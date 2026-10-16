@@ -1,0 +1,58 @@
+/* 가상 목록(vlist.ts) 모양 — 2dcad-viewer src/styles.css에서 옮겼다. --mono·--text·--text-faint·--accent-soft와 :root[data-theme] 는 쓰는 쪽 화면이 정한다. */
+.vlist {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  overscroll-behavior: contain;
+}
+.vlist-inner {
+  position: relative;
+  min-height: 100%;
+}
+.vlist-rows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.vlist-row {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding-right: 8px;
+  white-space: pre;
+  cursor: pointer;
+}
+.vlist-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+:root[data-theme='light'] .vlist-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.vlist-row .ln {
+  flex: none;
+  box-sizing: content-box;
+  padding: 0 8px 0 4px;
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+.vlist-row .tx {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vlist-row.sel {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.vlist-row.cur {
+  background: rgba(255, 180, 76, 0.16);
+  box-shadow: inset 3px 0 0 #ffb44c;
+}
