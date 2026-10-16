@@ -1,23 +1,25 @@
 /**
  * 키 고르기(순수 함수): 눌린 키와 지금 상황으로 할 일을 정한다. 실제 이벤트 처리는 app.ts가 한다.
  *
- * - 캔버스에 초점이 있으면 뷰어가 F·1~7·Esc를 직접 받는다(여기서는 Esc로 고른 것 지우기만 덧붙인다).
- * - 초점이 다른 곳(단추·패널 등)이어도 F·1~7·Esc가 뷰어로 가게 한다. 입력 칸(글·선택 상자)에서는 아무것도 가로채지 않는다.
- * - F7 = 격자, Space = 재생/멈춤(단추에 초점이 있으면 그 단추를 누르게 둔다), Ctrl/⌘+O = 열기.
+ * - 뷰어 키(F 전체 보기, 1~7 표준 뷰, Esc 측정 지우기)의 규칙은 뷰어 코어가 가진다(Viewer3d.handleKey).
+ *   캔버스에 초점이 있으면 뷰어가 직접 받고, 초점이 다른 곳(단추·패널 등)이면 앱이 창 키를 handleKey로 넘긴다.
+ * - 입력 칸(글·선택 상자)에서는 아무것도 가로채지 않는다.
+ * - 앱 키: F7 = 격자, Space = 재생/멈춤(단추에 초점이 있으면 그 단추를 누르게 둔다), Ctrl/⌘+O = 열기,
+ *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  */
-import type { ViewName } from 'opencad-viewer3d';
-
-/** 숫자 키 → 표준 뷰(뷰어 코어와 같은 배치) */
-export const VIEW_KEYS: Readonly<Record<string, ViewName>> = { '1': 'front', '2': 'back', '3': 'left', '4': 'right', '5': 'top', '6': 'bottom', '7': 'seIso' };
+import { VIEW_KEYS, type ViewName } from 'opencad-viewer3d';
 
 export type KeyAction =
   | { type: 'open' }
-  | { type: 'fit' }
-  | { type: 'view'; view: ViewName }
-  /** canvas: 캔버스가 받은 Esc(뷰어가 측정을 지우므로 기본 동작을 막지 않는다) */
-  | { type: 'escape'; canvas: boolean }
   | { type: 'grid' }
-  | { type: 'play' };
+  | { type: 'play' }
+  /** 캔버스 밖의 키를 뷰어 규칙(handleKey)으로 넘긴다 — 뷰어가 받지 않는 키면 아무 일도 없다 */
+  | { type: 'viewer' }
+  /**
+   * Esc의 앱 쪽 처리. canvas: 캔버스가 받은 Esc(뷰어가 스스로 측정을 지우므로 앱은 측정 중이 아닐 때 고른 것만 지운다).
+   * 캔버스 밖이면 측정 중일 때 handleKey로 측정을 먼저 지우고(점이 없으면 측정을 끈다), 아니면 고른 것을 지운다.
+   */
+  | { type: 'escape'; canvas: boolean };
 
 export interface KeyContext {
   key: string;
@@ -44,12 +46,14 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if (!c.hasDoc) return null;
   if (c.key === 'F7') return { type: 'grid' };
   if (c.key === ' ' || c.key === 'Spacebar') return c.canPlay && !c.onButton ? { type: 'play' } : null;
-  if (c.onCanvas) return c.key === 'Escape' ? { type: 'escape', canvas: true } : null;
-  if (c.key === 'f' || c.key === 'F') return { type: 'fit' };
-  const view = VIEW_KEYS[c.key];
-  if (view) return { type: 'view', view };
-  if (c.key === 'Escape') return { type: 'escape', canvas: false };
-  return null;
+  if (c.key === 'Escape') return { type: 'escape', canvas: c.onCanvas };
+  return c.onCanvas ? null : { type: 'viewer' };
+}
+
+/** 표준 뷰 → 숫자 키(메뉴 글용, 코어 VIEW_KEYS를 뒤집은 것). 키가 없는 뷰는 undefined */
+export function viewKeyOf(view: ViewName): string | undefined {
+  for (const [k, v] of Object.entries(VIEW_KEYS)) if (v === view) return k;
+  return undefined;
 }
 
 /** 초점 요소가 글 입력 칸인지(범위 막대·체크 상자·단추형 input은 아니다) */

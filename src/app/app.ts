@@ -20,7 +20,7 @@ import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceRes
 import { h, toast } from './dom';
 import { extensionList, fileAccept, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
-import { isEditableTarget, keyAction, VIEW_KEYS } from './keys';
+import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -36,7 +36,10 @@ const RENDER_MODES: [RenderMode, string][] = [
   ['xray', 'X-ray'],
 ];
 const VIEW_MENU: ViewName[] = ['top', 'front', 'right', 'left', 'back', 'bottom', 'seIso', 'swIso', 'neIso', 'nwIso'];
-const VIEW_KEY_OF: Partial<Record<ViewName, string>> = Object.fromEntries(Object.entries(VIEW_KEYS).map(([k, v]) => [v, k]));
+/** 뷰 큐브 한 변(CSS 화소): 넓은 화면은 코어 기본값, 폭 760px 미만은 작게 */
+const CUBE_WIDE = 112;
+const CUBE_NARROW = 76;
+const NARROW_QUERY = `(max-width: ${NARROW_WIDTH - 0.02}px)`;
 
 /** 자동 확인용 상태 */
 export interface AppState {
@@ -109,9 +112,6 @@ export class NcViewerApp implements PanelHost {
   private theme: ThemeName;
   private readonly storage = safeStorage();
   private panelOpen = window.innerWidth >= NARROW_WIDTH;
-  private gridOn = true;
-  private cubeOn = true;
-  private axesOn = true;
   private playing = false;
   private raf = 0;
   private lastT = 0;
@@ -196,7 +196,8 @@ export class NcViewerApp implements PanelHost {
         'views',
         tbtn('views', '표준 뷰', '표준 뷰 (1 앞 · 2 뒤 · 3 왼쪽 · 4 오른쪽 · 5 위 · 6 아래 · 7 등각)'),
         VIEW_MENU.map((v) => {
-          const b = h('button', { type: 'button', role: 'menuitem' }, h('span', {}, VIEW_LABELS[v]), VIEW_KEY_OF[v] ? h('kbd', {}, VIEW_KEY_OF[v]!) : null);
+          const key = viewKeyOf(v);
+          const b = h('button', { type: 'button', role: 'menuitem' }, h('span', {}, VIEW_LABELS[v]), key ? h('kbd', {}, key) : null);
           b.addEventListener('click', () => this.viewer?.setView(v));
           return b;
         }),
@@ -256,6 +257,11 @@ export class NcViewerApp implements PanelHost {
     document.addEventListener('pointerdown', (ev) => {
       if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
     });
+    try {
+      window.matchMedia(NARROW_QUERY).addEventListener('change', () => this.viewer?.setViewCubeSize(this.cubeSizeFor()));
+    } catch {
+      /* matchMedia가 없는 환경 */
+    }
     try {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (!readThemePref(this.storage)) this.setTheme(resolveTheme(null, this.systemDark()));
@@ -555,7 +561,7 @@ export class NcViewerApp implements PanelHost {
     this.viewEl.hidden = false;
     let v: Viewer3d;
     try {
-      v = new Viewer3d(this.viewEl, { theme: this.theme, grid: this.gridOn, viewCube: this.cubeOn, axes: this.axesOn });
+      v = new Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
@@ -733,22 +739,35 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
   }
 
-  toggleGrid(on = !this.gridOn): void {
-    this.gridOn = on;
-    this.viewer?.setGridVisible(on);
+  // 격자·뷰 큐브·좌표축 켜짐 상태는 뷰어 코어가 가진다(gridVisible 등). 뷰어가 없으면 막대 단추가 꺼져 있어 부를 일이 없다
+  toggleGrid(on?: boolean): void {
+    const v = this.viewer;
+    if (!v) return;
+    v.setGridVisible(on ?? !v.gridVisible);
     this.renderToolbar();
   }
 
-  toggleCube(on = !this.cubeOn): void {
-    this.cubeOn = on;
-    this.viewer?.setViewCubeVisible(on);
+  toggleCube(on?: boolean): void {
+    const v = this.viewer;
+    if (!v) return;
+    v.setViewCubeVisible(on ?? !v.viewCubeVisible);
     this.renderToolbar();
   }
 
-  toggleAxes(on = !this.axesOn): void {
-    this.axesOn = on;
-    this.viewer?.setAxesVisible(on);
+  toggleAxes(on?: boolean): void {
+    const v = this.viewer;
+    if (!v) return;
+    v.setAxesVisible(on ?? !v.axesVisible);
     this.renderToolbar();
+  }
+
+  /** 지금 화면 폭에 맞는 뷰 큐브 크기 */
+  private cubeSizeFor(): number {
+    try {
+      return window.matchMedia(NARROW_QUERY).matches ? CUBE_NARROW : CUBE_WIDE;
+    } catch {
+      return window.innerWidth < NARROW_WIDTH ? CUBE_NARROW : CUBE_WIDE;
+    }
   }
 
   get measuring(): boolean {
@@ -905,9 +924,10 @@ export class NcViewerApp implements PanelHost {
     const has = !!this.doc && !!this.viewer;
     for (const t of Object.values(this.tools)) t.el.disabled = t.needsDoc && !has;
     const pressed = (key: string, on: boolean): void => this.tools[key]?.el.setAttribute('aria-pressed', String(on));
-    pressed('grid', this.gridOn);
-    pressed('cube', this.cubeOn);
-    pressed('axes', this.axesOn);
+    const v = this.viewer;
+    pressed('grid', v?.gridVisible ?? true);
+    pressed('cube', v?.viewCubeVisible ?? true);
+    pressed('axes', v?.axesVisible ?? true);
     pressed('measure', this.measuring);
     pressed('panel', this.panelOpen && !!this.doc);
     const persp = this.projection === 'perspective';
@@ -961,36 +981,37 @@ export class NcViewerApp implements PanelHost {
       canPlay: this.canPlay(),
     });
     if (!a) return;
-    if (a.type === 'escape' && a.canvas) {
-      // 뷰어도 Esc를 받아 측정을 지운다(막지 않는다)
-      if (!v?.measureMode) this.clearSelection();
+    if (a.type === 'open') {
+      // 열기는 문서·뷰어가 없어도(시작 화면) 된다
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.chooseFile();
       return;
+    }
+    if (!v) return;
+    switch (a.type) {
+      case 'viewer':
+        // F·1~7(·측정 점이 있을 때 Esc)은 뷰어 규칙대로. 받지 않은 키는 그대로 흘려보낸다
+        if (v.handleKey(ev)) ev.stopPropagation();
+        return;
+      case 'escape':
+        if (a.canvas) {
+          // 캔버스도 Esc를 받아 뷰어가 측정을 지운다(막지 않는다). 앱은 측정 중이 아닐 때 고른 것만 지운다
+          if (!v.measureMode) this.clearSelection();
+          return;
+        }
+        ev.preventDefault();
+        ev.stopPropagation();
+        // 측정 중이면 측정 먼저: 찍힌 점이 있으면 뷰어가 지우고, 없으면 측정을 끈다. 아니면 고른 것을 지운다
+        if (v.measureMode) {
+          if (!v.handleKey(ev)) this.toggleMeasure(false);
+        } else this.clearSelection();
+        return;
     }
     ev.preventDefault();
     ev.stopPropagation();
-    switch (a.type) {
-      case 'open':
-        this.chooseFile();
-        break;
-      case 'fit':
-        v?.fit();
-        break;
-      case 'view':
-        v?.setView(a.view);
-        break;
-      case 'grid':
-        this.toggleGrid();
-        break;
-      case 'play':
-        this.togglePlay();
-        break;
-      case 'escape':
-        if (v?.measureMode) {
-          if (v.measurement()) v.clearMeasure();
-          else this.toggleMeasure(false);
-        } else this.clearSelection();
-        break;
-    }
+    if (a.type === 'grid') this.toggleGrid();
+    else this.togglePlay();
   }
 
   // ───────────────────────── 자동 확인용 ─────────────────────────

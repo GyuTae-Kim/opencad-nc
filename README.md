@@ -82,7 +82,7 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.1.0`으로 받습니다. 코어를 올리면 `package.json`의 태그를 바꿉니다.
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.2.0`으로 받습니다. 코어를 올리면 `package.json`의 태그를 바꿉니다.
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
 
 ## 배포
