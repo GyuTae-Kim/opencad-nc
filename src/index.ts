@@ -12,7 +12,8 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from './exten
 import { makeSource } from './text';
 
 export * from './model';
-export { parseGcode, detectGcodeDialect, type GcodeOptions } from './gcode';
+export { parseGcode, detectGcodeDialect, detectLathe, type GcodeOptions } from './gcode';
+export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions } from './mpr';
 export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions } from './scene';

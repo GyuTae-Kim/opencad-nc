@@ -10,6 +10,7 @@
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, type NcProgram, type PathPoint } from './model';
+import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
 import type { MprPart } from './mpr';
 
@@ -26,9 +27,16 @@ export interface NcSceneOptions {
   rapids?: boolean;
   /** 공작물 상자. 없으면 프로그램의 것(BLK FORM 등), 'auto'면 절삭 범위로, null이면 넣지 않는다 */
   stock?: Box3 | 'auto' | null;
+  /**
+   * 반경 보정 경로(공구 중심)를 따로 넣을지(기본 false). 넣으면 선분 묶음 'nc-comp'(묶음 '보정 경로', 실선·다른 색,
+   * segmentIds = 이동 번호)와 meta.compRuns가 생긴다. 객체로 주면 반지름 선택(comp.ts CompPathOptions)
+   */
+  compPath?: boolean | CompPathOptions;
 }
 
 const RAPID_COLOR: Rgba = [0.55, 0.55, 0.6, 1];
+const COMP_COLOR: Rgba = [0.95, 0.3, 0.75, 1];
+const AXIS_COLOR: Rgba = [0.45, 0.6, 0.85, 1];
 const STOCK_COLOR: Rgba = [0.85, 0.72, 0.5, 0.22];
 const HOLE_COLOR: Rgba = [0.9, 0.2, 0.1, 1];
 
@@ -261,6 +269,29 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     });
   }
 
+  // 반경 보정 경로(선택)
+  const extraWarnings: string[] = [];
+  let compMeta: { first: number; end: number; side: number; radius: number; source: string; line: number; computed: boolean }[] | undefined;
+  const compBox = emptyBox();
+  if (opts.compPath) {
+    const cp = ncCompPath(p, typeof opts.compPath === 'object' ? opts.compPath : {});
+    compMeta = cp.runs.map((r) => ({ first: r.first, end: r.end, side: r.side, radius: r.used, source: r.source, line: r.line, computed: r.computed }));
+    for (const w of cp.warnings) extraWarnings.push(`보정 경로: ${w}`);
+    if (cp.count) {
+      const seg = compPathSegments(cp, maxAngle);
+      const q = seg.positions;
+      for (let i = 0; i < q.length; i += 3) extendBox(compBox, q[i]!, q[i + 1]!, q[i + 2]!);
+      lines.push({ id: 'nc-comp', name: '보정 경로(공구 중심)', positions: q, color: COMP_COLOR, group: '보정 경로', segmentIds: seg.ids, width: 2 });
+    }
+  }
+  // 선반: 회전축(Z) 표시
+  if (p.lathe && p.bounds) {
+    const z0 = Math.min(p.bounds.min[2], 0);
+    const z1 = Math.max(p.bounds.max[2], 0);
+    const pad = Math.max(1, (z1 - z0) * 0.05);
+    lines.push({ id: 'lathe-axis', name: '회전축(Z)', positions: new Float32Array([0, 0, z0 - pad, 0, 0, z1 + pad]), color: AXIS_COLOR, dashed: true, group: '회전축' });
+  }
+
   const meshes: Mesh3d[] = [];
   let stock: Box3 | undefined;
   if (opts.stock === undefined) stock = p.stock;
@@ -269,7 +300,7 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
   if (stock) meshes.push(stockMesh('nc-stock', stock));
 
   const box = emptyBox();
-  for (const b of [p.bounds, stock]) {
+  for (const b of [p.bounds, stock, boxOf(compBox)]) {
     if (!b) continue;
     extendBox(box, b.min[0], b.min[1], b.min[2]);
     extendBox(box, b.max[0], b.max[1], b.max[2]);
@@ -280,7 +311,7 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     meshes,
     lines,
     points,
-    warnings: p.warnings.slice(),
+    warnings: extraWarnings.length ? [...p.warnings, ...extraWarnings] : p.warnings.slice(),
     meta: {
       kind: 'nc',
       format: p.format,
@@ -297,6 +328,12 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
       arcAngle: maxAngle,
       /** 이동 번호 → 원본 줄 번호(0부터). segmentIds·pointIds를 줄로 바꿀 때 */
       moveLine: m.line,
+      /** 반경 보정 구간 수(보정 코드가 있으면) */
+      compRunCount: p.compRuns?.length ?? 0,
+      /** 보정 경로를 넣었으면 구간마다 반지름·계산 여부 */
+      compRuns: compMeta,
+      lathe: !!p.lathe,
+      rotaryAxes: !!p.rotaryAxes,
     },
   };
   const bb = boxOf(box);
@@ -357,6 +394,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   const usedContours = new Set<number>();
   const centers: number[] = [];
   const centerIds: number[] = [];
+  const others: number[] = [];
+  const otherIds: number[] = [];
   part.operations.forEach((op, oi) => {
     if (!op.enabled && !opts.disabled) return;
     const group = op.enabled ? opGroup(op.kind) : '꺼진 가공';
@@ -434,6 +473,14 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         lines.push({ id: `mpr-op-${oi}`, name: op.label, positions: new Float32Array(seg), color: toolColor(op.tool), group, segmentIds: ids, width: 2 });
         return;
       }
+      case 'other':
+        // 모르는 매크로: 위치만 점으로(묶음 '기타 가공(위치)')
+        if (op.at) {
+          others.push(op.at[0], op.at[1], op.at[2]);
+          otherIds.push(oi);
+          extendBox(box, op.at[0], op.at[1], op.at[2]);
+        }
+        return;
       default:
         return;
     }
@@ -452,6 +499,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   }
   if (centers.length)
     points.push({ id: 'mpr-hole-centers', name: '구멍 중심', positions: new Float32Array(centers), color: [0.1, 0.1, 0.1, 1], size: 4, group: '구멍', pointIds: new Uint32Array(centerIds) });
+  if (others.length)
+    points.push({ id: 'mpr-other-pos', name: '지원하지 않는 가공 위치', positions: new Float32Array(others), color: [0.95, 0.6, 0.1, 1], size: 7, group: '기타 가공(위치)', pointIds: new Uint32Array(otherIds) });
   const scene: Scene3d = {
     name: part.name,
     units: part.units,

@@ -131,6 +131,42 @@ export interface NcStats {
   rapidFeed: number;
 }
 
+/**
+ * 반경 보정 구간(G41/G42 … G40, Heidenhain RL/RR … R0). 이동 [first, end)가 보정이 켜진 채 만든 이동이고,
+ * first가 들어가기(보정을 켠 뒤 첫 이동), end번 이동(있으면)이 나오기 이동이다. 보정 경로 계산(comp.ts)에 쓴다.
+ */
+export interface NcCompRun {
+  first: number;
+  end: number;
+  /** 1 왼쪽(G41·RL), 2 오른쪽(G42·RR) */
+  side: 1 | 2;
+  plane: NcPlane;
+  /** 공구 반지름(표시 단위, 모르면 NaN) */
+  radius: number;
+  /** 반지름을 어디서 얻었는지(사람이 읽는 글, 모르면 '') */
+  source: string;
+  /** 보정을 켠 줄(0부터) */
+  line: number;
+}
+
+/**
+ * 회전축 감기 설정. 회전축이 공작물을 돌리는(또는 공구가 공작물 둘레를 도는) 기계에서, 프로그램의 직선 축 위치를
+ * 지금 각만큼 축 둘레로 돌려 공작물 기준의 공구 끝 경로를 만든다(각이 바뀌는 이동은 잘게 나눈다).
+ * 회전축 중심선은 center를 지나고, 공구 끝점 제어(G43.4·G43.5)가 켜진 동안은 감지 않는다(프로그램 좌표가 곧 공구 끝).
+ */
+export interface NcRotaryOptions {
+  /** A·B·C가 도는 직선 축(기본 A→x, B→y, C→z. null이면 그 회전축은 무시) */
+  A?: 'x' | 'y' | 'z' | null;
+  B?: 'x' | 'y' | 'z' | null;
+  C?: 'x' | 'y' | 'z' | null;
+  /** 회전 중심(표시 좌표, 기본 원점) */
+  center?: [number, number, number];
+  /** 도는 방향 뒤집기(기본 false: + 각 = 공작물에 대한 공구의 오른손 법칙 방향) */
+  reverse?: boolean;
+  /** 나누는 각(도, 기본 2) */
+  stepDeg?: number;
+}
+
 /** 해석 결과 */
 export interface NcProgram {
   name: string;
@@ -151,6 +187,12 @@ export interface NcProgram {
   feedBounds?: Box3;
   /** 공작물(프로그램에 정의가 있으면 — Heidenhain BLK FORM 등) */
   stock?: Box3;
+  /** 반경 보정 구간(보정 코드가 있을 때만) */
+  compRuns?: NcCompRun[];
+  /** 선반 모드로 읽었으면 true(X = 반지름 값, XZ 평면 단면 경로, 회전축 = Z) */
+  lathe?: boolean;
+  /** 회전축(A·B·C) 낱말이 있었는지 */
+  rotaryAxes?: boolean;
   warnings: string[];
 }
 

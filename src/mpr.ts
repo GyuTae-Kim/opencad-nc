@@ -13,6 +13,8 @@
  * 좌표: 판 왼쪽 아래(앞) 모서리의 밑면이 원점, X = 길이(LA), Y = 폭(BR), Z = 두께 방향 위(윗면 Z = DI).
  * 구멍·홈 깊이(TI)는 윗면에서 잰다. 호 KA: DS=0 시계, DS=1 반시계, R 반지름(.I/.J = 계산된 중심).
  * 조건 `??`가 0이거나 EN=0인 가공은 꺼진 것으로 둔다.
+ * 윤곽 KR(둥글리기 R)·KF(모따기)는 앞뒤가 직선인 모서리에서 호·직선으로 깎는다(호가 낀 모서리는 그대로, 경고).
+ * 변수는 정의 차례대로 계산하고, 뒤에 정의된 변수를 쓰는 식은 다시 돌며 푼다. 모르는 매크로는 XA·YA가 있으면 위치만 남긴다.
  */
 import { ExprError, evalMprExpr } from './expr';
 import { NcWarnings, type PathPoint } from './model';
@@ -91,6 +93,8 @@ export interface MprBoxOp extends OpBase {
 
 export interface MprOtherOp extends OpBase {
   kind: 'comment' | 'other';
+  /** 모르는 매크로의 위치(XA·YA가 있으면, Z = 윗면) — 장면에서 점으로 */
+  at?: [number, number, number];
 }
 
 export type MprOperation = MprDrillOp | MprContourOp | MprBoxOp | MprOtherOp;
@@ -298,13 +302,44 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
       return undefined;
     }
   };
+  // 변수: 차례대로 계산하고, 못 푼 것(뒤에 정의된 변수를 쓰는 식)은 더 풀리지 않을 때까지 다시 돈다
+  const quiet = (expr: string): number | undefined => {
+    const e = expr.trim();
+    if (e === '') return undefined;
+    const n = Number(e);
+    if (Number.isFinite(n)) return n;
+    try {
+      const v = evalMprExpr(e, lookup);
+      return Number.isFinite(v) ? v : undefined;
+    } catch (err) {
+      if (!(err instanceof ExprError)) throw err;
+      return undefined;
+    }
+  };
+  let pending: MprVariable[] = [];
   for (const v of variables) {
-    const val = evalExpr(v.expr, v.line, `변수 ${v.name}`);
+    const val = quiet(v.expr);
     if (val !== undefined) {
       v.value = val;
       setEnv(v.name, val);
-    }
+    } else pending.push(v);
   }
+  let late = false;
+  for (let guard = 0; pending.length && guard < 50; guard++) {
+    const next: MprVariable[] = [];
+    for (const v of pending) {
+      const val = quiet(v.expr);
+      if (val !== undefined) {
+        v.value = val;
+        setEnv(v.name, val);
+        late = true;
+      } else next.push(v);
+    }
+    if (next.length === pending.length) break;
+    pending = next;
+  }
+  for (const v of pending) evalExpr(v.expr, v.line, `변수 ${v.name}`);
+  if (late) w.add('뒤에 정의된 변수를 쓰는 변수 식이 있음 — 정의 차례와 상관없이 풀어 계산함');
 
   const units: 'mm' | 'inch' = header.INCH === '1' ? 'inch' : 'mm';
 
@@ -342,6 +377,11 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     let py = 0;
     let pz = 0;
     let first = true;
+    /** 다음 요소와의 모서리에 걸 둥글리기·모따기 */
+    let corner: { type: string; size: number; index: number; line: number } | null = null;
+    const sharp = (cr: { type: string; line: number }, why: string): void => {
+      w.add(`윤곽 요소 ${cr.type}(모서리 둥글리기·모따기): ${why} — 모서리 그대로 그림`, cr.line);
+    };
     for (const e of elemRaw.get(c) ?? []) {
       const num = (key: string, dflt: number): number => {
         // 값이 없으면 woodWOP가 계산해 둔 .값, 그것도 없으면 앞 값
@@ -366,15 +406,60 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
           el.radius = arc.r;
         } else w.add(`윤곽 ${c.id} 요소 ${e.index}: 호 중심을 정할 수 없어 직선으로 그림`, e.line);
       } else if (type === 'KR' || type === 'KF') {
-        w.add(`윤곽 요소 ${type}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, e.line);
+        if (corner) sharp(corner, '모서리가 겹침');
+        const key = ['R', 'FA', 'L'].find((k) => e.vals[k] !== undefined || e.vals['.' + k] !== undefined);
+        const size = key ? Math.abs(num(key, 0)) : 0;
+        if (!(size > 0)) {
+          w.add(`윤곽 요소 ${type}에 크기(R)가 없음 — 모서리 그대로 그림`, e.line);
+          continue;
+        }
+        corner = { type, size, index: e.index, line: e.line };
         continue;
       } else if (type !== 'KL' && type !== 'KSL') w.add(`알 수 없는 윤곽 요소 ${type || '(종류 없음)'}`, e.line);
+      if (corner) {
+        // 앞 직선(A0 → A1)과 이 직선(A1 → 끝) 사이 모서리
+        const cr = corner;
+        corner = null;
+        const n = c.elements.length;
+        const A1 = c.elements[n - 1];
+        const A0 = c.elements[n - 2];
+        if (!A0 || !A1 || A1.arc || el.arc || (type !== 'KL' && type !== 'KSL')) sharp(cr, '앞뒤가 직선인 모서리만 지원');
+        else {
+          const l1 = Math.hypot(A1.x - A0.x, A1.y - A0.y);
+          const l2 = Math.hypot(x - A1.x, y - A1.y);
+          const u1 = [(A1.x - A0.x) / l1, (A1.y - A0.y) / l1];
+          const u2 = [(x - A1.x) / l2, (y - A1.y) / l2];
+          const cross = u1[0]! * u2[1]! - u1[1]! * u2[0]!;
+          const turn = Math.acos(Math.max(-1, Math.min(1, u1[0]! * u2[0]! + u1[1]! * u2[1]!)));
+          const d = cr.type === 'KR' ? cr.size * Math.tan(turn / 2) : cr.size;
+          if (!(l1 > 0 && l2 > 0) || Math.abs(cross) < 1e-9) sharp(cr, '모서리가 꺾이지 않음');
+          else if (d > l1 + 1e-9 || d > l2 + 1e-9) sharp(cr, '크기가 변보다 큼');
+          else {
+            const t1x = A1.x - u1[0]! * d;
+            const t1y = A1.y - u1[1]! * d;
+            const t2x = A1.x + u2[0]! * d;
+            const t2y = A1.y + u2[1]! * d;
+            const cz = A1.z;
+            A1.x = t1x;
+            A1.y = t1y;
+            const fe: MprContourElement = { type: cr.type, index: cr.index, line: cr.line, x: t2x, y: t2y, z: cz };
+            if (cr.type === 'KR') {
+              const sg = cross > 0 ? 1 : -1;
+              fe.arc = { cx: t1x - u1[1]! * cr.size * sg, cy: t1y + u1[0]! * cr.size * sg, sweep: sg * turn };
+              fe.radius = cr.size;
+              fe.dir = sg > 0 ? 'ccw' : 'cw';
+            }
+            c.elements.push(fe);
+          }
+        }
+      }
       c.elements.push(el);
       px = x;
       py = y;
       pz = z;
       first = false;
     }
+    if (corner) sharp(corner, '뒤에 요소가 없음');
   }
 
   // 가공
@@ -531,10 +616,15 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
       case 'comment':
         operations.push({ ...base, kind: 'comment', label: m.comments.join(' ') || label });
         break;
-      default:
-        w.add(`지원하지 않는 매크로 <${m.id} \\${m.name}\\ — 목록에만 넣음`, m.line);
-        operations.push({ ...base, kind: 'other' });
+      default: {
+        const xa = p.XA !== undefined ? num('XA') : undefined;
+        const ya = p.YA !== undefined ? num('YA') : undefined;
+        const op: MprOtherOp = { ...base, kind: 'other' };
+        if (xa !== undefined && ya !== undefined) op.at = [xa, ya, thick];
+        w.add(`지원하지 않는 매크로 <${m.id} \\${m.name}\\ — ${op.at ? '목록과 위치(점)만 넣음' : '목록에만 넣음'}`, m.line);
+        operations.push(op);
         stats.other++;
+      }
     }
   }
   if (!ended) w.add('파일 끝 표시(!)가 없음');

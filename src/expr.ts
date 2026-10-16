@@ -262,8 +262,9 @@ function tokenizeMpr(s: string): Tok[] {
       i += 2;
       continue;
     }
-    if ('+-*/^()=<>,%'.includes(c)) {
-      out.push({ t: 'op', v: c });
+    if ('+-*/^()=<>,%;'.includes(c)) {
+      // 함수 인수 구분은 , 또는 ;
+      out.push({ t: 'op', v: c === ';' ? ',' : c });
       i++;
       continue;
     }
