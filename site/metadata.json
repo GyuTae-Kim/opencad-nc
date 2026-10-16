@@ -1,0 +1,61 @@
+{
+  "title": "OpenCAD 무료 NC·G-code 뷰어 | Heidenhain·MPR 공구 경로",
+  "description": "G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.",
+  "url": "https://gyutae-kim.github.io/opencad-nc/",
+  "siteName": "OpenCAD NC 뷰어",
+  "language": "ko",
+  "locale": "ko_KR",
+  "image": {
+    "url": "https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg",
+    "type": "image/jpeg",
+    "width": 1200,
+    "height": 630,
+    "alt": "OpenCAD의 DWG·DXF, STEP, SketchUp, NC 무료 뷰어 화면"
+  },
+  "author": {
+    "@type": "Person",
+    "name": "김규태 · Sean Kim",
+    "url": "https://gyutae-kim.github.io/"
+  },
+  "application": {
+    "name": "OpenCAD NC 뷰어",
+    "alternateName": "OpenCAD 무료 NC·G-code 뷰어",
+    "applicationCategory": "DesignApplication",
+    "operatingSystem": "Web browser",
+    "browserRequirements": "JavaScript와 WebGL2 지원 브라우저",
+    "isAccessibleForFree": true,
+    "license": "https://github.com/GyuTae-Kim/opencad-nc/blob/main/LICENSE",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "KRW"
+    },
+    "featureList": [
+      "G-code·Heidenhain 평문·woodWOP MPR 해석",
+      "코드 줄과 3D 공구 경로 연결",
+      "공구별 표시와 가공 순서 재생",
+      "두 점 측정과 PNG 저장"
+    ],
+    "sameAs": "https://github.com/GyuTae-Kim/opencad-nc"
+  },
+  "breadcrumbs": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "김규태 · Sean Kim",
+      "item": "https://gyutae-kim.github.io/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "OpenCAD",
+      "item": "https://gyutae-kim.github.io/opencad"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "OpenCAD NC 뷰어",
+      "item": "https://gyutae-kim.github.io/opencad-nc/"
+    }
+  ]
+}

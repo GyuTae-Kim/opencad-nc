@@ -139,3 +139,16 @@ npm run preview    # 빌드 결과 보기
 ## 라이선스
 
 MIT
+
+
+## 검색·공유 메타데이터와 콘텐츠 수정일
+
+`site/metadata.json`을 공통 원본으로 삼아 Vite 플러그인이 제목·설명·canonical·Open Graph·Twitter Card·JSON-LD를 초기 HTML에 넣습니다. 같은 원본으로 앱의 공개 주소를 담은 `sitemap.xml`도 생성합니다. 공유 이미지는 각 앱의 `public/og-opencad.jpg`이며 앱 파일과 함께 배포합니다. `robots.txt`는 같은 호스트 루트(`https://gyutae-kim.github.io/robots.txt`)의 설정이 적용됩니다.
+
+`site/content-history.json`에는 실제 콘텐츠 수정 시각과 지문을 저장합니다. 초기 HTML 본문·메타데이터·공유 이미지와 빌드된 앱/워커 JavaScript·CSS를 비교하므로 앱 기능이 바뀌면 날짜 갱신이 필요합니다. 수정일 자체와 소스 맵은 비교에서 제외합니다.
+
+1. 콘텐츠를 변경한 실제 UTC 시각을 기록하고 `npm run update:content-dates -- --at YYYY-MM-DDTHH:mm:ssZ`를 실행합니다.
+2. `npm run build`로 다시 빌드합니다. 변경되지 않은 콘텐츠는 기존 날짜를 유지하며, 날짜가 오래되었거나 잘못된 경우 SEO 검사가 실패해 배포를 막습니다.
+3. `npm run test:seo`와 기존 테스트를 실행하고 메타데이터·수정일 기록을 함께 커밋합니다.
+
+일반 빌드나 배포 시각으로 날짜를 자동 갱신하지 않습니다. `sitemap.xml`의 `lastmod`와 앱 구조화 데이터의 `dateModified`는 동일한 기록을 사용합니다. 배포 뒤에는 앱·사이트맵·공유 이미지의 실제 공개 응답을 확인하고, 포트폴리오 통합 사이트맵의 연결 날짜도 새 앱 사이트맵과 맞춥니다. 사이트맵 게시와 검색엔진의 실제 수집·색인 완료는 별도로 확인합니다.
