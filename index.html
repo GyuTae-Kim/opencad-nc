@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>OpenCAD 무료 NC·G-code 뷰어 | Heidenhain·MPR 공구 경로</title>
+    <link rel="canonical" href="https://gyutae-kim.github.io/opencad-nc/">
+    <link rel="sitemap" type="application/xml" href="https://gyutae-kim.github.io/opencad-nc/sitemap.xml">
+    <meta name="description" content="G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="author" content="김규태 · Sean Kim">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="OpenCAD 무료 NC·G-code 뷰어 | Heidenhain·MPR 공구 경로">
+    <meta name="twitter:description" content="G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.">
+    <meta name="twitter:image" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta name="twitter:image:alt" content="OpenCAD의 DWG·DXF, STEP, SketchUp, NC 무료 뷰어 화면">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="OpenCAD NC 뷰어">
+    <meta property="og:locale" content="ko_KR">
+    <meta property="og:title" content="OpenCAD 무료 NC·G-code 뷰어 | Heidenhain·MPR 공구 경로">
+    <meta property="og:description" content="G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.">
+    <meta property="og:url" content="https://gyutae-kim.github.io/opencad-nc/">
+    <meta property="og:image" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta property="og:image:secure_url" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="OpenCAD의 DWG·DXF, STEP, SketchUp, NC 무료 뷰어 화면">
+    <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebApplication","@id":"https://gyutae-kim.github.io/opencad-nc/#app","name":"OpenCAD NC 뷰어","alternateName":"OpenCAD 무료 NC·G-code 뷰어","applicationCategory":"DesignApplication","operatingSystem":"Web browser","browserRequirements":"JavaScript와 WebGL2 지원 브라우저","isAccessibleForFree":true,"license":"https://github.com/GyuTae-Kim/opencad-nc/blob/main/LICENSE","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"},"featureList":["G-code·Heidenhain 평문·woodWOP MPR 해석","코드 줄과 3D 공구 경로 연결","공구별 표시와 가공 순서 재생","두 점 측정과 PNG 저장"],"sameAs":"https://github.com/GyuTae-Kim/opencad-nc","url":"https://gyutae-kim.github.io/opencad-nc/","description":"G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.","inLanguage":"ko","image":"https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg","author":{"@type":"Person","name":"김규태 · Sean Kim","url":"https://gyutae-kim.github.io/"},"dateModified":"2026-10-16T19:01:03Z"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"김규태 · Sean Kim","item":"https://gyutae-kim.github.io/"},{"@type":"ListItem","position":2,"name":"OpenCAD","item":"https://gyutae-kim.github.io/opencad"},{"@type":"ListItem","position":3,"name":"OpenCAD NC 뷰어","item":"https://gyutae-kim.github.io/opencad-nc/"}]}]}</script>
+    <meta name="theme-color" content="#232830" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      // 첫 화면이 깜빡이지 않게 테마를 먼저 정한다(기억한 선택 → 없으면 시스템 설정). 저장소가 막혀도 넘어간다.
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem('opencad-nc.theme');
+        } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-BRpZ8CNW.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-AjSsLyZ-.css">
+  </head>
+  <body>
+    <div id="app">
+      <!-- 앱이 준비되면 이 안내를 앱 화면으로 바꾼다. -->
+      <main class="site-intro">
+        <h1>OpenCAD NC 뷰어</h1>
+        <p>G-code·Heidenhain 평문·woodWOP MPR 프로그램을 브라우저에서 열어 3D 공구 경로로 보는 무료 뷰어입니다. 파일은 서버로 보내지 않고 이 기기 안에서 읽습니다.</p>
+        <noscript><p>이 뷰어는 JavaScript와 WebGL2가 필요합니다. 브라우저에서 JavaScript를 켜 주십시오.</p></noscript>
+      <p><a href="https://gyutae-kim.github.io/opencad/projects/nc-viewer">OpenCAD NC 뷰어 사용법·지원 범위</a> · <a href="https://gyutae-kim.github.io/">개발자 포트폴리오</a></p>
+      </main>
+    </div>
+  </body>
+</html>
