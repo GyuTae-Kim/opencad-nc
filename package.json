@@ -2,7 +2,7 @@
   "name": "opencad-nc",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenCAD NC 해석기: G-code·Heidenhain·woodWOP MPR 프로그램을 브라우저에서 읽어 3D 공구 경로 장면으로 만듦",
+  "description": "OpenCAD NC 뷰어·해석기: G-code·Heidenhain·woodWOP MPR 프로그램을 브라우저에서 읽어 3D 공구 경로로 보여 줌",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -14,16 +14,20 @@
     "src"
   ],
   "scripts": {
+    "dev": "vite --port 4401",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4401",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.1.0"
+    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.3.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
+    "vite": "^7.3.7",
     "vitest": "^3.2.7"
   }
 }

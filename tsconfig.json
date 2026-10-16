@@ -19,12 +19,13 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "types": [
-      "node"
+      "node",
+      "vite/client"
     ]
   },
   "include": [
     "src",
     "tests",
-    "vitest.config.ts"
+    "vite.config.ts"
   ]
 }

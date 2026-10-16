@@ -8,6 +8,7 @@ import { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 import type { NcProgram } from './model';
 import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
 import { mprToScene, ncToScene, type MprSceneOptions, type NcSceneOptions } from './scene';
+import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from './extensions';
 import { makeSource } from './text';
 
 export * from './model';
@@ -20,14 +21,7 @@ export { evalMprExpr } from './expr';
 
 export type NcFileKind = 'gcode' | 'heidenhain' | 'mpr';
 
-/** G-code로 보는 확장자 */
-export const GCODE_EXTENSIONS = ['nc', 'ngc', 'gcode', 'gco', 'gc', 'g', 'tap', 'cnc', 'ncc', 'nc1', 'mpf', 'spf', 'eia', 'iso', 'anc', 'din', 'ptp', 'fnc', 'min', 'hnc', 'ncd', 'xpi', 'cut'];
-/** Heidenhain 평문 확장자 */
-export const HEIDENHAIN_EXTENSIONS = ['h'];
-/** woodWOP 확장자 */
-export const MPR_EXTENSIONS = ['mpr'];
-/** NC 뷰어가 여는 모든 확장자(점 없이) */
-export const NC_EXTENSIONS = [...GCODE_EXTENSIONS, ...HEIDENHAIN_EXTENSIONS, ...MPR_EXTENSIONS];
+export { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, NC_EXTENSIONS } from './extensions';
 
 function ext(name: string): string {
   const m = /\.([^./\\]+)$/.exec(name);

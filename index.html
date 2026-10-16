@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>OpenCAD NC 뷰어 · G-code·Heidenhain·MPR 공구 경로 보기</title>
+    <meta name="description" content="G-code(Fanuc·LinuxCNC·GRBL·Mach3), Heidenhain 평문, woodWOP MPR 프로그램을 브라우저에서 열어 3D 공구 경로를 돌려 보고, 코드 줄을 짚고, 가공 순서를 재생하는 무료 NC 뷰어입니다. 파일은 서버로 보내지 않고 이 기기에서 읽습니다." />
+    <meta name="theme-color" content="#232830" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="canonical" href="https://gyutae-kim.github.io/opencad-nc/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="OpenCAD NC 뷰어 · G-code·Heidenhain·MPR 공구 경로 보기" />
+    <meta property="og:description" content="NC 프로그램을 브라우저에서 3D 공구 경로로 보는 무료 뷰어. 설치·회원가입 없이, 파일은 이 기기 밖으로 나가지 않습니다." />
+    <meta property="og:url" content="https://gyutae-kim.github.io/opencad-nc/" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      // 첫 화면이 깜빡이지 않게 테마를 먼저 정한다(기억한 선택 → 없으면 시스템 설정). 저장소가 막혀도 넘어간다.
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem('opencad-nc.theme');
+        } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <script type="module" src="./src/app/main.ts"></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 앱이 준비되면 이 안내를 앱 화면으로 바꾼다. -->
+      <main class="site-intro">
+        <h1>OpenCAD NC 뷰어</h1>
+        <p>G-code·Heidenhain 평문·woodWOP MPR 프로그램을 브라우저에서 열어 3D 공구 경로로 보는 무료 뷰어입니다. 파일은 서버로 보내지 않고 이 기기 안에서 읽습니다.</p>
+        <noscript><p>이 뷰어는 JavaScript와 WebGL2가 필요합니다. 브라우저에서 JavaScript를 켜 주십시오.</p></noscript>
+      </main>
+    </div>
+  </body>
+</html>
