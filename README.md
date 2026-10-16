@@ -68,7 +68,7 @@ const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·
 | `src/mpr.ts` | woodWOP MPR |
 | `src/model.ts`, `src/emitter.ts`, `src/text.ts` | 공통 이동 모델·시간표, 이동 만들기, 원문 줄 |
 | `src/scene.ts`, `src/mesh.ts` | 공구 경로·공작물 → `Scene3d` |
-| `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts`), 선분 강조 덧그림(`overlay.ts`), 가상 목록(`vlist.ts`, `vlist.css`) |
+| `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts`), 가상 목록(`vlist.ts`, `vlist.css`) |
 | `tests/`, `tests/app/` | 해석기 시험, 앱 순수 로직 시험(글·키·테마·이전 목록·문서 모델) |
 
 ## 개발
@@ -82,7 +82,7 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.2.0`으로 받습니다. 코어를 올리면 `package.json`의 태그를 바꿉니다.
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.3.0`으로 받습니다. 코어를 올리면 `package.json`의 태그를 바꿉니다.
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
 
 ## 배포

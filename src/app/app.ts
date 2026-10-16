@@ -10,10 +10,9 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import { DARK_THEME, LIGHT_THEME, VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type ViewName } from 'opencad-viewer3d';
+import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
-import { SegmentOverlay } from '../view/overlay';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
 import { ParseWorkerClient } from './client';
 import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, selectionSummary, statusParts, type NcDoc } from './doc';
@@ -105,7 +104,6 @@ function tbtn(ic: IconName, label: string, title: string, cls = ''): HTMLButtonE
 export class NcViewerApp implements PanelHost {
   doc: NcDoc | null = null;
   viewer: Viewer3d | null = null;
-  private overlay: SegmentOverlay | null = null;
   private readonly client = new ParseWorkerClient();
   readonly panel: NcPanel;
 
@@ -567,13 +565,9 @@ export class NcViewerApp implements PanelHost {
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
     }
     this.viewer = v;
-    this.overlay = new SegmentOverlay(this.viewEl);
     this.applyThemeUi();
     v.onPick((p) => this.onPick(p));
     v.onMeasure((m) => this.onMeasure(m));
-    v.onCameraChange((c) => {
-      if (this.overlay && !this.overlay.empty) this.overlay.draw(c);
-    });
     return v;
   }
 
@@ -608,7 +602,7 @@ export class NcViewerApp implements PanelHost {
     v.highlight(d.highlight.length ? d.highlight : null);
     d.measure = null;
     this.applyPlayback(d);
-    this.updateOverlay();
+    this.updateSegHighlight();
   }
 
   private applyThemeUi(): void {
@@ -620,9 +614,6 @@ export class NcViewerApp implements PanelHost {
     this.themeBtn.title = `${next} 바꾸기`;
     this.themeBtn.setAttribute('aria-label', `${next} 바꾸기`);
     this.viewer?.setTheme(t);
-    const th = t === 'light' ? LIGHT_THEME : DARK_THEME;
-    this.overlay?.setColors(th.highlight, t === 'light' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.55)');
-    this.updateOverlay();
   }
 
   setTheme(t: ThemeName, remember = false): void {
@@ -678,14 +669,14 @@ export class NcViewerApp implements PanelHost {
     this.viewer?.highlight(ids.length ? ids : null);
   }
 
-  /** 코드 줄 고르기: 그 줄의 이동을 덧그림으로 강조(moves를 주면 그것만) */
+  /** 코드 줄 고르기: 그 줄의 이동을 선분 강조로 보인다(moves를 주면 그것만) */
   selectLine(line: number, moves?: number[], reveal = false): void {
     const d = this.doc;
     if (!d) return;
     d.selLine = line;
     d.selMoves = moves ?? (d.nc && line >= 0 ? lineMoveList(d.nc, line) : []);
     if (moves === undefined) d.pick = null;
-    this.updateOverlay();
+    this.updateSegHighlight();
     this.panel.onSelectLine(reveal);
     this.renderStatus();
   }
@@ -700,7 +691,7 @@ export class NcViewerApp implements PanelHost {
     d.selKey = String(i);
     d.selLine = mprOps(d.scene)[i]?.line ?? -1;
     d.selMoves = [];
-    this.updateOverlay();
+    this.updateSegHighlight();
     this.panel.onPick(reveal);
     this.renderStatus();
   }
@@ -715,12 +706,12 @@ export class NcViewerApp implements PanelHost {
     this.panel.onPick();
   }
 
-  private updateOverlay(): void {
+  /** 고른 이동(코드 줄)의 선분을 뷰어의 선분 강조로: 보이는 부분은 굵게, 가려진 부분은 흐리게(색은 테마 강조색) */
+  private updateSegHighlight(): void {
     const d = this.doc;
-    const o = this.overlay;
-    if (!o) return;
-    o.set(d && d.selMoves.length ? moveSegments(d.scene, d.selMoves) : null);
-    o.draw(this.viewer && d ? this.viewer.getCamera() : null);
+    const v = this.viewer;
+    if (!v) return;
+    v.setHighlightSegments(d && d.selMoves.length ? moveSegments(d.scene, d.selMoves) : null, { width: 3, hidden: 0.35 });
   }
 
   // ───────────────────────── 보기 명령 ─────────────────────────
