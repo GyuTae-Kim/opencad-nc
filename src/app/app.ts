@@ -15,7 +15,7 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../exte
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
 import { ParseWorkerClient } from './client';
-import { beginOpen, trackExport, type OpenAttempt } from './analytics';
+import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { extensionList, fileAccept, fmtNum, parseStartParams } from './format';
@@ -173,7 +173,11 @@ export class NcViewerApp implements PanelHost {
     const sampleBtn = tbtn('sample', '예제 열기', '합성 예제 G-code 열기');
     sampleBtn.addEventListener('click', () => void this.openSample());
     this.themeBtn = tbtn('moon', '테마', '테마 바꾸기', 'theme-btn');
-    this.themeBtn.addEventListener('click', () => this.setTheme(otherTheme(this.theme), true));
+    const themeChoice = h('button', { type: 'button', role: 'menuitem' }, '밝은 / 어두운 테마로 바꾸기');
+    themeChoice.addEventListener('click', () => this.setTheme(otherTheme(this.theme), true));
+    const analyticsChoice = h('button', { type: 'button', role: 'menuitem' }, '방문 통계 설정');
+    analyticsChoice.addEventListener('click', showAnalyticsSettings);
+    const settings = this.menu('settings', this.themeBtn, [themeChoice, analyticsChoice], false);
     const toolsLink = h('a', { class: 'tbtn', href: TOOLS_URL, title: 'OpenCAD 도구 모음', 'aria-label': 'OpenCAD 도구', html: `${icon('apps')}<span class="lbl">OpenCAD 도구</span>` });
     const repoLink = h('a', { class: 'tbtn', href: REPO_URL, target: '_blank', rel: 'noopener', title: 'GitHub 저장소(소스 코드)', 'aria-label': 'GitHub', html: `${icon('code')}<span class="lbl">GitHub</span>` });
     this.docNameEl = h('span', { class: 'docname' });
@@ -183,7 +187,7 @@ export class NcViewerApp implements PanelHost {
       h('h1', { class: 'brand' }, h('b', {}, 'OpenCAD'), ' NC 뷰어'),
       this.docNameEl,
       h('span', { class: 'spacer' }),
-      h('div', { class: 'title-actions' }, openBtn, sampleBtn, this.themeBtn, toolsLink, repoLink),
+      h('div', { class: 'title-actions' }, openBtn, sampleBtn, settings, toolsLink, repoLink),
     );
 
     // ── 보기 도구 막대 ──
@@ -358,7 +362,7 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 펼침 메뉴(표준 뷰·그리기 모드) */
-  private menu(key: string, button: HTMLButtonElement, items: HTMLButtonElement[]): HTMLElement {
+  private menu(key: string, button: HTMLButtonElement, items: HTMLButtonElement[], needsDoc = true): HTMLElement {
     button.setAttribute('aria-haspopup', 'menu');
     button.setAttribute('aria-expanded', 'false');
     button.insertAdjacentHTML('beforeend', `<span class="caret">${icon('chevron')}</span>`);
@@ -401,7 +405,7 @@ export class NcViewerApp implements PanelHost {
         items[(i + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n]?.focus();
       }
     });
-    this.tools[key] = { el: button, needsDoc: true };
+    this.tools[key] = { el: button, needsDoc };
     return wrap;
   }
 
@@ -788,10 +792,9 @@ export class NcViewerApp implements PanelHost {
     const t = this.theme;
     document.documentElement.dataset.theme = t;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t === 'light' ? '#e2e5ea' : '#232830');
-    const next = otherTheme(t) === 'light' ? '밝은 테마로' : '어두운 테마로';
-    this.themeBtn.innerHTML = `${icon(t === 'light' ? 'moon' : 'sun')}<span class="lbl">${t === 'light' ? '어둡게' : '밝게'}</span>`;
-    this.themeBtn.title = `${next} 바꾸기`;
-    this.themeBtn.setAttribute('aria-label', `${next} 바꾸기`);
+    this.themeBtn.innerHTML = `${icon(t === 'light' ? 'moon' : 'sun')}<span class="lbl">설정</span><span class="caret">${icon('chevron')}</span>`;
+    this.themeBtn.title = '앱 설정';
+    this.themeBtn.setAttribute('aria-label', '앱 설정');
     this.viewer?.setTheme(t);
   }
 
