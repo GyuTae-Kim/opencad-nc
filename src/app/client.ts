@@ -42,6 +42,13 @@ export class ParseWorkerClient {
     this.worker = null;
   }
 
+  /** 지금 해석을 멈춘다(워커를 끝내고 기다리던 요청은 실패로). 다음 요청에서 워커를 새로 만든다 */
+  cancel(): boolean {
+    const had = this.pending.size > 0;
+    this.dispose();
+    return had;
+  }
+
   private ensure(): Worker {
     if (this.worker) return this.worker;
     const w = new Worker(new URL('../worker/parse.worker.ts', import.meta.url), { type: 'module', name: 'opencad-nc-parse' });

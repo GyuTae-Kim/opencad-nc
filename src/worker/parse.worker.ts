@@ -26,10 +26,10 @@ function open(req: ParseRequest): ParseResult {
   const o = req.nc ?? {};
   const parsed = parseNcFile(base, bytes, {
     ...(check.kind ? { kind: check.kind } : {}),
-    gcode: { dialect: o.dialect ?? 'auto', ...(o.units ? { units: o.units } : {}) },
+    gcode: { dialect: o.dialect ?? 'auto', ...(o.units ? { units: o.units } : {}), ...(o.lathe ? { lathe: true } : {}), ...(o.rotary ? { rotary: true } : {}) },
   });
   progress(0.7, '공구 경로 만드는 중');
-  const scene = ncParsedToScene(parsed);
+  const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
   if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };

@@ -175,14 +175,17 @@ export function lineMoveList(nc: Pick<NcPayload, 'lineMoves'>, line: number, cap
   return out;
 }
 
-/** 이동 번호들을 장면의 선분 쌍으로(호는 나눈 선분). segmentIds가 오름차순인 NC 선분 묶음(nc-*)만 본다 */
-export function moveSegments(scene: Scene3d, moveIds: readonly number[], maxSegs = 200_000): Float32Array {
+/**
+ * 이동 번호들을 장면의 선분 쌍으로(호는 나눈 선분). segmentIds가 오름차순인 NC 선분 묶음(nc-*)만 본다.
+ * 반경 보정 경로(nc-comp)는 프로그램 경로가 아니므로 빼고, withComp면 넣는다.
+ */
+export function moveSegments(scene: Scene3d, moveIds: readonly number[], maxSegs = 200_000, withComp = false): Float32Array {
   const parts: Float32Array[] = [];
   let n = 0;
   const want = [...new Set(moveIds)].sort((a, b) => a - b);
   for (const l of scene.lines) {
     const ids = l.segmentIds;
-    if (!ids || !l.id.startsWith('nc-')) continue;
+    if (!ids || !l.id.startsWith('nc-') || (!withComp && l.id === 'nc-comp')) continue;
     for (const m of want) {
       const [a, b] = idRange(ids, m);
       if (b <= a) continue;
@@ -209,6 +212,47 @@ export function moveEndPoint(nc: Pick<NcPayload, 'moves'>, i: number): [number, 
   const k = (i + 1) * 3;
   const p = nc.moves.points;
   return [p[k]!, p[k + 1]!, p[k + 2]!];
+}
+
+/** 공구가 만든 첫 이동의 줄(이동이 없으면 -1) */
+export function toolFirstMoveLine(nc: Pick<NcPayload, 'moves'>, tool: number): number {
+  const m = nc.moves;
+  for (let i = 0; i < m.count; i++) if (m.tool[i] === tool) return m.line[i]!;
+  return -1;
+}
+
+/**
+ * 공구 줄을 눌렀을 때 고를 코드 줄: 공구가 처음 나온 줄이 그 공구의 이동을 만들면 그 줄,
+ * 아니면(공구 교환 줄 등) 그 공구의 첫 이동 줄.
+ */
+export function toolSelectLine(nc: Pick<NcPayload, 'moves' | 'lineMoves'>, tool: number, firstLine: number): number {
+  if (firstLine >= 0 && lineMoveList(nc, firstLine).some((i) => nc.moves.tool[i] === tool)) return firstLine;
+  const l = toolFirstMoveLine(nc, tool);
+  return l >= 0 ? l : firstLine;
+}
+
+/** 상태 막대 경고 단추 글(경고가 없으면 '') */
+export function warningLabel(d: Pick<NcDoc, 'scene'>): string {
+  const n = d.scene.warnings?.length ?? 0;
+  return n ? `경고 ${fmtCount(n)}` : '';
+}
+
+/** 장면 meta의 선택 기능 정보(보정 구간·선반·회전축) */
+export function sceneFeatures(s: Scene3d): {
+  compRunCount: number;
+  compRuns: { first: number; end: number; side: number; radius: number; source: string; line: number; computed: boolean }[] | null;
+  lathe: boolean;
+  rotaryAxes: boolean;
+  disabledOps: number;
+} {
+  const m = (s.meta ?? {}) as { compRunCount?: number; compRuns?: unknown; lathe?: boolean; rotaryAxes?: boolean; stats?: { disabled?: number } };
+  return {
+    compRunCount: m.compRunCount ?? 0,
+    compRuns: Array.isArray(m.compRuns) ? (m.compRuns as ReturnType<typeof sceneFeatures>['compRuns']) : null,
+    lathe: !!m.lathe,
+    rotaryAxes: !!m.rotaryAxes,
+    disabledOps: m.stats?.disabled ?? 0,
+  };
 }
 
 /** 공구 번호 → 장면 묶음 이름(선분 묶음 nc-cut-·nc-drill-에서 찾는다) */

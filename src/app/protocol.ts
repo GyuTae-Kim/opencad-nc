@@ -17,6 +17,14 @@ export interface NcOpenOptions {
   dialect?: NcDialect | 'auto';
   /** G20/G21이 없을 때의 단위(기본 mm) */
   units?: 'mm' | 'inch';
+  /** 반경 보정 경로(공구 중심)를 따로 그릴지(G-code·Heidenhain) */
+  comp?: boolean;
+  /** 선반 모드로 읽기(G-code) */
+  lathe?: boolean;
+  /** 회전축 A·B·C 감기(G-code) */
+  rotary?: boolean;
+  /** 꺼진 가공도 그리기(MPR) */
+  mprDisabled?: boolean;
 }
 
 export interface ParseRequest {

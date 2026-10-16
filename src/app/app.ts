@@ -10,14 +10,14 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type ViewName } from 'opencad-viewer3d';
+import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
 import { ParseWorkerClient } from './client';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, selectionSummary, statusParts, type NcDoc } from './doc';
+import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
-import { extensionList, fileAccept, parseStartParams } from './format';
+import { extensionList, fileAccept, fmtNum, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
@@ -68,6 +68,8 @@ export interface AppState {
   selLine: number;
   theme: ThemeName;
   measuring: boolean;
+  /** 단면 보기(꺼져 있으면 null) */
+  section: { axis: SectionAxis | null; t: number; flip: boolean } | null;
 }
 
 export interface OpencadAppApi {
@@ -83,6 +85,10 @@ export interface OpencadAppApi {
   selectLine(line: number): void;
   seek(sec: number | null): void;
   togglePlay(): void;
+  /** 읽는 중이면 멈춘다(앞 문서는 그대로). 멈췄으면 true */
+  cancel(): boolean;
+  /** 단면 보기: 축과 범위 안 위치(0~1), null이면 끈다 */
+  setSection(axis: SectionAxis | null, t?: number, flip?: boolean): void;
 }
 
 declare global {
@@ -134,6 +140,8 @@ export class NcViewerApp implements PanelHost {
   private readonly busyStage: HTMLDivElement;
   private readonly busyBar: HTMLDivElement;
   private readonly busyName: HTMLDivElement;
+  private readonly busyCancel: HTMLButtonElement;
+  private readonly stWarn: HTMLButtonElement;
   private readonly dropMask: HTMLDivElement;
   private readonly stMain: HTMLSpanElement;
   private readonly stSel: HTMLSpanElement;
@@ -142,6 +150,7 @@ export class NcViewerApp implements PanelHost {
   private readonly playBtn: HTMLButtonElement;
   private readonly playSep: HTMLSpanElement;
   private readonly renderItems: { mode: RenderMode; el: HTMLButtonElement }[] = [];
+  private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -218,6 +227,7 @@ export class NcViewerApp implements PanelHost {
     add('grid', tbtn('grid', '격자', '바닥 격자 (F7)'), () => this.toggleGrid());
     add('cube', tbtn('cube', '뷰 큐브', '뷰 큐브 보이기'), () => this.toggleCube());
     add('axes', tbtn('axes', '좌표축', '좌표축 보이기'), () => this.toggleAxes());
+    toolbar.append(this.sectionControl());
     sep();
     add('measure', tbtn('measure', '측정', '두 점 거리·dx·dy·dz (Esc로 지우기)'), () => this.toggleMeasure());
     add('png', tbtn('image', 'PNG 저장', '지금 화면을 PNG 그림으로 저장'), () => void this.savePng());
@@ -234,7 +244,13 @@ export class NcViewerApp implements PanelHost {
     this.busyStage = h('div', { class: 'busy-stage' }, '여는 중…');
     this.busyBar = h('div', { class: 'bar' });
     this.busyName = h('div', { class: 'busy-name' });
-    this.busyEl = h('div', { class: 'busy', hidden: true, role: 'status', 'aria-live': 'polite' }, h('div', { class: 'busy-card' }, this.busyStage, h('div', { class: 'progress', 'aria-hidden': 'true' }, this.busyBar), this.busyName));
+    this.busyCancel = h('button', { class: 'btn small busy-cancel', type: 'button', title: '읽기 멈추기 (Esc) — 열린 문서는 그대로 둡니다' }, '취소');
+    this.busyCancel.addEventListener('click', () => this.cancelLoad());
+    this.busyEl = h(
+      'div',
+      { class: 'busy', hidden: true, role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'busy-card' }, this.busyStage, h('div', { class: 'progress', 'aria-hidden': 'true' }, this.busyBar), h('div', { class: 'busy-foot' }, this.busyName, this.busyCancel)),
+    );
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
     this.workspace.append(this.busyEl);
@@ -242,7 +258,9 @@ export class NcViewerApp implements PanelHost {
     // ── 상태 막대 ──
     this.stMain = h('span', { class: 'st-main' });
     this.stSel = h('span', { class: 'st-sel' });
-    const status = h('footer', { class: 'statusbar', 'aria-live': 'polite' }, this.stMain, this.stSel);
+    this.stWarn = h('button', { class: 'st-warn', type: 'button', hidden: true, title: '해석 경고 보기(패널 정보 탭)' });
+    this.stWarn.addEventListener('click', () => this.showInfoTab());
+    const status = h('footer', { class: 'statusbar', 'aria-live': 'polite' }, this.stMain, this.stWarn, this.stSel);
 
     this.dropMask = h('div', { class: 'dropmask', hidden: true, 'aria-hidden': 'true' }, h('div', { html: `${icon('drop')}<span>놓으면 엽니다</span>` }));
 
@@ -327,8 +345,8 @@ export class NcViewerApp implements PanelHost {
         h(
           'dl',
           { class: 'formats', 'aria-label': '지원 형식' },
-          fmt('G-code', GCODE_EXTENSIONS, 'ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별, 원호·나선, 고정 사이클, 부프로그램, 변수'),
-          fmt('Heidenhain 평문', HEIDENHAIN_EXTENSIONS, 'BLK FORM 공작물, TOOL CALL, L·C·CR·CT, 드릴 사이클, Q 변수'),
+          fmt('G-code', GCODE_EXTENSIONS, 'ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별, 원호·나선, 고정 사이클, 부프로그램, 변수, 좌표 회전·배율·거울, 반경 보정 경로·선반·회전축(선택)'),
+          fmt('Heidenhain 평문', HEIDENHAIN_EXTENSIONS, 'BLK FORM 공작물, TOOL CALL, L·C·CR·CT·FK, 드릴·포켓 사이클, Q 변수'),
           fmt('woodWOP MPR', MPR_EXTENSIONS, '판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 변수'),
         ),
         h('p', { class: 'privacy', html: `${icon('lock')}<span><b>파일은 이 브라우저 밖으로 나가지 않습니다.</b> 서버로 올리지 않고 이 기기 안에서 읽습니다.</span>` }),
@@ -388,6 +406,87 @@ export class NcViewerApp implements PanelHost {
   private closeMenu(): void {
     this.openMenu?.close();
     this.openMenu = null;
+  }
+
+  /** 단면 보기 펼침 상자: 축(끔·X·Y·Z), 위치 슬라이더, 뒤집기 */
+  private sectionControl(): HTMLElement {
+    const btn = tbtn('section', '단면', '단면 보기: 자를 축(X·Y·Z)·위치·뒤집기');
+    btn.setAttribute('aria-haspopup', 'dialog');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.insertAdjacentHTML('beforeend', `<span class="caret">${icon('chevron')}</span>`);
+    const axes = ([null, 'x', 'y', 'z'] as const).map((axis) => {
+      const el = h('button', { type: 'button', class: 'seg', 'aria-pressed': 'false', title: axis ? `${axis.toUpperCase()}축에 수직인 평면으로 자르기` : '단면 끄기' }, axis ? axis.toUpperCase() : '끔');
+      el.addEventListener('click', () => this.setSectionAxis(axis));
+      return { axis, el };
+    });
+    const range = h('input', { type: 'range', min: 0, max: 1000, step: 1, value: 500, 'aria-label': '단면 위치', disabled: true });
+    range.addEventListener('input', () => {
+      this.viewer?.setSectionPosition(Number(range.value) / 1000);
+      this.renderSection();
+    });
+    const flip = h('button', { type: 'button', class: 'btn small', 'aria-pressed': 'false', title: '잘라 내는 쪽 뒤집기', disabled: true }, '뒤집기');
+    flip.addEventListener('click', () => {
+      this.viewer?.flipSection();
+      this.renderSection();
+    });
+    const val = h('span', { class: 'sec-val' });
+    const panel = h(
+      'div',
+      { class: 'sec-pop', role: 'dialog', 'aria-label': '단면 보기', hidden: true },
+      h('div', { class: 'seg-row', role: 'group', 'aria-label': '자를 축' }, ...axes.map((a) => a.el)),
+      h('div', { class: 'sec-row' }, range),
+      h('div', { class: 'sec-row' }, val, flip),
+    );
+    const wrap = h('div', { class: 'menu-wrap' }, btn, panel);
+    const close = (): void => {
+      panel.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      if (this.openMenu?.wrap === wrap) this.openMenu = null;
+    };
+    btn.addEventListener('click', () => {
+      if (!panel.hidden) return close();
+      this.closeMenu();
+      panel.hidden = false;
+      panel.style.left = '0px';
+      btn.setAttribute('aria-expanded', 'true');
+      this.openMenu = { wrap, close };
+      // 화면 밖으로 나가지 않게(휴대폰 폭)
+      const r = panel.getBoundingClientRect();
+      const over = r.right - (window.innerWidth - 8);
+      if (over > 0) panel.style.left = `${-Math.min(over, r.left - 8)}px`;
+      this.renderSection();
+      (axes.find((a) => a.el.getAttribute('aria-pressed') === 'true') ?? axes[0])!.el.focus();
+    });
+    this.tools.section = { el: btn, needsDoc: true };
+    this.sec = { btn, axes, range, flip, val };
+    return wrap;
+  }
+
+  /** 단면 축 고르기(null = 끄기). 같은 축이면 위치를 지킨다 */
+  setSectionAxis(axis: SectionAxis | null, t?: number, flip?: boolean): void {
+    const v = this.viewer;
+    if (!v) return;
+    if (!axis) v.setSection(null);
+    else {
+      const cur = v.section;
+      v.setSectionAxis(axis, t ?? (cur && cur.axis === axis ? cur.t : 0.5), flip === undefined ? {} : { flip });
+    }
+    this.renderSection();
+  }
+
+  /** 단면 UI를 뷰어 상태에 맞춘다(새 문서를 열면 단면이 꺼진다) */
+  private renderSection(): void {
+    const e = this.sec;
+    if (!e) return;
+    const s = this.viewer?.section ?? null;
+    for (const a of e.axes) a.el.setAttribute('aria-pressed', String(s ? s.axis === a.axis : a.axis === null));
+    e.range.disabled = !s;
+    if (s) e.range.value = String(Math.round(Math.max(0, Math.min(1, s.t)) * 1000));
+    e.flip.disabled = !s;
+    e.flip.setAttribute('aria-pressed', String(!!s?.flip));
+    const u = this.doc?.scene.units === 'inch' ? 'in' : this.doc?.scene.units === 'mm' ? 'mm' : '';
+    e.val.textContent = s ? `${s.axis ? s.axis.toUpperCase() : '평면'} = ${fmtNum(s.position)}${u ? ` ${u}` : ''}${s.flip ? ' (뒤집음)' : ''}` : '꺼짐';
+    e.btn.setAttribute('aria-pressed', String(!!s));
   }
 
   // ───────────────────────── 열기 ─────────────────────────
@@ -463,10 +562,13 @@ export class NcViewerApp implements PanelHost {
   /** 방언·단위를 바꿔 다시 읽기(G-code) */
   async reparse(opts: NcOpenOptions): Promise<void> {
     const d = this.doc;
-    const src = d?.nc?.source.bytes;
-    if (!d || !src) return;
-    const copy = src.slice().buffer as ArrayBuffer;
-    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm');
+    if (!d) return;
+    let copy: ArrayBuffer;
+    if (d.nc) copy = d.nc.source.bytes.slice().buffer as ArrayBuffer;
+    else if (d.mpr) copy = new TextEncoder().encode(`${d.mpr.lines.join('\n')}\n`).buffer as ArrayBuffer;
+    else return;
+    // 단위·선반·회전축을 바꾸면 모양이 달라지므로 카메라를 새로 맞춘다
+    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || !!opts.lathe !== !!d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary;
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {
@@ -498,6 +600,26 @@ export class NcViewerApp implements PanelHost {
     if (req.kind === 'error') this.showError(req.message);
     else if (req.kind === 'sample') await this.openSample();
     else await this.openUrl(req.url, req.name);
+  }
+
+  /** 읽기(받기·해석)를 멈춘다: 워커를 끝내고 앞 문서는 그대로 둔다 */
+  cancelLoad(): boolean {
+    if (!this.busy) return false;
+    this.loadSeq++;
+    this.client.cancel();
+    this.setBusy(null);
+    toast(this.doc ? '읽기를 멈췄습니다 — 열린 문서는 그대로 둡니다.' : '읽기를 멈췄습니다.', 'info', 3000);
+    return true;
+  }
+
+  /** 패널 정보 탭(해석 경고)을 연다 */
+  private showInfoTab(): void {
+    const d = this.doc;
+    if (!d) return;
+    d.panelTab = 'info';
+    this.panel.show(d);
+    this.togglePanel(true);
+    requestAnimationFrame(() => this.panel.el.querySelector('.warn-list')?.scrollIntoView({ block: 'nearest' }));
   }
 
   private setBusy(stage: string | null, fraction = 0, name = ''): void {
@@ -598,6 +720,8 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     v.setScene(d.scene, { keepView: !!cam });
     if (cam) v.setCamera(cam);
+    // 선반: XZ 단면이 보이게 앞에서
+    else if (sceneFeatures(d.scene).lathe) v.setView('front', false);
     for (const g of d.hiddenGroups) v.setGroupVisible(g, false);
     v.highlight(d.highlight.length ? d.highlight : null);
     d.measure = null;
@@ -632,6 +756,14 @@ export class NcViewerApp implements PanelHost {
       this.clearSelection();
       return;
     }
+    if (p.section) {
+      // 단면 잘린 면: 원본 번호가 없다(index −1) — 줄 고르기는 하지 않는다
+      this.setHighlight([]);
+      d.selKey = null;
+      this.selectLine(-1, []);
+      this.panel.onPick(true);
+      return;
+    }
     if (d.nc && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-')) {
       // NC 선분·구멍: 원본 번호 = 이동 번호 → 그 줄
       const move = p.index;
@@ -644,7 +776,7 @@ export class NcViewerApp implements PanelHost {
       this.selectMprOp(Number(p.id.slice(7)), true);
       return;
     }
-    if (d.kind === 'mpr' && p.id === 'mpr-hole-centers') {
+    if (d.kind === 'mpr' && (p.id === 'mpr-hole-centers' || p.id === 'mpr-other-pos')) {
       this.selectMprOp(p.index, true);
       return;
     }
@@ -660,6 +792,10 @@ export class NcViewerApp implements PanelHost {
     d.measure = m;
     this.panel.onMeasure();
     this.renderStatus();
+  }
+
+  fitItems(ids: string[]): void {
+    if (ids.length) this.viewer?.fitItems(ids);
   }
 
   setHighlight(ids: string[]): void {
@@ -927,6 +1063,7 @@ export class NcViewerApp implements PanelHost {
     this.projBtn.setAttribute('aria-label', persp ? '원근 투영(누르면 평행)' : '평행 투영(누르면 원근)');
     const mode = this.viewer?.getRenderMode() ?? 'shadedEdges';
     for (const r of this.renderItems) r.el.setAttribute('aria-checked', String(r.mode === mode));
+    this.renderSection();
     const canPlay = this.canPlay();
     this.playBtn.hidden = !canPlay;
     this.playSep.hidden = !canPlay;
@@ -940,9 +1077,13 @@ export class NcViewerApp implements PanelHost {
     if (!d) {
       this.stMain.textContent = '파일을 열면 형식·단위·크기·이동 수·읽은 시간이 여기에 보입니다.';
       this.stSel.textContent = '';
+      this.stWarn.hidden = true;
       return;
     }
     this.stMain.textContent = statusParts(d).join(' · ');
+    const wl = warningLabel(d);
+    this.stWarn.hidden = !wl;
+    this.stWarn.textContent = wl;
     this.stSel.textContent = selectionSummary(d, this.measuring);
     this.stSel.title = this.stSel.textContent;
   }
@@ -950,6 +1091,12 @@ export class NcViewerApp implements PanelHost {
   // ───────────────────────── 키 ─────────────────────────
 
   private onKey(ev: KeyboardEvent): void {
+    if (this.busy && ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.cancelLoad();
+      return;
+    }
     if (this.openMenu && ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1032,6 +1179,10 @@ export class NcViewerApp implements PanelHost {
       selLine: d?.selLine ?? -1,
       theme: this.theme,
       measuring: this.measuring,
+      section: (() => {
+        const sc = this.viewer?.section;
+        return sc ? { axis: sc.axis, t: sc.t, flip: sc.flip } : null;
+      })(),
     };
   }
 
@@ -1062,6 +1213,8 @@ export class NcViewerApp implements PanelHost {
       selectLine: (line) => app.selectLine(line, undefined, true),
       seek: (sec) => app.seek(sec),
       togglePlay: () => app.togglePlay(),
+      cancel: () => app.cancelLoad(),
+      setSection: (axis, t, flip) => app.setSectionAxis(axis, t, flip),
     };
     window.opencadApp = api;
   }

@@ -33,6 +33,7 @@ export const ICONS = {
   lock: svg('<rect x="4" y="9" width="12" height="8.5" rx="1.2"/><path d="M6.8 9V6.5a3.2 3.2 0 0 1 6.4 0V9"/>'),
   first: svg('<path d="M5 4v12M15 4l-7 6 7 6z" fill="currentColor"/>'),
   all: svg('<path d="M3 15c3-8 5-9 7-5s4 3 7-5"/>'),
+  section: svg('<path d="M10 2.5l6.5 3.7v7.6L10 17.5l-6.5-3.7V6.2z"/><path d="M2 12.2l8-4.6 8 4.6-8 4.6z" fill="currentColor" fill-opacity="0.28"/>'),
 } as const;
 
 export type IconName = keyof typeof ICONS;
