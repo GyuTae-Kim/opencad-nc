@@ -3,7 +3,12 @@
  */
 import '../view/vlist.css';
 import './styles.css';
+import { initAnalytics } from './analytics';
+import { GA4_MEASUREMENT_ID } from './analytics-config';
 import { NcViewerApp } from './app';
 
 const root = document.getElementById('app');
-if (root) new NcViewerApp(root);
+if (root) {
+  initAnalytics(GA4_MEASUREMENT_ID, 'nc');
+  new NcViewerApp(root);
+}

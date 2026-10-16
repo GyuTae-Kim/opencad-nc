@@ -15,6 +15,7 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../exte
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
 import { ParseWorkerClient } from './client';
+import { beginOpen, trackExport, type OpenAttempt } from './analytics';
 import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { extensionList, fileAccept, fmtNum, parseStartParams } from './format';
@@ -533,23 +534,26 @@ export class NcViewerApp implements PanelHost {
   }
 
   async openFile(f: File): Promise<boolean> {
+    const attempt = beginOpen('local', f.name.split('.').pop() ?? 'other');
     let buf: ArrayBuffer;
     try {
       buf = await f.arrayBuffer();
     } catch (e) {
       this.showError(`${f.name}: 파일을 읽지 못했습니다(${errorText(e)}).`);
+      attempt.error('read_error');
       return false;
     }
-    return this.openBuffer(f.name, buf);
+    return this.openBuffer(f.name, buf, {}, attempt);
   }
 
   async openSample(): Promise<boolean> {
     const bytes = new TextEncoder().encode(ncSampleProgram());
-    return this.openBuffer(NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer);
+    return this.openBuffer(NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer, {}, beginOpen('sample', 'nc'));
   }
 
   /** 같은 출처 주소에서 받아 연다(?open=) */
   async openUrl(url: string, name?: string): Promise<boolean> {
+    const attempt = beginOpen('url', (name ?? url.split(/[?#]/)[0]!).split('.').pop() ?? 'other');
     const label = name || url.replace(/[?#].*$/, '').replace(/^.*\//, '') || 'program.nc';
     const seq = ++this.loadSeq;
     this.setBusy('파일 받는 중', 0.01, label);
@@ -560,18 +564,19 @@ export class NcViewerApp implements PanelHost {
       if (/text\/html/i.test(r.headers.get('content-type') ?? '')) throw new Error('파일 대신 웹 페이지가 왔습니다. 주소가 맞는지 확인하십시오.');
       const buf = await r.arrayBuffer();
       if (seq !== this.loadSeq) return false;
-      return await this.openBuffer(label, buf);
+      return await this.openBuffer(label, buf, {}, attempt);
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
         this.showError(`${label}: ${errorText(e)}`);
+        attempt.error('fetch_error');
       }
       return false;
     }
   }
 
   /** 파일 열기(data는 워커로 이전되어 비워진다). 열었으면 true */
-  async openBuffer(name: string, data: ArrayBuffer, opts: NcOpenOptions = {}): Promise<boolean> {
+  async openBuffer(name: string, data: ArrayBuffer, opts: NcOpenOptions = {}, attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other')): Promise<boolean> {
     const seq = ++this.loadSeq;
     const size = data.byteLength;
     this.closeMenu();
@@ -582,14 +587,19 @@ export class NcViewerApp implements PanelHost {
       });
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
+        attempt.error('empty');
         const why = res.scene.warnings?.[0];
         throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
       }
       this.ensureViewer();
       this.setDoc(createDoc(name, size, res, opts));
+      attempt.success();
       return true;
     } catch (e) {
-      if (seq === this.loadSeq) this.showError(`${name}: ${errorText(e)}`);
+      if (seq === this.loadSeq) {
+        this.showError(`${name}: ${errorText(e)}`);
+        attempt.error('parse_error');
+      }
       return false;
     } finally {
       if (seq === this.loadSeq) this.setBusy(null);
@@ -986,6 +996,7 @@ export class NcViewerApp implements PanelHost {
       a.href = URL.createObjectURL(b);
       a.download = `${d.name.replace(/\.[^.]+$/, '') || 'opencad-nc'}.png`;
       a.click();
+      trackExport('png');
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('지금 화면을 PNG로 저장했습니다.', 'info', 2500);
     } catch (e) {
