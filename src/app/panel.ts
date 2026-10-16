@@ -9,7 +9,7 @@ import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, selectedLineText, toolGroup, toolItems, unitLabel, type NcDoc } from './doc';
+import { docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
@@ -39,6 +39,8 @@ export interface PanelHost {
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
   selectMprOp(i: number, reveal?: boolean): void;
   setHighlight(ids: string[]): void;
+  /** 주어진 항목에 맞춰 보기 */
+  fitItems(ids: string[]): void;
   setGroupVisible(g: string, on: boolean): void;
   groups(): { name: string; visible: boolean; count: number }[];
   reparse(opts: NcOpenOptions): void;
@@ -411,17 +413,26 @@ export class NcPanel {
         h('td', { class: 'num' }, formatDuration(t.time)),
         h('td', { class: 'num' }, `${fmtNum(t.feedLength, 1)}${u}`),
       );
-      tr.addEventListener('click', () => {
+      const selLine = toolSelectLine(nc, t.number, t.firstLine);
+      tr.addEventListener('click', (ev) => {
+        if (ev.detail >= 2) {
+          // 두 번 누르기: 강조를 켠 채 그 공구 경로에 맞춰 보기
+          this.host.setHighlight(items);
+          this.host.selectLine(selLine);
+          this.host.fitItems(items);
+          this.render();
+          return;
+        }
         this.host.setHighlight(cur ? [] : items);
-        // 코드 보기는 그 공구가 처음 나온 줄로(그 줄의 이동이 있으면 덧그림 강조)
-        if (!cur) this.host.selectLine(t.firstLine);
+        // 코드 보기는 그 공구의 첫 이동 줄로(공구가 처음 나온 줄이 이동을 만들지 않으면 첫 이동 줄)
+        if (!cur) this.host.selectLine(selLine);
         this.render();
       });
       tbody.append(tr);
     }
     this.body.append(
       h('div', { class: 'table-wrap' }, h('table', { class: 'grid tools' }, h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))), tbody)),
-      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조합니다. 눈 단추로 켜고 끕니다.'),
+      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 단추로 켜고 끕니다.'),
     );
   }
 
@@ -515,6 +526,8 @@ export class NcPanel {
         this.body.append(
           group('가공 요약', row('구멍', `${st.holes ?? 0}개 (드릴 가공 ${st.drillOps ?? 0})`), row('윤곽 가공', String(st.contourOps ?? 0)), row('홈 · 포켓', `${st.grooves ?? 0} · ${st.pockets ?? 0}`), row('꺼진 가공', String(st.disabled ?? 0))),
         );
+      if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled)
+        this.body.append(group('보기 선택', this.optToggle(d, 'mprDisabled', '꺼진 가공도 그리기', '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.')));
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];
@@ -537,7 +550,7 @@ export class NcPanel {
       const units = h('select', { class: 'select', 'aria-label': '기본 단위' });
       units.append(h('option', { value: 'mm' }, 'mm'), h('option', { value: 'inch' }, 'inch'));
       units.value = d.ncOptions.units ?? 'mm';
-      const apply = () => this.host.reparse({ dialect: dialect.value as NcDialect | 'auto', units: units.value as 'mm' | 'inch' });
+      const apply = () => this.host.reparse({ ...d.ncOptions, dialect: dialect.value as NcDialect | 'auto', units: units.value as 'mm' | 'inch' });
       dialect.addEventListener('change', apply);
       units.addEventListener('change', apply);
       this.body.append(
@@ -549,10 +562,29 @@ export class NcPanel {
         ),
       );
     }
+    // 선택 기능: 반경 보정 경로·선반·회전축
+    const f = sceneFeatures(d.scene);
+    const opts: HTMLElement[] = [];
+    if (f.compRunCount > 0 || d.ncOptions.comp) {
+      opts.push(this.optToggle(d, 'comp', '보정 경로 보기', `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`));
+      if (f.compRuns)
+        for (const r of f.compRuns.slice(0, 20))
+          opts.push(
+            row(
+              `${r.line + 1}번 줄 ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
+              r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음',
+            ),
+          );
+    }
+    if (nc.kind === 'gcode') {
+      opts.push(this.optToggle(d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
+      if (f.rotaryAxes || d.ncOptions.rotary) opts.push(this.optToggle(d, 'rotary', '회전축 감기', 'A·B·C 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로를 그립니다(회전 중심 = 원점, G43.4 동안은 감지 않음).'));
+    }
+    if (opts.length) this.body.append(group('보기 선택', ...opts));
     this.body.append(
       group(
         '공구 경로',
-        row('방언 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 평문' : NC_DIALECT_NAMES[nc.dialect]} · ${nc.units}`),
+        row('방언 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 평문' : NC_DIALECT_NAMES[nc.dialect]}${f.lathe ? ' · 선반' : ''} · ${nc.units}`),
         row('줄 · 실행 블록', `${nc.source.lineCount.toLocaleString('ko-KR')} · ${st.blocks.toLocaleString('ko-KR')}`),
         row('이동', st.moveCount.toLocaleString('ko-KR')),
         row('이송 길이', `${fmtNum(st.feedLength, 1)} ${u}`),
@@ -563,6 +595,14 @@ export class NcPanel {
         row('공구 교환 · 원호 · 구멍', `${st.toolChanges} · ${st.arcCount.toLocaleString('ko-KR')} · ${st.holeCount.toLocaleString('ko-KR')}`),
       ),
     );
+  }
+
+  /** 다시 읽는 켜고 끄기(선택 기능) */
+  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled', label: string, hint: string): HTMLElement {
+    const cb = h('input', { type: 'checkbox' });
+    cb.checked = !!d.ncOptions[key];
+    cb.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, [key]: cb.checked }));
+    return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label), h('span', { class: 'hint inline' }, '다시 읽음'));
   }
 
   // ───────────────────────── 아래 띠: 고른 것·측정 ─────────────────────────

@@ -4,13 +4,17 @@
  * 지원: BEGIN/END PGM(단위), BLK FORM 0.1/0.2(공작물 상자), TOOL DEF(반지름 → 지름), TOOL CALL(번호·이름, 축, S, F),
  * L(FMAX·F·R0/RL/RR·M), CC(극), C(DR±), CR(R±), CT(접선 호), LP·CP(극좌표, IPA 나선), Q 변수(Qn = 식, FN 0~8),
  * CYCL DEF 200·201·202·203·205·240·206·207·209·1(드릴 계열)과 CYCL CALL·M99·M89, CYCL DEF 7(원점 이동),
- * LBL·CALL LBL REP(구간 반복·부프로그램), FN 9~12 조건 점프.
- * 근사: RND·CHF는 모서리 그대로, APPR·DEP는 끝점까지 직선(경고).
- * 지원하지 않음: PLANE·회전·대칭·배율 사이클, 포켓·윤곽 사이클, PATTERN DEF, CALL PGM(경고).
+ * 밀링 사이클 208(보어 밀링 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256(사각 보스)·257(원 보스)·232(정면 밀링),
+ * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
+ * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프.
+ * 근사: RND·CHF는 모서리 그대로, APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
+ * 지원하지 않음: PLANE·회전·대칭·배율 사이클, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF, CALL PGM(경고).
  */
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
 import { FLAG_CYCLE, FLAG_MACHINE, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
+
+const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
 import { makeSource, sourceLine, type NcSource } from './text';
 import { isSource } from './gcode';
@@ -24,9 +28,13 @@ export interface HeidenhainOptions {
   /** 실행 블록 수 한도 */
   maxBlocks?: number;
   maxMoves?: number;
+  /** 반경 보정·포켓 사이클용 공구 표(표시 단위, 키 = 공구 번호). 없으면 TOOL DEF R + TOOL CALL DR */
+  toolTable?: Record<number, { diameter?: number; radius?: number }>;
 }
 
 const AXES = 'XYZ';
+/** CYCL CALL에서 밀링 길을 만드는 사이클 */
+const MILL_CYCLES = new Set([208, 251, 252, 253, 256, 257, 232]);
 
 /** 한 블록: 원본 첫 줄 번호와 낱말들 */
 interface HBlock {
@@ -58,6 +66,12 @@ class HRunner extends NcEmitter {
   private ended = false;
   private blocks = 0;
   private toolNames = new Map<string, number>();
+  /** FK 극(FPOL) */
+  private fkPole: [number, number] | null = null;
+  /** TOOL DEF 반지름 */
+  private toolR = new Map<number, number>();
+  /** TOOL CALL DR(반지름 덧값) */
+  private toolDR = 0;
   private maxBlocks: number;
   private maxMoves: number;
 
@@ -158,7 +172,11 @@ class HRunner extends NcEmitter {
     if (t0 === 'TOOL' && t1 === 'DEF') {
       const n = parseInt(T[2] ?? '', 10);
       const r = findWord(T, 'R');
-      if (Number.isFinite(n) && r !== undefined) this.setToolInfo(n, { diameter: 2 * this.value(r) });
+      if (Number.isFinite(n) && r !== undefined) {
+        const rv = this.value(r);
+        this.toolR.set(n, rv);
+        this.setToolInfo(n, { diameter: 2 * rv });
+      }
       return;
     }
     if (t0 === 'TOOL' && t1 === 'CALL') return this.toolCall(T, line);
@@ -203,6 +221,11 @@ class HRunner extends NcEmitter {
     if (t0 === 'CT') return this.circleT(T, line);
     if (t0 === 'LP') return this.linearPolar(T, line);
     if (t0 === 'CP') return this.circlePolar(T, line);
+    if (t0 === 'FPOL' || t0 === 'FL' || t0 === 'FLT' || t0 === 'FC' || t0 === 'FCT') return this.fk(t0, T, line);
+    if (t0 === 'FSELECT') {
+      this.w.add('FSELECT(FK 해 고르기)는 무시함 — 한 블록으로 정해지는 해만 그림', line);
+      return;
+    }
     if (t0 === 'RND' || t0 === 'CHF') {
       this.w.add(`${t0}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, line);
       return;
@@ -287,7 +310,24 @@ class HRunner extends NcEmitter {
     if (s !== undefined) this.speed = Math.abs(this.value(s));
     const f = findWord(T, 'F');
     if (f !== undefined && /^[+-]?[\d.Q]/i.test(f)) this.autoFeed = this.value(f);
+    const dr = findWord(T, 'DR');
+    this.toolDR = dr !== undefined ? this.value(dr) : 0;
     this.changeTool(n, line);
+    if (this.comp) this.compNote(line);
+  }
+
+  /** 지금 공구의 반지름(공구 표 → TOOL DEF R, + TOOL CALL DR). 모르면 undefined */
+  private toolRadius(): number | undefined {
+    const t = this.tool;
+    const tt = this.o.toolTable?.[t];
+    const base = tt ? (tt.radius ?? (tt.diameter !== undefined ? tt.diameter / 2 : undefined)) : this.toolR.get(t);
+    return base === undefined ? undefined : base + this.toolDR;
+  }
+
+  /** 반경 보정 구간 기록 */
+  private compNote(line: number): void {
+    const r = this.comp ? this.toolRadius() : undefined;
+    this.noteComp(this.plane, line, r, r === undefined ? '' : `T${this.tool} R${this.toolDR ? ' + DR' : ''}`, this.tool);
   }
 
   private cyclDef(T: string[], line: number): void {
@@ -333,9 +373,9 @@ class HRunner extends NcEmitter {
       if (sub === 0) this.w.add(`CYCL DEF ${major}은 지원하지 않음`, line);
       return;
     }
-    if ([200, 201, 202, 203, 205, 240, 206, 207, 209, 204, 208].includes(major)) {
+    if ([200, 201, 202, 203, 205, 240, 206, 207, 209, 204, 208, 251, 252, 253, 256, 257, 232].includes(major)) {
       this.cycle = { n: major, ok: true };
-      if (major === 204 || major === 208) this.w.add(`CYCL DEF ${major}은 드릴처럼(내려가서 올라옴) 그림`, line);
+      if (major === 204) this.w.add(`CYCL DEF ${major}은 드릴처럼(내려가서 올라옴) 그림`, line);
       return;
     }
     // 점 패턴(정의하면 바로 앞 가공 사이클을 점마다 부른다)
@@ -352,6 +392,7 @@ class HRunner extends NcEmitter {
       return;
     }
     if (!c.ok) return;
+    if (MILL_CYCLES.has(c.n)) return this.millCycle(c.n, line);
     const [p0, p1, da] = PLANE_AXES[this.plane]!;
     const Q = (k: string, d: number): number => this.q.get(k) ?? d;
     let setup: number;
@@ -483,7 +524,7 @@ class HRunner extends NcEmitter {
     if (!this.labels) {
       this.labels = new Map();
       for (let i = 0; i < this.src.lineCount; i++) {
-        const m = /^\s*(?:N?\d+\s+)?LBL\s+("?[^"\s;]+"?)/i.exec(sourceLine(this.src, i));
+        const m = /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i.exec(sourceLine(this.src, i));
         if (m && !this.labels.has(m[1]!.toUpperCase())) this.labels.set(m[1]!.toUpperCase(), i);
       }
     }
@@ -503,8 +544,20 @@ class HRunner extends NcEmitter {
       const v = /^REP(\d+)?/i.exec(T[repTok]!)![1] ?? T[repTok + 1];
       rep = parseInt(v ?? '0', 10) || 0;
     }
+    if (target < line && repTok < 0 && this.lbl0Between(target, line)) {
+      // REP 없이 앞쪽 표지를 부르고 그 사이에 LBL 0이 있으면 부프로그램 호출
+      if (this.stack.length > 64) {
+        this.w.add('부프로그램 호출이 너무 깊음 — 멈춤', line);
+        this.ended = true;
+        return;
+      }
+      this.stack.push({ ret: this.pc, reps: 1, start: target + 1 });
+      this.pc = target + 1;
+      return;
+    }
     if (target < line) {
       // 구간 반복: LBL과 CALL 사이를 rep번 더
+      if (repTok < 0) this.w.add(`CALL LBL ${name}: REP 없는 앞쪽 표지(구간 반복 0번) — 아무것도 하지 않음`, line);
       const left = this.sectionReps.get(line) ?? rep;
       if (left > 0) {
         this.sectionReps.set(line, left - 1);
@@ -519,6 +572,12 @@ class HRunner extends NcEmitter {
     }
     this.stack.push({ ret: this.pc, reps: Math.max(1, rep + (rep > 0 ? 1 : 0)), start: target + 1 });
     this.pc = target + 1;
+  }
+
+  /** 줄 a와 b 사이에 LBL 0이 있는지 */
+  private lbl0Between(a: number, b: number): boolean {
+    for (let i = a + 1; i < b; i++) if (/^\s*(?:N?\d+\s+)?LBL\s+"?0"?\s*(?:;|$)/i.test(sourceLine(this.src, i))) return true;
+    return false;
   }
 
   private fn(b: HBlock, line: number): void {
@@ -613,6 +672,7 @@ class HRunner extends NcEmitter {
   private modal(T: string[], line: number): { rapid: boolean; m99: boolean; machine: boolean } {
     let rapid = false;
     let machine = false;
+    const compBefore = this.comp;
     for (let i = 1; i < T.length; i++) {
       const w = T[i]!.toUpperCase();
       if (w === 'R0') this.comp = 0;
@@ -623,6 +683,7 @@ class HRunner extends NcEmitter {
       else if (/^F[+-]?[\d.]+$/.test(w) || /^F[+-]?Q/.test(w)) this.feed = this.value(w.slice(1));
       else if (w === 'M91' || w === 'M92') machine = true;
     }
+    if (this.comp !== compBefore) this.compNote(line);
     const { m99 } = this.mWords(T, line, false);
     return { rapid, m99, machine };
   }
@@ -866,6 +927,537 @@ class HRunner extends NcEmitter {
       this.arcTo(cu, cv, this.dr > 0, e[0]!, e[1]!, e[2]!, line);
     }
     this.afterMove(m99, line);
+  }
+
+  // ───────────────────────── FK 자유 윤곽 ─────────────────────────
+
+  /**
+   * FK(FPOL·FL·FLT·FC·FCT): 한 블록 안의 자료로 끝점이 정해지는 경우만 그린다.
+   * FL: 끝점 X·Y(I 증분), PR·PA(FPOL 기준 극좌표), 방향 AN(IAN = 앞 요소 방향에 더함, FLT = 앞 요소 접선) + LEN 또는 좌표 하나.
+   * FC: 방향 DR±, 중심 CCX·CCY(ICC 증분, CCPR·CCPA 극좌표), 반지름 R, 끝점(좌표 둘 또는 하나), FCT = 앞 요소에 접함.
+   */
+  private fk(kind: string, T: string[], line: number): void {
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    if (kind === 'FPOL') {
+      let u = this.fkPole?.[0] ?? this.pos[a0]!;
+      let v = this.fkPole?.[1] ?? this.pos[a1]!;
+      for (const w of T.slice(1)) {
+        const m = /^(I?)([XYZ])(.+)$/i.exec(w);
+        if (!m) continue;
+        const a = AXES.indexOf(m[2]!.toUpperCase());
+        const val = this.value(m[3]!);
+        const abs = m[1] ? this.pos[a]! + val : val + this.shift[a]!;
+        if (a === a0) u = abs;
+        else if (a === a1) v = abs;
+      }
+      this.fkPole = [u, v];
+      return;
+    }
+    const { rapid, m99 } = this.modal(T, line);
+    const c = this.coords(T);
+    const su = this.pos[a0]!;
+    const sv = this.pos[a1]!;
+    let eu = c[a0];
+    let ev = c[a1];
+    const ew = c[a2] ?? this.pos[a2]!;
+    let an: number | undefined;
+    let ian: number | undefined;
+    let len: number | undefined;
+    let rad: number | undefined;
+    let ccu: number | undefined;
+    let ccv: number | undefined;
+    let pr: number | undefined;
+    let pa: number | undefined;
+    let ccpr: number | undefined;
+    let ccpa: number | undefined;
+    let rel = false;
+    for (let i = 1; i < T.length; i++) {
+      const w = T[i]!.toUpperCase();
+      let m: RegExpExecArray | null;
+      if ((m = /^(I?)AN([+-]?.+)$/.exec(w))) {
+        const v = this.value(m[2]!);
+        if (m[1]) ian = v;
+        else an = v;
+      } else if (w === 'LEN') len = this.value(T[++i] ?? '');
+      else if ((m = /^LEN([+-]?.+)$/.exec(w))) len = this.value(m[1]!);
+      else if ((m = /^(I?)CCP([RA])([+-]?.+)$/.exec(w))) {
+        if (m[2] === 'R') ccpr = this.value(m[3]!);
+        else ccpa = this.value(m[3]!);
+      } else if ((m = /^(I?)CC([XYZ])([+-]?.+)$/.exec(w))) {
+        const a = AXES.indexOf(m[2]!);
+        const v = this.value(m[3]!);
+        const abs = m[1] ? this.pos[a]! + v : v + this.shift[a]!;
+        if (a === a0) ccu = abs;
+        else if (a === a1) ccv = abs;
+      } else if ((m = /^(I?)P([RA])([+-]?.+)$/.exec(w))) {
+        if (m[2] === 'R') pr = this.value(m[3]!);
+        else pa = this.value(m[3]!);
+      } else if ((m = /^R([+-]?(?:[\d.]+|Q[LRS]?\d+))$/.exec(w))) rad = Math.abs(this.value(m[1]!));
+      else if (/^(?:RX|RY|RZ|PDX|PDY|PDZ|RAN|RLEN|RCCX|RCCY|RPR|RPA|PAR|PDX\d|RX\d)/.test(w)) rel = true;
+    }
+    if (rel) this.w.add('FK 상대 자료(RX·PDX·PAR 등, 다른 블록 참조)는 지원하지 않음', line);
+    const pole = this.fkPole ?? this.cc;
+    if (pr !== undefined && pa !== undefined && pole && (eu === undefined || ev === undefined)) {
+      const t = (pa * Math.PI) / 180;
+      eu = pole[0] + pr * Math.cos(t);
+      ev = pole[1] + pr * Math.sin(t);
+    }
+    const tangent = kind === 'FLT' || kind === 'FCT' ? this.lastDir : null;
+    if ((kind === 'FLT' || kind === 'FCT') && !tangent) this.w.add(`${kind}: 앞에 접선을 정할 요소가 없음`, line);
+    const put = (u: number, v: number): number[] => {
+      const p = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+      p[a0] = u;
+      p[a1] = v;
+      p[a2] = ew;
+      return p;
+    };
+    const fail = (why: string): void => {
+      this.w.add(`${kind}: ${why} — 다음 블록 자료가 필요한 FK는 그리지 않음`, line);
+      if (c[a2] !== undefined) {
+        const p = put(su, sv);
+        this.emit(MOVE_FEED, p[0]!, p[1]!, p[2]!, line);
+      }
+      this.afterMove(m99, line);
+    };
+    if (kind === 'FL' || kind === 'FLT') {
+      // 방향
+      let dir: [number, number] | null = null;
+      if (an !== undefined) dir = [Math.cos((an * Math.PI) / 180), Math.sin((an * Math.PI) / 180)];
+      else if (ian !== undefined && this.lastDir) {
+        const t = Math.atan2(this.lastDir[1], this.lastDir[0]) + (ian * Math.PI) / 180;
+        dir = [Math.cos(t), Math.sin(t)];
+      } else if (tangent) dir = [tangent[0], tangent[1]];
+      if (eu === undefined || ev === undefined) {
+        if (dir && len !== undefined) {
+          eu = su + dir[0] * len;
+          ev = sv + dir[1] * len;
+        } else if (dir && eu !== undefined && Math.abs(dir[0]) > 1e-12) {
+          ev = sv + ((eu - su) / dir[0]) * dir[1];
+        } else if (dir && ev !== undefined && Math.abs(dir[1]) > 1e-12) {
+          eu = su + ((ev - sv) / dir[1]) * dir[0];
+        } else if (eu === undefined && ev === undefined && len === undefined && dir === null && c[a2] !== undefined) {
+          eu = su;
+          ev = sv;
+        }
+      }
+      if (eu === undefined || ev === undefined) return fail('끝점을 정할 자료가 모자람');
+      const p = put(eu, ev);
+      this.emit(rapid ? MOVE_RAPID : MOVE_FEED, p[0]!, p[1]!, p[2]!, line);
+      this.known = 7;
+      this.setDir(su, sv, eu, ev);
+      return this.afterMove(m99, line);
+    }
+    // FC·FCT
+    const ccw = this.drWord(T) > 0;
+    this.dr = ccw ? 1 : -1;
+    if (ccpr !== undefined && ccpa !== undefined && pole && (ccu === undefined || ccv === undefined)) {
+      const t = (ccpa * Math.PI) / 180;
+      ccu = pole[0] + ccpr * Math.cos(t);
+      ccv = pole[1] + ccpr * Math.sin(t);
+    }
+    if ((ccu === undefined || ccv === undefined) && tangent && rad !== undefined) {
+      // 접선 왼쪽(DR+) 또는 오른쪽(DR-)으로 R만큼
+      const k = ccw ? 1 : -1;
+      ccu = su - tangent[1] * rad * k;
+      ccv = sv + tangent[0] * rad * k;
+    }
+    if (ccu !== undefined && ccv !== undefined) {
+      const R = Math.hypot(su - ccu, sv - ccv);
+      if (eu === undefined || ev === undefined) {
+        // 좌표 하나: 원과 직선의 교점 중 진행 방향으로 먼저 닿는 것
+        const known = eu !== undefined ? 0 : ev !== undefined ? 1 : -1;
+        if (known < 0) return fail('원호 끝점이 없음');
+        const kv = known === 0 ? eu! : ev!;
+        const off = kv - (known === 0 ? ccu : ccv);
+        if (Math.abs(off) > R + 1e-9) return fail('끝 좌표가 원 밖');
+        const h = Math.sqrt(Math.max(0, R * R - off * off));
+        const t0 = Math.atan2(sv - ccv, su - ccu);
+        let best: [number, number] | null = null;
+        let bestSweep = Infinity;
+        for (const sg of [1, -1]) {
+          const pu = known === 0 ? kv : ccu + sg * h;
+          const pv = known === 0 ? ccv + sg * h : kv;
+          let d = Math.atan2(pv - ccv, pu - ccu) - t0;
+          d = ccw ? ((d % TAU) + TAU) % TAU : ((-d % TAU) + TAU) % TAU;
+          if (d < 1e-9) d = TAU;
+          if (d < bestSweep) {
+            bestSweep = d;
+            best = [pu, pv];
+          }
+        }
+        eu = best![0];
+        ev = best![1];
+      } else if (Math.abs(Math.hypot(eu - ccu, ev - ccv) - R) > Math.max(this.tol, R * 1e-3)) this.w.add(`${kind}: 끝점이 원 위에 있지 않음(나선형으로 이어 그림)`, line);
+      const p = put(eu, ev);
+      this.arcTo(ccu, ccv, ccw, p[0]!, p[1]!, p[2]!, line);
+      this.known = 7;
+      return this.afterMove(m99, line);
+    }
+    if (eu === undefined || ev === undefined) return fail('원호 중심·끝점을 정할 자료가 모자람');
+    if (tangent) {
+      // FCT + 끝점: 앞 요소에 접하고 끝점을 지나는 원(CT와 같음)
+      this.lastDir = tangent;
+      return this.circleT(['CT', ...T.slice(1)], line);
+    }
+    if (rad !== undefined) {
+      this.w.add(`${kind}: 반지름·끝점만으로는 해가 둘 — 짧은 호로 그림`, line);
+      const du = eu - su;
+      const dv = ev - sv;
+      const d = Math.hypot(du, dv);
+      if (d < 1e-9) return fail('시작점과 끝점이 같음');
+      const r = Math.max(rad, d / 2);
+      const h = Math.sqrt(Math.max(0, r * r - (d * d) / 4));
+      const side = ccw ? 1 : -1;
+      const p = put(eu, ev);
+      this.arcTo(su + du / 2 - (side * h * dv) / d, sv + dv / 2 + (side * h * du) / d, ccw, p[0]!, p[1]!, p[2]!, line);
+      this.known = 7;
+      return this.afterMove(m99, line);
+    }
+    return fail('원호 중심·반지름이 없음');
+  }
+
+  // ───────────────────────── 밀링 사이클 ─────────────────────────
+
+  /** 평면 좌표(u, v)와 공구 축 높이 w로 이동 */
+  private go3(kind: number, u: number, v: number, w: number, line: number): void {
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const p = [0, 0, 0];
+    p[a0] = u;
+    p[a1] = v;
+    p[a2] = w;
+    this.emit(kind, p[0]!, p[1]!, p[2]!, line, FLAG_CYCLE);
+  }
+
+  /** 평면 원호(중심 cu, cv · 중심각 sweep)로 (u, v, w)까지. 높이가 바뀌면 나선 */
+  private arc3(cu: number, cv: number, sweep: number, u: number, v: number, w: number, line: number): void {
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const c = [0, 0, 0];
+    c[a0] = cu;
+    c[a1] = cv;
+    c[a2] = this.pos[a2]!;
+    const e = [0, 0, 0];
+    e[a0] = u;
+    e[a1] = v;
+    e[a2] = w;
+    this.emitArc(this.plane, c, sweep, e[0]!, e[1]!, e[2]!, line, FLAG_CYCLE);
+  }
+
+  /**
+   * 밀링 사이클(CYCL CALL 자리에서): 208 보어 밀링, 251 사각 포켓, 252 원 포켓, 253 홈, 256 사각 보스, 257 원 보스, 232 정면 밀링.
+   * 깊이는 Q203(윗면)에서 Q202씩 Q201까지, 옆 간격은 공구 지름 × Q370. 공구 반지름은 공구 표 → TOOL DEF R(+DR).
+   */
+  private millCycle(n: number, line: number): void {
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const Q = (k: string, d = 0): number => this.q.get(k) ?? d;
+    let r = this.toolRadius();
+    if (r === undefined) {
+      this.w.add(`CYCL DEF ${n}: 공구 반지름을 몰라(TOOL DEF R 없음) 반지름 0으로 그림`, line);
+      r = 0;
+    }
+    const setup = Math.abs(Q('Q200', 2));
+    const second = Math.abs(Q('Q204', 0));
+    const surface = (n === 232 ? Q('Q227', 0) : Q('Q203', 0)) + this.shift[a2]!;
+    const depth = n === 232 ? Q('Q386', 0) - Q('Q227', 0) : Q('Q201', 0);
+    const plungeStep = Math.abs(Q('Q202', 0));
+    const up = depth < 0 ? 1 : -1;
+    const zEnd = surface + depth;
+    const clear = surface + up * Math.max(setup, second);
+    const safe = surface + up * setup;
+    const overlap = Q('Q370', 1) > 0 ? Q('Q370', 1) : 1;
+    const step0 = r > 0 ? 2 * r * overlap : Infinity;
+    const saveFeed = this.feed;
+    const fMill = Q('Q207', this.feed || this.autoFeed);
+    const fPlunge = Q('Q206', fMill);
+    const climb = Q('Q351', 1) >= 0;
+    const cu0 = this.pos[a0]!;
+    const cv0 = this.pos[a1]!;
+    if (depth === 0) {
+      this.w.add(`CYCL DEF ${n}: 깊이가 0`, line);
+      return;
+    }
+    // 깊이 단계(윗면부터)
+    const levels: number[] = [];
+    if (plungeStep > 0) {
+      for (let k = 1; k < 10000; k++) {
+        const d = surface - up * k * plungeStep;
+        if (up * (d - zEnd) <= 1e-9) break;
+        levels.push(d);
+      }
+    }
+    levels.push(zEnd);
+    const F = MOVE_FEED;
+    const Rp = MOVE_RAPID;
+    let w = this.pos[a2]!;
+    const go = (kind: number, u: number, v: number, ww = w): void => {
+      this.go3(kind, u, v, ww, line);
+      w = ww;
+    };
+    // 지역 좌표(중심 c, 각 ang) → 평면
+    let cu = cu0;
+    let cv = cv0;
+    let ca = 1;
+    let sa = 0;
+    const P = (lu: number, lv: number): [number, number] => [cu + lu * ca - lv * sa, cv + lu * sa + lv * ca];
+    const goL = (kind: number, lu: number, lv: number): void => {
+      const p = P(lu, lv);
+      go(kind, p[0], p[1]);
+    };
+    const arcL = (lcu: number, lcv: number, sweep: number, lu: number, lv: number): void => {
+      const c = P(lcu, lcv);
+      const p = P(lu, lv);
+      this.arc3(c[0], c[1], sweep, p[0], p[1], w, line);
+    };
+    /** 둥근 모서리 사각 고리(반너비 hx, hy, 모서리 rc), 오른쪽 가운데에서 시작해 ccw면 반시계 */
+    const rectLoop = (hx: number, hy: number, rc: number, ccw: boolean): void => {
+      rc = Math.max(0, Math.min(rc, hx, hy));
+      const s = ccw ? 1 : -1;
+      const q = (s * Math.PI) / 2;
+      goL(F, hx, 0);
+      if (hx < 1e-9 || hy < 1e-9) {
+        // 폭 0인 고리: 긴 쪽으로 왕복
+        goL(F, -hx, -s * hy);
+        goL(F, hx, s * hy);
+        goL(F, hx, 0);
+        return;
+      }
+      goL(F, hx, s * (hy - rc));
+      if (rc > 0) arcL(hx - rc, s * (hy - rc), q, hx - rc, s * hy);
+      goL(F, -hx + rc, s * hy);
+      if (rc > 0) arcL(-hx + rc, s * (hy - rc), q, -hx, s * (hy - rc));
+      goL(F, -hx, -s * (hy - rc));
+      if (rc > 0) arcL(-hx + rc, -s * (hy - rc), q, -hx + rc, -s * hy);
+      goL(F, hx - rc, -s * hy);
+      if (rc > 0) arcL(hx - rc, -s * (hy - rc), q, hx, -s * (hy - rc));
+      goL(F, hx, 0);
+    };
+    const circleLoop = (rr: number, ccw: boolean): void => {
+      goL(F, rr, 0);
+      if (rr > 1e-9) arcL(0, 0, ccw ? TAU : -TAU, rr, 0);
+    };
+    this.feed = fMill;
+    switch (n) {
+      case 251:
+      case 256: {
+        const Lx = Q('Q218');
+        const Wy = Q('Q219');
+        const rc = Q('Q220');
+        const al = Q('Q368');
+        const ang = (Q(n === 251 ? 'Q224' : 'Q224') * Math.PI) / 180;
+        ca = Math.cos(ang);
+        sa = Math.sin(ang);
+        const posK = Math.round(Q('Q367'));
+        const off: [number, number] = posK === 1 ? [Lx / 2, Wy / 2] : posK === 2 ? [-Lx / 2, Wy / 2] : posK === 3 ? [-Lx / 2, -Wy / 2] : posK === 4 ? [Lx / 2, -Wy / 2] : [0, 0];
+        cu = cu0 + off[0] * ca - off[1] * sa;
+        cv = cv0 + off[0] * sa + off[1] * ca;
+        if (!(Lx > 0 && Wy > 0)) {
+          this.w.add(`CYCL DEF ${n}: 크기(Q218·Q219)가 없음`, line);
+          break;
+        }
+        if (n === 251) {
+          const hx = Lx / 2 - r - al;
+          const hy = Wy / 2 - r - al;
+          if (hx < -1e-9 || hy < -1e-9) {
+            this.w.add('CYCL DEF 251: 공구가 포켓보다 큼', line);
+            break;
+          }
+          const m = Math.min(hx, hy);
+          const loops: number[] = [];
+          for (let e = 0; e < m - 1e-9; e += step0) loops.push(e);
+          loops.push(m);
+          go(Rp, ...P(0, 0), clear);
+          go(Rp, ...P(0, 0), safe);
+          for (const d of levels) {
+            goL(F, 0, 0);
+            this.feed = fPlunge;
+            go(F, ...P(0, 0), d);
+            this.feed = fMill;
+            for (let k = 0; k < loops.length; k++) {
+              const e = loops[k]!;
+              const last = k === loops.length - 1;
+              rectLoop(hx - m + e, hy - m + e, last ? rc - r - al : 0, climb);
+            }
+          }
+          if (al > 0 && Q('Q215') !== 1) rectLoop(Lx / 2 - r, Wy / 2 - r, rc - r, climb);
+          goL(F, 0, 0);
+        } else {
+          // 보스: 바깥에서 안쪽으로(블랭크 Q424·Q425 → 완성 크기 + 여유)
+          const hx = Lx / 2 + r + al;
+          const hy = Wy / 2 + r + al;
+          const bx = Math.max(Q('Q424', Lx), Lx) / 2 + r;
+          const by = Math.max(Q('Q425', Wy), Wy) / 2 + r;
+          const span = Math.max(bx - hx, by - hy, 0);
+          const loops: number[] = [];
+          for (let e = span; e > 1e-9; e -= step0) loops.push(e);
+          loops.push(0);
+          go(Rp, ...P(bx + r + setup, 0), clear);
+          go(Rp, ...P(bx + r + setup, 0), safe);
+          for (const d of levels) {
+            this.feed = fPlunge;
+            go(F, ...P(bx + r + setup, 0), d);
+            this.feed = fMill;
+            for (let k = 0; k < loops.length; k++) {
+              const e = loops[k]!;
+              rectLoop(hx + e, hy + e, k === loops.length - 1 ? rc + r + al : 0, !climb);
+            }
+            goL(F, bx + r + setup, 0);
+          }
+        }
+        break;
+      }
+      case 252:
+      case 257:
+      case 208: {
+        if (n === 208) {
+          // 보어 밀링: 나선으로 내려가 바닥에서 한 바퀴
+          const D = Q('Q335');
+          const pitch = Math.abs(Q('Q334', 0.25));
+          const rp = D / 2 - r;
+          if (!(rp > 1e-9)) {
+            this.w.add('CYCL DEF 208: 공구가 구멍보다 큼(또는 지름 Q335 없음)', line);
+            break;
+          }
+          go(Rp, cu, cv, clear);
+          go(Rp, cu, cv, safe);
+          this.feed = fMill;
+          goL(F, rp, 0);
+          const travel = Math.abs(safe - zEnd);
+          const turns = pitch > 0 ? travel / pitch : 1;
+          const s = climb ? 1 : -1;
+          const sweep = s * TAU * Math.max(turns, 1e-3);
+          const ea = sweep;
+          this.arc3(cu, cv, sweep, cu + rp * Math.cos(ea), cv + rp * Math.sin(ea), zEnd, line);
+          w = zEnd;
+          const p = [this.pos[a0]!, this.pos[a1]!];
+          this.arc3(cu, cv, s * TAU, p[0]!, p[1]!, zEnd, line);
+          go(F, cu, cv);
+          break;
+        }
+        const D = Q('Q223');
+        const al = n === 252 ? Q('Q368') : Q('Q368');
+        if (!(D > 0)) {
+          this.w.add(`CYCL DEF ${n}: 지름(Q223)이 없음`, line);
+          break;
+        }
+        if (n === 252) {
+          const rr = D / 2 - r - al;
+          if (rr < -1e-9) {
+            this.w.add('CYCL DEF 252: 공구가 포켓보다 큼', line);
+            break;
+          }
+          const radii: number[] = [];
+          for (let e = step0; e < rr - 1e-9; e += step0) radii.push(e);
+          radii.push(Math.max(0, rr));
+          go(Rp, cu, cv, clear);
+          go(Rp, cu, cv, safe);
+          for (const d of levels) {
+            goL(F, 0, 0);
+            this.feed = fPlunge;
+            go(F, cu, cv, d);
+            this.feed = fMill;
+            for (const rk of radii) circleLoop(rk, climb);
+          }
+          if (al > 0 && Q('Q215') !== 1) circleLoop(D / 2 - r, climb);
+          goL(F, 0, 0);
+        } else {
+          const rf = D / 2 + r + al;
+          const rb = Math.max(Q('Q222', D), D) / 2 + r;
+          const radii: number[] = [];
+          for (let e = rb; e > rf + 1e-9; e -= step0) radii.push(e);
+          radii.push(rf);
+          const start = rb + r + setup;
+          go(Rp, cu + start, cv, clear);
+          go(Rp, cu + start, cv, safe);
+          for (const d of levels) {
+            this.feed = fPlunge;
+            go(F, cu + start, cv, d);
+            this.feed = fMill;
+            for (const rk of radii) circleLoop(rk, !climb);
+            goL(F, start, 0);
+          }
+        }
+        break;
+      }
+      case 253: {
+        const Ls = Q('Q218');
+        const Ws = Q('Q219');
+        const al = Q('Q368');
+        const ang = (Q('Q374') * Math.PI) / 180;
+        ca = Math.cos(ang);
+        sa = Math.sin(ang);
+        const half = Ls / 2 - Ws / 2;
+        const posK = Math.round(Q('Q367'));
+        const shiftL = posK === 1 ? Ls / 2 : posK === 2 ? half : posK === 3 ? -Ls / 2 : posK === 4 ? -half : 0;
+        cu = cu0 + shiftL * ca;
+        cv = cv0 + shiftL * sa;
+        const rr = Ws / 2 - r - al;
+        if (!(Ls > 0 && Ws > 0) || rr < -1e-9 || half < -1e-9) {
+          this.w.add('CYCL DEF 253: 홈 크기(Q218·Q219)가 없거나 공구가 홈보다 큼', line);
+          break;
+        }
+        const widths: number[] = [];
+        for (let e = step0 / 2; e < rr - 1e-9; e += step0) widths.push(e);
+        if (rr > 1e-9) widths.push(rr);
+        const s = climb ? 1 : -1;
+        go(Rp, ...P(-half, 0), clear);
+        go(Rp, ...P(-half, 0), safe);
+        for (const d of levels) {
+          goL(F, -half, 0);
+          this.feed = fPlunge;
+          go(F, ...P(-half, 0), d);
+          this.feed = fMill;
+          goL(F, half, 0);
+          for (const e of widths) {
+            // 경기장 꼴: 오른쪽 반원 → 위 직선 → 왼쪽 반원 → 아래 직선
+            goL(F, half, -s * e);
+            arcL(half, 0, s * Math.PI, half, s * e);
+            goL(F, -half, s * e);
+            arcL(-half, 0, s * Math.PI, -half, -s * e);
+            goL(F, half, -s * e);
+          }
+          goL(F, half, 0);
+        }
+        break;
+      }
+      case 232: {
+        const u0 = Q('Q225') + this.shift[a0]!;
+        const v0 = Q('Q226') + this.shift[a1]!;
+        const Lx = Q('Q218');
+        const Wy = Q('Q219');
+        const strategy = Math.round(Q('Q389'));
+        if (strategy === 2) this.w.add('CYCL DEF 232: Q389=2(나선)는 지그재그로 그림', line);
+        const step = Number.isFinite(step0) ? step0 : Math.abs(Wy) / 10 || 1;
+        const sgnW = Wy < 0 ? -1 : 1;
+        const rows: number[] = [];
+        for (let e = 0; e < Math.abs(Wy) - 1e-9; e += step) rows.push(v0 + sgnW * e);
+        rows.push(v0 + Wy);
+        const uA = u0 - r - setup;
+        const uB = u0 + Lx + r + setup;
+        go(Rp, uA, rows[0]!, clear);
+        go(Rp, uA, rows[0]!, safe);
+        for (const d of levels) {
+          go(Rp, uA, rows[0]!, safe);
+          this.feed = fPlunge;
+          go(F, uA, rows[0]!, d);
+          this.feed = fMill;
+          rows.forEach((v, k) => {
+            const fwd = strategy === 1 || k % 2 === 0;
+            const [from, to] = fwd ? [uA, uB] : [uB, uA];
+            if (strategy === 1 && k > 0) {
+              go(Rp, this.pos[a0]!, this.pos[a1]!, safe);
+              go(Rp, from, v, safe);
+              go(F, from, v, d);
+            } else go(F, from, v);
+            go(F, to, v);
+          });
+        }
+        break;
+      }
+    }
+    go(Rp, this.pos[a0]!, this.pos[a1]!, clear);
+    // 사이클 뒤 공구는 시작 자리 위(평면 위치는 CYCL CALL 자리)로
+    if (n !== 232) go(Rp, cu0, cv0, clear);
+    this.feed = saveFeed;
+    this.known = 7;
   }
 
   finish(): NcProgram {

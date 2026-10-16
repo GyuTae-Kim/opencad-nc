@@ -11,23 +11,40 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
 ## 할 수 있는 것
 
 - G-code(ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별): 직선·호·나선, 평면·단위·좌표계, 고정 사이클, 부프로그램, 변수와 IF/WHILE
-- Heidenhain 평문(.h)
-- woodWOP MPR: 공작물, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 꺼진 가공, 변수
+  - 좌표 변환: G68/G69 회전(Mach3 G68 A·B 중심), G51/G50 배율(Fanuc 중심 + P·I·J·K, Mach3 축별 배율), G51.1/G50.1 거울,
+    LinuxCNC G10 L2 R 좌표계 회전 — 원호·고정 사이클 구멍도 함께 옮김
+  - 반경 보정 G41/G42/G40: 프로그램 경로는 그대로 두고, 선택하면 공구 중심 경로를 따로 계산(직선·호 모서리 교점 자르기,
+    바깥 모서리 호 잇기, 들어가기·나오기, 간섭 경고). 반지름은 D 번호 → 공구 표(선택)·G10 L12/L13(Fanuc)·G10 L1 R(LinuxCNC·Mach3)·
+    G41.1 D 지름·공구 주석 지름(`T1 D=10.`) 차례로 찾음
+  - 선반 모드(선택): G18, X 지름(LinuxCNC·GRBL은 G7/G8), U·W 증분, T0101, G96/G97 주속 일정(G50 S·G96 D 최고 회전수로 시간 계산),
+    G90/G92/G94 단순 사이클, G70~G73 복합 사이클(거친 깎기·다듬질·형상 반복), G74/G75 쪼아 깎기, G76 나사(여러 번), G32/G33 —
+    XZ 단면 경로(X = 반지름, 회전축 = Z). 선반 프로그램처럼 보이면 밀링으로 읽을 때 안내 경고
+  - 회전축 A·B·C(선택): 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로(각이 바뀌는 이동은 2도씩 나눔, 시간은 직선·각 합성 길이).
+    G43.4/G43.5 공구 끝점 제어 동안은 프로그램 좌표를 그대로 공구 끝 경로로 그림
+- Heidenhain 평문(.h): L·C·CR·CT·LP·CP, FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 자료로 정해지는 것), RL/RR 반경 보정(TOOL DEF R + DR),
+  드릴 사이클 200~209·240, 밀링 사이클 208(보어 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256/257(보스)·232(정면), 점 패턴 220/221,
+  LBL·CALL LBL(구간 반복·부프로그램, 따옴표 표지), Q 변수·FN
+- woodWOP MPR: 공작물, 수직·수평 드릴, 윤곽 가공(KR 둥글리기·KF 모따기 포함), 홈, 포켓, 꺼진 가공, 변수(뒤에 정의된 변수도 풂),
+  지원하지 않는 매크로는 위치(XA·YA)만 점으로
 - 공구 목록(색·지름), 이송·급속 길이, 예상 시간, 줄 번호 ↔ 이동 연결
-- 100만 줄(32MB) G-code를 약 0.5초에 읽습니다.
+- 100만 줄(30MB) G-code를 약 0.5~0.6초에 읽습니다(선택 기능을 켜지 않으면 예전과 같은 경로).
 
 ## 뷰어 앱 쓰는 법
 
 1. 파일을 창 어디에나 끌어다 놓거나 **열기**(Ctrl/⌘+O)를 누릅니다. **예제 열기**는 코드로 만든 합성 G-code를 엽니다.
    파일은 서버로 올리지 않고 이 기기 안에서 읽습니다(해석은 웹 워커).
 2. 가운데 3D 보기: 왼쪽 끌기 회전, 가운데·오른쪽 끌기 이동, 휠 확대(터치는 한 손가락 회전·두 손가락 이동·핀치).
-   보기 도구 막대에 전체 보기, 표준 뷰, 원근/평행, 그리기 모드(음영·음영+모서리·와이어프레임·X-ray), 격자, 뷰 큐브, 좌표축, 두 점 측정, PNG 저장, 패널 열고 닫기가 있습니다.
+   보기 도구 막대에 전체 보기, 표준 뷰, 원근/평행, 그리기 모드(음영·음영+모서리·와이어프레임·X-ray), 격자, 뷰 큐브, 좌표축,
+   **단면**(끔·X·Y·Z 축 고르기, 위치 슬라이더, 뒤집기 — 새 문서를 열면 꺼짐), 두 점 측정, PNG 저장, 패널 열고 닫기가 있습니다.
+   읽는 동안 덮개의 **취소**(또는 Esc)로 멈추면 열려 있던 문서를 그대로 둡니다.
 3. 오른쪽 패널(폭 760px 미만이면 아래 시트)
-   - G-code·Heidenhain: **코드**(줄을 누르면 그 줄의 이동을 강조, 3D에서 경로를 누르면 그 줄로 이동) · **공구**(색·지름·시간, 켜고 끄기) ·
-     **정보**(방언·단위 바꿔 다시 읽기, 이송/급속 길이, 예상 시간, 묶음 켜고 끄기, 해석 경고)
-   - MPR: **가공**(작업 목록) · **변수** · **코드** · **정보**
+   - G-code·Heidenhain: **코드**(줄을 누르면 그 줄의 이동을 강조, 3D에서 경로를 누르면 그 줄로 이동) ·
+     **공구**(색·지름·시간, 켜고 끄기. 줄을 누르면 그 공구의 첫 이동 줄로, 두 번 누르면 그 공구 경로에 맞춰 보기) ·
+     **정보**(방언·단위 바꿔 다시 읽기, 보기 선택 — **보정 경로 보기**(구간별 반지름·출처)·**선반 모드**·**회전축 감기**, 이송/급속 길이,
+     예상 시간, 묶음 켜고 끄기, 해석 경고)
+   - MPR: **가공**(작업 목록) · **변수** · **코드** · **정보**(꺼진 가공이 있으면 **꺼진 가공도 그리기**)
    - 재생 막대: 재생/멈춤, ×1·×10·×100, 시간 막대 — 지나간 경로만 진하게 그리고 공구 위치를 표시합니다.
-4. 아래 상태 막대에 형식·단위·파일 크기·이동/선분 수·읽은 시간과 고른 것(줄·이동·측정 거리)이 보입니다.
+4. 아래 상태 막대에 형식·단위·파일 크기·이동/선분 수·읽은 시간, 해석 경고 수(누르면 정보 탭)와 고른 것(줄·이동·측정 거리)이 보입니다.
 
 | 키 | 하는 일 |
 |---|---|
@@ -35,12 +52,12 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
 | 1~7 | 앞·뒤·왼쪽·오른쪽·위·아래·등각 |
 | F7 | 격자 켜고 끄기 |
 | Space | 재생 / 멈춤 |
-| Esc | 측정·고른 것 지우기 |
+| Esc | 측정·고른 것 지우기(읽는 중이면 읽기 멈추기) |
 | Ctrl/⌘+O | 파일 열기 |
 
 주소 인자: `?sample`(예제 바로 열기), `?open=<같은 출처 주소>`(그 파일을 받아 열기 — 자동 확인용, 다른 사이트 주소는 열지 않음).
 테마는 시스템 설정을 따르고, 제목 막대 단추로 고른 테마는 이 브라우저에 기억합니다.
-자동 확인용으로 `window.opencadApp`(상태 `state`, `open`·`openSample`·`openUrl` 등)을 둡니다.
+자동 확인용으로 `window.opencadApp`(상태 `state`, `open`·`openSample`·`openUrl`·`reparse`·`cancel`·`setSection` 등)을 둡니다.
 
 ## 라이브러리로 쓰는 법
 
@@ -54,6 +71,16 @@ const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·
 
 형식별 함수(`parseGcode`, `parseHeidenhain`, `parseMpr`, `ncToScene`, `mprToScene`)와 확장자 목록(`NC_EXTENSIONS` 등)도 `src/index.ts`에서 내보냅니다.
 
+선택 기능(기본은 모두 꺼짐 — 켜지 않으면 결과가 예전과 같습니다):
+
+```ts
+// 선반 모드('auto'면 글로 판별), 회전축 감기, 반경 보정용 공구 표(키 = D 번호, LinuxCNC는 공구 번호)
+const p = parseGcode(text, { lathe: true, rotary: { A: 'x', stepDeg: 2 }, toolTable: { 1: { diameter: 10 } } });
+p.compRuns; // 보정 구간 [{ first, end, side, plane, radius, source, line }]
+const scene = ncToScene(p, { compPath: true }); // 선분 묶음 'nc-comp'(묶음 '보정 경로'), meta.compRuns
+const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 — compPathSegments(cp)로 선분
+```
+
 ## 구조
 
 | 경로 | 내용 |
@@ -63,7 +90,8 @@ const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile` |
 | `src/extensions.ts` | 확장자 목록(`NC_EXTENSIONS` 등 — 화면 코드가 해석기 없이 가져다 쓴다) |
-| `src/gcode.ts`, `src/expr.ts` | G-code 해석과 변수·식 |
+| `src/gcode.ts`, `src/expr.ts` | G-code 해석(좌표 변환·선반·회전축 포함)과 변수·식 |
+| `src/comp.ts` | 반경 보정 공구 중심 경로(옮긴 요소, 모서리 교점·호 잇기, 들어가기·나오기) |
 | `src/heidenhain.ts` | Heidenhain 평문 |
 | `src/mpr.ts` | woodWOP MPR |
 | `src/model.ts`, `src/emitter.ts`, `src/text.ts` | 공통 이동 모델·시간표, 이동 만들기, 원문 줄 |
@@ -82,7 +110,8 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.3.0`으로 받습니다. 코어를 올리면 `package.json`의 태그를 바꿉니다.
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.4.0`(잠금 커밋 `8b49820`)으로 받습니다. 코어를 올리면
+`npm install "opencad-viewer3d@github:GyuTae-Kim/opencad-viewer3d#<태그>"`로 받아 `package.json`·`package-lock.json`을 함께 바꿉니다(그냥 `npm install`은 옛 커밋을 남김).
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
 
 ## 배포
@@ -92,10 +121,13 @@ npm run preview    # 빌드 결과 보기
 
 ## 남은 일
 
-- 회전축(4·5축)·선반 코드
-- 반경 보정 경로, 좌표 회전·배율
-- Heidenhain FK·포켓 사이클
-- MPR 나머지 매크로·좌표계
+- 5축: 공구 끝점 제어 없는 동시 5축(기계 구조·피벗 길이가 필요), 공구 방향 표시, G68.2·Heidenhain PLANE·M128·회전축 감기(Heidenhain)
+- 반경 보정: Fanuc B형·C형 들어가기(교점 방식)·보정 중 평면 바꾸기·G41/G42 방향 바꿀 때의 교점, 선반 공구 끝 R 보정(G41/G42 노즈 R)
+- 선반: Fanuc G 코드 B·C 체계(G77~G79), LinuxCNC G70~G72(o-코드 윤곽), G71 II형(오목 윤곽), 나사 사이클의 모따기·절입 각
+- Heidenhain: 다음 블록 자료가 필요한 FK(PDX·RX·PAR, FSELECT), RND·CHF, 윤곽(SL) 사이클 20~25·270, 회전·배율·대칭 사이클 7.x 밖의 것,
+  PATTERN DEF, CALL PGM
+- MPR: 좌표계 표 `[K`·KO(면 좌표계), BohrUniv 등 나머지 매크로(지금은 위치만 점), 호가 낀 모서리의 KR·KF
+- G16 극좌표, LinuxCNC 스플라인(G5) 곡선
 
 ## 내력
 
