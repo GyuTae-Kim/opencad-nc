@@ -1118,3 +1118,46 @@ tr.off td:not(:first-child) {
     min-height: 36px;
   }
 }
+
+/* 화면 위 단면 손잡이(끌어서 평면 옮기기) */
+.sec-handle {
+  --sec-size: 20px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  width: var(--sec-size);
+  height: var(--sec-size);
+  margin: calc(var(--sec-size) / -2) 0 0 calc(var(--sec-size) / -2);
+  border: 2px solid #ff5ea3;
+  border-radius: 50%;
+  background: color-mix(in srgb, #ff5ea3 30%, transparent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  touch-action: none;
+}
+.sec-handle.dragging {
+  cursor: grabbing;
+  background: color-mix(in srgb, #ff5ea3 55%, transparent);
+}
+.sec-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #ff5ea3;
+  transform: rotate(var(--sec-dir, 0rad)) translate(calc(var(--sec-size) / 2 + 2px), -50%);
+  transform-origin: 0 0;
+}
+.sec-handle.no-dir::after {
+  display: none;
+}
+@media (pointer: coarse) {
+  .sec-handle {
+    --sec-size: 32px;
+  }
+}

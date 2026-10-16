@@ -10,7 +10,7 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type ViewName } from 'opencad-viewer3d';
+import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
@@ -150,6 +150,7 @@ export class NcViewerApp implements PanelHost {
   private readonly playBtn: HTMLButtonElement;
   private readonly playSep: HTMLSpanElement;
   private readonly renderItems: { mode: RenderMode; el: HTMLButtonElement }[] = [];
+  private secHandle: HTMLDivElement | null = null;
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement) {
@@ -420,15 +421,10 @@ export class NcViewerApp implements PanelHost {
       return { axis, el };
     });
     const range = h('input', { type: 'range', min: 0, max: 1000, step: 1, value: 500, 'aria-label': '단면 위치', disabled: true });
-    range.addEventListener('input', () => {
-      this.viewer?.setSectionPosition(Number(range.value) / 1000);
-      this.renderSection();
-    });
+    // 단추·슬라이더·손잡이는 뷰어의 onSectionChange 알림 하나로 맞춘다
+    range.addEventListener('input', () => this.viewer?.setSectionPosition(Number(range.value) / 1000));
     const flip = h('button', { type: 'button', class: 'btn small', 'aria-pressed': 'false', title: '잘라 내는 쪽 뒤집기', disabled: true }, '뒤집기');
-    flip.addEventListener('click', () => {
-      this.viewer?.flipSection();
-      this.renderSection();
-    });
+    flip.addEventListener('click', () => this.viewer?.flipSection());
     const val = h('span', { class: 'sec-val' });
     const panel = h(
       'div',
@@ -454,7 +450,6 @@ export class NcViewerApp implements PanelHost {
       const r = panel.getBoundingClientRect();
       const over = r.right - (window.innerWidth - 8);
       if (over > 0) panel.style.left = `${-Math.min(over, r.left - 8)}px`;
-      this.renderSection();
       (axes.find((a) => a.el.getAttribute('aria-pressed') === 'true') ?? axes[0])!.el.focus();
     });
     this.tools.section = { el: btn, needsDoc: true };
@@ -471,14 +466,12 @@ export class NcViewerApp implements PanelHost {
       const cur = v.section;
       v.setSectionAxis(axis, t ?? (cur && cur.axis === axis ? cur.t : 0.5), flip === undefined ? {} : { flip });
     }
-    this.renderSection();
   }
 
-  /** 단면 UI를 뷰어 상태에 맞춘다(새 문서를 열면 단면이 꺼진다) */
-  private renderSection(): void {
+  /** 단면 UI(단추·슬라이더·값·손잡이)를 뷰어 상태에 맞춘다 — onSectionChange 알림(새 문서에서 꺼짐·손잡이 끌기 포함)에서 부른다 */
+  private renderSection(s: SectionState | null = this.viewer?.section ?? null): void {
     const e = this.sec;
     if (!e) return;
-    const s = this.viewer?.section ?? null;
     for (const a of e.axes) a.el.setAttribute('aria-pressed', String(s ? s.axis === a.axis : a.axis === null));
     e.range.disabled = !s;
     if (s) e.range.value = String(Math.round(Math.max(0, Math.min(1, s.t)) * 1000));
@@ -487,6 +480,50 @@ export class NcViewerApp implements PanelHost {
     const u = this.doc?.scene.units === 'inch' ? 'in' : this.doc?.scene.units === 'mm' ? 'mm' : '';
     e.val.textContent = s ? `${s.axis ? s.axis.toUpperCase() : '평면'} = ${fmtNum(s.position)}${u ? ` ${u}` : ''}${s.flip ? ' (뒤집음)' : ''}` : '꺼짐';
     e.btn.setAttribute('aria-pressed', String(!!s));
+    this.placeSecHandle();
+  }
+
+  /** 화면 위 단면 손잡이: 장면 가운데를 평면에 내린 점에 두고, 화살표는 잘라 내는 쪽을 가리킨다 */
+  private placeSecHandle(): void {
+    const el = this.secHandle;
+    if (!el) return;
+    const v = this.viewer;
+    const hd = v?.section ? v.sectionHandle() : null;
+    el.hidden = !hd;
+    if (!hd) return;
+    el.style.transform = `translate(${hd.x}px, ${hd.y}px)`;
+    const arrow = Math.hypot(hd.dx, hd.dy) > 0.2;
+    el.classList.toggle('no-dir', !arrow);
+    if (arrow) el.style.setProperty('--sec-dir', `${Math.atan2(hd.dy, hd.dx)}rad`);
+  }
+
+  /** 단면 손잡이 끌기 → moveSectionByPixels(UI는 알림으로 맞춘다) */
+  private makeSecHandle(): HTMLDivElement {
+    const el = h('div', { class: 'sec-handle', hidden: true, title: '끌어서 단면 옮기기', 'aria-hidden': 'true' });
+    let last: { x: number; y: number; id: number } | null = null;
+    el.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      last = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
+      el.classList.add('dragging');
+      try {
+        el.setPointerCapture(ev.pointerId);
+      } catch {
+        /* 합성 사건 */
+      }
+    });
+    el.addEventListener('pointermove', (ev) => {
+      if (!last || ev.pointerId !== last.id) return;
+      this.viewer?.moveSectionByPixels(ev.clientX - last.x, ev.clientY - last.y);
+      last = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
+    });
+    const end = (): void => {
+      last = null;
+      el.classList.remove('dragging');
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    return el;
   }
 
   // ───────────────────────── 열기 ─────────────────────────
@@ -690,6 +727,11 @@ export class NcViewerApp implements PanelHost {
     this.applyThemeUi();
     v.onPick((p) => this.onPick(p));
     v.onMeasure((m) => this.onMeasure(m));
+    this.secHandle = this.makeSecHandle();
+    this.viewEl.append(this.secHandle);
+    v.onSectionChange((st) => this.renderSection(st));
+    v.onCameraChange(() => this.placeSecHandle());
+    this.renderSection(null);
     return v;
   }
 
@@ -710,7 +752,10 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
     this.renderStatus();
     const w = d.scene.warnings?.length ?? 0;
-    if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
+    // 선반처럼 보이는 G-code를 밀링으로 읽었으면 선반 모드를 알려 준다
+    const latheHint = d.kind === 'gcode' && !d.ncOptions.lathe && !!d.scene.warnings?.some((x) => x.includes('선반 프로그램으로 보임'));
+    if (latheHint) toast('선반 프로그램으로 보입니다 — 패널 "정보" 탭의 "선반 모드"를 켜면 X를 지름으로 보고 선반 사이클을 그립니다.', 'info', 7000);
+    else if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
     this.viewer?.canvas.focus({ preventScroll: true });
   }
 
@@ -1063,7 +1108,6 @@ export class NcViewerApp implements PanelHost {
     this.projBtn.setAttribute('aria-label', persp ? '원근 투영(누르면 평행)' : '평행 투영(누르면 원근)');
     const mode = this.viewer?.getRenderMode() ?? 'shadedEdges';
     for (const r of this.renderItems) r.el.setAttribute('aria-checked', String(r.mode === mode));
-    this.renderSection();
     const canPlay = this.canPlay();
     this.playBtn.hidden = !canPlay;
     this.playSep.hidden = !canPlay;
