@@ -131,7 +131,7 @@ npm run preview    # 빌드 결과 보기
 
 ## 내력
 
-[2dcad-viewer](https://github.com/GyuTae-Kim/2dcad-viewer)의 `src/formats/nc/`에서 분리했습니다(커밋 `d7c584a` 기준, 처음 들어온 것은 PR #7).
+[2dcad-viewer](https://github.com/GyuTae-Kim/opencad-dwgdxf)의 `src/formats/nc/`에서 분리했습니다(커밋 `d7c584a` 기준, 처음 들어온 것은 PR #7).
 `src/view/`의 파일은 같은 커밋의 `src/app/view3d/`에서 옮겼습니다.
 2D 뷰어 안에서 NC 파일을 3D 탭으로 열던 화면(코드 보기·공구 목록·재생 패널, 웹 워커 — 같은 커밋의 `src/app/view3d/manager.ts`·`panel.ts` 등)은
 2D 화면 골격(리본·탭)에 기대지 않게 다시 짜서 `src/app/`·`src/worker/`의 혼자 돌아가는 뷰어 앱으로 옮겼습니다.
