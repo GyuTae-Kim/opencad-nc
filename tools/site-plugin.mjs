@@ -7,7 +7,7 @@ export function siteMetadata() {
     name: 'opencad-site-metadata',
     transformIndexHtml: { order: 'pre', handler(html) {
       if (html.split('<!-- site-metadata -->').length !== 2) throw new Error('Expected one shared metadata marker.');
-      return html.replace('<!-- site-metadata -->', renderMetadata());
+      return html.replace('<!-- site-metadata -->', '<!-- localized-metadata:start -->' + renderMetadata() + '<!-- localized-metadata:end -->');
     } },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {

@@ -1,3 +1,4 @@
+import { installLocalization } from './i18n';
 /**
  * OpenCAD NC 뷰어 진입점: 스타일을 불러오고 #app에 앱을 세운다.
  */
@@ -12,3 +13,5 @@ if (root) {
   initAnalytics(GA4_MEASUREMENT_ID, 'nc');
   new NcViewerApp(root);
 }
+
+if (root) void installLocalization(root);

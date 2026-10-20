@@ -155,6 +155,7 @@ export class NcViewerApp implements PanelHost {
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement) {
+    root.addEventListener('languagechange', () => { if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize); });
     this.root = root;
     this.theme = resolveTheme(readThemePref(this.storage), this.systemDark());
     document.documentElement.dataset.theme = this.theme;

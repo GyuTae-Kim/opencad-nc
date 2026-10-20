@@ -408,7 +408,7 @@ export class NcPanel {
         h('td', {}, eye),
         h('td', {}, h('span', { class: 'swatch', style: `background:${rgbCss(t.color ?? [0.5, 0.5, 0.5])}` })),
         h('td', {}, label),
-        h('td', { class: 'wrap' }, t.name ?? ''),
+        h('td', { class: 'wrap', translate: 'no' }, t.name ?? ''),
         h('td', { class: 'num' }, t.diameter ? `Ø${fmtNum(t.diameter)}` : ''),
         h('td', { class: 'num' }, formatDuration(t.time)),
         h('td', { class: 'num' }, `${fmtNum(t.feedLength, 1)}${u}`),
