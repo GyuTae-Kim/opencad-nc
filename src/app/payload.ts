@@ -5,6 +5,7 @@
 import { detectNcFormat, type NcFileKind } from '../index';
 import { NC_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
+import { BINARY_MESSAGE, looksBinary } from './format';
 import type { NcPayload } from './protocol';
 
 /** 확장자도 내용도 NC로 보이지 않을 때 */
@@ -21,11 +22,7 @@ function extOf(name: string): string {
  */
 export function checkNcInput(name: string, bytes: Uint8Array): { ok: true; kind: NcFileKind | null } | { ok: false; message: string } {
   if (!bytes.length) return { ok: false, message: '빈 파일입니다.' };
-  // 앞 4KB에 NUL 바이트가 여럿이면 글 파일이 아니다(그림·압축·CAD 이진 등)
-  const head = bytes.subarray(0, 4096);
-  let zeros = 0;
-  for (let i = 0; i < head.length; i++) if (head[i] === 0) zeros++;
-  if (zeros > Math.max(4, head.length / 100)) return { ok: false, message: '글 파일이 아닌 이진 자료로 보입니다. NC 프로그램은 글(텍스트) 파일이어야 합니다.' };
+  if (looksBinary(bytes.subarray(0, 4096))) return { ok: false, message: BINARY_MESSAGE };
   const kind = detectNcFormat(name, bytes);
   if (!kind && !NC_EXTENSIONS.includes(extOf(name))) return { ok: false, message: NOT_NC_MESSAGE };
   return { ok: true, kind };

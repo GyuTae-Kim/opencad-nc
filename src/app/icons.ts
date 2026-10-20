@@ -34,6 +34,8 @@ export const ICONS = {
   first: svg('<path d="M5 4v12M15 4l-7 6 7 6z" fill="currentColor"/>'),
   all: svg('<path d="M3 15c3-8 5-9 7-5s4 3 7-5"/>'),
   section: svg('<path d="M10 2.5l6.5 3.7v7.6L10 17.5l-6.5-3.7V6.2z"/><path d="M2 12.2l8-4.6 8 4.6-8 4.6z" fill="currentColor" fill-opacity="0.28"/>'),
+  sliders: svg('<path d="M3 6h7.5M14.5 6H17M3 14h2.5M9.5 14H17"/><circle cx="12.5" cy="6" r="2"/><circle cx="7.5" cy="14" r="2"/>'),
+  reset: svg('<path d="M3.2 10a6.8 6.8 0 1 0 2-4.8L3.2 7.2"/><path d="M3.2 3v4.2h4.2"/>'),
 } as const;
 
 export type IconName = keyof typeof ICONS;
