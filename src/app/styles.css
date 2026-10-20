@@ -1187,5 +1187,8 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
   .titlebar .title-actions { flex-shrink: 0; }
 }
 @media (max-width: 767px) {
-  .titlebar .docname, .titlebar .tbtn .lbl { display: none; }
+  .titlebar .docname { display: none; }
+}
+@media (max-width: 1000px) {
+  .titlebar .tbtn .lbl { display: none; }
 }

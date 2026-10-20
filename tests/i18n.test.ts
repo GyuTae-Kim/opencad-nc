@@ -64,4 +64,24 @@ describe('language URLs and UI presentation', () => {
     expect(root.querySelector('[translate="no"]:not(.language-control):not(.language-list)')!.textContent).toBe('열기');
     dispose();dispose=undefined;dom.window.close();
   });
+  it('dismisses the language menu with Escape without cancelling a file import', async () => {
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const { NcViewerApp } = await import('../src/app/app');
+    dispose=await installLocalization(document.getElementById('app')!);
+    const cancelLoad=vi.fn();
+    const app={busy:true,cancelLoad};
+    const onKey=(NcViewerApp.prototype as unknown as {onKey(event: KeyboardEvent):void}).onKey;
+    const captured=(event: KeyboardEvent) => onKey.call(app,event);
+    window.addEventListener('keydown',captured,true);
+    try {
+      const trigger=document.querySelector<HTMLButtonElement>('.language-trigger')!;
+      trigger.click();
+      const menu=document.querySelector<HTMLElement>('.language-list')!;
+      document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      expect(menu.hidden).toBe(true);expect(document.activeElement).toBe(trigger);expect(cancelLoad).not.toHaveBeenCalled();
+      document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      expect(cancelLoad).toHaveBeenCalledOnce();
+    } finally { window.removeEventListener('keydown',captured,true);dispose();dispose=undefined;dom.window.close(); }
+  });
 });

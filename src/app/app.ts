@@ -1150,6 +1150,9 @@ export class NcViewerApp implements PanelHost {
   // ───────────────────────── 키 ─────────────────────────
 
   private onKey(ev: KeyboardEvent): void {
+    const t = ev.target as HTMLElement | null;
+    // The language menu owns its keyboard focus, including Escape during loading.
+    if (t?.closest?.('.language-control, .language-list')) return;
     if (this.busy && ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1164,7 +1167,6 @@ export class NcViewerApp implements PanelHost {
       (btn as HTMLButtonElement | null)?.focus();
       return;
     }
-    const t = ev.target as HTMLElement | null;
     const v = this.viewer;
     const a = keyAction({
       key: ev.key,
