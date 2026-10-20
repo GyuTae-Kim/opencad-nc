@@ -36,7 +36,7 @@ assert.equal(app.dateModified, history.lastmod);
 assert.equal(app.description, metadata.description);
 assert.equal(app.url, metadata.url);
 const xml = new JSDOM(readFileSync('dist/sitemap.xml', 'utf8'), { contentType: 'text/xml' });
-assert.equal(xml.window.document.querySelectorAll('url').length, 1);
+assert.equal(xml.window.document.querySelectorAll('url').length, 5);
 assert.equal(xml.window.document.querySelector('loc').textContent, metadata.url);
 assert.equal(xml.window.document.querySelector('lastmod').textContent, history.lastmod);
 dom.window.close(); prefix.window.close(); xml.window.close();
