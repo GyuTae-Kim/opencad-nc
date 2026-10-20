@@ -1163,12 +1163,32 @@ tr.off td:not(:first-child) {
 }
 
 /* Language changes update UI text without reopening the document. */
-.language-selector { flex: 0 0 auto; max-width: 100px; min-height: 30px; padding: 3px 5px; border: 1px solid currentColor; border-radius: 5px; color: inherit; background: var(--bg, Canvas); font: 12px system-ui, sans-serif; }
-.language-selector-floating { position: fixed; top: 8px; right: 12px; z-index: 100; background: Canvas; color: CanvasText; }
-.language-selector:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 html:lang(ja) { --font: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; font-family: var(--font); }
 html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-family: var(--font); }
 
+
+
+/* The language menu is a body portal, clear of toolbar clipping. */
+.language-control { flex: 0 0 32px; width: 32px; margin-left: 4px; }
+.language-trigger { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; padding: 0; border: 1px solid var(--border-soft, currentColor); border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
+.language-trigger:hover, .language-trigger[aria-expanded="true"] { background: var(--bg-hover, ButtonFace); }
+.language-trigger:focus-visible, .language-list button:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+.language-control-floating { position: fixed; top: 8px; right: 12px; z-index: 100; }
+.language-list { position: fixed; z-index: 10001; width: 184px; max-width: calc(100vw - 16px); padding: 4px; border: 1px solid var(--border-soft, currentColor); border-radius: 7px; background: var(--bg-panel, Canvas); color: var(--text, CanvasText); box-shadow: 0 6px 24px #0003; font: 14px/1.4 system-ui, sans-serif; }
+.language-list[hidden] { display: none; }
+.language-list button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 40px; padding: 8px 12px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
+.language-list button:hover, .language-list button:focus { background: var(--bg-hover, ButtonFace); }
+.language-list button[aria-checked="true"]::after { content: '✓'; }
 @media (max-width: 767px) {
-  .titlebar { flex-wrap: wrap; height: auto; min-height: 44px; padding-block: 4px; row-gap: 4px; }
+  .titlebar { flex-wrap: nowrap; height: 44px; min-height: 44px; padding-block: 0; }
+  .language-control { flex-basis: 36px; width: 36px; margin-left: 0; }
+  .language-trigger { width: 36px; height: 36px; }
+  .titlebar .brand { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
+  .titlebar .title-actions { flex-shrink: 0; }
+}
+@media (max-width: 767px) {
+  .titlebar .docname { display: none; }
+}
+@media (max-width: 1000px) {
+  .titlebar .tbtn .lbl { display: none; }
 }

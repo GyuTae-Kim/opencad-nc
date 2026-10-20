@@ -1,3 +1,4 @@
+import { createLanguageMenu } from './language-menu';
 import { VIEW_LABELS } from 'opencad-viewer3d';
 import { CUBE_FACES } from 'opencad-viewer3d/viewcube';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */
@@ -24,11 +25,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   const presentationRoot = document.body;
   const texts = new WeakMap<Node, RecordValue>();
   const attributes = new WeakMap<Element, Map<string, RecordValue>>();
-  const options = languages;
-  const selector = document.createElement('select');
-  selector.className = 'language-selector'; selector.setAttribute('aria-label', 'Language'); selector.setAttribute('translate', 'no');
-  for (const item of options) { const option = document.createElement('option'); option.value = item.code; option.lang = item.code; option.textContent = item.label; selector.append(option); }
-  selector.value = language;
+  const control = createLanguageMenu(languages, language, changeLanguage);
   function value(current: string, record?: RecordValue): RecordValue {
     const source = record && current === record.rendered ? record.source : sourceMessage(current);
     const rendered = translate(source, language);
@@ -63,9 +60,9 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     for (const child of Array.from(node.childNodes)) update(child);
   }
   function mountSelector(): void {
-    const host = root.querySelector('.titlebar, .topbar, .start-actions, .welcome-actions, .boot-actions, header');
-    if (host) { selector.classList.remove('language-selector-floating'); if (selector.parentNode !== host) host.append(selector); }
-    if (!selector.isConnected) { selector.classList.add('language-selector-floating'); root.append(selector); }
+    const host = root.querySelector('.titlebar, .topbar, header');
+    if (host) { control.element.classList.remove('language-control-floating'); if (control.element.parentNode !== host) host.append(control.element); }
+    if (!control.element.isConnected) { control.element.classList.add('language-control-floating'); root.append(control.element); }
   }
   let titleSource = sourceMessage(document.title);
   function metadata(): void {
@@ -93,21 +90,20 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       graph.textContent=JSON.stringify(existing).replace(/</g,'\\u003c');
     }
   }
-  selector.addEventListener('change', async () => {
-    selector.disabled=true;
-    try { await loadLanguage(selector.value); } catch { selector.value=language; selector.disabled=false; return; }
-    selector.disabled=false;
-    const url = new URL(languageUrl(location.href,selector.value));
+  async function changeLanguage(next: string): Promise<void> {
+    try { await loadLanguage(next); } catch { return; }
+    const url = new URL(languageUrl(location.href,next));
     // Dev servers use /en/; published apps use /opencad-<format>/en/.
     if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
       const base = location.pathname.match(/^\/(?:2dcad-viewer|opencad-(?:dwgdxf|skp|step|nc))\//)?.[0] ?? '/';
-      url.pathname = base + (selector.value === 'ko' ? '' : selector.value + '/');
+      url.pathname = base + (next === 'ko' ? '' : next + '/');
     }
-    language = selector.value;
+    language = next;
+    control.setLanguage(language);
     history.replaceState(history.state,'',url.pathname+url.search+url.hash);
     metadata(); canvasLabels(); update(presentationRoot);
     root.dispatchEvent(new CustomEvent('languagechange',{detail:language}));
-  });
+  }
   const observer = new MutationObserver(records => {
     for (const record of records) {
       if (record.type === 'childList') for (const node of Array.from(record.addedNodes)) update(node);
@@ -130,7 +126,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   if (title) titleObserver.observe(title,{childList:true,subtree:true,characterData:true});
   observer.observe(presentationRoot,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','aria-description','placeholder','alt','href']});
   return () => {
-    observer.disconnect(); titleObserver.disconnect(); selector.remove();
+    observer.disconnect(); titleObserver.disconnect(); control.dispose();
     for (const [view,label] of originalViews) VIEW_LABELS[view as keyof typeof VIEW_LABELS]=label;
     CUBE_FACES.forEach((face,index) => { face.label=originalFaces[index]!; });
   };

@@ -43,16 +43,45 @@ describe('language URLs and UI presentation', () => {
     await new Promise(resolve=>setTimeout(resolve,0)); expect(status.textContent).toBe(translate('닫기','en'));
     const dialog=document.createElement('div');dialog.textContent='닫기';document.body.append(dialog);
     await new Promise(resolve=>setTimeout(resolve,0));expect(dialog.textContent).toBe(translate('닫기','en'));
-    const select=root.querySelector('select')!;select.value='de';select.dispatchEvent(new dom.window.Event('change'));
+    const trigger=root.querySelector<HTMLButtonElement>('.language-trigger')!;
+    trigger.click();expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const menu=document.querySelector<HTMLElement>('.language-list')!;
+    expect(menu.hidden).toBe(false);expect(menu.querySelectorAll('[role=menuitemradio]')).toHaveLength(5);
+    (menu.querySelector('[data-language=de]') as HTMLButtonElement).click();
     await new Promise(resolve=>setTimeout(resolve,0));
     expect(document.getElementById('pretranslated')!.textContent).toBe(translate('열기','de'));
     expect(document.documentElement.lang).toBe('de');expect(button.textContent).toBe(translate('열기','de'));
     expect(dialog.textContent).toBe(translate('닫기','de'));
     expect(location.search).toBe('?sample');expect(location.hash).toBe('#view');
-    select.value='ko';select.dispatchEvent(new dom.window.Event('change'));
+    expect(menu.hidden).toBe(true);
+    expect(menu.querySelector('[data-language=de]')!.getAttribute('aria-checked')).toBe('true');
+    trigger.click();
+    document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    expect(menu.hidden).toBe(true);expect(document.activeElement).toBe(trigger);
+    trigger.click();(menu.querySelector('[data-language=ko]') as HTMLButtonElement).click();
     await new Promise(resolve=>setTimeout(resolve,0));expect(button.textContent).toBe('열기');
     expect(root.querySelector('canvas')).toBe(canvas);button.click();expect(clicked).toHaveBeenCalledOnce();
-    expect(root.querySelector('[translate="no"]:not(select)')!.textContent).toBe('열기');
+    expect(root.querySelector('[translate="no"]:not(.language-control):not(.language-list)')!.textContent).toBe('열기');
     dispose();dispose=undefined;dom.window.close();
+  });
+  it('dismisses the language menu with Escape without cancelling a file import', async () => {
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const { NcViewerApp } = await import('../src/app/app');
+    dispose=await installLocalization(document.getElementById('app')!);
+    const cancelLoad=vi.fn();
+    const app={busy:true,cancelLoad};
+    const onKey=(NcViewerApp.prototype as unknown as {onKey(event: KeyboardEvent):void}).onKey;
+    const captured=(event: KeyboardEvent) => onKey.call(app,event);
+    window.addEventListener('keydown',captured,true);
+    try {
+      const trigger=document.querySelector<HTMLButtonElement>('.language-trigger')!;
+      trigger.click();
+      const menu=document.querySelector<HTMLElement>('.language-list')!;
+      document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      expect(menu.hidden).toBe(true);expect(document.activeElement).toBe(trigger);expect(cancelLoad).not.toHaveBeenCalled();
+      document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      expect(cancelLoad).toHaveBeenCalledOnce();
+    } finally { window.removeEventListener('keydown',captured,true);dispose();dispose=undefined;dom.window.close(); }
   });
 });
