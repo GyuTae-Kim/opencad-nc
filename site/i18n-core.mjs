@@ -7,6 +7,9 @@ export const catalogs = {};
 export function registerCatalog(language, content) { catalogs[language] = content; patterns.delete(language); cache.clear(); reverse=null; }
 export const normalize = value => value.replace(/\s+/g, ' ').trim();
 const patterns = new Map(); const cache = new Map();
+// A separator (" · ", " | ", " — ", a line break) inside a pattern capture: the capture holds more than one piece of a joined sentence.
+const SEPARATED = /(?:^|\s)[·|—](?:\s|$)|\n/;
+const hangulCount = text => (text.match(/[가-힣]/g) ?? []).length;
 let reverse = null;
 export function sourceMessage(value) {
   if (['OpenCAD','Sean Kim','GitHub'].includes(value.trim())) return value;
@@ -25,14 +28,22 @@ export function translate(value, language = 'ko') {
     key: k, slots: k.match(/\{\d+\}/g), anchor: k.split(/\{\d+\}/).sort((a,b)=>b.length-a.length)[0],
     expression: new RegExp('^' + k.split(/\{\d+\}/).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('(.*?)') + '$'),
   })).sort((a,b) => b.key.replace(/\{\d+\}/g,'').length - a.key.replace(/\{\d+\}/g,'').length));
-  let result = value;
+  let result = value, joined = null;
   for (const pattern of patterns.get(language)) {
     if (pattern.anchor && !key.includes(pattern.anchor)) continue;
     const match = key.match(pattern.expression);
     if (!match) continue;
     // Captures are document data, command identifiers, measurements or file names.
     // Substitute them verbatim, without translating or changing their values.
-    result = catalog[pattern.key].replace(/\{\d+\}/g, slot => match[pattern.slots.indexOf(slot) + 1]);
+    const filled = catalog[pattern.key].replace(/\{\d+\}/g, slot => match[pattern.slots.indexOf(slot) + 1]);
+    // A capture that runs over a separator and still holds Korean words may have swallowed the rest of a joined
+    // sentence ("면 {0}" for "면 · 넓이 12 m² · 태그 벽" leaves "Face · 넓이 …"): keep looking for a pattern that fits,
+    // and keep this one for the end, where the piece-by-piece split below wins if it leaves less Korean.
+    if (match.slice(1).some(capture => SEPARATED.test(capture) && /[가-힣]/.test(capture))) {
+      joined ??= filled;
+      continue;
+    }
+    result = filled;
     break;
   }
   const disclosure = result === value ? value.match(/^(.*?)(\s*[▾▸▴▼▶▲])$/) : null;
@@ -41,6 +52,7 @@ export function translate(value, language = 'ko') {
     const pieces = value.split(/(\n| · | \| | — )/);
     if (pieces.length > 1) result = pieces.map(piece => /[가-힣]/.test(piece) ? translate(piece,language) : piece).join('');
   }
+  if (joined !== null && (result === value || hangulCount(joined) <= hangulCount(result))) result = joined;
   if (cache.size > 4000) cache.clear();
   cache.set(cacheKey, result);
   return result;

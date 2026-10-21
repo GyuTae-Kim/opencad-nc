@@ -26,6 +26,20 @@ describe('language URLs and UI presentation', () => {
     expect(translate(example,'en')).toContain('FILE_A.skp');
     expect(translate(example,'en')).not.toBe(example);
   });
+  it('translates every piece of a " · "-joined sentence, even when a short pattern would swallow the rest', () => {
+    const hangul = /[가-힣]/;
+    // "줄 {0}"·"중심 {0}"·"{0} · 줄 {1}"이 문장 끝까지 잡아 나머지가 한국어로 남던 줄(상태 막대의 고른 이동·원호 상태)
+    const lines = ['줄 12 · 직선 이송 · T1 · F100 · 1, 2, 3', '줄 3 · 급속 · T2 · 0, 0, 5', 'O1001.nc · 줄 4 · 직선 이송 · T1 · F100 · 1, 2, 3',
+      'O1001.nc · 줄 4 · 이동 없음', '중심 10 20 -5 · R 5 · 시계 90°', '중심 0 0 0 · R 2.5 · 반시계 180°'];
+    for (const {code} of languages.filter(item => item.code !== 'ko'))
+      for (const line of lines) expect(translate(line, code), `${code}: ${line}`).not.toMatch(hangul);
+    expect(translate('줄 12 · 직선 이송 · T1 · F100 · 1, 2, 3', 'en')).toBe('Line 12 · Linear feed · T1 · F100 · 1, 2, 3');
+    expect(translate('O1001.nc · 줄 4 · 직선 이송 · T1 · F100 · 1, 2, 3', 'en')).toBe('O1001.nc · Line 4 · Linear feed · T1 · F100 · 1, 2, 3');
+    expect(translate('중심 10 20 -5 · R 5 · 시계 90°', 'en')).toBe('Center 10 20 -5 · R 5 · CW 90°');
+    // 잡은 값(파일 이름·공구 이름)은 그대로: 한국어 공구 이름도 바꾸지 않는다
+    expect(translate('줄 3 · 급속 · 공구 모서리 · 0, 0, 5', 'en')).toBe('Line 3 · Rapid · 공구 모서리 · 0, 0, 5');
+    expect(translate('줄 3 · 급속 · CUTTER_A · 0, 0, 5', 'en')).toBe('Line 3 · Rapid · CUTTER_A · 0, 0, 5');
+  });
   it('updates dynamic UI and switches languages without changing document data or listeners', async () => {
     const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"><button>열기</button><span class="docname">열기</span></header><canvas></canvas><div class="anno-layer">열기</div><input value="열기" placeholder="열기"><div contenteditable="true">열기</div><div translate="no">열기</div><p id="status">열기</p></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-skp/en/?sample#view'});
     for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
