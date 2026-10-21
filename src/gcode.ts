@@ -1861,6 +1861,8 @@ export class Runner extends NcEmitter {
     // 모르는(또는 매개변수만 받는) G가 있는 블록의 좌표는 이동이 아니다 — 그리지 않는다
     if (unknownG >= 0 && (axisGiven || rotGiven)) {
       this.w.add(`G${(unknownG / 10).toFixed(unknownG % 10 ? 1 : 0)} 블록의 좌표는 이동으로 그리지 않음`, line);
+      // 이동은 그리지 않아도 같은 블록의 모달 낱말(G0~G3 이동 꼴, G80 취소·고정 사이클 고르기)은 다음 블록에 남는다
+      this.modalOnly(motionG, cycleG);
       return this.endBlock(blk, line);
     }
 
@@ -1936,6 +1938,20 @@ export class Runner extends NcEmitter {
     }
     this.finishAng();
     this.endBlock(blk, line);
+  }
+
+  /** 이동 없이 모달만: 이동 꼴(G0~G3이 고정 사이클을 끈다)과 G80 취소·고정 사이클 고르기(구멍은 다음 블록부터) */
+  protected modalOnly(motionG: number, cycleG: number): void {
+    if (motionG >= 0) {
+      if (motionG !== this.motion && motionG < 900) this.boxX = this.boxZ = NaN;
+      this.motion = motionG;
+      if (this.cycle) this.cancelCycle();
+    }
+    if (cycleG === 800) this.cancelCycle();
+    else if (cycleG > 0 && this.cycle !== cycleG) {
+      if (!this.cycle) this.cycleFresh = true;
+      this.cycle = cycleG;
+    }
   }
 
   /** 블록에서 쓰지 않은 회전 각을 지금 각으로 */

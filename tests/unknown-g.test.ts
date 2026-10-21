@@ -25,6 +25,18 @@ G1 X20 F100`);
     expect(p.warnings.some((w) => w.includes('G47 블록의 좌표는 이동으로 그리지 않음'))).toBe(true);
   });
 
+  it('모르는 G 블록도 같은 블록의 G0~G3 이동 꼴과 G80 취소는 다음 블록에 남는다', () => {
+    const p = run(`G1 X10 Y0 F100
+G0 G47 P0 X1 Y1 Z-1 E10 (TEXT)
+X20
+G81 X30 Y0 Z-5 R2
+G80 G150 P1 X40 Z-5 Q2 R1
+X50`);
+    expect(Array.from(p.moves.kind)).toEqual([MOVE_FEED, MOVE_RAPID, MOVE_RAPID, MOVE_RAPID, MOVE_DRILL, MOVE_RAPID, MOVE_RAPID]);
+    expect(ends(p).slice(-1)).toEqual([[50, 0, 50]]);
+    expect(p.holes.count).toBe(1);
+  });
+
   it('Haas G154 P·G110~G129는 작업 좌표계 고르기(같은 블록의 좌표는 이동)', () => {
     const p = run(`G0 G154 P1 X1. Y1.\nG1 Z-1 F100\nG0 Z5\nG110 X2. Y2.\nG129 X3`, { workOffsets: { 'G54.1P1': [0, 0, 0], 'G54.1P20': [100, 0, 0] } });
     expect(ends(p)).toEqual([
