@@ -477,6 +477,23 @@ kbd {
   }
 }
 
+/* 현재 블록 상태(패널 아래 띠·재생 막대) */
+.panel-foot .state,
+.play-state {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.play-state {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+}
+.play-state[hidden] {
+  display: none;
+}
+
 /* 표 안의 글처럼 보이는 단추(Z 최저 → 그 줄로) */
 button.linkish {
   padding: 0;

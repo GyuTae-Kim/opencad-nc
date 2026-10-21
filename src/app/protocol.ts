@@ -59,7 +59,17 @@ export interface NcPayload {
     line: Uint32Array;
     tool: Int32Array;
     feed: Float32Array;
+    /** 현재 블록 표시용: 주축(부호 = 방향)·FLAG_*·작업 좌표계·모달 상태·H·D 번호·호 표 번호 */
+    spindle: Float32Array;
+    flags: Uint16Array;
+    wcs: Uint8Array;
+    modal: Uint16Array;
+    hNum: Int16Array;
+    dNum: Int16Array;
+    arc: Int32Array;
   };
+  /** 호 표(중심·평면·중심각) */
+  arcs: { center: Float64Array; plane: Uint8Array; sweep: Float64Array };
   /** 이동마다 끝난 시각(초, 누적) */
   timeline: Float64Array;
   /** 줄 → 이동(CSR) */

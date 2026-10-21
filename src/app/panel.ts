@@ -9,7 +9,7 @@ import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { cutRangeText, docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { cutRangeText, docLabel, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
@@ -91,7 +91,7 @@ export class NcPanel {
   private code: VirtualList | null = null;
   private codeFor: object | null = null;
   private lastPlayLine = -2;
-  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement } | null = null;
+  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement } | null = null;
 
   constructor(
     private readonly host: PanelHost,
@@ -230,6 +230,10 @@ export class NcPanel {
     p.range.setAttribute('aria-valuetext', `${formatDuration(info.sec)} / ${formatDuration(info.total)}`);
     p.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
     p.line.textContent = info.line >= 0 ? `줄 ${(info.line + 1).toLocaleString('ko-KR')}` : '전체 경로';
+    const nc = this.doc?.nc;
+    const st = nc && info.move >= 0 ? moveState(nc, info.move, unitLabel(this.doc!.scene.units)) : null;
+    p.state.hidden = !st;
+    if (st) p.state.textContent = `${st.motion} · ${st.modal}\n${st.pos}`;
     p.speed.value = String(this.host.speed);
     if (info.line !== this.lastPlayLine) {
       this.lastPlayLine = info.line;
@@ -303,8 +307,10 @@ export class NcPanel {
     });
     const time = h('span', { class: 'mono-dim' });
     const line = h('span', { class: 'mono-dim' });
-    this.play.append(h('div', { class: 'play-row' }, first, btn, all, speed, h('span', { class: 'play-info' }, time, line)), range);
-    this.playEls = { btn, range, time, line, speed };
+    // 재생 중인 이동의 상태(끝점·이송·주축·공구·모달 G)
+    const state = h('div', { class: 'play-state', 'aria-live': 'off' });
+    this.play.append(h('div', { class: 'play-row' }, first, btn, all, speed, h('span', { class: 'play-info' }, time, line)), range, state);
+    this.playEls = { btn, range, time, line, speed, state };
   }
 
   // ───────────────────────── 코드 보기 ─────────────────────────
@@ -668,9 +674,17 @@ export class NcPanel {
     if (d.selLine >= 0 && (d.nc || d.mpr)) {
       lines.push(h('div', {}, h('b', {}, `줄 ${(d.selLine + 1).toLocaleString('ko-KR')}`), ` ${selectedLineText(d, 80)}`));
       if (d.nc) {
-        if (p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count) lines.push(h('div', { class: 'dim' }, `${moveSummary(d.nc, p.index)} · ${fmtPt(p.point)}`));
-        else if (d.selMoves.length) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다.`));
-        else lines.push(h('div', { class: 'dim' }, '이 줄은 이동을 만들지 않습니다.'));
+        const picked = p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count ? p.index : -1;
+        const mi = picked >= 0 ? picked : (d.selMoves[0] ?? -1);
+        const st = mi >= 0 ? moveState(d.nc, mi, u) : null;
+        if (st) {
+          // 현재 블록 상태: 이동·이송·주축 / 공구·보정·모달 G / 끝점(고른 점) / 원호
+          lines.push(h('div', { class: 'state' }, st.motion));
+          lines.push(h('div', { class: 'state' }, st.modal));
+          lines.push(h('div', { class: 'dim' }, `끝점 ${st.pos}${picked >= 0 ? ` · 고른 점 ${fmtPt(p!.point)}` : ''}`));
+          if (st.arc) lines.push(h('div', { class: 'dim' }, st.arc));
+          if (picked < 0 && d.selMoves.length > 1) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다(첫 이동의 상태).`));
+        } else lines.push(h('div', { class: 'dim' }, '이 줄은 이동을 만들지 않습니다.'));
       }
     } else if (p) {
       const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);

@@ -81,7 +81,22 @@ export interface NcMoves {
   wcs: Uint8Array;
   /** 걸린 시간(초, 이동 뒤 휴지 포함) */
   time: Float32Array;
+  /** 모달 상태 비트(MODAL_*): 평면·증분·극좌표·좌표 변환, 위 8비트 = 고정 사이클 G 번호(81 …, 0 = 없음) */
+  modal: Uint16Array;
+  /** 켜진 공구 길이 보정 H 번호(-1 = 없음) */
+  hNum: Int16Array;
+  /** 켜진 반경 보정 D 번호(-1 = 없음) */
+  dNum: Int16Array;
 }
+
+/** 모달 상태 비트: 평면(0 G17·1 G18·2 G19) */
+export const MODAL_PLANE = 3;
+/** G91 증분 */
+export const MODAL_INC = 4;
+/** G16 극좌표 */
+export const MODAL_POLAR = 8;
+/** 좌표 변환(회전·배율·거울·프레임·기울인 평면)이 켜짐 */
+export const MODAL_XF = 16;
 
 /** 호 표(호 이동만) */
 export interface NcArcs {
@@ -258,7 +273,7 @@ export class NcWarnings {
 
 // ───────────────────────── 이동 쌓기 ─────────────────────────
 
-function grow<T extends Float64Array | Float32Array | Uint32Array | Int32Array | Uint8Array | Uint16Array>(a: T, n: number): T {
+function grow<T extends Float64Array | Float32Array | Uint32Array | Int32Array | Uint8Array | Uint16Array | Int16Array>(a: T, n: number): T {
   const b = new (a.constructor as new (n: number) => T)(n);
   b.set(a);
   return b;
@@ -278,6 +293,9 @@ export class MoveBuilder {
   flags: Uint16Array;
   wcs: Uint8Array;
   time: Float32Array;
+  modal: Uint16Array;
+  hNum: Int16Array;
+  dNum: Int16Array;
 
   arcCount = 0;
   private arcCap = 64;
@@ -306,6 +324,9 @@ export class MoveBuilder {
     this.flags = new Uint16Array(cap);
     this.wcs = new Uint8Array(cap);
     this.time = new Float32Array(cap);
+    this.modal = new Uint16Array(cap);
+    this.hNum = new Int16Array(cap);
+    this.dNum = new Int16Array(cap);
     this.points[0] = start[0]!;
     this.points[1] = start[1]!;
     this.points[2] = start[2]!;
@@ -343,13 +364,19 @@ export class MoveBuilder {
     this.flags = grow(this.flags, n);
     this.wcs = grow(this.wcs, n);
     this.time = grow(this.time, n);
+    this.modal = grow(this.modal, n);
+    this.hNum = grow(this.hNum, n);
+    this.dNum = grow(this.dNum, n);
     this.cap = n;
   }
 
   /** 이동 하나를 더한다(시작점은 마지막 점). 이동 번호를 돌려준다 */
-  push(kind: number, x: number, y: number, z: number, line: number, tool: number, feed: number, spindle: number, flags: number, wcs: number, arc = -1): number {
+  push(kind: number, x: number, y: number, z: number, line: number, tool: number, feed: number, spindle: number, flags: number, wcs: number, arc = -1, modal = 0, h = -1, d = -1): number {
     this.ensure();
     const i = this.count;
+    this.modal[i] = modal;
+    this.hNum[i] = h;
+    this.dNum[i] = d;
     this.kind[i] = kind;
     this.line[i] = line;
     this.tool[i] = tool;
@@ -424,6 +451,9 @@ export class MoveBuilder {
         flags: this.flags.slice(0, n),
         wcs: this.wcs.slice(0, n),
         time: this.time.slice(0, n),
+        modal: this.modal.slice(0, n),
+        hNum: this.hNum.slice(0, n),
+        dNum: this.dNum.slice(0, n),
       },
       arcs: { count: a, center: this.arcCenter.slice(0, a * 3), plane: this.arcPlane.slice(0, a), sweep: this.arcSweep.slice(0, a) },
       holes: {

@@ -3,7 +3,23 @@
  * 한 번에 문서 하나만 연다. 새 파일을 열면 문서를 통째로 바꾸고, 방언·단위를 바꿔 다시 읽으면 결과만 바꿔 끼운다.
  */
 import type { MeasureResult, Pick3d, Scene3d } from 'opencad-viewer3d';
-import { MOVE_KIND_NAMES, NC_DIALECT_NAMES } from '../model';
+import {
+  FLAG_COMP_LEFT,
+  FLAG_COMP_RIGHT,
+  FLAG_COOLANT,
+  FLAG_CYCLE,
+  FLAG_INVERSE_TIME,
+  FLAG_MACHINE_EST,
+  FLAG_PER_REV,
+  FLAG_TOOL_LENGTH,
+  MODAL_INC,
+  MODAL_PLANE,
+  MODAL_POLAR,
+  MODAL_XF,
+  MOVE_KIND_NAMES,
+  NC_DIALECT_NAMES,
+  PLANE_AXES,
+} from '../model';
 import { sourceLine } from '../text';
 import { idRange } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
@@ -320,13 +336,69 @@ export function statusParts(d: NcDoc): string[] {
 
 const KIND_LABEL: Record<string, string> = { rapid: '급속', feed: '직선 이송', arc: '원호 이송', drill: '드릴' };
 
+/** 공구 이름표: T번호(이름만 있는 공구는 이름) */
+export function toolLabel(nc: Partial<Pick<NcPayload, 'tools'>>, t: number): string {
+  if (t < 0) return '';
+  if (t >= 100000) return nc.tools?.find((x) => x.number === t)?.name ?? `T${t}`;
+  return `T${t}`;
+}
+
 /** 이동 하나의 설명("직선 이송 · T1 · F1200") */
-export function moveSummary(nc: Pick<NcPayload, 'moves'>, i: number): string {
+export function moveSummary(nc: Pick<NcPayload, 'moves'> & Partial<Pick<NcPayload, 'tools'>>, i: number): string {
   if (i < 0 || i >= nc.moves.count) return '';
   const kind = MOVE_KIND_NAMES[nc.moves.kind[i]!] ?? 'feed';
   const tool = nc.moves.tool[i]!;
   const feed = nc.moves.feed[i]!;
-  return `${KIND_LABEL[kind] ?? kind}${tool >= 0 ? ` · T${tool}` : ''}${kind !== 'rapid' && feed > 0 ? ` · F${fmtNum(feed, 1)}` : ''}`;
+  return `${KIND_LABEL[kind] ?? kind}${tool >= 0 ? ` · ${toolLabel(nc, tool)}` : ''}${kind !== 'rapid' && feed > 0 ? ` · F${fmtNum(feed, 1)}` : ''}`;
+}
+
+/** 작업 좌표계 번호 → 이름 */
+export function wcsLabel(idx: number, dialect: string): string {
+  if (idx === 255) return '기계 좌표(G53)';
+  if (idx <= 5) return `G${54 + idx}`;
+  return dialect === 'siemens' ? `G${505 + idx - 6}` : `G54.1 P${idx - 5}`;
+}
+
+/**
+ * 현재 블록(이동 i) 상태 한 덩어리: 끝점 X·Y·Z, 이송·주축·냉각, 공구·H·D, 모달 G(좌표계·G90/G91·평면·보정·이송 꼴·극좌표·변환),
+ * 고정 사이클, 원호(중심·반지름·중심각). 줄마다 하나씩(패널 아래 띠·재생 띠)
+ */
+export function moveState(nc: NcPayload, i: number, units: string): { pos: string; motion: string; modal: string; arc: string } | null {
+  const m = nc.moves;
+  if (i < 0 || i >= m.count) return null;
+  const k = (i + 1) * 3;
+  const u = units ? ` ${units}` : '';
+  const pos = `X ${fmtNum(m.points[k]!)} · Y ${fmtNum(m.points[k + 1]!)} · Z ${fmtNum(m.points[k + 2]!)}${u}`;
+  const fl = m.flags[i]!;
+  const kind = MOVE_KIND_NAMES[m.kind[i]!] ?? 'feed';
+  const sp = m.spindle[i]!;
+  const parts: string[] = [KIND_LABEL[kind] ?? kind];
+  if (kind !== 'rapid' && m.feed[i]! > 0) parts.push(`F${fmtNum(m.feed[i]!, 1)}${fl & FLAG_INVERSE_TIME ? '(G93)' : fl & FLAG_PER_REV ? '(G95)' : ''}`);
+  parts.push(sp > 0 ? `S${Math.round(sp)} M3` : sp < 0 ? `S${Math.round(-sp)} M4` : '주축 정지');
+  if (fl & FLAG_COOLANT) parts.push('냉각');
+  const t = m.tool[i]!;
+  const h = m.hNum[i]!;
+  const dd = m.dNum[i]!;
+  const tl = [t >= 0 ? toolLabel(nc, t) : '공구 없음', fl & FLAG_TOOL_LENGTH ? `G43${h >= 0 ? ` H${h}` : ''}` : '', fl & FLAG_COMP_LEFT ? `G41${dd >= 0 ? ` D${dd}` : ''}` : fl & FLAG_COMP_RIGHT ? `G42${dd >= 0 ? ` D${dd}` : ''}` : ''].filter(Boolean);
+  const md = m.modal[i]!;
+  const g: string[] = [wcsLabel(m.wcs[i]!, nc.dialect), md & MODAL_INC ? 'G91' : 'G90', ['G17', 'G18', 'G19'][md & MODAL_PLANE] ?? 'G17'];
+  if (md & MODAL_POLAR) g.push('G16');
+  if (md & MODAL_XF) g.push('좌표 변환');
+  const cyc = md >> 8;
+  if (fl & FLAG_CYCLE) g.push(cyc ? `G${cyc} 사이클` : '사이클');
+  if (fl & FLAG_MACHINE_EST) g.push('기계 좌표 쪽(추정)');
+  let arc = '';
+  const ai = m.arc[i]!;
+  if (kind === 'arc' && ai >= 0) {
+    const a = nc.arcs;
+    const plane = a.plane[ai]!;
+    const [a0, a1] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
+    const c = [a.center[ai * 3]!, a.center[ai * 3 + 1]!, a.center[ai * 3 + 2]!];
+    const r = Math.hypot(m.points[i * 3 + a0]! - c[a0]!, m.points[i * 3 + a1]! - c[a1]!);
+    const sw = (a.sweep[ai]! * 180) / Math.PI;
+    arc = `중심 ${fmtPt(c)} · R ${fmtNum(r)} · ${sw < 0 ? '시계' : '반시계'} ${fmtNum(Math.abs(sw), 1)}°`;
+  }
+  return { pos, motion: parts.join(' · '), modal: [...tl, ...g].join(' · '), arc };
 }
 
 /**

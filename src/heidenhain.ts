@@ -14,7 +14,7 @@
 import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
-import { FLAG_CYCLE, FLAG_MACHINE, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
+import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
 
 const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
@@ -118,6 +118,11 @@ class HRunner extends NcEmitter {
     this.tol = this.displayInch ? 0.0001 : 0.002;
     this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
     this.feedMode = 94;
+  }
+
+  /** 이동마다 남기는 모달 상태: 작업 평면·좌표 변환(사이클 번호는 200번대라 남기지 않는다) */
+  protected override modalState(): number {
+    return this.plane | (this.outXf ? MODAL_XF : 0);
   }
 
   /** 줄 i부터 블록 하나(~ 이어 쓰기 포함) */

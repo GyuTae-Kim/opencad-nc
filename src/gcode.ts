@@ -23,6 +23,9 @@ import { NcEmitter } from './emitter';
 import {
   FLAG_CYCLE,
   FLAG_MACHINE,
+  MODAL_INC,
+  MODAL_POLAR,
+  MODAL_XF,
   MOVE_DRILL,
   MOVE_FEED,
   MOVE_RAPID,
@@ -1015,6 +1018,11 @@ export class Runner extends NcEmitter {
   }
 
   /** 변환이 평면 plane을 그대로 두는지(원호를 원호로 옮길 수 있는지), 평면 안 방향 부호(거울이면 -1), 평면 안 배율이 고른지 */
+  /** 이동마다 남기는 모달 상태: 평면·G91·G16·좌표 변환·고정 사이클 번호 */
+  protected override modalState(): number {
+    return this.plane | (this.absolute ? 0 : MODAL_INC) | (this.polar ? MODAL_POLAR : 0) | (this.xf ? MODAL_XF : 0) | (Math.round(this.cycle / 10) << 8);
+  }
+
   protected xfPlane(plane: number): { keeps: boolean; sign: number; uniform: boolean } {
     return affinePlane(this.xf, plane);
   }
@@ -1321,6 +1329,7 @@ export class Runner extends NcEmitter {
         case 490:
           this.tlc = false;
           this.rotOff = false;
+          this.hNum = -1;
           break;
         case 540:
         case 550:
@@ -1485,6 +1494,8 @@ export class Runner extends NcEmitter {
     // 안전 확인: 공구 길이 보정 번호(H)·반경 보정 번호(D)가 공구 번호와 다른지(공구 교환 뒤에 본다)
     if (tlcOn) this.noteToolLength(blk.has[7] ? Math.round(blk.val[7]!) : undefined, line);
     if ((this.comp === 1 || this.comp === 2) && blk.has[LD] && !compDirect && this.dialect !== 'siemens') this.checkToolNumber('D', Math.round(blk.val[LD]!), line);
+    // 현재 블록 표시용 D 번호(Siemens는 날 번호 그대로)
+    if (blk.has[LD] && !compDirect) this.dNum = Math.round(blk.val[LD]!);
 
     // 휴지
     if (nonModal === 40) {

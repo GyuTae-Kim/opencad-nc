@@ -111,10 +111,21 @@ export class NcEmitter {
   protected checkSpindle = true;
   private warnedNumber = new Set<string>();
 
+  // ── 이동마다 남기는 모달 상태(화면의 현재 블록 표시) ──
+  /** 켜진 공구 길이 보정 H 번호(-1 = 없음) */
+  protected hNum = -1;
+  /** 켜진 반경 보정 D 번호(-1 = 없음) */
+  protected dNum = -1;
+  /** 모달 상태 비트(MODAL_* + 위 8비트 사이클 G 번호) — 해석기가 덮어쓴다 */
+  protected modalState(): number {
+    return 0;
+  }
+
   /** G43/G44(h = H 번호) — 공구 바꾼 뒤 보정 했음, H≠T면 경고 */
   protected noteToolLength(h: number | undefined, line: number): void {
     this.tlcAny = true;
     this.tlcTool = true;
+    if (h !== undefined) this.hNum = h;
     if (h !== undefined && h !== 0) this.checkToolNumber('H', h, line);
   }
 
@@ -267,7 +278,7 @@ export class NcEmitter {
     if (len < 1e-12) return false;
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
-    const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx);
+    const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx, this.modalState(), this.tlc ? this.hNum : -1, this.comp ? this.dNum : -1);
     const endHigh = this.machHigh;
     if (endHigh !== 0 || this.machLast !== 0) {
       this.mb.flags[i] = this.mb.flags[i]! | FLAG_MACHINE_EST;
@@ -511,6 +522,9 @@ export class NcEmitter {
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const flags = this.flags() | extraFlags | estFlag;
+    const modal = this.modalState();
+    const hN = this.tlc ? this.hNum : -1;
+    const dN = this.comp ? this.dNum : -1;
     if (kind !== MOVE_RAPID && !estFlag) this.safetyCut(line);
     if (this.spindleDir !== 0) this.spindleSeen = true;
     const acc = this.toolAcc();
@@ -542,7 +556,7 @@ export class NcEmitter {
       lx = w[0]!;
       ly = w[1]!;
       lz = w[2]!;
-      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, flags, wcs);
+      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, flags, wcs, -1, modal, hN, dN);
       this.mb.time[i] = t / n;
       acc.moveCount++;
     }

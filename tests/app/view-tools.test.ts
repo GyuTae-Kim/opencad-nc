@@ -129,6 +129,22 @@ describe('공구별 절삭 범위(공구 탭·정보 탭)', () => {
   });
 });
 
+describe('현재 블록 상태', () => {
+  it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.opencadApp!.selectLine(5);
+    const foot = root.querySelector('.panel-foot')!.textContent!;
+    expect(foot).toContain('직선 이송 · F100 · S1000 M3');
+    expect(foot).toContain('T1 · G43 H1 · G54 · G90 · G17');
+    expect(foot).toContain('끝점 X 0 · Y 0 · Z -2 mm');
+    window.opencadApp!.seek(1);
+    const play = root.querySelector<HTMLElement>('.play-state')!;
+    expect(play.hidden).toBe(false);
+    expect(play.textContent).toMatch(/T1 · G43 H1/);
+  });
+});
+
 describe('해석 판단 띠', () => {
   it('선반처럼 보이면 선반으로 읽고 띠를 보이며, "밀링으로 읽기"는 선반을 끄고 다시 읽는다', async () => {
     const { app, root } = makeApp();
