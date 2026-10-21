@@ -1,6 +1,6 @@
 # OpenCAD NC 뷰어 · 해석기
 
-NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에서 읽어 3D 공구 경로로 보여 주는 뷰어 앱과, 그 해석기 라이브러리입니다.
+NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR·WangShi PGI·KDT XML)을 브라우저 안에서 읽어 3D 공구 경로로 보여 주는 뷰어 앱과, 그 해석기 라이브러리입니다.
 해석기는 DOM·WebGL에 기대지 않아 웹 워커에서 돌고, 결과 장면(`Scene3d`)은 [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d)로 그립니다.
 다른 NC 해석 라이브러리를 쓰지 않고 공개 자료만 보고 새로 작성했습니다.
 
@@ -26,6 +26,17 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
   LBL·CALL LBL(구간 반복·부프로그램, 따옴표 표지), Q 변수·FN
 - woodWOP MPR: 공작물, 수직·수평 드릴, 윤곽 가공(KR 둥글리기·KF 모따기 포함), 홈, 포켓, 꺼진 가공, 변수(뒤에 정의된 변수도 풂),
   지원하지 않는 매크로는 위치(XA·YA)만 점으로
+- WangShi PGI(.pgi, 뿌리 `<pgi>`)·KDT XML(.xml, 뿌리 `<KDTPanelFormat>`): 판재 가공 센터(KDT 등) 프로그램. MPR과 같은 판재 가공 모델로 읽습니다.
+  - 판 크기·변수(`<params>`·`<Params>`, 값에 `W-37`·`300+(40)/2` 같은 식), 직사각형이 아닌 판의 외곽선(bulge 호 포함)
+  - 여섯 면 구멍(PGI `direction` z-·z+·x+·x-·y+·y-, XML TypeNo 1·8·2 + Quadrant), 구멍 줄(`no`·`xi`·`yi`·`zi`), 노치 벽 위의 옆면 구멍,
+    공구가 원을 다 채우는 35 mm 도어 컵(T35)
+  - 톱 홈(PGI `line isSaw`, XML 3·13 `UseSaw`)과 직선 경로, 사각 포켓(가운데·최소 모서리, 둥근 모서리·회전, 옆면 포함), 원형 포켓·원 경로,
+    라우팅 경로(PGI bulge — ±1은 들어오는 접선을 잇는 호, XML `<Arc Radius Direction>`, 상대 좌표), 닫힌 empty 경로는 포켓으로
+  - 옆면 높이(PGI `z`·`centerZ`, XML `Z1`)는 아랫면에서 잽니다. 윗면·아랫면 위치는 둘 다 위에서 본 (x, y)입니다.
+  - 꺼진 가공(`enable`·`Enable` 0), 모르는 요소는 위치만 점으로(XML `FlatAnglePull`·`Engraving`은 한국어 이름), 깨진 값은 '해석 실패'로 목록에.
+    문서 순서와 다른 `order`, 그리지 않는 진입 값(`entryL`·`entryZ`·`toolExtraOffset`), 면에서 벗어난 옆면 구멍은 경고로 알립니다.
+  - 형식은 내용(뿌리 요소)으로 정합니다. `.xml`이라도 `<KDTPanelFormat>`이 아니면 G-code로 읽지 않고 알리며, woodWOP MPRX(XML)는 MPR로 저장해 열라고 안내합니다.
+  - XML은 웹 워커에서 돌도록 직접 읽습니다(`src/xml.ts` — 요소마다 원본 줄, DOCTYPE·개체 선언은 풀지 않음, 끊긴 문서는 닫힌 요소까지).
 - 공구 목록(색·지름), 이송·급속 길이, 예상 시간, 줄 번호 ↔ 이동 연결
 - 100만 줄(30MB) G-code를 약 0.5~0.6초에 읽습니다(선택 기능을 켜지 않으면 예전과 같은 경로).
 
@@ -44,7 +55,7 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
      **공구**(색·지름·시간, 켜고 끄기. 줄을 누르면 그 공구의 첫 이동 줄로, 두 번 누르면 그 공구 경로에 맞춰 보기) ·
      **정보**(방언·단위 바꿔 다시 읽기, 보기 선택 — **보정 경로 보기**(구간별 반지름·출처)·**선반 모드**·**회전축 감기**, 이송/급속 길이,
      예상 시간, 묶음 켜고 끄기, 해석 경고)
-   - MPR: **가공**(작업 목록) · **변수** · **코드** · **정보**(꺼진 가공이 있으면 **꺼진 가공도 그리기**)
+   - MPR·PGI·XML: **가공**(작업 목록) · **변수** · **코드** · **정보**(꺼진 가공이 있으면 **꺼진 가공도 그리기**)
    - 재생 막대: 재생/멈춤, ×1·×10·×100, 시간 막대 — 지나간 경로만 진하게 그리고 공구 위치를 표시합니다.
 4. 아래 상태 막대에 형식·단위·파일 크기·이동/선분 수·읽은 시간, 해석 경고 수(누르면 정보 탭)와 고른 것(줄·이동·측정 거리)이 보입니다.
 5. 휴대폰·터치: 폭 760px 미만이거나 휴대폰 가로 화면(손가락 기기에 높이 500px 미만)에서는 도구 막대를 한 줄(전체 보기·표준 뷰·보기 설정·단면·측정·재생·패널)로 줄이고,
@@ -89,11 +100,11 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
 import { loadNcFile } from 'opencad-nc';
 
 const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·확장자로 자동 판별
-// parsed.kind: 'gcode' | 'heidenhain' | 'mpr'
+// parsed.kind: 'gcode' | 'heidenhain' | 'mpr' | 'pgi' | 'xml' (판재 형식은 parsed.part: MprPart)
 // scene: Scene3d (opencad-viewer3d의 Viewer3d.setScene에 넘긴다)
 ```
 
-형식별 함수(`parseGcode`, `parseHeidenhain`, `parseMpr`, `ncToScene`, `mprToScene`)와 확장자 목록(`NC_EXTENSIONS` 등)도 `src/index.ts`에서 내보냅니다.
+형식별 함수(`parseGcode`, `parseHeidenhain`, `parseMpr`, `parsePgi`, `parseKdtXml`, `ncToScene`, `mprToScene`)와 확장자 목록(`NC_EXTENSIONS` 등), `isPanelKind`도 `src/index.ts`에서 내보냅니다.
 
 선택 기능(기본은 모두 꺼짐 — 켜지 않으면 결과가 예전과 같습니다):
 
@@ -114,11 +125,12 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `recent.ts`(최근 문서, IndexedDB), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile` |
-| `src/extensions.ts` | 확장자 목록(`NC_EXTENSIONS` 등 — 화면 코드가 해석기 없이 가져다 쓴다) |
+| `src/extensions.ts` | 확장자 목록(`NC_EXTENSIONS` 등)과 판재 형식 갈래(`isPanelKind`) — 화면 코드가 해석기 없이 가져다 쓴다 |
 | `src/gcode.ts`, `src/expr.ts` | G-code 해석(좌표 변환·선반·회전축 포함)과 변수·식 |
 | `src/comp.ts` | 반경 보정 공구 중심 경로(옮긴 요소, 모서리 교점·호 잇기, 들어가기·나오기) |
 | `src/heidenhain.ts` | Heidenhain 평문 |
-| `src/mpr.ts` | woodWOP MPR |
+| `src/mpr.ts` | woodWOP MPR(판재 가공 모델 `MprPart` — PGI·XML도 이 꼴로 읽는다) |
+| `src/wangs.ts`, `src/xml.ts` | WangShi PGI·KDT XML, 줄 번호를 남기는 작은 XML 읽기 |
 | `src/model.ts`, `src/emitter.ts`, `src/text.ts` | 공통 이동 모델·시간표, 이동 만들기, 원문 줄 |
 | `src/scene.ts`, `src/mesh.ts` | 공구 경로·공작물 → `Scene3d` |
 | `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts`), 가상 목록(`vlist.ts`, `vlist.css`) |

@@ -92,7 +92,7 @@ vi.mock('../../src/app/client', async () => {
       fake.parses++;
       const { parsed, scene } = loadNcFile(name, new Uint8Array(data));
       const out: Record<string, unknown> = { kind: parsed.kind, scene, ms: 1 };
-      if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+      if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
       else out.nc = ncPayload(parsed.program);
       return out;
     }

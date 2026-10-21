@@ -3,6 +3,7 @@
  * 한 번에 문서 하나만 연다. 새 파일을 열면 문서를 통째로 바꾸고, 방언·단위를 바꿔 다시 읽으면 결과만 바꿔 끼운다.
  */
 import type { MeasureResult, Pick3d, Scene3d } from 'opencad-viewer3d';
+import { isPanelKind } from '../extensions';
 import { MOVE_KIND_NAMES, NC_DIALECT_NAMES } from '../model';
 import { sourceLine } from '../text';
 import { idRange } from '../view/playback';
@@ -33,7 +34,7 @@ export interface NcDoc {
   /** 코드 보기에서 고른 줄(-1 없음)과 덧그림으로 강조할 이동 */
   selLine: number;
   selMoves: number[];
-  /** MPR 가공에서 고른 것(가공 번호 글) */
+  /** 판재 가공(MPR·PGI·XML)에서 고른 것(가공 번호 글) */
   selKey: string | null;
   /** 재생 시각(초, null = 전체 경로) */
   playSec: number | null;
@@ -58,7 +59,7 @@ export function createDoc(name: string, size: number, res: ParseResult, ncOption
     selMoves: [],
     selKey: null,
     playSec: null,
-    panelTab: res.kind === 'mpr' ? 'ops' : 'code',
+    panelTab: isPanelKind(res.kind) ? 'ops' : 'code',
   };
 }
 
@@ -83,7 +84,7 @@ export function replaceResult(d: NcDoc, res: ParseResult, opts: NcOpenOptions): 
 
 /** 문서 종류별 패널 탭 */
 export function panelTabs(d: Pick<NcDoc, 'kind'>): [PanelTab, string][] {
-  if (d.kind === 'mpr')
+  if (isPanelKind(d.kind))
     return [
       ['ops', '가공'],
       ['vars', '변수'],
@@ -105,6 +106,8 @@ export function unitLabel(u: Scene3d['units']): string {
 /** 형식 설명(상태 막대·정보) */
 export function docLabel(d: Pick<NcDoc, 'kind' | 'nc' | 'scene'>): string {
   if (d.kind === 'heidenhain') return 'Heidenhain 평문';
+  if (d.kind === 'pgi') return 'WangShi PGI';
+  if (d.kind === 'xml') return 'WangShi XML';
   if (d.kind === 'mpr') {
     const v = (d.scene.meta as { version?: unknown } | undefined)?.version;
     return `woodWOP MPR${typeof v === 'string' && v ? ` ${v}` : ''}`;
@@ -123,7 +126,7 @@ export function sceneCounts(s: Scene3d): { triangles: number; segments: number; 
   return { triangles: Math.round(triangles), segments: Math.round(segments), points: Math.round(points) };
 }
 
-/** MPR 가공 목록(scene.meta.operations) */
+/** 판재 가공 목록(scene.meta.operations — MPR·PGI·XML) */
 export interface MprOpRow {
   index: number;
   kind: string;
@@ -141,7 +144,7 @@ export function mprOps(scene: Scene3d): MprOpRow[] {
   return Array.isArray(ops) ? (ops as MprOpRow[]) : [];
 }
 
-/** MPR 변수(scene.meta.variables) */
+/** 판재 가공 변수(scene.meta.variables) */
 export interface MprVarRow {
   name: string;
   value?: number;
@@ -154,7 +157,7 @@ export function mprVars(scene: Scene3d): MprVarRow[] {
   return Array.isArray(v) ? (v as MprVarRow[]) : [];
 }
 
-/** 줄 i를 품은 MPR 가공(시작 줄이 i 이하인 마지막 가공). 없으면 -1 */
+/** 줄 i를 품은 판재 가공(시작 줄이 i 이하인 마지막 가공). 없으면 -1 */
 export function mprOpAtLine(ops: readonly MprOpRow[], line: number): number {
   let best = -1;
   let bestLine = -1;
@@ -277,7 +280,7 @@ export function statusParts(d: NcDoc): string[] {
   parts.push(formatBytes(d.size));
   const c = sceneCounts(d.scene);
   if (d.nc) parts.push(`이동 ${fmtCount(d.nc.moves.count)}`);
-  else if (d.kind === 'mpr') parts.push(`가공 ${fmtCount(mprOps(d.scene).length)}`);
+  else if (isPanelKind(d.kind)) parts.push(`가공 ${fmtCount(mprOps(d.scene).length)}`);
   if (c.segments) parts.push(`선분 ${fmtCount(c.segments)}`);
   parts.push(`읽기 ${formatMs(d.ms)}`);
   return parts;
@@ -313,7 +316,7 @@ export function selectionSummary(d: NcDoc | null, measuring = false, touch = fal
     const n = d.selMoves.length;
     return n ? `${head} · 이동 ${fmtCount(n)}` : `${head} · 이동 없음`;
   }
-  if (d.kind === 'mpr' && d.selKey !== null) {
+  if (isPanelKind(d.kind) && d.selKey !== null) {
     const op = mprOps(d.scene)[Number(d.selKey)];
     if (op) return `가공 ${op.index + 1} · ${op.label || op.kind}${op.enabled ? '' : ' (꺼짐)'}`;
   }

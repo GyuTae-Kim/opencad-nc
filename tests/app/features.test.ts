@@ -8,7 +8,7 @@ const enc = new TextEncoder();
 function parse(name: string, text: string, scene = {}): ParseResult {
   const { parsed, scene: s } = loadNcFile(name, enc.encode(text), { scene: { nc: scene } });
   const out: ParseResult = { kind: parsed.kind, scene: s, ms: 1 };
-  if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
   else out.nc = ncPayload(parsed.program);
   return out;
 }

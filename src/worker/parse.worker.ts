@@ -1,13 +1,21 @@
 /**
- * NC 해석 워커: G-code·Heidenhain·woodWOP MPR 파일을 화면 밖에서 해석해 Scene3d와 패널 자료로 돌려준다.
+ * NC 해석 워커: G-code·Heidenhain·woodWOP MPR·WangShi PGI·KDT XML 파일을 화면 밖에서 해석해 Scene3d와 패널 자료로 돌려준다.
  * 결과의 형식 배열은 이전 가능한 버퍼로 넘긴다(protocol.ts collectTransfers).
  */
 /// <reference lib="webworker" />
-import { ncParsedToScene, parseNcFile } from '../index';
+import { ncParsedToScene, parseNcFile, type NcFileKind } from '../index';
 import { checkNcInput, ncPayload } from '../app/payload';
 import { collectTransfers, errorText, type ParseRequest, type ParseResponse, type ParseResult } from '../app/protocol';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+
+const READING: Record<NcFileKind, string> = {
+  gcode: 'G-code 읽는 중',
+  heidenhain: 'Heidenhain 프로그램 읽는 중',
+  mpr: 'woodWOP MPR 읽는 중',
+  pgi: 'WangShi PGI 읽는 중',
+  xml: 'WangShi XML 읽는 중',
+};
 
 function post(msg: ParseResponse, transfer: Transferable[] = []): void {
   ctx.postMessage(msg, transfer);
@@ -22,7 +30,7 @@ function open(req: ParseRequest): ParseResult {
   progress(0.05, '파일 확인 중');
   const check = checkNcInput(base, bytes);
   if (!check.ok) throw new Error(check.message);
-  progress(0.15, check.kind === 'mpr' ? 'woodWOP MPR 읽는 중' : check.kind === 'heidenhain' ? 'Heidenhain 프로그램 읽는 중' : 'G-code 읽는 중');
+  progress(0.15, READING[check.kind ?? 'gcode']);
   const o = req.nc ?? {};
   const parsed = parseNcFile(base, bytes, {
     ...(check.kind ? { kind: check.kind } : {}),
@@ -32,7 +40,7 @@ function open(req: ParseRequest): ParseResult {
   const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
-  if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
   else out.nc = ncPayload(parsed.program);
   out.ms = performance.now() - t0;
   return out;

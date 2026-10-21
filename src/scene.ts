@@ -5,14 +5,14 @@
  * 공구별 굵은 선, 구멍 위치는 점. 선분 segmentIds·점 pointIds는 이동 번호(program.moves.line으로 원본 줄을 찾는다).
  * 호는 각도 허용치(기본 5도)로 나눈다. 공작물이 있으면 반투명 상자(group "공작물").
  *
- * mprToScene: 판 상자(반투명), 수직·수평 구멍은 원기둥, 윤곽 가공은 공구 경로 선, 홈은 얇은 상자, 포켓은 상자.
- * meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
+ * mprToScene(MPR·WangShi PGI·KDT XML 공용): 판 상자(반투명), 수직·수평 구멍은 원기둥, 윤곽 가공은 공구 경로 선, 홈은 얇은 상자,
+ * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로). meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
-import type { MprPart } from './mpr';
+import type { MprPart, PanelFace } from './mpr';
 
 export interface NcSceneOptions {
   /** 원호를 나눌 최대 각도(라디안, 기본 5도). 선분 예산을 넘으면 자동으로 키운다 */
@@ -365,8 +365,10 @@ const DRILL_H_COLOR: Rgba = [0.15, 0.35, 0.8, 1];
 const GROOVE_COLOR: Rgba = [0.2, 0.6, 0.3, 0.85];
 const POCKET_COLOR: Rgba = [0.55, 0.3, 0.7, 0.75];
 const CONTOUR_COLOR: Rgba = [0.5, 0.5, 0.5, 1];
+/** 판 면으로 들어가는 방향 */
+const FACE_DIR: Record<PanelFace, readonly [number, number, number]> = { top: [0, 0, -1], bottom: [0, 0, 1], left: [1, 0, 0], right: [-1, 0, 0], front: [0, 1, 0], back: [0, -1, 0] };
 
-/** MPR 가공 모델을 장면으로 */
+/** 판재 가공 모델(MPR·PGI·XML)을 장면으로 */
 export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   const maxAngle = opts.arcAngle ?? Math.PI / 36;
   const meshes: Mesh3d[] = [];
@@ -376,7 +378,16 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   const wp = part.workpiece;
   if (wp) {
     const acc = new MeshAccum();
-    acc.aabb([0, 0, 0], [wp.length, wp.width, wp.thickness]);
+    if (wp.outline && wp.outline.length > 2) {
+      // 직사각형이 아닌 판(PGI·XML 외곽선): 윗면 외곽선을 두께만큼 아래로 민 기둥
+      const seg: number[] = [];
+      tessellatePath(wp.outline.map((q) => ({ ...q, z: wp.thickness })), maxAngle, seg);
+      const ring = seg.slice(0, 3);
+      for (let i = 3; i < seg.length; i += 6) ring.push(seg[i]!, seg[i + 1]!, seg[i + 2]!);
+      acc.prism(ring, [0, 0, -1], wp.thickness);
+      for (let i = 0; i < ring.length; i += 3) extendBox(box, ring[i]!, ring[i + 1]!, 0);
+    }
+    if (acc.isEmpty()) acc.aabb([0, 0, 0], [wp.length, wp.width, wp.thickness]);
     meshes.push({ id: 'mpr-board', name: `판 ${fmt(wp.length)}×${fmt(wp.width)}×${fmt(wp.thickness)}`, ...acc.arrays(), color: BOARD_COLOR, group: '공작물', doubleSided: true });
     extendBox(box, 0, 0, 0);
     extendBox(box, wp.length, wp.width, wp.thickness);
@@ -415,7 +426,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         }
         meshes.push({
           id: `mpr-op-${oi}`,
-          name: `${op.label} Ø${fmt(op.diameter)} 깊이 ${fmt(op.depth)}`,
+          // PGI·XML 이름에는 지름·깊이가 이미 들어 있다
+          name: op.face ? op.label : `${op.label} Ø${fmt(op.diameter)} 깊이 ${fmt(op.depth)}`,
           ...acc.arrays(),
           color: op.kind === 'drillV' ? DRILL_V_COLOR : DRILL_H_COLOR,
           group,
@@ -424,6 +436,17 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       }
       case 'groove':
       case 'pocket': {
+        if (op.prism) {
+          const pr = op.prism;
+          const acc = new MeshAccum();
+          acc.prism(pr.outline, pr.dir, pr.depth);
+          if (acc.isEmpty()) return;
+          meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
+          for (let i = 0; i + 2 < pr.outline.length; i += 3)
+            for (const k of [0, pr.depth])
+              extendBox(box, pr.outline[i]! + pr.dir[0] * k, pr.outline[i + 1]! + pr.dir[1] * k, pr.outline[i + 2]! + pr.dir[2] * k);
+          return;
+        }
         if (!op.box) return;
         const acc = new MeshAccum();
         acc.box(op.box.origin, op.box.u, op.box.v, op.box.w);
@@ -461,8 +484,12 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         const seg: number[] = [];
         tessellatePath(path, maxAngle, seg);
         for (let i = 0; i < seg.length; i += 3) extendBox(box, seg[i]!, seg[i + 1]!, seg[i + 2]!);
-        // 시작·끝의 깊이 표시(윗면에서 경로까지 세로선)
-        if (wp) {
+        // 시작의 깊이 표시(들어가는 면에서 경로까지 선. 면을 모르면(MPR) 윗면에서)
+        if (op.face && op.depth !== undefined && op.depth > 0) {
+          const d = FACE_DIR[op.face];
+          const s0 = path[0]!;
+          seg.push(s0.x - d[0] * op.depth, s0.y - d[1] * op.depth, s0.z - d[2] * op.depth, s0.x, s0.y, s0.z);
+        } else if (wp) {
           const top = wp.thickness;
           const sx = path[0]!.x;
           const sy = path[0]!.y;
@@ -510,6 +537,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
     warnings: part.warnings.slice(),
     meta: {
       kind: 'mpr',
+      format: part.format,
       version: part.version,
       units: part.units,
       workpiece: wp,

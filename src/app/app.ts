@@ -17,7 +17,7 @@
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
 import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
-import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
+import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
@@ -458,7 +458,7 @@ export class NcViewerApp implements PanelHost {
         'div',
         { class: 'start-card' },
         h('h2', {}, 'NC 프로그램을 3D 공구 경로로 봅니다'),
-        h('p', { class: 'lead' }, 'G-code·Heidenhain 평문·woodWOP MPR 파일을 열면 공구 경로를 돌려 보고, 코드 줄과 이동을 함께 짚고, 가공 순서를 재생할 수 있습니다.'),
+        h('p', { class: 'lead' }, 'G-code·Heidenhain 평문·woodWOP MPR·WangShi PGI·XML 파일을 열면 공구 경로를 돌려 보고, 코드 줄과 이동을 함께 짚고, 가공 순서를 재생할 수 있습니다.'),
         zone,
         this.startError,
         this.recentCard,
@@ -468,6 +468,7 @@ export class NcViewerApp implements PanelHost {
           fmt('G-code', GCODE_EXTENSIONS, 'ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별, 원호·나선, 고정 사이클, 부프로그램, 변수, 좌표 회전·배율·거울, 반경 보정 경로·선반·회전축(선택)'),
           fmt('Heidenhain 평문', HEIDENHAIN_EXTENSIONS, 'BLK FORM 공작물, TOOL CALL, L·C·CR·CT·FK, 드릴·포켓 사이클, Q 변수'),
           fmt('woodWOP MPR', MPR_EXTENSIONS, '판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 변수'),
+          fmt('WangShi PGI · XML', [...PGI_EXTENSIONS, ...XML_EXTENSIONS], '판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수'),
         ),
         h('p', { class: 'privacy', html: `${icon('lock')}<span><b>파일은 이 브라우저 밖으로 나가지 않습니다.</b> 서버로 올리지 않고 이 기기 안에서 읽습니다.</span>` }),
         h('p', { class: 'keys fine-only' }, '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Esc 고른 것 지우기 · Ctrl+O 열기'),
@@ -1080,11 +1081,11 @@ export class NcViewerApp implements PanelHost {
       this.selectLine(line, move >= 0 ? [move] : [], true);
       return;
     }
-    if (d.kind === 'mpr' && /^mpr-op-\d+$/.test(p.id)) {
+    if (isPanelKind(d.kind) && /^mpr-op-\d+$/.test(p.id)) {
       this.selectMprOp(Number(p.id.slice(7)), true);
       return;
     }
-    if (d.kind === 'mpr' && (p.id === 'mpr-hole-centers' || p.id === 'mpr-other-pos')) {
+    if (isPanelKind(d.kind) && (p.id === 'mpr-hole-centers' || p.id === 'mpr-other-pos')) {
       this.selectMprOp(p.index, true);
       return;
     }
@@ -1514,7 +1515,7 @@ export class NcViewerApp implements PanelHost {
       lines: d ? (d.nc?.source.lineCount ?? d.mpr?.lines.length ?? 0) : 0,
       segments: c?.segments ?? 0,
       tools: d?.nc?.tools.length ?? 0,
-      operations: d && d.kind === 'mpr' ? mprOps(d.scene).length : 0,
+      operations: d && isPanelKind(d.kind) ? mprOps(d.scene).length : 0,
       warnings: d?.scene.warnings?.length ?? 0,
       error: this.error,
       panelOpen: this.panelOpen && !!d,
