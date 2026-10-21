@@ -7,6 +7,7 @@
  * - 회전축 감기(setRotary): A·B·C 각을 축 둘레로 감아 공작물 기준 공구 끝 경로를 만든다(각이 바뀌는 이동은 잘게 나눈다).
  */
 import type { Box3 } from 'opencad-viewer3d/types';
+import { affinePlane, applyAffine, invertAffine, isIdentityAffine, type Affine } from './affine';
 import {
   FLAG_COMP_LEFT,
   FLAG_COMP_RIGHT,
@@ -151,8 +152,54 @@ export class NcEmitter {
     return t;
   }
 
+  // ── 출력 변환(Heidenhain 좌표 변환 사이클 8·10·11·26): this.pos는 변환 전 좌표, 쌓는 점은 변환 뒤 ──
+  protected outXf: Affine | null = null;
+  private outInv: Affine | null = null;
+
+  /** 출력 변환을 바꾼다. 지금 공구 자리(화면)는 그대로 두고 변환 전 좌표를 새 변환으로 다시 셈한다 */
+  protected setOutXf(m: Affine | null): void {
+    const d = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+    if (this.outXf) applyAffine(this.outXf, this.pos, d);
+    const inv = m && !isIdentityAffine(m) ? invertAffine(m) : null;
+    this.outXf = inv ? m : null;
+    this.outInv = inv;
+    if (inv) applyAffine(inv, d, this.pos);
+    else this.pos.set(d);
+  }
+
+  /** 변환 전 좌표 → 쌓는(화면) 좌표 */
+  protected outPoint(p: ArrayLike<number>): number[] {
+    const d = [p[0]!, p[1]!, p[2]!];
+    if (this.outXf) applyAffine(this.outXf, d, d);
+    return d;
+  }
+
+  /** 출력 변환 중의 이동: 화면 좌표로 바꿔 보통 길로 쌓고, 지금 자리는 변환 전 좌표로 둔다 */
+  private emitOut(kind: number, x: number, y: number, z: number, line: number, extraFlags: number, arcIdx: number, arcLen: number): boolean {
+    const xf = this.outXf!;
+    const prog = [x, y, z];
+    const p = this.pos;
+    const first = this.known !== 7 && this.mb.count === 0;
+    if (first) for (let a = 0; a < 3; a++) if (!(this.known & (1 << a))) p[a] = prog[a]!;
+    const s = [0, 0, 0];
+    const e = [0, 0, 0];
+    applyAffine(xf, p, s);
+    applyAffine(xf, prog, e);
+    if (first) this.mb.setLast(s[0]!, s[1]!, s[2]!);
+    const known = this.known;
+    this.outXf = null;
+    this.known = 7;
+    p.set(s);
+    const ok = this.emit(kind, e[0]!, e[1]!, e[2]!, line, extraFlags, arcIdx, arcLen);
+    this.outXf = xf;
+    this.known = known;
+    p.set(prog);
+    return ok;
+  }
+
   /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다 */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
+    if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     const p = this.pos;
     if (this.known !== 7 && this.mb.count === 0) {
@@ -225,6 +272,17 @@ export class NcEmitter {
   protected machineRetract(mask: number, line: number, kind = MOVE_RAPID): number {
     const safe = mask & this.machSafeAxes;
     if (!safe) return mask;
+    if (this.outXf) {
+      // 기계 좌표는 좌표 변환 밖: 화면 좌표에서 물러나고 지금 자리를 변환 전 좌표로 되돌린다
+      const xf = this.outXf;
+      const inv = this.outInv!;
+      applyAffine(xf, this.pos, this.pos);
+      this.outXf = null;
+      const r = this.machineRetract(mask, line, kind);
+      this.outXf = xf;
+      applyAffine(inv, this.pos, this.pos);
+      return r;
+    }
     const t = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const margin = this.displayInch ? 1 : 25;
     for (let a = 0; a < 3; a++) {
@@ -257,11 +315,40 @@ export class NcEmitter {
 
   /** 호 이동: 중심 c(xyz, 직선 축 값은 시작점), 부호 있는 중심각 */
   protected emitArc(plane: number, c: readonly number[], sweep: number, x: number, y: number, z: number, line: number, extraFlags = 0): void {
+    if (this.outXf) return this.emitArcOut(plane, c, sweep, x, y, z, line, extraFlags);
     const s = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const e = [x, y, z];
     const idx = this.mb.pushArc(c[0]!, c[1]!, c[2]!, plane, sweep);
     const len = arcLength(s, e, c, plane, sweep);
     if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.mb.arcCount--;
+  }
+
+  /** 출력 변환 중의 호: 평면을 지키면 중심·방향을 옮긴 호로, 아니면 직선 조각으로 */
+  private emitArcOut(plane: number, c: readonly number[], sweep: number, x: number, y: number, z: number, line: number, extraFlags: number): void {
+    const xf = this.outXf!;
+    const info = affinePlane(xf, plane);
+    const s = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+    const e = [x, y, z];
+    if (!info.keeps) {
+      this.w.add('좌표 변환 평면과 다른 평면의 원호는 직선 조각으로 그림', line);
+      const pts: number[] = [];
+      const n = arcPoints(s, e, c, plane, sweep, Math.PI / 36, pts);
+      for (let k = 0; k < n; k++) this.emit(MOVE_FEED, pts[k * 3]!, pts[k * 3 + 1]!, pts[k * 3 + 2]!, line, extraFlags);
+      return;
+    }
+    if (!info.uniform) this.w.add('축마다 다른 배율의 원호는 타원 대신 반지름이 바뀌는 호로 그림', line);
+    const sd = this.outPoint(s);
+    const ed = this.outPoint(e);
+    const cd = this.outPoint(c);
+    const sw = sweep * info.sign;
+    const idx = this.mb.pushArc(cd[0]!, cd[1]!, cd[2]!, plane, sw);
+    const len = arcLength(sd, ed, cd, plane, sw);
+    if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.mb.arcCount--;
+  }
+
+  /** 구멍(드릴 사이클) — 출력 변환 중이면 옮겨서 */
+  protected pushHoleOut(top: ArrayLike<number>, bottom: ArrayLike<number>, line: number, cycle: number, first: number): void {
+    this.mb.pushHole(this.outPoint(top), this.outPoint(bottom), line, this.tool, cycle, first);
   }
 
   // ───────────────────────── 회전축 감기 ─────────────────────────

@@ -8,8 +8,10 @@
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
  * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프.
  * 근사: RND·CHF는 모서리 그대로, APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
- * 지원하지 않음: PLANE·회전·대칭·배율 사이클, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF, CALL PGM(경고).
+ * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
+ * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF(경고).
  */
+import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
 import { FLAG_CYCLE, FLAG_MACHINE, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
@@ -50,6 +52,12 @@ interface HBlock {
 class HRunner extends NcEmitter {
   private o: HeidenhainOptions;
   private plane: NcPlane = 0;
+  // 좌표 변환 사이클: 8 대칭(축별 ±1)·10 회전(도, 작업 평면)·11 배율·26 축별 배율(중심) — 원점(cycle 7) 둘레
+  private mirror = [1, 1, 1];
+  private rotDeg = 0;
+  private scaleF = 1;
+  private scale26 = [1, 1, 1];
+  private center26 = [0, 0, 0];
   private cc: [number, number] | null = null;
   private lastDir: [number, number] | null = null;
   private dr = 1;
@@ -228,6 +236,7 @@ class HRunner extends NcEmitter {
       this.w.add('FSELECT(FK 해 고르기)는 무시함 — 한 블록으로 정해지는 해만 그림', line);
       return;
     }
+    if (t0 === 'TRANS') return this.transDatum(T, line);
     if (t0 === 'RND' || t0 === 'CHF') {
       this.w.add(`${t0}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, line);
       return;
@@ -357,6 +366,70 @@ class HRunner extends NcEmitter {
           const v = this.value(m[3]!);
           this.shift[a] = m[1] ? this.shift[a]! + v : v;
         }
+        this.updateXf();
+        return;
+      }
+      if (major === 8) {
+        // 대칭: 8.1 X Y(대칭할 축, 없으면 끔)
+        if (sub === 1) {
+          this.mirror = [1, 1, 1];
+          for (const w of T.slice(3)) {
+            const a = AXES.indexOf(w.toUpperCase().replace(/^I/, ''));
+            if (a >= 0) this.mirror[a] = -1;
+          }
+          this.updateXf();
+        }
+        return;
+      }
+      if (major === 10) {
+        // 회전: 10.1 ROT+45(IROT는 더하기). 지금 작업 평면에서 원점 둘레
+        if (sub === 1) {
+          const tok = T.slice(3).join('').toUpperCase();
+          const m = /^(I?)ROT([-+]?.+)$/.exec(tok);
+          if (m) {
+            const v = this.value(m[2]!);
+            this.rotDeg = m[1] ? this.rotDeg + v : v;
+            this.updateXf();
+          }
+        }
+        return;
+      }
+      if (major === 11) {
+        // 배율: 11.1 SCL 0.75
+        if (sub === 1) {
+          const tok = T.slice(3).join('').toUpperCase();
+          const m = /^SCL([-+]?.+)$/.exec(tok);
+          if (m) {
+            const v = this.value(m[1]!);
+            if (v > 0) this.scaleF = v;
+            this.updateXf();
+          }
+        }
+        return;
+      }
+      if (major === 26) {
+        // 축별 배율: 26.1 X1.4 Y0.6 CCX+15 CCY+20
+        if (sub === 1) {
+          this.scale26 = [1, 1, 1];
+          this.center26 = [0, 0, 0];
+          for (const w of T.slice(3)) {
+            let m = /^CC([XYZ])(.+)$/i.exec(w);
+            if (m) {
+              this.center26[AXES.indexOf(m[1]!.toUpperCase())] = this.value(m[2]!);
+              continue;
+            }
+            m = /^([XYZ])(.+)$/i.exec(w);
+            if (m) {
+              const v = this.value(m[2]!);
+              if (v > 0) this.scale26[AXES.indexOf(m[1]!.toUpperCase())] = v;
+            }
+          }
+          this.updateXf();
+        }
+        return;
+      }
+      if (major === 19) {
+        if (sub === 0) this.w.add('CYCL DEF 19(기울인 작업 평면)은 지원하지 않음(변환 없이 그림)', line);
         return;
       }
       if (major === 1 || major === 2 || major === 17) {
@@ -366,10 +439,6 @@ class HRunner extends NcEmitter {
           const key = ['', 'O1', 'O2', 'O3', 'O4', 'O5'][sub];
           if (key) this.q.set('OLD' + key, v);
         }
-        return;
-      }
-      if (major === 8 || major === 10 || major === 11 || major === 26 || major === 19) {
-        if (sub === 0) this.w.add(`CYCL DEF ${major}(대칭·회전·배율·기울인 평면)은 지원하지 않음`, line);
         return;
       }
       if (sub === 0) this.w.add(`CYCL DEF ${major}은 지원하지 않음`, line);
@@ -384,6 +453,45 @@ class HRunner extends NcEmitter {
     if (major === 220 || major === 221) return this.patternCycle(major, line);
     this.cycle = { n: major, ok: false };
     this.w.add(`CYCL DEF ${num}은 지원하지 않음(호출해도 그리지 않음)`, line);
+  }
+
+  /**
+   * 좌표 변환(8 대칭·10 회전·11/26 배율)을 원점 이동(7·TRANS DATUM) 둘레의 출력 변환으로:
+   * 화면 = 원점 + M(R(S(p - 원점))) — 원점 이동 → 대칭 → 회전 → 배율 차례(Heidenhain)
+   */
+  private updateXf(): void {
+    const sh = this.shift;
+    const s = this.scaleF;
+    let L = composeAffine(diagAbout(ZERO3, this.mirror), rotAbout(ZERO3, this.rotDeg, this.plane));
+    L = composeAffine(L, composeAffine(diagAbout(ZERO3, [s, s, s]), diagAbout(this.center26, this.scale26)));
+    if (isIdentityAffine(L)) {
+      this.setOutXf(null);
+      return;
+    }
+    this.setOutXf(composeAffine(composeAffine(translateAffine(sh), L), translateAffine([-sh[0]!, -sh[1]!, -sh[2]!])));
+  }
+
+  /** TRANS DATUM AXIS X… Y…(원점 이동)·TRANS DATUM RESET */
+  private transDatum(T: string[], line: number): void {
+    const what = (T[2] ?? '').toUpperCase();
+    if ((T[1] ?? '').toUpperCase() !== 'DATUM') {
+      this.w.add(`${T.slice(0, 2).join(' ')} 블록은 지원하지 않음`, line);
+      return;
+    }
+    if (what === 'RESET') this.shift = [0, 0, 0];
+    else if (what === 'AXIS') {
+      for (const w of T.slice(3)) {
+        const m = /^(I?)([XYZ])(.+)$/i.exec(w);
+        if (!m) continue;
+        const a = AXES.indexOf(m[2]!.toUpperCase());
+        const v = this.value(m[3]!);
+        this.shift[a] = m[1] ? this.shift[a]! + v : v;
+      }
+    } else {
+      this.w.add(`TRANS DATUM ${what}(원점 표)는 읽지 않음`, line);
+      return;
+    }
+    this.updateXf();
   }
 
   /** 지금 위치에서 드릴 사이클 실행 */
@@ -466,7 +574,7 @@ class HRunner extends NcEmitter {
       top[da] = rD;
       const bottom = [top[0]!, top[1]!, top[2]!];
       bottom[da] = zD;
-      this.mb.pushHole(top, bottom, line, this.tool, c.n, first);
+      this.pushHoleOut(top, bottom, line, c.n, first);
     }
     this.feed = saveFeed;
   }

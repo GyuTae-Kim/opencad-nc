@@ -411,7 +411,7 @@ class SiemensRunner extends Runner {
       case 'MIRROR':
       case 'AMIRROR':
         sc.eatWord(kw);
-        return this.sFrame(kw, sc, line);
+        return this.sFrame(kw, sc);
       case 'MCALL':
         sc.eatWord('MCALL');
         return this.sMcall(sc, line);
@@ -836,7 +836,7 @@ class SiemensRunner extends Runner {
     this.rebuildXf();
   }
 
-  private sFrame(kw: string, sc: Scan, line: number): void {
+  private sFrame(kw: string, sc: Scan): void {
     const vals: (number | undefined)[] = [undefined, undefined, undefined];
     let rpl: number | undefined;
     while (!sc.end()) {
@@ -873,7 +873,6 @@ class SiemensRunner extends Runner {
           if (vals[0]) m = composeAffine(rotAbout(ZERO3, vals[0], 2), m);
           if (vals[1]) m = composeAffine(rotAbout(ZERO3, vals[1], 1), m);
           if (vals[2]) m = composeAffine(rotAbout(ZERO3, vals[2], 0), m);
-          if (vals[0] || vals[1]) this.w.add(`${kw} X·Y(평면 밖 회전) — 원호는 직선 조각, 드릴 사이클은 공구 축 방향을 바꾸지 않고 그림`, line);
         }
         break;
       }
@@ -1361,10 +1360,19 @@ class SiemensRunner extends Runner {
       c = Math.round(a[11] ?? 1) === 0 ? 730 : 830;
     }
     this.retractR = false;
-    this.initLevel = this.level(rtp, da);
-    const rD = this.level(rfp + up * sdis, da);
-    const zD = this.level(dp, da);
-    this.drillAt(c, p0, p1, da, this.pos[p0]!, this.pos[p1]!, rD, zD, line);
+    if (!this.xfPlane(this.plane).keeps) {
+      // 기울인 프레임(ROT X/Y): 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다(공구 축도 기운다)
+      const q = this.progPos();
+      const saveInit = this.initLevelProg;
+      this.initLevelProg = rtp;
+      this.drillAt(c, p0, p1, da, q[p0]!, q[p1]!, rfp + up * sdis, dp, line, (v) => this.toDisplay(v, v));
+      this.initLevelProg = saveInit;
+    } else {
+      this.initLevel = this.level(rtp, da);
+      const rD = this.level(rfp + up * sdis, da);
+      const zD = this.level(dp, da);
+      this.drillAt(c, p0, p1, da, this.pos[p0]!, this.pos[p1]!, rD, zD, line);
+    }
     this.peckFirstExtra = 0;
     [this.cq, this.cp, this.cqI, this.cqJ, this.cqK] = [saveQ[0], saveQ[1], saveQ[2], saveQ[3], saveQ[4]];
     this.retractR = !!saveQ[5];

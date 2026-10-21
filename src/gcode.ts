@@ -17,6 +17,7 @@
  * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
+import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
 import { ExprError, GExpr, type GVarRef } from './expr';
 import { NcEmitter } from './emitter';
 import {
@@ -528,73 +529,7 @@ interface Frame {
   backLine?: number;
 }
 
-/** 3×4 아핀 변환(행 우선 3×3 + 이동 3) */
-export type Affine = Float64Array;
-
-export function affine(m: number[], t: number[]): Affine {
-  return new Float64Array([...m, ...t]);
-}
-/** a∘b(b를 먼저) */
-export function composeAffine(a: Affine, b: Affine): Affine {
-  const o = new Float64Array(12);
-  for (let i = 0; i < 3; i++) {
-    for (let j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3]! * b[j]! + a[i * 3 + 1]! * b[3 + j]! + a[i * 3 + 2]! * b[6 + j]!;
-    o[9 + i] = a[i * 3]! * b[9]! + a[i * 3 + 1]! * b[10]! + a[i * 3 + 2]! * b[11]! + a[9 + i]!;
-  }
-  return o;
-}
-export function invertAffine(a: Affine): Affine | null {
-  const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = a as unknown as number[];
-  const c0 = m4! * m8! - m5! * m7!;
-  const c1 = m5! * m6! - m3! * m8!;
-  const c2 = m3! * m7! - m4! * m6!;
-  const det = m0! * c0 + m1! * c1 + m2! * c2;
-  if (Math.abs(det) < 1e-15) return null;
-  const inv = [
-    c0 / det,
-    (m2! * m7! - m1! * m8!) / det,
-    (m1! * m5! - m2! * m4!) / det,
-    c1 / det,
-    (m0! * m8! - m2! * m6!) / det,
-    (m2! * m3! - m0! * m5!) / det,
-    c2 / det,
-    (m1! * m6! - m0! * m7!) / det,
-    (m0! * m4! - m1! * m3!) / det,
-  ];
-  const t = [0, 1, 2].map((i) => -(inv[i * 3]! * a[9]! + inv[i * 3 + 1]! * a[10]! + inv[i * 3 + 2]! * a[11]!));
-  return affine(inv, t);
-}
-export function applyAffine(a: Affine, p: ArrayLike<number>, out: number[] | Float64Array): void {
-  const x = p[0]!;
-  const y = p[1]!;
-  const z = p[2]!;
-  out[0] = a[0]! * x + a[1]! * y + a[2]! * z + a[9]!;
-  out[1] = a[3]! * x + a[4]! * y + a[5]! * z + a[10]!;
-  out[2] = a[6]! * x + a[7]! * y + a[8]! * z + a[11]!;
-}
-/** 중심 c에 대한 축별 배율(거울은 -1) */
-export function diagAbout(c: number[], f: number[]): Affine {
-  return affine([f[0]!, 0, 0, 0, f[1]!, 0, 0, 0, f[2]!], [c[0]! * (1 - f[0]!), c[1]! * (1 - f[1]!), c[2]! * (1 - f[2]!)]);
-}
-/** 평면 plane에서 중심 c 둘레 deg도 회전(평면 법선 기준 반시계 +) */
-export function rotAbout(c: number[], deg: number, plane: number): Affine {
-  const [a0, a1, a2] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
-  const t = (deg * Math.PI) / 180;
-  const m = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-  m[a0 * 3 + a0] = Math.cos(t);
-  m[a0 * 3 + a1] = -Math.sin(t);
-  m[a1 * 3 + a0] = Math.sin(t);
-  m[a1 * 3 + a1] = Math.cos(t);
-  m[a2 * 3 + a2] = 1;
-  const r = affine(m, [0, 0, 0]);
-  const rc = [0, 0, 0];
-  applyAffine(r, c, rc);
-  r[9] = c[0]! - rc[0]!;
-  r[10] = c[1]! - rc[1]!;
-  r[11] = c[2]! - rc[2]!;
-  return r;
-}
-export const ZERO3 = [0, 0, 0];
+export { affine, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, ZERO3, type Affine } from './affine';
 
 const MAX_CALL_DEPTH = 64;
 
@@ -761,8 +696,10 @@ export class Runner extends NcEmitter {
   protected scaleXf: { c: number[]; f: number[] } | null = null;
   protected rotXf: { c: number[]; deg: number; plane: NcPlane } | null = null;
   protected wcsRot = new Map<number, number>();
-  /** 가장 바깥 변환(Siemens 프레임·G68.2) — 프로그램 좌표 → 작업 좌표 */
+  /** 가장 바깥 변환(Siemens 프레임) — 프로그램 좌표 → 작업 좌표 */
   protected progXf: Affine | null = null;
+  /** G68.2·Haas G268 기울인 작업 평면(G68 회전 등 바깥) */
+  protected tiltXf: Affine | null = null;
   protected xf: Affine | null = null;
   protected xfInv: Affine | null = null;
   protected pp = new Float64Array(3);
@@ -1059,6 +996,7 @@ export class Runner extends NcEmitter {
     const wr = this.wcsRot.get(this.wcs);
     if (wr) put(rotAbout(ZERO3, wr, 0));
     // 가장 바깥: Siemens 프로그램 프레임(TRANS·ROT·SCALE·MIRROR)·G68.2 기울인 평면
+    if (this.tiltXf) put(this.tiltXf);
     if (this.progXf) put(this.progXf);
     this.xf = m;
     this.xfInv = m ? invertAffine(m) : null;
@@ -1070,16 +1008,7 @@ export class Runner extends NcEmitter {
 
   /** 변환이 평면 plane을 그대로 두는지(원호를 원호로 옮길 수 있는지), 평면 안 방향 부호(거울이면 -1), 평면 안 배율이 고른지 */
   protected xfPlane(plane: number): { keeps: boolean; sign: number; uniform: boolean } {
-    const m = this.xf;
-    if (!m) return { keeps: true, sign: 1, uniform: true };
-    const [a0, a1, a2] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
-    const e = (i: number, j: number): number => m[i * 3 + j]!;
-    const keeps = Math.abs(e(a2, a0)) < 1e-12 && Math.abs(e(a2, a1)) < 1e-12 && Math.abs(e(a0, a2)) < 1e-12 && Math.abs(e(a1, a2)) < 1e-12;
-    const det = e(a0, a0) * e(a1, a1) - e(a0, a1) * e(a1, a0);
-    const c0 = Math.hypot(e(a0, a0), e(a1, a0));
-    const c1 = Math.hypot(e(a0, a1), e(a1, a1));
-    const dotc = e(a0, a0) * e(a0, a1) + e(a1, a0) * e(a1, a1);
-    return { keeps, sign: det < 0 ? -1 : 1, uniform: Math.abs(c0 - c1) < 1e-9 * Math.max(1, c0) && Math.abs(dotc) < 1e-9 };
+    return affinePlane(this.xf, plane);
   }
 
   /** G51(배율) — Fanuc: X·Y·Z 중심(없으면 지금 위치), P 모든 축 또는 I·J·K 축별. Mach3: X·Y·Z가 축별 배율 */
@@ -1149,6 +1078,28 @@ export class Runner extends NcEmitter {
     else this.w.add('G68에 각도 R이 없어 0도로 봄', line);
     if (!this.absolute && this.rotXf && this.rotXf.plane === plane) deg += this.rotXf.deg;
     this.rotXf = deg === 0 ? null : { c, deg, plane };
+    this.rebuildXf();
+  }
+
+  /**
+   * G68.2(Fanuc)·G268(Haas) 기울인 작업 평면: X·Y·Z = 피처 좌표계 원점(지금 프로그램 좌표), I·J·K = 오일러 각(도).
+   * P0(기본)·Haas Q313 = Z-X-Z, Fanuc P1·Haas Q123 = X-Y-Z(고정 축 롤·피치·요). 그 밖은 경고하고 변환 없이.
+   * 이후 블록의 좌표(원호·고정 사이클 포함)는 이 평면에서 읽는다. G69로 끈다
+   */
+  protected g682(blk: Block, line: number): void {
+    const o = [0, 1, 2].map((a) => (blk.has[AXIS_LETTER[a]!] ? blk.val[AXIS_LETTER[a]!]! * this.axScale[a]! : 0));
+    const ang = [LI, LJ, LK].map((L) => (blk.has[L] ? blk.val[L]! : 0));
+    const haas = this.dialect === 'haas';
+    const p = blk.has[LP] ? Math.round(blk.val[LP]!) : 0;
+    const q = blk.has[LQ] ? Math.round(blk.val[LQ]!) : haas ? 313 : 0;
+    let r: Affine;
+    if ((!haas && p === 0) || (haas && q === 313)) r = composeAffine(composeAffine(rotAxis(2, ang[0]!), rotAxis(0, ang[1]!)), rotAxis(2, ang[2]!));
+    else if ((!haas && p === 1) || (haas && q === 123)) r = composeAffine(composeAffine(rotAxis(2, ang[2]!), rotAxis(1, ang[1]!)), rotAxis(0, ang[0]!));
+    else {
+      this.w.add(`G68.2 꼴(P${p}${haas ? ` Q${q}` : ''})은 지원하지 않음 — 변환 없이 그림`, line);
+      return;
+    }
+    this.tiltXf = composeAffine(translateAffine(o), r);
     this.rebuildXf();
   }
 
@@ -1293,10 +1244,22 @@ export class Runner extends NcEmitter {
           }
           break;
         case 690:
-          if (this.rotXf) {
+          // G69: 좌표 회전과 기울인 평면(G68.2·Haas G268 대신 G269)을 끈다
+          if (this.rotXf || this.tiltXf) {
             this.rotXf = null;
+            this.tiltXf = null;
             this.rebuildXf();
           }
+          break;
+        case 2690:
+          if (this.dialect === 'haas' && this.tiltXf) {
+            this.tiltXf = null;
+            this.rebuildXf();
+          }
+          break;
+        case 531:
+        case 532:
+          // G53.1·G53.6 공구 축을 기울인 평면에 맞춤 — 공구 끝 경로는 그대로
           break;
         case 530:
           machine = true;
@@ -1424,8 +1387,16 @@ export class Runner extends NcEmitter {
           }
           break;
         case 682:
-          this.w.add('G68.2 기울인 작업 평면은 지원하지 않음(변환 없이 그림)', line);
-          unknownG = g;
+          // G68.2 기울인 작업 평면: 이 블록의 X·Y·Z·I·J·K는 원점과 각(이동이 아니다)
+          nonModal = 682;
+          break;
+        case 2680:
+          // Haas G268(기울인 평면 — G68.2와 같은 꼴, Q는 오일러 차례)
+          if (this.dialect === 'haas') nonModal = 682;
+          else {
+            this.w.add('지원하지 않는 G268', line);
+            if (unknownG < 0) unknownG = g;
+          }
           break;
         case 90:
         case 620:
@@ -1562,6 +1533,9 @@ export class Runner extends NcEmitter {
         return this.endBlock(blk, line);
       case 680:
         this.g68(blk, line);
+        return this.endBlock(blk, line);
+      case 682:
+        this.g682(blk, line);
         return this.endBlock(blk, line);
       case 280:
       case 300: {
@@ -1988,11 +1962,18 @@ export class Runner extends NcEmitter {
       const zP = this.absolute ? this.cz : rP + this.cz;
       const top = [0, 0, 0];
       const bot = [0, 0, 0];
+      // 공구 축이 기울면(G68.2·Siemens ROT X/Y) 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다
+      const tilted = !this.xfPlane(cp).keeps;
+      const map = (v: number[]): void => this.toDisplay(v, v);
       for (let k = 0; k < reps; k++) {
         if (k > 0 && this.polarAgain) this.polarAgain();
         const q = Array.from(this.progPos());
         if (blk.has[L0]) q[p0] = this.incAxis(blk, p0) ? q[p0]! + blk.val[L0]! * s0 : blk.val[L0]! * s0;
         if (blk.has[L1]) q[p1] = this.incAxis(blk, p1) ? q[p1]! + blk.val[L1]! * s1 : blk.val[L1]! * s1;
+        if (tilted) {
+          this.drillAt(code, p0, p1, da, q[p0]!, q[p1]!, rP, zP, line, map);
+          continue;
+        }
         q[da] = rP;
         this.toDisplay(q, top);
         q[da] = zP;
@@ -2026,24 +2007,34 @@ export class Runner extends NcEmitter {
     this.known = 7;
   }
 
-  protected drillAt(code: number, p0: number, p1: number, da: number, x: number, y: number, rD: number, zD: number, line: number): void {
+  /**
+   * 구멍 하나(고정 사이클 몸통). 위치·높이는 표시 좌표, map을 주면 프로그램 좌표(기울인 평면 — 점마다 map으로 표시 좌표로 옮긴다)
+   */
+  protected drillAt(code: number, p0: number, p1: number, da: number, x: number, y: number, rD: number, zD: number, line: number, map?: (q: number[]) => void): void {
     const up = rD >= zD ? 1 : -1;
-    const clear = this.retractR ? rD : up * (this.initLevel - rD) > 0 ? this.initLevel : rD;
+    const init = map ? this.initLevelProg : this.initLevel;
+    const clear = this.retractR ? rD : up * (init - rD) > 0 ? init : rD;
+    // 지금 자리(작업 공간 — map이 있으면 프로그램 좌표)
+    const cur = map ? Array.from(this.progPos()) : [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const pt = [0, 0, 0];
-    const go = (kind: number, depth: number, px = this.pos[p0]!, py = this.pos[p1]!): void => {
-      pt[p0] = px;
-      pt[p1] = py;
-      pt[da] = depth;
+    const go = (kind: number, depth: number, px = cur[p0]!, py = cur[p1]!): void => {
+      cur[p0] = px;
+      cur[p1] = py;
+      cur[da] = depth;
+      pt[0] = cur[0]!;
+      pt[1] = cur[1]!;
+      pt[2] = cur[2]!;
+      if (map) map(pt);
       this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
     };
     // 컨트롤러처럼: 지금 높이에서 구멍 자리로 옮긴 뒤 R 점으로(지금 높이가 R보다 낮으면 낮은 채 옮겨 간다 — 실제 위험을 숨기지 않게)
-    go(MOVE_RAPID, this.pos[da]!, x, y);
+    go(MOVE_RAPID, cur[da]!, x, y);
     // 뒤 보링(Fanuc 밀링 G87·Haas G77): 시프트한 자리에서 구멍 아래(R)로 내려간다
     const backBore = !this.lathe && ((code === 870 && this.dialect !== 'haas') || (code === 770 && this.dialect === 'haas'));
-    const [sx, sy] = this.cShiftD;
+    const [sx, sy] = map ? this.cShift : this.cShiftD;
     if (backBore) {
       this.noteShift(line);
-      go(MOVE_RAPID, this.pos[da]!, x + sx, y + sy);
+      go(MOVE_RAPID, cur[da]!, x + sx, y + sy);
       go(MOVE_RAPID, rD, x + sx, y + sy);
       go(MOVE_RAPID, rD, x, y);
     } else go(MOVE_RAPID, rD);
@@ -2124,8 +2115,8 @@ export class Runner extends NcEmitter {
           go(MOVE_DRILL, zD);
           this.dwell(this.cp);
           go(MOVE_RAPID, zD, x + sx, y + sy);
-          go(MOVE_RAPID, this.initLevel, x + sx, y + sy);
-          go(MOVE_RAPID, this.initLevel, x, y);
+          go(MOVE_RAPID, init, x + sx, y + sy);
+          go(MOVE_RAPID, init, x, y);
           break;
         }
         this.w.add(`G${code / 10} 사이클(수동 복귀)은 내려가서 급속 복귀로 그림`, line);
@@ -2144,6 +2135,10 @@ export class Runner extends NcEmitter {
         go(MOVE_RAPID, clear);
     }
     if (this.mb.count > first) {
+      if (map) {
+        map(top);
+        map(bottom);
+      }
       if (this.rotAxis && !this.rotOff && (this.ang[0] || this.ang[1] || this.ang[2])) {
         const w = [0, 0, 0];
         this.wrapPoint(top[0]!, top[1]!, top[2]!, this.ang, w);
