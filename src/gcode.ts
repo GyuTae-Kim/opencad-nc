@@ -639,6 +639,16 @@ export class Runner extends NcEmitter {
   protected cqK = 0;
   /** 첫 절입에 더할 길이(Siemens CYCLE83은 첫 깊이를 기준면에서 잰다 — R 점까지의 안전 거리) */
   protected peckFirstExtra = 0;
+  /** 보링 시프트(G76·G87·Haas G77): 평면 두 축(프로그램 좌표)과 표시 좌표, Q로 정했는지 */
+  protected cShift: [number, number] = [0, 0];
+  protected cShiftD: [number, number] = [0, 0];
+  protected cShiftQ = false;
+
+  /** 보링 시프트 안내(한 번) */
+  protected noteShift(line: number): void {
+    if (this.cShiftQ) this.w.add('보링 사이클 시프트 Q는 평면 첫 축 + 방향으로 봄(기계 매개변수에 따라 다름)', line);
+    else if (!this.cShift[0] && !this.cShift[1]) this.w.add('보링 사이클에 시프트 양(Q 또는 I·J)이 없음 — 시프트 없이 그림', line);
+  }
   protected plane: NcPlane = 0;
   protected blockInch = false;
   protected scale = 1;
@@ -1139,6 +1149,14 @@ export class Runner extends NcEmitter {
         case 310:
           this.w.add('프로브(G38·G31) 이동은 끝점까지 직선으로 그림', line);
           motionG = 10;
+          break;
+        case 770:
+          // Haas G77 뒤 보링(밀링). 그 밖에서는 모르는 G
+          if (this.dialect === 'haas' && !this.lathe) cycleG = g;
+          else {
+            this.w.add('지원하지 않는 G77', line);
+            if (unknownG < 0) unknownG = g;
+          }
           break;
         case 730:
         case 740:
@@ -1675,6 +1693,9 @@ export class Runner extends NcEmitter {
     this.cqI = 0;
     this.cqJ = 0;
     this.cqK = 0;
+    this.cShift = [0, 0];
+    this.cShiftD = [0, 0];
+    this.cShiftQ = false;
   }
 
   // ── 원호 ──
@@ -1817,6 +1838,31 @@ export class Runner extends NcEmitter {
       if (blk.has[LJ]) this.cqJ = Math.abs(blk.val[LJ]!) * sc;
       if (blk.has[LK]) this.cqK = Math.abs(blk.val[LK]!) * sc;
     }
+    // 보링 시프트: Haas는 I·J(방향과 양), Fanuc은 Q(양, 소수점 없으면 최소 입력 단위)를 평면 첫 축 + 방향으로
+    if (!this.lathe && (code === 760 || code === 870 || code === 770)) {
+      const O0 = OFFSET_LETTER[p0]!;
+      const O1 = OFFSET_LETTER[p1]!;
+      if (blk.has[O0] || blk.has[O1]) {
+        this.cShift = [(blk.has[O0] ? blk.val[O0]! : 0) * sc, (blk.has[O1] ? blk.val[O1]! : 0) * sc];
+        this.cShiftQ = false;
+      } else if (blk.has[LQ]) {
+        const v = Math.abs(blk.val[LQ]!);
+        const fanucInt = (this.dialect === 'fanuc' || this.dialect === 'iso') && !blk.dot[LQ];
+        this.cShift = [(fanucInt ? v / (this.blockInch ? 10000 : 1000) : v) * sc, 0];
+        this.cShiftQ = true;
+      }
+      // 표시 좌표 방향(좌표 회전·거울이 있으면 함께 돌린다)
+      const v3 = [0, 0, 0];
+      v3[p0] = this.cShift[0];
+      v3[p1] = this.cShift[1];
+      if (this.xf) {
+        const o = [0, 0, 0];
+        const z = [0, 0, 0];
+        applyAffine(this.xf, v3, o);
+        applyAffine(this.xf, ZERO3, z);
+        this.cShiftD = [o[p0]! - z[p0]!, o[p1]! - z[p1]!];
+      } else this.cShiftD = [this.cShift[0], this.cShift[1]];
+    }
     let reps = 1;
     if (blk.has[LL]) reps = Math.round(blk.val[LL]!);
     else if (blk.has[LK] && cp === 0 && this.dialect !== 'linuxcnc' && this.dialect !== 'haas' && !haasPeck) {
@@ -1897,9 +1943,17 @@ export class Runner extends NcEmitter {
       pt[da] = depth;
       this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
     };
-    if (up * (this.pos[da]! - rD) < 0) go(MOVE_RAPID, rD);
+    // 컨트롤러처럼: 지금 높이에서 구멍 자리로 옮긴 뒤 R 점으로(지금 높이가 R보다 낮으면 낮은 채 옮겨 간다 — 실제 위험을 숨기지 않게)
     go(MOVE_RAPID, this.pos[da]!, x, y);
-    go(MOVE_RAPID, rD);
+    // 뒤 보링(Fanuc 밀링 G87·Haas G77): 시프트한 자리에서 구멍 아래(R)로 내려간다
+    const backBore = !this.lathe && ((code === 870 && this.dialect !== 'haas') || (code === 770 && this.dialect === 'haas'));
+    const [sx, sy] = this.cShiftD;
+    if (backBore) {
+      this.noteShift(line);
+      go(MOVE_RAPID, this.pos[da]!, x + sx, y + sy);
+      go(MOVE_RAPID, rD, x + sx, y + sy);
+      go(MOVE_RAPID, rD, x, y);
+    } else go(MOVE_RAPID, rD);
     const first = this.mb.count;
     const top = [0, 0, 0];
     top[p0] = x;
@@ -1956,11 +2010,38 @@ export class Runner extends NcEmitter {
         go(MOVE_FEED, rD);
         if (clear !== rD) go(MOVE_RAPID, clear);
         break;
-      case 860:
       case 760:
+        if (this.lathe) {
+          go(MOVE_DRILL, zD);
+          go(MOVE_RAPID, clear);
+          break;
+        }
+        // 정밀 보링: 바닥에서 휴지 → 주축 정위치 → 시프트(벽에서 떨어짐) → 급속 복귀 → 시프트 되돌림
+        this.noteShift(line);
+        go(MOVE_DRILL, zD);
+        this.dwell(this.cp);
+        go(MOVE_RAPID, zD, x + sx, y + sy);
+        go(MOVE_RAPID, clear, x + sx, y + sy);
+        go(MOVE_RAPID, clear, x, y);
+        break;
       case 870:
+      case 770:
+        if (backBore) {
+          // 뒤 보링: 아래(R)에서 위(Z)로 이송 → 휴지 → 시프트 → 늘 처음 높이로 급속 → 시프트 되돌림
+          go(MOVE_DRILL, zD);
+          this.dwell(this.cp);
+          go(MOVE_RAPID, zD, x + sx, y + sy);
+          go(MOVE_RAPID, this.initLevel, x + sx, y + sy);
+          go(MOVE_RAPID, this.initLevel, x, y);
+          break;
+        }
+        this.w.add(`G${code / 10} 사이클(수동 복귀)은 내려가서 급속 복귀로 그림`, line);
+        go(MOVE_DRILL, zD);
+        go(MOVE_RAPID, clear);
+        break;
+      case 860:
       case 880:
-        if (code !== 860) this.w.add(`G${code / 10} 사이클은 G86처럼(내려가서 급속 복귀) 그림`, line);
+        if (code === 880) this.w.add('G88 사이클(바닥 휴지 뒤 수동 복귀)은 급속 복귀로 그림', line);
         go(MOVE_DRILL, zD);
         if (code === 880) this.dwell(this.cp);
         go(MOVE_RAPID, clear);
