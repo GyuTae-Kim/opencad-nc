@@ -258,4 +258,39 @@ describe('해석 판단 띠', () => {
     bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!.click();
     expect(bar.hidden).toBe(true);
   });
+
+  it('좁은 화면: 띠 글을 누르면 펼치고(다시 누르면 접음), 알림은 아래쪽 띠 맨 위보다 위로(--toast-clear)', async () => {
+    const cbs: (() => void)[] = [];
+    const roCb = (): void => cbs.forEach((cb) => cb());
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          cbs.push(cb);
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    const row = root.querySelector<HTMLElement>('.notice-bar .notice')!;
+    const text = row.querySelector<HTMLElement>('.nt-text')!;
+    expect(text.title).toBe(text.textContent);
+    text.click();
+    expect(row.classList.contains('open')).toBe(true);
+    text.click();
+    expect(row.classList.contains('open')).toBe(false);
+    // 화면 아래쪽에 붙은 띠(재생 띠 top 513) 위로: innerHeight - 513 + 8
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    strip.hidden = false;
+    strip.getBoundingClientRect = () => ({ top: 513, bottom: 631, height: 118, left: 8, right: 367, width: 359, x: 8, y: 513, toJSON: () => ({}) }) as DOMRect;
+    // (jsdom은 CSS 사용자 속성을 담지 않으므로 넣는 값을 본다)
+    const set = vi.spyOn(document.body.style, 'setProperty');
+    roCb();
+    expect(set).toHaveBeenLastCalledWith('--toast-clear', `${innerHeight - 513 + 8}px`);
+    strip.hidden = true;
+    roCb();
+    expect(set).toHaveBeenLastCalledWith('--toast-clear', '0px');
+  });
 });

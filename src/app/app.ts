@@ -388,6 +388,11 @@ export class NcViewerApp implements PanelHost {
     this.noticeBar = h('div', { class: 'notice-bar', role: 'status', 'aria-live': 'polite', hidden: true });
     this.playStrip = this.buildPlayStrip();
     this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar, this.playStrip.el);
+    // 알림은 3D 보기 아래쪽 띠(해석 판단·재생·측정) 위로 올린다 — 띠가 나타나거나 크기가 바뀌면 다시 잰다
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => this.liftToasts());
+      for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) ro.observe(el);
+    }
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
     this.workspace.append(this.busyEl);
@@ -1684,7 +1689,10 @@ export class NcViewerApp implements PanelHost {
     const list = d ? noticeViews(d) : [];
     bar.hidden = !list.length;
     for (const n of list) {
-      const row = h('div', { class: 'notice', 'data-notice': n.key }, h('span', { class: 'nt-text' }, n.text));
+      // 좁은 화면은 글을 한두 줄로 줄여 보이고(3D 보기를 덜 가리게), 글을 누르면 펼친다
+      const text = h('span', { class: 'nt-text', title: n.text }, n.text);
+      const row = h('div', { class: 'notice', 'data-notice': n.key }, text);
+      text.addEventListener('click', () => row.classList.toggle('open'));
       if (n.action) {
         const act = n.action;
         const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
@@ -1707,6 +1715,18 @@ export class NcViewerApp implements PanelHost {
       row.append(x);
       bar.append(row);
     }
+  }
+
+  /** 알림이 3D 보기 아래쪽 띠를 가리지 않게: 화면 아래쪽에 붙은 띠 가운데 맨 위의 높이(화면 아래에서 잰 px)를 --toast-clear로 */
+  private liftToasts(): void {
+    const vh = window.innerHeight;
+    let top = Infinity;
+    for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) {
+      if (el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > vh / 2 && r.top < top) top = r.top;
+    }
+    document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
   }
 
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */
