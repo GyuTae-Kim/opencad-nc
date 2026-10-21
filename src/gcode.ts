@@ -1037,6 +1037,14 @@ class Runner extends NcEmitter {
     let machine = false;
     const compBefore = this.comp;
     let compDirect = false;
+    /** 그리지 않는(모르거나 매개변수만 받는) G — 이 블록의 좌표 낱말은 이동이 아니다 */
+    let unknownG = -1;
+    /** 한 블록만 급속 위치 결정(G60 한 방향 위치 결정·G27·G29) */
+    let oneShot = false;
+    /** Haas·Mach3 원형 포켓 G12(시계)·G13(반시계) */
+    let pocket = -1;
+    /** LinuxCNC G33.1 강성 탭(들어갔다 나온다) */
+    let tapOneShot = false;
     for (let k = 0; k < blk.gCount; k++) {
       const g = blk.g[k]!;
       if (this.lathe) {
@@ -1193,6 +1201,13 @@ class Runner extends NcEmitter {
         case 593:
           this.selectWcs(6 + (g - 591), line);
           break;
+        case 1540: {
+          // Haas G154 P1~P99 = 추가 작업 좌표계(G54.1 P와 같은 번호)
+          const p = blk.has[LP] ? Math.round(blk.val[LP]!) : 1;
+          blk.has[LP] = 0;
+          this.selectWcs(5 + p, line);
+          break;
+        }
         case 610:
         case 611:
         case 640:
@@ -1233,6 +1248,29 @@ class Runner extends NcEmitter {
           break;
         case 682:
           this.w.add('G68.2 기울인 작업 평면은 지원하지 않음(변환 없이 그림)', line);
+          unknownG = g;
+          break;
+        case 90:
+        case 620:
+        case 630:
+          // G9 정확 정지(한 블록)·G62 모서리 이송 조정·G63 태핑 모드: 이동은 그대로
+          break;
+        case 600:
+        case 270:
+        case 290:
+          // G60 한 방향 위치 결정·G27 기준점 확인·G29 기준점에서 복귀: 끝점까지 급속 한 번
+          oneShot = true;
+          break;
+        case 331:
+          // LinuxCNC G33.1 강성 탭: 끝점까지 이송으로 들어갔다 같은 길로 나온다
+          tapOneShot = true;
+          break;
+        case 120:
+        case 130:
+          if (this.dialect === 'linuxcnc') {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            unknownG = g;
+          } else pocket = g;
           break;
         case 70:
         case 80:
@@ -1240,10 +1278,18 @@ class Runner extends NcEmitter {
           if (this.dialect === 'linuxcnc') this.w.add('G7/G8 선반 지름·반지름 모드는 선반 모드에서만 읽음', line);
           break;
         case 330:
-          this.w.add('나사 깎기(G33·G76)는 그리지 않음', line);
+          // 밀링의 G33 나사 깎기는 끝점까지 이송 직선(나사 이송은 리드 F)
+          this.w.add('나사 깎기(G33)는 끝점까지 이송 직선으로 그림', line);
+          motionG = 10;
           break;
         default:
+          if (g >= 1100 && g <= 1290 && g % 10 === 0 && this.dialect !== 'linuxcnc') {
+            // Haas G110~G129 = G154 P1~P20
+            this.selectWcs(5 + (g / 10 - 109), line);
+            break;
+          }
           this.w.add(`지원하지 않는 G${(g / 10).toFixed(g % 10 ? 1 : 0)}`, line);
+          if (unknownG < 0) unknownG = g;
       }
     }
     // 반경 보정 구간 기록(보정 경로 계산용 — 프로그램 경로는 그대로)
@@ -1362,6 +1408,17 @@ class Runner extends NcEmitter {
         return this.endBlock(blk, line);
     }
 
+    // 원형 포켓(G12·G13): 지금 자리를 중심으로
+    if (pocket >= 0) {
+      this.circPocket(blk, line, pocket === 130);
+      return this.endBlock(blk, line);
+    }
+    // 모르는(또는 매개변수만 받는) G가 있는 블록의 좌표는 이동이 아니다 — 그리지 않는다
+    if (unknownG >= 0 && (axisGiven || rotGiven)) {
+      this.w.add(`G${(unknownG / 10).toFixed(unknownG % 10 ? 1 : 0)} 블록의 좌표는 이동으로 그리지 않음`, line);
+      return this.endBlock(blk, line);
+    }
+
     // 회전축 각(감기를 켰을 때) — 이번 블록의 이동이 이 각까지 고르게 돈다
     if (rotGiven && this.rotAxis) {
       const t = new Float64Array(this.ang);
@@ -1374,6 +1431,23 @@ class Runner extends NcEmitter {
       const c = this.lcmd;
       this.lcmd = 0;
       this.latheCmd(c, blk, line);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+
+    if (tapOneShot && axisGiven) {
+      const s = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+      const t = this.targets(blk, false);
+      this.emit(MOVE_DRILL, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
+      this.emit(MOVE_FEED, s[0]!, s[1]!, s[2]!, line, FLAG_CYCLE);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+    // 한 블록 위치 결정(G60·G27·G29): 모달 이동은 그대로 두고 끝점까지 급속
+    if (oneShot && axisGiven) {
+      const t = this.targets(blk, false);
+      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line);
+      this.known |= (blk.has[LX] ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] ? 4 : 0);
       this.finishAng();
       return this.endBlock(blk, line);
     }
@@ -1816,6 +1890,69 @@ class Runner extends NcEmitter {
       }
       this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
     }
+  }
+
+  /** 지금 공구 반지름(D 번호 → G10 L12/L13·공구 표, 없으면 지금 공구의 공구 표·주석 지름). 모르면 undefined */
+  protected toolRadiusFor(d: number | undefined): number | undefined {
+    if (d !== undefined && d >= 0) {
+      const tt = this.o.toolTable?.[d];
+      if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return tt.radius ?? tt.diameter! / 2;
+      const g = this.radiusGeo.get(d);
+      const w = this.radiusWear.get(d);
+      if (g !== undefined || w !== undefined) return (g ?? 0) + (w ?? 0);
+    }
+    const t = this.tool;
+    const tt = this.o.toolTable?.[t];
+    if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return tt.radius ?? tt.diameter! / 2;
+    const dia = this.toolInfo.get(t)?.diameter;
+    return dia !== undefined ? dia / 2 : undefined;
+  }
+
+  /**
+   * Haas·Mach3 원형 포켓 G12(시계)·G13(반시계): 지금 자리가 중심. I = 첫 원 반지름(K 없으면 마무리), K = 마무리 반지름,
+   * Q = 반지름 증분(K와 함께), Z = 깊이(G91이면 증분, L번 반복하며 더 깊게), D = 공구 반지름 번호.
+   * 공구 중심은 포켓 반지름 - 공구 반지름. 원마다 중심에서 직선으로 나가 한 바퀴 돌고, 끝나면 중심으로 돌아온다.
+   */
+  private circPocket(blk: Block, line: number, ccw: boolean): void {
+    const name = ccw ? 'G13' : 'G12';
+    const sc = this.scale;
+    if (!blk.has[LI]) {
+      this.w.add(`${name} 원형 포켓에 반지름 I가 없음 — 그리지 않음`, line);
+      return;
+    }
+    let tr = this.toolRadiusFor(blk.has[LD] ? Math.round(blk.val[LD]!) : undefined);
+    if (tr === undefined) {
+      this.w.add(`${name} 원형 포켓: 공구 반지름을 몰라 포켓 반지름 그대로 그림`, line);
+      tr = 0;
+    }
+    const r1 = Math.abs(blk.val[LI]!) * sc;
+    const rk = blk.has[LK] ? Math.abs(blk.val[LK]!) * sc : r1;
+    const q = blk.has[LQ] ? Math.abs(blk.val[LQ]!) * sc : 0;
+    const radii: number[] = [];
+    if (blk.has[LK] && q > 0) {
+      for (let r = r1; r < rk - 1e-9 && radii.length < 1000; r += q) radii.push(r);
+    } else if (blk.has[LK]) radii.push(r1);
+    radii.push(rk);
+    const path = radii.map((r) => r - tr!).filter((r) => r > 1e-9);
+    if (!path.length) {
+      this.w.add(`${name} 원형 포켓: 공구가 포켓보다 큼 — 그리지 않음`, line);
+      return;
+    }
+    const loops = Math.max(1, blk.has[LL] ? Math.round(blk.val[LL]!) : 1);
+    const cx = this.pos[0]!;
+    const cy = this.pos[1]!;
+    let z = this.pos[2]!;
+    const zStep = blk.has[LZ] ? blk.val[LZ]! * this.axScale[2]! : 0;
+    for (let n = 0; n < loops; n++) {
+      if (blk.has[LZ]) z = this.absolute ? zStep + this.off[2]! : z + zStep;
+      this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
+      for (const r of path) {
+        this.emit(MOVE_FEED, cx + r, cy, z, line, FLAG_CYCLE);
+        this.emitArc(0, [cx, cy, z], ccw ? Math.PI * 2 : -Math.PI * 2, cx + r, cy, z, line, FLAG_CYCLE);
+      }
+      this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
+    }
+    this.known = 7;
   }
 
   // ── 선반 ──

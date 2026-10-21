@@ -585,6 +585,11 @@ export function toolInfoFromComment(text: string, units: 'mm' | 'inch'): { diame
     m = /(\d+)\s*\/\s*(\d+)\s*("|in\b|inch)/i.exec(t);
     if (m && +m[2]! !== 0) diameter = conv(+m[1]! / +m[2]!, m[3]);
   }
+  if (diameter === undefined && units === 'inch') {
+    // inch 프로그램의 단위 없는 분수 + 공구 이름("1/2 ENDMILL", "3/8 DRILL", "1/4-20 TAP")
+    m = /(?:^|[^\d./])(\d+)\s*\/\s*(\d+)(?=[\s-]*(?:\d+\s+)?(?:FLAT|BALL|BULL|END|E\/?M\b|DRILL|TAP|REAM|MILL|SPOT|CHAMF|CENTER|BORE|CUTTER|BIT|SLOT|FACE))/i.exec(t);
+    if (m && +m[2]! !== 0) diameter = +m[1]! / +m[2]!;
+  }
   if (diameter === undefined) {
     m = /(\d+(?:\.\d*)?|\.\d+)\s*(mm|"|in\b|inch)/i.exec(t);
     if (m) diameter = conv(parseFloat(m[1]!), m[2]);
