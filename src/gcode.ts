@@ -744,6 +744,8 @@ export class Runner extends NcEmitter {
   protected cycle = 0; // ×10: 0 = 없음, 810…
   protected cycleFresh = true;
   protected initLevel = 0;
+  /** 고정 사이클 처음 높이가 추정 안전 높이인지 */
+  protected initEst = false;
   protected cz: number | undefined;
   protected cr: number | undefined;
   protected cq = 0;
@@ -2205,6 +2207,8 @@ export class Runner extends NcEmitter {
     if (this.cycleFresh) {
       this.initLevel = this.pos[da]!;
       this.initLevelProg = this.progPos()[da]!;
+      // 처음 높이가 기계 좌표 쪽 추정 안전 높이면 그리로 돌아가는 이동도 추정(G53 Z0 뒤의 G98 사이클)
+      this.initEst = (this.machHigh & (1 << da)) !== 0;
       this.cycleFresh = false;
     }
     const sc = this.scale;
@@ -2329,6 +2333,8 @@ export class Runner extends NcEmitter {
     // 지금 자리(작업 공간 — map이 있으면 프로그램 좌표)
     const cur = map ? Array.from(this.progPos()) : [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const pt = [0, 0, 0];
+    // 처음 높이가 추정 안전 높이면 그리로 돌아가는 이동의 끝도 추정(build에서 안전 높이 값으로 고친다)
+    const estInit = this.initEst && !map;
     const go = (kind: number, depth: number, px = cur[p0]!, py = cur[p1]!): void => {
       cur[p0] = px;
       cur[p1] = py;
@@ -2337,7 +2343,8 @@ export class Runner extends NcEmitter {
       pt[1] = cur[1]!;
       pt[2] = cur[2]!;
       if (map) map(pt);
-      this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
+      if (estInit && depth === init) this.emitToEstimated(1 << da, kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
+      else this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
     };
     // 컨트롤러처럼: 지금 높이에서 구멍 자리로 옮긴 뒤 R 점으로(지금 높이가 R보다 낮으면 낮은 채 옮겨 간다 — 실제 위험을 숨기지 않게)
     go(MOVE_RAPID, cur[da]!, x, y);

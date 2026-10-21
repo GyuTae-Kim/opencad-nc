@@ -654,6 +654,7 @@
   "최소": "Minimum",
   "최소 단위로 읽기": "Als kleinstes Inkrement lesen",
   "축마다 다른 배율의 원호는 타원 대신 반지름이 바뀌는 호로 그림": "Bögen mit unterschiedlichen Skalierungen pro Achse werden als Bögen mit veränderlichen Radien anstelle von Ellipsen gezeichnet.",
+  "출발 높이 추정(기계 좌표 쪽)": "Starthöhe geschätzt (Maschinenkoordinaten)",
   "취소": "Abbrechen",
   "측정": "Messen",
   "측정 끝내기": "Messen beenden",

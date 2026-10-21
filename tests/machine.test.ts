@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseGcode } from '../src/gcode';
 import { parseHeidenhain } from '../src/heidenhain';
-import { FLAG_MACHINE_EST, moveEnd, type NcProgram } from '../src/model';
+import { FLAG_MACHINE_EST, FLAG_START_EST, MOVE_DRILL, MOVE_FEED, moveEnd, type NcProgram } from '../src/model';
 import { ncToScene } from '../src/scene';
 
 const ends = (p: NcProgram): number[][] => {
@@ -10,6 +10,7 @@ const ends = (p: NcProgram): number[][] => {
   return out;
 };
 const est = (p: NcProgram): boolean[] => Array.from(p.moves.flags, (f) => !!(f & FLAG_MACHINE_EST));
+const startEst = (p: NcProgram): boolean[] => Array.from(p.moves.flags, (f) => !!(f & FLAG_START_EST));
 
 /** Fusion Haas 포스트처럼 공구 교환마다 G53 G0 Z0 */
 const HAAS = `%
@@ -121,5 +122,58 @@ describe('기계 좌표 쪽 이동(G53·G28·M91)', () => {
     const p = parseGcode(`G0 X0 Y0 Z5\nG1 Z-1 F100\nX10\nG0 Z5`, { initialPosition: [0, 0, 10] });
     expect(est(p).some(Boolean)).toBe(false);
     expect(ncToScene(p).lines.some((l) => l.id === 'nc-machine')).toBe(false);
+  });
+
+  it('추정 높이에서 출발한 이송은 보통 이송(출발점만 추정): 묶음·범위·안전 확인에 들어간다', () => {
+    const p = parseGcode(`O1\nG21 G90 G17\nS1000 M3\nG0 X0 Y0 Z10\nG91 G28 Z0\nG90\nT1 M6\nM5\nG54 G0 X0 Y0\nG43 H1 G1 Z-5. F2000\nG1 X50. F500\nG0 Z50.\nM30`);
+    const plunge = Array.from(p.moves.line).indexOf(9);
+    expect(p.moves.kind[plunge]).toBe(MOVE_FEED);
+    expect(est(p)[plunge]).toBe(false);
+    expect(startEst(p)[plunge]).toBe(true);
+    // 출발점은 고친 안전 높이(경로 맨 위 Z50 + 25)
+    expect(p.moves.points[plunge * 3 + 2]).toBe(75);
+    // 장면: 진입 이송은 절삭 묶음, 점선(기계 원점 쪽) 묶음이 아니다
+    const s = ncToScene(p);
+    expect(s.lines.find((l) => l.id === 'nc-machine')!.segmentIds!.includes(plunge)).toBe(false);
+    // 범위·공구 절삭 범위·최저 Z에는 끝점만(추정 높이 75는 넣지 않음)
+    expect(p.feedBounds!.max[2]).toBe(-5);
+    const t1 = p.tools.find((t) => t.number === 1)!;
+    expect(t1.cutMin![2]).toBe(-5);
+    expect(t1.cutMax![2]).toBe(-5);
+    expect(p.bounds!.max[2]).toBe(50);
+    // 안전 확인: 주축이 멈춘 채(M5) 절삭
+    expect(p.warnings.some((w) => w.includes('주축이 멈춘 채'))).toBe(true);
+  });
+
+  it('선반 G28 U0 W0 → G0 Z2. → G1 X50.: 이송은 보통 이송(출발점만 추정)', () => {
+    const p = parseGcode(`O1\nG21 G99\nG28 U0 W0\nT0101\nG97 S1000 M3\nG0 X40. Z2.\nG1 Z-20. F0.2\nG0 X60.\nG0 Z2.\nG28 U0 W0\nG0 Z2.\nG1 X50. F0.2\nG1 Z-20.\nG0 X100.\nM30`, { lathe: true });
+    const feed = Array.from(p.moves.line).lastIndexOf(11);
+    expect(p.moves.kind[feed]).toBe(MOVE_FEED);
+    expect(est(p)[feed]).toBe(false);
+    expect(startEst(p)[feed]).toBe(true);
+    // 앞의 급속(Z2.로 — X는 아직 안전 위치)은 추정 이동
+    expect(est(p)[feed - 1]).toBe(true);
+  });
+
+  it('G53 Z0 뒤의 G98 고정 사이클: 처음 높이로 돌아가는 급속도 추정(안전 높이 값으로 고침), 드릴은 보통', () => {
+    const p = parseGcode(`O1\nG21 G90 G17\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG53 G0 Z0\nT1 M6\nS1000 M3\nG54 G0 X10 Y10\nG43 H1 G98 G81 Z-20. R2. F100\nX20.\nG80\nM30`);
+    const e = ends(p);
+    // 처음 높이 = G53 Z0의 안전 높이(Z5 + 25 = 30) — 돌아가는 급속도 30(예전에는 임시 값 그대로라 출발점과 달랐음)
+    expect(e).toEqual([
+      [0, 0, -1],
+      [0, 0, 30],
+      [10, 10, 30],
+      [10, 10, 2],
+      [10, 10, -20],
+      [10, 10, 30],
+      [20, 10, 30],
+      [20, 10, 2],
+      [20, 10, -20],
+      [20, 10, 30],
+    ]);
+    expect(est(p)).toEqual([false, true, true, true, false, true, true, true, false, true]);
+    const drills = Array.from(p.moves.kind).map((k, i) => (k === MOVE_DRILL ? i : -1)).filter((i) => i >= 0);
+    for (const i of drills) expect(startEst(p)[i]).toBe(false);
+    expect(p.bounds!.max[2]).toBe(5);
   });
 });

@@ -654,6 +654,7 @@
   "최소": "Minimum",
   "최소 단위로 읽기": "Read as least increment",
   "축마다 다른 배율의 원호는 타원 대신 반지름이 바뀌는 호로 그림": "Arcs with different scaling factors along the axes are drawn as arcs with varying radii, rather than as ellipses.",
+  "출발 높이 추정(기계 좌표 쪽)": "Start height estimated (machine coordinates)",
   "취소": "Cancel",
   "측정": "Measure",
   "측정 끝내기": "Finish measuring",

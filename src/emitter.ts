@@ -17,6 +17,7 @@ import {
   FLAG_MACHINE,
   FLAG_MACHINE_EST,
   FLAG_PER_REV,
+  FLAG_START_EST,
   FLAG_TOOL_LENGTH,
   MOVE_ARC,
   MOVE_FEED,
@@ -365,11 +366,15 @@ export class NcEmitter {
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx, this.modalState(), this.tlc ? this.hNum : -1, this.comp ? this.dNum : -1);
     const endHigh = this.machHigh;
+    let est = false;
     if (endHigh !== 0 || this.machLast !== 0) {
-      this.mb.flags[i] = this.mb.flags[i]! | FLAG_MACHINE_EST;
+      // 추정 높이에 닿거나 머무는 이동·거기서 출발한 급속은 추정 이동. 거기서 출발한 이송·호·드릴은 보통 이동(출발점만 추정)
+      est = endHigh !== 0 || kind === MOVE_RAPID;
+      this.mb.flags[i] = this.mb.flags[i]! | (est ? FLAG_MACHINE_EST : FLAG_START_EST);
       if (endHigh !== 0) this.machFix.push(i + 1, endHigh);
       this.machLast = endHigh;
-    } else if (kind !== MOVE_RAPID) this.safetyCut(line);
+    }
+    if (!est && kind !== MOVE_RAPID) this.safetyCut(line);
     if (this.spindleDir !== 0) this.spindleSeen = true;
     const sm = this.seenMax;
     if (x > sm[0]! && !(endHigh & 1)) sm[0] = x;
@@ -460,6 +465,14 @@ export class NcEmitter {
   }
   /** machineRetract가 내는 이동이 끝날 때 켤 안전 높이 비트 */
   private machPending = 0;
+
+  /** 끝에서 축 mask가 추정 안전 높이에 있는 이동(고정 사이클이 추정 높이였던 처음 높이로 돌아갈 때 — build에서 값을 고친다) */
+  protected emitToEstimated(mask: number, kind: number, x: number, y: number, z: number, line: number, extraFlags = 0): boolean {
+    this.machPending = mask;
+    const ok = this.emit(kind, x, y, z, line, extraFlags);
+    this.machPending = 0;
+    return ok;
+  }
 
   /** 호 이동: 중심 c(xyz, 직선 축 값은 시작점), 부호 있는 중심각 */
   protected emitArc(plane: number, c: readonly number[], sweep: number, x: number, y: number, z: number, line: number, extraFlags = 0): void {
@@ -567,7 +580,8 @@ export class NcEmitter {
     // 회전축 감기 중의 안전 높이(추정)는 값을 고치지 않고 표시만 한다
     if (this.machHigh !== 0) this.leaveMachHigh(x, y, z);
     if (this.machPending !== 0) this.machHigh |= this.machPending;
-    const estFlag = this.machHigh !== 0 || this.machLast !== 0 ? FLAG_MACHINE_EST : 0;
+    const startEst = this.machLast !== 0;
+    const estFlag = this.machHigh !== 0 || (startEst && kind === MOVE_RAPID) ? FLAG_MACHINE_EST : 0;
     this.machLast = this.machHigh;
     const dA = [a1[0]! - a0[0]!, a1[1]! - a0[1]!, a1[2]! - a0[2]!];
     const dlin = arcLen >= 0 ? arcLen : Math.hypot(x - s[0]!, y - s[1]!, z - s[2]!);
@@ -643,7 +657,7 @@ export class NcEmitter {
       lx = w[0]!;
       ly = w[1]!;
       lz = w[2]!;
-      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, flags, wcs, -1, modal, hN, dN);
+      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, k === 1 && startEst && !estFlag ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
       this.mb.time[i] = t / n;
       acc.moveCount++;
     }
@@ -766,7 +780,8 @@ export class NcEmitter {
     for (let i = 0; i < n; i++) {
       if (mb.flags[i]! & FLAG_MACHINE_EST) continue;
       const k = i * 3;
-      if (mb.kind[i] === MOVE_ARC && mb.arc[i]! >= 0) {
+      if (mb.flags[i]! & FLAG_START_EST) extendBox(box, pts[k + 3]!, pts[k + 4]!, pts[k + 5]!);
+      else if (mb.kind[i] === MOVE_ARC && mb.arc[i]! >= 0) {
         const ai = mb.arc[i]!;
         c[0] = mb.arcCenter[ai * 3]!;
         c[1] = mb.arcCenter[ai * 3 + 1]!;
@@ -846,6 +861,13 @@ export class NcEmitter {
       e[1] = pts[k + 4]!;
       e[2] = pts[k + 5]!;
       const kind = moves.kind[i]!;
+      // 출발점이 추정 안전 높이인 이동은 끝점만 범위에
+      const startEst = (moves.flags[i]! & FLAG_START_EST) !== 0;
+      if (startEst) {
+        s[0] = e[0];
+        s[1] = e[1];
+        s[2] = e[2];
+      }
       let tb: { box: Float64Array; minZ: number; line: number } | undefined;
       if (kind !== MOVE_RAPID) {
         const t = moves.tool[i]!;
@@ -857,7 +879,7 @@ export class NcEmitter {
           tb.line = moves.line[i]!;
         }
       }
-      if (kind === MOVE_ARC) {
+      if (kind === MOVE_ARC && !startEst) {
         const ai = moves.arc[i]!;
         c[0] = arcs.center[ai * 3]!;
         c[1] = arcs.center[ai * 3 + 1]!;

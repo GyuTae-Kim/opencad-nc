@@ -10,6 +10,7 @@ import {
   FLAG_CYCLE,
   FLAG_INVERSE_TIME,
   FLAG_MACHINE_EST,
+  FLAG_START_EST,
   FLAG_PER_REV,
   FLAG_TOOL_LENGTH,
   MODAL_INC,
@@ -438,6 +439,7 @@ export function moveState(nc: NcPayload, i: number, units: string): { pos: strin
   const cyc = md >> 8;
   if (fl & FLAG_CYCLE) g.push(cyc ? `G${cyc} 사이클` : '사이클');
   if (fl & FLAG_MACHINE_EST) g.push('기계 좌표 쪽(추정)');
+  else if (fl & FLAG_START_EST) g.push('출발 높이 추정(기계 좌표 쪽)');
   let arc = '';
   const ai = m.arc[i]!;
   if (kind === 'arc' && ai >= 0) {
