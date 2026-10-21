@@ -60,7 +60,7 @@ const MPR_KIND: Record<string, string> = {
   other: '기타',
 };
 
-const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'linuxcnc', 'grbl', 'mach3'];
+const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
 
 const row = (k: string, v: string): HTMLElement => h('div', { class: 'prop-row' }, h('span', { class: 'k' }, k), h('span', { class: 'v', title: v }, v));
 const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);

@@ -10,7 +10,10 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
 
 ## 할 수 있는 것
 
-- G-code(ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별): 직선·호·나선, 평면·단위·좌표계, 고정 사이클, 부프로그램, 변수와 IF/WHILE
+- G-code(ISO·Fanuc·Haas·LinuxCNC·GRBL·Mach3 방언 자동 판별): 직선·호·나선, 평면·단위·좌표계, 고정 사이클, 부프로그램, 변수와 IF/WHILE
+  - Haas(주석의 HAAS, G187·G103·G154·G110~G129·G150·M97·M130으로 판별): G73/G83의 I·J·K = 첫 절입·줄이는 양·최소 절입,
+    반복은 L(K는 반복이 아님). Fanuc 계열도 쪼기 사이클에 I·J가 있거나 K가 정수가 아니면 Haas 꼴로 읽고 경고,
+    다른 사이클의 정수 아닌 K 반복은 한 번으로 보고 경고(K.05를 반복 0번으로 읽어 구멍이 사라지지 않게)
   - 좌표 변환: G68/G69 회전(Mach3 G68 A·B 중심), G51/G50 배율(Fanuc 중심 + P·I·J·K, Mach3 축별 배율), G51.1/G50.1 거울,
     LinuxCNC G10 L2 R 좌표계 회전 — 원호·고정 사이클 구멍도 함께 옮김
   - 기계 좌표 쪽 이동(G53, G28·G30 기준점, Heidenhain M91·M92): 작업 원점의 기계 위치를 모르면 값을 작업 좌표로 읽지 않고

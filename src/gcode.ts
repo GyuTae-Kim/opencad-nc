@@ -443,6 +443,11 @@ export function detectGcodeDialect(head: string): NcDialect {
     return 'linuxcnc';
   if (/\bgrbl\b/i.test(head) || /^\s*\$[A-Z0-9$#]/m.test(head)) return 'grbl';
   if (/\bmach\s*[34]\b/i.test(head)) return 'mach3';
+  // Haas: 주석의 "HAAS"(Fusion·Mastercam 포스트 머리), Haas만 쓰는 코드 G187·G103·G154·G110~G129·G150·M97·M130
+  {
+    const code = head.replace(/\([^)\n]*\)/g, ' ');
+    if (/\(\s*[^)\n]*\bhaas\b/i.test(head) || /(?:^|[^A-Z0-9.#])G\s*(?:187|103|154|1[12]\d|150)(?![\d.])/im.test(code) || /(?:^|[^A-Z0-9.#])M\s*(?:97|130)(?!\d)/im.test(code)) return 'haas';
+  }
   if (/^\s*[O:]\d{1,8}\b/m.test(head) || /\b(?:G65|WHILE\s*\[|IF\s*\[|GOTO\s*\d)/i.test(head) || /#[1-9]\d{2,3}\s*=/.test(head) || /\bfanuc\b/i.test(head))
     return 'fanuc';
   return 'iso';
@@ -585,6 +590,10 @@ class Runner extends NcEmitter {
   private cr: number | undefined;
   private cq = 0;
   private cp = 0;
+  /** Haas 쪼기: 첫 절입 I·줄이는 양 J·최소 절입 K(표시 단위) */
+  private cqI = 0;
+  private cqJ = 0;
+  private cqK = 0;
   private plane: NcPlane = 0;
   private blockInch = false;
   private scale = 1;
@@ -999,7 +1008,7 @@ class Runner extends NcEmitter {
   private dwellSeconds(blk: Block, letter: number): number {
     const v = blk.val[letter]!;
     if (letter === LX) return v;
-    if ((this.dialect === 'fanuc' || this.dialect === 'iso') && !blk.dot[letter]) return v / 1000;
+    if ((this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && !blk.dot[letter]) return v / 1000;
     return v;
   }
 
@@ -1605,6 +1614,9 @@ class Runner extends NcEmitter {
     this.cr = undefined;
     this.cq = 0;
     this.cp = 0;
+    this.cqI = 0;
+    this.cqJ = 0;
+    this.cqK = 0;
   }
 
   // ── 원호 ──
@@ -1738,9 +1750,25 @@ class Runner extends NcEmitter {
     if (blk.has[LR]) this.cr = blk.val[LR]! * sc;
     if (blk.has[LQ]) this.cq = Math.abs(blk.val[LQ]!) * sc;
     if (blk.has[LP]) this.cp = this.dwellSeconds(blk, LP);
+    // 쪼기 사이클(G73·G83)의 I·J·K: Haas는 첫 절입·줄이는 양·최소 절입(반복은 L). Fanuc 계열도 I·J가 있거나
+    // K가 정수가 아니면 Haas 꼴로 본다(K .05를 반복 0번으로 읽어 구멍이 사라지지 않게)
+    const peck = code === 730 || code === 830;
+    const kFrac = blk.has[LK] && !Number.isInteger(blk.val[LK]!);
+    const haasPeck = peck && (this.dialect === 'haas' || blk.has[LI] || blk.has[LJ] || kFrac);
+    if (haasPeck) {
+      if (this.dialect !== 'haas' && (blk.has[LI] || blk.has[LJ] || blk.has[LK])) this.w.add(`G${code / 10}의 I·J·K를 Haas 쪼기(첫 절입·줄이는 양·최소 절입)로 봄 — 반복은 L`, line);
+      if (blk.has[LI]) this.cqI = Math.abs(blk.val[LI]!) * sc;
+      if (blk.has[LJ]) this.cqJ = Math.abs(blk.val[LJ]!) * sc;
+      if (blk.has[LK]) this.cqK = Math.abs(blk.val[LK]!) * sc;
+    }
     let reps = 1;
     if (blk.has[LL]) reps = Math.round(blk.val[LL]!);
-    else if (blk.has[LK] && cp === 0 && this.dialect !== 'linuxcnc') reps = Math.round(blk.val[LK]!);
+    else if (blk.has[LK] && cp === 0 && this.dialect !== 'linuxcnc' && this.dialect !== 'haas' && !haasPeck) {
+      if (kFrac) {
+        this.w.add(`고정 사이클 반복 횟수 K${blk.val[LK]}가 정수가 아님 — 한 번으로 봄`, line);
+        reps = 1;
+      } else reps = Math.round(blk.val[LK]!);
+    }
     if (this.cr === undefined) this.cr = this.absolute ? (this.xf ? this.progPos()[da]! : this.pos[da]! - this.off[da]!) : 0;
     if (this.cz === undefined) {
       this.w.add('고정 사이클에 깊이(Z)가 없음', line);
@@ -1823,7 +1851,10 @@ class Runner extends NcEmitter {
     top[da] = rD;
     const bottom = [top[0]!, top[1]!, top[2]!];
     bottom[da] = zD;
-    const q = this.cq;
+    // Haas I·J·K 쪼기(첫 절입 I, 매번 J만큼 줄여 K까지)가 있으면 그것을, 없으면 일정한 Q
+    const haasPeck = this.cqI > 0;
+    let q = haasPeck ? this.cqI : this.cq;
+    const qMin = haasPeck ? (this.cqK > 0 ? this.cqK : this.cqJ > 0 ? Math.min(this.cqI, this.cqJ) : this.cqI) : q;
     switch (code) {
       case 830:
       case 730:
@@ -1836,6 +1867,7 @@ class Runner extends NcEmitter {
             go(MOVE_DRILL, next);
             if (next !== zD) go(MOVE_RAPID, code === 830 ? rD : next + up * this.peck);
             d = next;
+            if (haasPeck) q = Math.max(qMin, q - this.cqJ);
           }
           go(MOVE_RAPID, clear);
           break;

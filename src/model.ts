@@ -40,10 +40,11 @@ export const FLAG_MACHINE_EST = 256;
 /** 평면: 0 XY(G17), 1 ZX(G18), 2 YZ(G19) */
 export type NcPlane = 0 | 1 | 2;
 
-export type NcDialect = 'iso' | 'fanuc' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
+export type NcDialect = 'iso' | 'fanuc' | 'haas' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
 export const NC_DIALECT_NAMES: Record<NcDialect, string> = {
   iso: '일반 ISO',
   fanuc: 'Fanuc',
+  haas: 'Haas',
   linuxcnc: 'LinuxCNC',
   grbl: 'GRBL',
   mach3: 'Mach3/Mach4',
