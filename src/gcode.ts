@@ -639,6 +639,54 @@ export class Runner extends NcEmitter {
   protected cqK = 0;
   /** 첫 절입에 더할 길이(Siemens CYCLE83은 첫 깊이를 기준면에서 잰다 — R 점까지의 안전 거리) */
   protected peckFirstExtra = 0;
+  // ── 극좌표(G16) ──
+  protected polar = false;
+  /** 극 원점(평면 두 축, 프로그램 좌표)·반지름·각(도) */
+  protected polarO: [number, number] = [0, 0];
+  protected polarR = 0;
+  protected polarA = 0;
+
+  /**
+   * G16 블록: 반지름(평면 첫 축 낱말)을 G90으로 주면 극 원점 = 작업 원점, G91로 주면 지금 자리.
+   * 각(둘째 축 낱말)은 G90이면 그 값, G91이면 앞 각에 더한다. 빠진 값은 앞 값. 결과를 절대 직교 좌표 낱말로 바꾼다
+   */
+  protected polarBlock(blk: Block): void {
+    this.polarAgain = null;
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    const L0 = AXIS_LETTER[a0]!;
+    const L1 = AXIS_LETTER[a1]!;
+    if (!blk.has[L0] && !blk.has[L1]) return;
+    const hasR = !!blk.has[L0];
+    const hasA = !!blk.has[L1];
+    const rv = blk.val[L0]!;
+    const av = blk.val[L1]!;
+    const abs = this.absolute;
+    const apply = (): void => {
+      const q = this.progPos();
+      if (hasR) {
+        this.polarR = rv * this.axScale[a0]!;
+        this.polarO = abs ? [0, 0] : [q[a0]!, q[a1]!];
+      }
+      if (hasA) this.polarA = abs ? av : this.polarA + av;
+      const t = (this.polarA * Math.PI) / 180;
+      blk.has[L0] = blk.has[L1] = 1;
+      blk.val[L0] = (this.polarO[0] + this.polarR * Math.cos(t)) / this.axScale[a0]!;
+      blk.val[L1] = (this.polarO[1] + this.polarR * Math.sin(t)) / this.axScale[a1]!;
+      blk.dot[L0] = blk.dot[L1] = 1;
+      blk.axAbs |= (1 << a0) | (1 << a1);
+    };
+    apply();
+    // 고정 사이클 반복(K·L)은 같은 낱말을 다시 준 것처럼(G91 각이면 반복마다 더 돈다)
+    this.polarAgain = apply;
+  }
+  /** 이 블록의 극좌표 바꾸기를 한 번 더(고정 사이클 반복용) */
+  protected polarAgain: (() => void) | null = null;
+
+  /** 낱말이 증분인지(블록의 축별 AC/IC 덮어쓰기 → G90/G91) */
+  protected incAxis(blk: Block, a: number): boolean {
+    return blk.axInc & (1 << a) ? true : blk.axAbs & (1 << a) ? false : !this.absolute;
+  }
+
   /** 보링 시프트(G76·G87·Haas G77): 평면 두 축(프로그램 좌표)과 표시 좌표, Q로 정했는지 */
   protected cShift: [number, number] = [0, 0];
   protected cShiftD: [number, number] = [0, 0];
@@ -1288,10 +1336,13 @@ export class Runner extends NcEmitter {
           this.selectWcs(5 + p, line);
           break;
         }
+        case 150:
+          // G15 극좌표 끝(Okuma G15 H는 좌표계 고르기 — 이동에는 영향 없음)
+          if (!blk.has[7]) this.polar = false;
+          break;
         case 610:
         case 611:
         case 640:
-        case 150:
         case 960:
         case 970:
         case 1030:
@@ -1324,7 +1375,15 @@ export class Runner extends NcEmitter {
           this.retractR = true;
           break;
         case 160:
-          this.w.add('G16 극좌표는 지원하지 않음(직교 좌표로 읽음)', line);
+          // G16 극좌표: 평면 첫 축 = 반지름, 둘째 축 = 각(도). 처음 반지름·각은 지금 자리(원점 기준)
+          if (!this.polar) {
+            const q = this.progPos();
+            const [u0, u1] = PLANE_AXES[this.plane]!;
+            this.polar = true;
+            this.polarO = [0, 0];
+            this.polarR = Math.hypot(q[u0]!, q[u1]!);
+            this.polarA = (Math.atan2(q[u1]!, q[u0]!) * 180) / Math.PI;
+          }
           break;
         case 682:
           this.w.add('G68.2 기울인 작업 평면은 지원하지 않음(변환 없이 그림)', line);
@@ -1487,6 +1546,10 @@ export class Runner extends NcEmitter {
         this.stored30 = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
         return this.endBlock(blk, line);
     }
+
+    // 극좌표(G16): 평면 두 축 낱말(반지름·각)을 절대 직교 좌표로 바꿔 둔다(이동·고정 사이클 모두)
+    this.polarAgain = null;
+    if (this.polar && !this.lathe) this.polarBlock(blk);
 
     // 원형 포켓(G12·G13): 지금 자리를 중심으로
     if (pocket >= 0) {
@@ -1888,14 +1951,10 @@ export class Runner extends NcEmitter {
       const top = [0, 0, 0];
       const bot = [0, 0, 0];
       for (let k = 0; k < reps; k++) {
+        if (k > 0 && this.polarAgain) this.polarAgain();
         const q = Array.from(this.progPos());
-        if (this.absolute) {
-          if (blk.has[L0]) q[p0] = blk.val[L0]! * s0;
-          if (blk.has[L1]) q[p1] = blk.val[L1]! * s1;
-        } else {
-          if (blk.has[L0]) q[p0] = q[p0]! + blk.val[L0]! * s0;
-          if (blk.has[L1]) q[p1] = q[p1]! + blk.val[L1]! * s1;
-        }
+        if (blk.has[L0]) q[p0] = this.incAxis(blk, p0) ? q[p0]! + blk.val[L0]! * s0 : blk.val[L0]! * s0;
+        if (blk.has[L1]) q[p1] = this.incAxis(blk, p1) ? q[p1]! + blk.val[L1]! * s1 : blk.val[L1]! * s1;
         q[da] = rP;
         this.toDisplay(q, top);
         q[da] = zP;
@@ -1915,15 +1974,11 @@ export class Runner extends NcEmitter {
       zD = rD + this.cz;
     }
     for (let k = 0; k < reps; k++) {
+      if (k > 0 && this.polarAgain) this.polarAgain();
       let x = this.pos[p0]!;
       let y = this.pos[p1]!;
-      if (this.absolute) {
-        if (blk.has[L0]) x = blk.val[L0]! * s0 + this.off[p0]!;
-        if (blk.has[L1]) y = blk.val[L1]! * s1 + this.off[p1]!;
-      } else {
-        if (blk.has[L0]) x += blk.val[L0]! * s0;
-        if (blk.has[L1]) y += blk.val[L1]! * s1;
-      }
+      if (blk.has[L0]) x = this.incAxis(blk, p0) ? x + blk.val[L0]! * s0 : blk.val[L0]! * s0 + this.off[p0]!;
+      if (blk.has[L1]) y = this.incAxis(blk, p1) ? y + blk.val[L1]! * s1 : blk.val[L1]! * s1 + this.off[p1]!;
       if (this.fanucLathe) {
         if (p0 === 0 && blk.has[LU] && !blk.has[LX]) x = this.pos[0]! + blk.val[LU]! * s0;
         if (p1 === 2 && blk.has[LW] && !blk.has[LZ]) y = this.pos[2]! + blk.val[LW]! * s1;
