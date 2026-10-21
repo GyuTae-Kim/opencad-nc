@@ -8,7 +8,7 @@
  * 이 파일은 화면 쪽에서도 불러오므로 해석기(무거운 코드)를 가져오지 않는다 — 워커 쪽 도움은 payload.ts에 있다.
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
-import type { NcDialect, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
+import type { NcDialect, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -27,6 +27,10 @@ export interface NcOpenOptions {
   rotary?: boolean;
   /** 꺼진 가공도 그리기(MPR) */
   mprDisabled?: boolean;
+  /** 기계·읽기 설정(앱 설정에서 덧붙인다): '/' 블록 건너뛰기, H·D 번호 확인, 기계 설정(mm) */
+  blockDelete?: boolean;
+  checkToolNumbers?: boolean;
+  machine?: NcMachineOptions;
 }
 
 export interface ParseRequest {

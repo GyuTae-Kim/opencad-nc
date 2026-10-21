@@ -59,7 +59,11 @@ export function parseOptions(kind: NcFileKind | null, o: NcOpenOptions): NcParse
       lathe: o.lathe === undefined ? 'auto' : o.lathe,
       ...(o.rotary ? { rotary: true } : {}),
       ...(o.integerUnits ? { integerUnits: true } : {}),
+      ...(o.blockDelete ? { blockDelete: true } : {}),
+      ...(o.checkToolNumbers === false ? { checkToolNumbers: false } : {}),
+      ...(o.machine ? { machine: o.machine } : {}),
     },
+    ...(o.machine ? { heidenhain: { machine: o.machine } } : {}),
   };
 }
 

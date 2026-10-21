@@ -355,6 +355,26 @@ export function toolLabel(nc: Partial<Pick<NcPayload, 'tools'>>, t: number): str
   return `T${t}`;
 }
 
+/** 공구 이름 → 재생 표시 모양: 볼 → 'ball', 드릴·센터·모따기·탭 → 'cone', 엔드밀·페이스밀 → 'cylinder' (모르면 null) */
+export function toolShape(name: string | undefined): 'ball' | 'cone' | 'cylinder' | null {
+  if (!name) return null;
+  if (/BALL|\bBN\b|KUGEL|볼/i.test(name)) return 'ball';
+  if (/DRILL|SPOT|CENT(?:ER|RE)|CHAMF|C'?SINK|COUNTERSINK|\bTAP|BOHR|ZENTRIER|FASE|SENK|REAM|드릴|센터|모따기|탭|리머/i.test(name)) return 'cone';
+  if (/MILL|ENDMILL|\bEM\b|FLAT|FACE|SHELL|SLOT|BULL|FR(?:AE|A|Ä)S|엔드밀|평|페이스/i.test(name)) return 'cylinder';
+  return null;
+}
+
+/**
+ * 재생 중 공구 표시: 모양은 공구 이름(모르면 원뿔), 실제 크기(realSize)면 반지름 = 지름/2(지름을 모르면 화면 크기)
+ */
+export function toolMarker(nc: Pick<NcPayload, 'moves' | 'tools'>, move: number, realSize: boolean): { kind: 'ball' | 'cone' | 'cylinder'; radius?: number } {
+  const t = move >= 0 && move < nc.moves.count ? nc.moves.tool[move]! : -1;
+  const tool = t >= 0 ? nc.tools.find((x) => x.number === t) : undefined;
+  const kind = toolShape(tool?.name) ?? 'cone';
+  const d = tool?.diameter;
+  return realSize && d && d > 0 ? { kind, radius: d / 2 } : { kind };
+}
+
 /** 이동 하나의 설명("직선 이송 · T1 · F1200") */
 export function moveSummary(nc: Pick<NcPayload, 'moves'> & Partial<Pick<NcPayload, 'tools'>>, i: number): string {
   if (i < 0 || i >= nc.moves.count) return '';

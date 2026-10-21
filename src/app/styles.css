@@ -1720,3 +1720,29 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
 @media (max-width: 1000px) {
   .titlebar .tbtn .lbl { display: none; }
 }
+
+/* 기계·읽기 설정: 숫자 칸(축 셋은 한 줄) */
+.num-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.xyz-input {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+@media (pointer: coarse) {
+  .num-input {
+    height: 36px;
+    font-size: 16px;
+  }
+}

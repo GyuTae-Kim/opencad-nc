@@ -32,6 +32,7 @@ import {
   PLANE_AXES,
   arcPoints,
   type NcDialect,
+  type NcMachineOptions,
   type NcPlane,
   type NcProgram,
   type NcRotaryOptions,
@@ -88,6 +89,11 @@ export interface GcodeOptions {
   integerUnits?: boolean;
   /** 공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고(기본 true) */
   checkToolNumbers?: boolean;
+  /**
+   * 기계·읽기 설정(mm 기준, 앱 설정): 급속 속도·공구 교환 시간·도그레그 급속·축별 허용 범위, 기계 오프셋·기준점.
+   * 프로그램 단위가 inch면 바꿔 쓴다. rapidFeed·machineOffset·referencePoint를 따로 주면 그쪽이 먼저
+   */
+  machine?: NcMachineOptions;
 }
 
 /** 소수점 없으면 최소 입력 단위로 읽는 낱말(X Y Z U V W I J K R Q A B C) */
@@ -789,7 +795,12 @@ export class Runner extends NcEmitter {
     this.blockInch = this.displayInch;
     this.updateScale();
     this.tol = this.displayInch ? 0.0001 : 0.002;
-    this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
+    this.rapidFeed = this.displayInch ? 400 : 10000;
+    if (opts.machine) {
+      const mc = this.applyMachine(opts.machine);
+      this.o = { ...opts, machineOffset: opts.machineOffset ?? mc.offset, referencePoint: opts.referencePoint ?? mc.reference };
+    }
+    if (opts.rapidFeed) this.rapidFeed = opts.rapidFeed;
     // 안전 확인: 공구 길이 보정(G43)은 밀링 Fanuc 계열에서, 주축은 GRBL(레이저 M3 S0)이 아니면
     this.checkNumbers = opts.checkToolNumbers !== false;
     this.checkTlc = !this.lathe && dialect !== 'grbl' && dialect !== 'siemens';

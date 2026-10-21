@@ -158,6 +158,8 @@ export interface NcStats {
   rapidTime: number;
   feedTime: number;
   dwellTime: number;
+  /** 공구 교환 시간 합(초, 기계 설정 toolChangeSec이 있을 때) */
+  toolChangeTime: number;
   /** 실행한 블록 수(반복·부프로그램 포함) */
   blocks: number;
   /** 계산에 쓴 급속 속도(표시 단위/분) */
@@ -208,6 +210,24 @@ export interface NcRotaryOptions {
 export interface NcNotice {
   kind: 'lathe-auto' | 'integer-units' | 'dialect';
   dialect?: NcDialect | 'heidenhain-iso' | 'okuma';
+}
+
+/**
+ * 기계 설정(화면의 "기계·읽기 설정" — 값은 mm, 해석기가 프로그램 단위로 바꾼다)
+ */
+export interface NcMachineOptions {
+  /** 급속 속도(mm/분, 시간 계산) */
+  rapidFeedMm?: number;
+  /** 공구 교환 한 번에 걸리는 시간(초, 두 번째 공구부터) */
+  toolChangeSec?: number;
+  /** 첫 작업 좌표계 원점의 기계 좌표(mm) — 주면 G53·M91 값과 G28 기준점을 실제 위치로 */
+  offsetMm?: [number, number, number];
+  /** G28·G30 기준점의 기계 좌표(mm, 기본 0,0,0 — offsetMm과 함께) */
+  referenceMm?: [number, number, number];
+  /** 작업 좌표로 허용하는 범위(mm, 축마다 null이면 보지 않음) — 넘으면 경고 */
+  limitsMm?: { min: (number | null)[]; max: (number | null)[] };
+  /** 급속을 축마다 따로 움직이는 꺾인 길(도그레그)로 그리고 시간도 가장 긴 축으로 */
+  dogleg?: boolean;
 }
 
 /** 해석 결과 */

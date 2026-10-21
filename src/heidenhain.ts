@@ -14,7 +14,7 @@
 import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
-import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
+import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcMachineOptions, type NcPlane, type NcProgram } from './model';
 
 const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
@@ -34,6 +34,8 @@ export interface HeidenhainOptions {
   toolTable?: Record<number, { diameter?: number; radius?: number }>;
   /** 공작물 원점의 기계 좌표(표시 단위). 주면 M91 값을 실제 위치로 그린다. 없으면 공구 축을 안전 높이(추정)로 */
   machineOffset?: [number, number, number];
+  /** 기계·읽기 설정(mm 기준, 앱 설정 — GcodeOptions.machine과 같음) */
+  machine?: NcMachineOptions;
 }
 
 const AXES = 'XYZ';
@@ -116,7 +118,12 @@ class HRunner extends NcEmitter {
       }
     }
     this.tol = this.displayInch ? 0.0001 : 0.002;
-    this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
+    this.rapidFeed = this.displayInch ? 400 : 10000;
+    if (opts.machine) {
+      const mc = this.applyMachine(opts.machine);
+      if (!opts.machineOffset && mc.offset) this.o = { ...opts, machineOffset: mc.offset };
+    }
+    if (opts.rapidFeed) this.rapidFeed = opts.rapidFeed;
     this.feedMode = 94;
   }
 

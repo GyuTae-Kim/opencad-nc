@@ -32,6 +32,7 @@ import {
   toolInfoFromComment,
   type NcCompRun,
   type NcDialect,
+  type NcMachineOptions,
   type NcNotice,
   type NcPlane,
   type NcProgram,
@@ -110,6 +111,77 @@ export class NcEmitter {
   /** 주축 확인을 할지(GRBL 레이저 M3 S0 등은 끔) */
   protected checkSpindle = true;
   private warnedNumber = new Set<string>();
+
+  // ── 기계 설정(급속 속도·공구 교환 시간·도그레그·허용 범위) ──
+  protected toolChangeSec = 0;
+  private changeTime = 0;
+  /** 아직 이동이 없어 넣지 못한 공구 교환 시간 */
+  private pendingTime = 0;
+  protected dogleg = false;
+  private inDogleg = false;
+  /** 시간 계산에 쓸 길이(도그레그: 가장 긴 축 이동, -1 = 이동 길이) */
+  private timeLen = -1;
+  private limits: { min: (number | null)[]; max: (number | null)[] } | null = null;
+
+  /**
+   * 기계 설정을 지금 표시 단위로(해석기가 단위를 정한 뒤 부른다): 급속 속도·공구 교환 시간·도그레그·허용 범위.
+   * 기계 오프셋·기준점은 표시 단위로 돌려준다(해석기가 기계 좌표 쪽 이동에 쓴다)
+   */
+  protected applyMachine(m: NcMachineOptions | undefined): { offset?: [number, number, number]; reference?: [number, number, number] } {
+    if (!m) return {};
+    const k = this.displayInch ? 1 / 25.4 : 1;
+    if (m.rapidFeedMm && m.rapidFeedMm > 0) this.rapidFeed = m.rapidFeedMm * k;
+    if (m.toolChangeSec && m.toolChangeSec > 0) this.toolChangeSec = m.toolChangeSec;
+    this.dogleg = !!m.dogleg;
+    if (m.limitsMm) {
+      const f = (v: number | null | undefined): number | null => (v === null || v === undefined || !Number.isFinite(v) ? null : v * k);
+      this.limits = { min: [0, 1, 2].map((a) => f(m.limitsMm!.min[a])), max: [0, 1, 2].map((a) => f(m.limitsMm!.max[a])) };
+    }
+    const conv = (v: [number, number, number] | undefined): [number, number, number] | undefined => (v ? [v[0] * k, v[1] * k, v[2] * k] : undefined);
+    return { offset: conv(m.offsetMm), reference: conv(m.referenceMm) };
+  }
+
+  /** 축별 허용 범위(표시 좌표) 밖으로 가는 이동을 경고(축·방향마다 한 문구, 줄은 모두 남긴다). 기계 좌표 쪽 추정 이동은 빼고 */
+  private checkLimits(x: number, y: number, z: number, line: number, extraFlags: number): void {
+    const lim = this.limits!;
+    if (this.machHigh !== 0 || extraFlags & FLAG_MACHINE_EST) return;
+    const v = [x, y, z];
+    const fmt = (n: number): string => String(Math.round(n * 1000) / 1000);
+    for (let a = 0; a < 3; a++) {
+      const lo = lim.min[a];
+      const hi = lim.max[a];
+      const ax = 'XYZ'[a]!;
+      if (lo !== null && lo !== undefined && v[a]! < lo - 1e-9) this.w.add(`${ax}가 허용 범위 최솟값 ${fmt(lo)}보다 작은 곳으로 이동`, line);
+      if (hi !== null && hi !== undefined && v[a]! > hi + 1e-9) this.w.add(`${ax}가 허용 범위 최댓값 ${fmt(hi)}보다 큰 곳으로 이동`, line);
+    }
+  }
+
+  /** 급속을 도그레그로: 모든 축이 같은 속도로 함께 가다 짧은 축부터 멈춘다(조각마다 가장 긴 축 이동으로 시간) */
+  private emitDogleg(x: number, y: number, z: number, line: number, extraFlags: number): boolean {
+    const p = this.pos;
+    const target = [x, y, z];
+    const rem = [x - p[0]!, y - p[1]!, z - p[2]!];
+    const cur = [p[0]!, p[1]!, p[2]!];
+    let any = false;
+    this.inDogleg = true;
+    for (let guard = 0; guard < 3; guard++) {
+      const mags = rem.map(Math.abs).filter((v) => v > 1e-9);
+      if (!mags.length) break;
+      const m = Math.min(...mags);
+      const last = mags.every((v) => v - m <= 1e-9);
+      const next = cur.map((c, a) => (last ? target[a]! : Math.abs(rem[a]!) > 1e-9 ? c + Math.sign(rem[a]!) * m : c));
+      this.timeLen = m;
+      any = this.emit(MOVE_RAPID, next[0]!, next[1]!, next[2]!, line, extraFlags) || any;
+      for (let a = 0; a < 3; a++) {
+        if (Math.abs(rem[a]!) > 1e-9) rem[a] = rem[a]! - Math.sign(rem[a]!) * m;
+        cur[a] = next[a]!;
+      }
+      if (last) break;
+    }
+    this.timeLen = -1;
+    this.inDogleg = false;
+    return any;
+  }
 
   // ── 이동마다 남기는 모달 상태(화면의 현재 블록 표시) ──
   /** 켜진 공구 길이 보정 H 번호(-1 = 없음) */
@@ -261,6 +333,11 @@ export class NcEmitter {
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
+    // 도그레그 급속(여러 축이 함께 움직이는 급속, 위치를 알 때만)
+    if (this.dogleg && !this.inDogleg && kind === MOVE_RAPID && arcIdx < 0 && this.known === 7 && this.machHigh === 0 && this.machPending === 0 && !(extraFlags & FLAG_MACHINE)) {
+      const d = [x - this.pos[0]!, y - this.pos[1]!, z - this.pos[2]!].filter((v) => Math.abs(v) > 1e-9);
+      if (d.length >= 2 && new Set(d.map((v) => Math.abs(v).toFixed(9))).size > 1) return this.emitDogleg(x, y, z, line, extraFlags);
+    }
     const p = this.pos;
     if (this.known !== 7 && this.mb.count === 0) {
       if (!(this.known & 1)) p[0] = x;
@@ -295,7 +372,7 @@ export class NcEmitter {
     if (acc.firstLine < 0) acc.firstLine = line;
     acc.moveCount++;
     if (kind === MOVE_RAPID) {
-      t = (len / this.rapidFeed) * 60;
+      t = ((this.timeLen >= 0 ? this.timeLen : len) / this.rapidFeed) * 60;
       this.rapidLen += len;
       this.rapidTime += t;
       acc.rapidLength += len;
@@ -313,7 +390,9 @@ export class NcEmitter {
       acc.feedLength += len;
     }
     acc.time += t;
-    this.mb.time[i] = t;
+    this.mb.time[i] = t + this.pendingTime;
+    this.pendingTime = 0;
+    if (this.limits) this.checkLimits(x, y, z, line, extraFlags);
     return true;
   }
 
@@ -639,6 +718,12 @@ export class NcEmitter {
     this.tool = t;
     this.tlcTool = false;
     this.toolChanges++;
+    if (this.toolChangeSec > 0) {
+      this.changeTime += this.toolChangeSec;
+      // 공구 교환 시간은 바로 앞 이동 뒤에(재생 시간 축), 아직 이동이 없으면 첫 이동에 붙인다
+      if (this.mb.count > 0) this.mb.time[this.mb.count - 1] = this.mb.time[this.mb.count - 1]! + this.toolChangeSec;
+      else this.pendingTime += this.toolChangeSec;
+    }
     const acc = this.toolAcc();
     if (acc.firstLine < 0) acc.firstLine = line;
     const lc = this.lastComment;
@@ -837,10 +922,11 @@ export class NcEmitter {
         arcCount: arcs.count,
         holeCount: holes.count,
         toolChanges: this.toolChanges,
-        time: this.rapidTime + this.feedTime + this.dwellTime,
+        time: this.rapidTime + this.feedTime + this.dwellTime + this.changeTime,
         rapidTime: this.rapidTime,
         feedTime: this.feedTime,
         dwellTime: this.dwellTime,
+        toolChangeTime: this.changeTime,
         blocks: o.blocks,
         rapidFeed: this.rapidFeed,
       },

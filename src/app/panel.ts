@@ -15,6 +15,7 @@ import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint } from './measure';
 import type { NcOpenOptions } from './protocol';
+import { defaultSettings, type NcSettings } from './settings';
 
 /** 이보다 좁으면 패널을 아래 시트로 */
 export const NARROW_WIDTH = 760;
@@ -52,6 +53,9 @@ export interface PanelHost {
   groups(): { name: string; visible: boolean; count: number }[];
   reparse(opts: NcOpenOptions): void;
   togglePanel(on?: boolean): void;
+  /** 기계·읽기 설정(앱 전체, 기억된다) */
+  readonly settings: NcSettings;
+  setSettings(s: NcSettings): void;
 }
 
 const MPR_KIND: Record<string, string> = {
@@ -845,7 +849,72 @@ export class NcPanel {
         row('이송 · 급속 · 휴지', `${formatDuration(st.feedTime)} · ${formatDuration(st.rapidTime)} · ${formatDuration(st.dwellTime)}`),
         row('급속 속도(계산용)', `${fmtNum(st.rapidFeed, 0)} ${u}/분`),
         row('공구 교환 · 원호 · 구멍', `${st.toolChanges} · ${st.arcCount.toLocaleString('ko-KR')} · ${st.holeCount.toLocaleString('ko-KR')}`),
+        st.toolChangeTime > 0 ? row('공구 교환 시간', formatDuration(st.toolChangeTime)) : null,
       ),
+    );
+    this.body.append(this.settingsGroup());
+  }
+
+  /** 기계·읽기 설정(앱 전체, 이 브라우저에 기억): 바꾸면 지금 프로그램을 다시 읽는다 */
+  private settingsGroup(): HTMLElement {
+    const s = this.host.settings;
+    const set = (patch: Partial<NcSettings>): void => this.host.setSettings({ ...this.host.settings, ...patch });
+    const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = ''): HTMLInputElement => {
+      const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label, placeholder });
+      el.value = v === null ? '' : String(v);
+      el.addEventListener('change', () => {
+        const t = el.value.trim();
+        const n = t === '' ? null : Number(t);
+        onSet(n === null || Number.isFinite(n) ? n : null);
+      });
+      return el;
+    };
+    const one = (label: string, hint: string, v: number | null, onSet: (n: number | null) => void, placeholder: string): HTMLElement =>
+      h('label', { class: 'prop-row edit', title: hint }, h('span', { class: 'k' }, label), numIn(v, label, onSet, placeholder));
+    const tri = (label: string, hint: string, key: 'offsetMm' | 'referenceMm' | 'limitMin' | 'limitMax'): HTMLElement =>
+      h(
+        'div',
+        { class: 'prop-row edit', title: hint },
+        h('span', { class: 'k' }, label),
+        h(
+          'span',
+          { class: 'xyz-input' },
+          ...[0, 1, 2].map((a) =>
+            numIn(
+              s[key][a]!,
+              `${label} — ${'XYZ'[a]}`,
+              (n) => {
+                const v = [...this.host.settings[key]] as NcSettings[typeof key];
+                v[a] = n;
+                set({ [key]: v });
+              },
+              'XYZ'[a]!,
+            ),
+          ),
+        ),
+      );
+    const check = (label: string, hint: string, key: 'blockDelete' | 'checkToolNumbers' | 'dogleg' | 'toolSize'): HTMLElement => {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = s[key];
+      cb.addEventListener('change', () => set({ [key]: cb.checked }));
+      return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label));
+    };
+    const reset = h('button', { type: 'button', class: 'btn small' }, '기본값으로');
+    reset.addEventListener('click', () => this.host.setSettings(defaultSettings()));
+    return group(
+      '기계·읽기 설정',
+      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000'),
+      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0'),
+      check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
+      check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
+      check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
+      tri('G54 원점의 기계 좌표(mm)', '세 축을 모두 넣으면 G53·M91 값과 G28·G30 기준점을 실제 위치로 그립니다(없으면 공구 축만 안전 높이로 추정).', 'offsetMm'),
+      tri('G28 기준점 기계 좌표(mm)', 'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.', 'referenceMm'),
+      tri('허용 범위 최소(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMin'),
+      tri('허용 범위 최대(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMax'),
+      check('공구를 실제 크기로 표시', '재생 중 공구 표시를 주석·공구 정의에서 읽은 지름 크기로 그립니다(모양은 공구 이름: 볼·드릴·엔드밀).', 'toolSize'),
+      h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
+      reset,
     );
   }
 

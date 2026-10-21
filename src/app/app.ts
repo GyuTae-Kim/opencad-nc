@@ -24,7 +24,8 @@ import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
+import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
+import { createDoc, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -165,6 +166,8 @@ export class NcViewerApp implements PanelHost {
   viewer: Viewer3d | null = null;
   private readonly client = new ParseWorkerClient();
   readonly panel: NcPanel;
+  /** 기계·읽기 설정(앱 전체, localStorage) */
+  settings: NcSettings = loadSettings();
 
   private theme: ThemeName;
   private readonly storage = safeStorage();
@@ -837,7 +840,7 @@ export class NcViewerApp implements PanelHost {
     this.closeMenu();
     this.setBusy('여는 중', 0.02, name);
     try {
-      const res = await this.client.open(name, data, opts, (f, stage) => {
+      const res = await this.client.open(name, data, { ...opts, ...settingsOpenOptions(this.settings) }, (f, stage) => {
         if (seq === this.loadSeq) this.setBusy(stage, f, name);
       });
       if (seq !== this.loadSeq) return false;
@@ -874,7 +877,7 @@ export class NcViewerApp implements PanelHost {
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {
-      const res = await this.client.open(d.name, copy, opts, (f, stage) => {
+      const res = await this.client.open(d.name, copy, { ...opts, ...settingsOpenOptions(this.settings) }, (f, stage) => {
         if (seq === this.loadSeq) this.setBusy(stage, f, d.name);
       });
       if (seq !== this.loadSeq || this.doc !== d) return;
@@ -895,6 +898,16 @@ export class NcViewerApp implements PanelHost {
     } finally {
       if (seq === this.loadSeq) this.setBusy(null);
     }
+  }
+
+  /** 기계·읽기 설정을 바꾼다(기억하고, 해석에 쓰는 값이 바뀌었으면 지금 프로그램을 다시 읽는다) */
+  setSettings(s: NcSettings): void {
+    const before = this.settings;
+    this.settings = s;
+    saveSettings(s);
+    const d = this.doc;
+    if (d?.nc && settingsNeedReparse(before, s)) void this.reparse(d.ncOptions);
+    else if (d) this.applyPlayback(d);
   }
 
   private async startFromUrl(): Promise<void> {
@@ -1422,7 +1435,8 @@ export class NcViewerApp implements PanelHost {
     const end = v.setDrawLimitBySegmentId(move, { ghost: 0.14 });
     const seg = moveSegments(d.scene, [move], 4096);
     const pos = pointAlong(seg, frac) ?? end ?? moveEndPoint(d.nc, move);
-    v.setMarker(pos, 'cone');
+    const mk = toolMarker(d.nc, move, this.settings.toolSize);
+    v.setMarker(pos, mk.kind, mk.radius ? { radius: mk.radius } : {});
   }
 
   // ───────────────────────── 막대 그리기 ─────────────────────────
