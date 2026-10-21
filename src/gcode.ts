@@ -285,6 +285,9 @@ interface SlowEnv {
   readonly fanucRounding?: boolean;
 }
 
+/** 소수점 없는 수 낱말 값(부호 + 숫자, 뒤에 숫자·소수점이 더 없음) — lastIndex에서 맞춘다 */
+const INT_LITERAL = /[-+]?\d+(?![\d.])/y;
+
 const O_KEYWORDS = ['ENDSUB', 'SUB', 'CALL', 'RETURN', 'ELSEIF', 'ELSE', 'ENDIF', 'IF', 'ENDWHILE', 'WHILE', 'DO', 'ENDREPEAT', 'REPEAT', 'BREAK', 'CONTINUE'];
 
 /** 주석을 떼고 대문자·공백 없는 글로 */
@@ -451,11 +454,17 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
       ex.pos++;
       // Siemens 꼴 X=식
       let v: number | undefined;
+      // 소수점 없는 수 그대로(X20000)인지 — 최소 입력 단위 읽기에 쓴다. 변수·식 값은 소수점이 있는 것으로 본다
+      let dot = true;
       if (s[ex.pos] === '=') {
         ex.pos++;
         v = ex.expr();
-      } else v = ex.unary();
-      if (v !== undefined) blk.set(c.charCodeAt(0) - A, v, true);
+      } else {
+        INT_LITERAL.lastIndex = ex.pos;
+        dot = !INT_LITERAL.test(s);
+        v = ex.unary();
+      }
+      if (v !== undefined) blk.set(c.charCodeAt(0) - A, v, dot);
       continue;
     }
     if (c === '%') return;
@@ -756,6 +765,8 @@ export class Runner extends NcEmitter {
     for (const L of INT_LETTERS) {
       if (!blk.has[L]) continue;
       if (opt) {
+        // 반복 횟수 K(Fanuc 계열 고정 사이클·M98)는 길이가 아니다
+        if (L === LK && this.kIsCount(blk)) continue;
         if (!blk.dot[L]) {
           blk.val[L] = blk.val[L]! / (L <= 2 ? 1000 : this.blockInch ? 10000 : 1000);
           blk.dot[L] = 1;
@@ -770,6 +781,23 @@ export class Runner extends NcEmitter {
         }
       }
     }
+  }
+
+  /**
+   * 이 블록의 K가 반복 횟수인지: M98·M97 블록, 또는 Fanuc 계열(LinuxCNC·Haas가 아닌) 고정 사이클 블록(이 블록에서 켜거나 켜져 있는 사이클 —
+   * G80·G0~G3이 같은 블록에 있으면 끈다). 선반 모드는 정면·측면 드릴 G81~G89만(G76 나사의 K는 높이)
+   */
+  protected kIsCount(blk: Block): boolean {
+    if (blk.hasM(98) || blk.hasM(97)) return true;
+    if (this.dialect === 'linuxcnc' || this.dialect === 'haas') return false;
+    let cyc = this.cycle;
+    for (let k = 0; k < blk.gCount; k++) {
+      const g = blk.g[k]!;
+      if (g === 0 || g === 10 || g === 20 || g === 30 || g === 800) cyc = 0;
+      else if (g >= 810 && g <= 890) cyc = g;
+      else if (g === 730 || g === 740 || g === 760) cyc = g;
+    }
+    return this.lathe ? cyc >= 810 && cyc <= 890 : cyc > 0;
   }
 
   // ── 극좌표(G16) ──
@@ -2752,6 +2780,8 @@ export class Runner extends NcEmitter {
           continue;
         }
       }
+      // 윤곽 블록도 소수점 없는 값을 최소 입력 단위로(켰을 때만 — 끄면 세기는 실행할 때 한다)
+      if (this.o.integerUnits) this.integerWords(b);
       for (let k = 0; k < b.gCount; k++) {
         const g = b.g[k]!;
         if (g === 0 || g === 10 || g === 20 || g === 30) mot = g;

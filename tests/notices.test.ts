@@ -58,6 +58,39 @@ describe('소수점 없는 값 = 최소 입력 단위(Fanuc DPI = 0 꼴)', () =>
     expect(ends(inch)[0]![0]).toBeCloseTo(1.25);
   });
 
+  it('켜도 반복 횟수 K(고정 사이클·M98)는 그대로, 식·변수가 있는 줄의 소수점 없는 수는 최소 단위로', () => {
+    const holes = (p: NcProgram): number[][] => {
+      const out: number[][] = [];
+      for (let h = 0; h < p.holes.count; h++) out.push([0, 1, 2].map((k) => r3(p.holes.top[h * 3 + k]!)));
+      return out;
+    };
+    // G91 G81 … K3: 구멍 세 개(예전에는 K가 0.003 → "정수가 아님 — 한 번"으로 둘이 빠졌다)
+    const k3 = parseGcode('O1\nG21 G90 G17\nG0 X0 Y0 Z10000\nG91 G99 G81 X10000 Z-5000 R-8000 K3 F100\nG90 G80\nM30', { integerUnits: true });
+    expect(holes(k3)).toEqual([
+      [10, 0, 2],
+      [20, 0, 2],
+      [30, 0, 2],
+    ]);
+    expect(k3.warnings.some((w) => w.includes('정수가 아님'))).toBe(false);
+    // Fanuc G83 K2는 반복 두 번(Haas 최소 절입으로 바뀌지 않는다)
+    const g83 = parseGcode('O1\nG21 G90 G17\nG0 X0 Y0 Z10000\nG91 G83 X10000 Y0 Z-20000 R-8000 Q5000 K2 F100\nG90 G80\nM30', { integerUnits: true });
+    expect(holes(g83)).toEqual([
+      [10, 0, 2],
+      [20, 0, 2],
+    ]);
+    expect(g83.warnings.some((w) => w.includes('Haas 쪼기'))).toBe(false);
+    // M98 P K: 반복 세 번
+    const sub = parseGcode('O1\nG21 G90 G17\nG0 X0 Y0 Z5000\nM98 P100 K3\nM30\nO100\nG91 G1 X10000 F100\nG90\nM99', { integerUnits: true });
+    expect(ends(sub).slice(-1)).toEqual([[30, 0, 5]]);
+    // 느린 길(변수·식이 있는 줄): 소수점 없는 X20000은 20 mm, 변수 값은 그대로
+    const slow = parseGcode('O1\nG21 G90 G17\n#1=5.\n#2=7000\nG0 X0 Y0 Z10000\nG1 X20000 Y#1 F100\nG1 X30000 Y0\nG1 X[#2] Y[2000]\nM30', { integerUnits: true });
+    expect(ends(slow)).toEqual([
+      [20, 5, 10],
+      [30, 0, 10],
+      [7000, 2000, 10],
+    ]);
+  });
+
   it('소수점을 쓴 프로그램·0·작은 정수만 있는 프로그램은 알리지 않는다', () => {
     expect(parseGcode('G21 G90\nG0 X0 Y0 Z10\nG1 X125. Y-30. F100\nX150.5\nY200.').notices).toBeUndefined();
     expect(parseGcode('G21 G90\nG0 X0 Y0 Z10\nG1 X5 Y5 F100\nX10 Y0\nX0').notices).toBeUndefined();
