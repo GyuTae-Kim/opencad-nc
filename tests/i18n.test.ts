@@ -27,6 +27,16 @@ describe('language URLs and UI presentation', () => {
     expect(translate(example,'en')).toContain('FILE_A.skp');
     expect(translate(example,'en')).not.toBe(example);
   });
+  it('has no machine-translation leftovers: stray extra lines or wrong-sense words', () => {
+    for (const {code} of languages.filter(item => item.code !== 'ko'))
+      for (const [key, value] of Object.entries(catalogs[code])) {
+        expect(value.split('\n').length, `${code}: ${key}`).toBe(key.split('\n').length);
+        // 해석(parse)을 통역으로, 그릴(draw)을 석쇠로, 이송(feed)을 송금·전송으로, 주석(annotation)을 주석(錫)으로, 개(個)를 개(犬)로 옮긴 말
+        expect(value, `${code}: ${key}`).not.toMatch(/译员|Dolmetsch|grill|Grill|格栅|转账|转移|Übertrag|錫|犬|Revision|Processing/);
+      }
+    expect(translate('직선 이송', 'de')).toBe('Geradenvorschub');
+    expect(translate('급속', 'de')).toBe('Eilgang');
+  });
   it('translates every piece of a " · "-joined sentence, even when a short pattern would swallow the rest', () => {
     const hangul = /[가-힣]/;
     // "줄 {0}"·"중심 {0}"·"{0} · 줄 {1}"이 문장 끝까지 잡아 나머지가 한국어로 남던 줄(상태 막대의 고른 이동·원호 상태)
