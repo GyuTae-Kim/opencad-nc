@@ -84,18 +84,34 @@ class HRunner extends NcEmitter {
   private toolDR = 0;
   private maxBlocks: number;
   private maxMoves: number;
+  // ── DIN/ISO(%이름 G71 * 꼴) ──
+  private iso = false;
+  private isoAbs = true;
+  /** 이동 모드: 0 급속, 1 직선, 2 시계, 3 반시계, 5 방향 없는 원호, 6 접선 원호, 10/11 극 직선, 12/13/15 극 원호 */
+  private isoMot = 1;
+  private isoComp = 0;
+  private isoSeenStart = false;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
     super(src, opts.initialPosition);
     this.o = opts;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
     this.maxMoves = opts.maxMoves ?? 8_000_000;
-    // 단위: BEGIN PGM … MM|INCH
+    // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)
     for (let i = 0; i < Math.min(src.lineCount, 50); i++) {
-      const m = /BEGIN\s+PGM\s+(\S+)\s+(MM|INCH)/i.exec(sourceLine(src, i));
+      const t = sourceLine(src, i);
+      const m = /BEGIN\s+PGM\s+(\S+)\s+(MM|INCH)/i.exec(t);
       if (m) {
         this.name = m[1]!;
         this.displayInch = m[2]!.toUpperCase() === 'INCH';
+        break;
+      }
+      const iso = /^\s*%([^\s*;]+)\s+G7([01])\b/i.exec(t);
+      if (iso) {
+        this.iso = true;
+        this.name = iso[1]!;
+        this.displayInch = iso[2] === '0';
+        this.notices.push({ kind: 'dialect', dialect: 'heidenhain-iso' });
         break;
       }
     }
@@ -120,8 +136,9 @@ class HRunner extends NcEmitter {
       j++;
       if (!cont || j >= this.src.lineCount) break;
     }
-    // 블록 번호 떼기
+    // 블록 번호 떼기(DIN/ISO는 블록 끝 * 도)
     text = text.replace(/^\s*N?\d+(?:\s+|$)/, '').trim();
+    if (this.iso) text = text.replace(/\s*\*\s*$/, '').trim();
     return { line: i, next: j, toks: tokenize(text), text };
   }
 
@@ -135,7 +152,13 @@ class HRunner extends NcEmitter {
       this.pc = b.next;
       if (!b.toks.length) continue;
       try {
-        this.exec(b);
+        if (this.iso) {
+          // DIN/ISO 블록을 평문 블록(하나 이상)으로 옮겨 같은 길로 실행
+          for (const t of this.isoBlock(b.text, b.line)) {
+            this.exec({ line: b.line, next: b.next, text: t, toks: tokenize(t) });
+            if (this.ended || this.pc !== b.next) break;
+          }
+        } else this.exec(b);
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, b.line);
@@ -145,6 +168,188 @@ class HRunner extends NcEmitter {
         break;
       }
     }
+  }
+
+  // ── DIN/ISO → 평문 ──
+  /**
+   * DIN/ISO 블록 하나를 평문 블록 글(하나 이상)로 옮긴다:
+   * G00/G01 → L(FMAX), G02/G03 → C·CR(R), G05 → C(방향 그대로), G06 → CT, G10/G11 R H → LP, G12/G13/G15 H → CP, I·J·K → CC(절대 원 중심),
+   * G29 → CC(마지막 자리), G40/G41/G42 → R0/RL/RR, G90/G91 → I 붙임, G30/G31 → BLK FORM, G99 T L R → TOOL DEF, T G17 S → TOOL CALL,
+   * G2xx → CYCL DEF, G79 → CYCL CALL, G83 P01… → 옛 쪼기 사이클 1, G54 → 사이클 7, G28 → 8, G73 H → 10, G72 F → 11,
+   * G98 L n → LBL n, L n,m → CALL LBL n REP m, D00~D13 → FN, G04 F → 휴지, G38 → STOP, %이름 → 시작·끝(다른 이름이면 CALL PGM)
+   */
+  private isoBlock(text: string, line: number): string[] {
+    const t = text.trim();
+    if (!t) return [];
+    // %이름 G71: 처음이면 시작, 그다음(N99999999 %이름 …)은 끝, 다른 이름이면 프로그램 부르기
+    let m = /^%([^\s*;]+)/.exec(t);
+    if (m) {
+      if (!this.isoSeenStart) {
+        this.isoSeenStart = true;
+        return [];
+      }
+      return m[1]!.toUpperCase() === this.name.toUpperCase() ? ['END PGM'] : [`CALL PGM ${m[1]}`];
+    }
+    // Q 공식(Q1 = …)은 그대로
+    if (/^Q[LRS]?\d+\s*=/.test(t)) return [t];
+    // D 함수: D00 Q1 P01 +5 / D01 Q1 P01 Q2 P02 +3 / D09 P01 +Q1 P02 +10 P03 5
+    if ((m = /^D(\d+)\s+(.*)$/i.exec(t))) return [this.isoFn(+m[1]!, m[2]!, line)];
+    // 낱말: 글자 + 값(+5·-2.5·Q3·+Q3), L n,m(부르기)
+    const W: { k: string; v: string }[] = [];
+    const re = /([A-Z]+)\s*((?:[-+]?(?:\d+\.?\d*|\.\d+)(?:,\d+)?)|[-+]?Q[LRS]?\d+)?/gi;
+    let mm: RegExpExecArray | null;
+    let rest = '';
+    while ((mm = re.exec(t))) {
+      const k = mm[1]!.toUpperCase();
+      // 사이클 이름(BOHREN 등)·이름 뒤 Q 대입은 그대로 넘긴다
+      if (/^Q[LRS]?$/.test(k) && t[re.lastIndex] === '=') {
+        rest = t.slice(mm.index);
+        break;
+      }
+      W.push({ k, v: mm[2] ?? '' });
+    }
+    const gs = W.filter((w) => w.k === 'G').map((w) => Math.round(parseFloat(w.v)));
+    const word = (k: string): string | undefined => W.find((w) => w.k === k)?.v;
+    const has = (k: string): boolean => W.some((w) => w.k === k);
+    const out: string[] = [];
+    // 모드
+    for (const g of gs) {
+      if (g === 90) this.isoAbs = true;
+      else if (g === 91) this.isoAbs = false;
+      else if (g === 40) this.isoComp = 0;
+      else if (g === 41) this.isoComp = 1;
+      else if (g === 42) this.isoComp = 2;
+      else if ([0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 15, 16].includes(g)) this.isoMot = g;
+    }
+    const inc = this.isoAbs ? '' : 'I';
+    const sgn = (v: string): string => (/^[-+]/.test(v) ? v : `+${v}`);
+    const axes = (letters: string[]): string =>
+      letters
+        .filter((a) => has(a))
+        .map((a) => `${inc}${a}${sgn(word(a)!)}`)
+        .join(' ');
+    const ms = W.filter((w) => w.k === 'M').map((w) => `M${w.v}`);
+    const feed = has('F') ? ` F${word('F')}` : '';
+    const g = (n: number): boolean => gs.includes(n);
+    // 블록 꼴
+    if (g(30) || g(31)) {
+      const ax = g(18) ? 'Y' : g(19) ? 'X' : 'Z';
+      return [g(30) ? `BLK FORM 0.1 ${ax} ${axes(['X', 'Y', 'Z'])}` : `BLK FORM 0.2 ${axes(['X', 'Y', 'Z'])}`];
+    }
+    if (g(99) && has('T')) return [`TOOL DEF ${word('T')} L${sgn(word('L') ?? '0')} R${sgn(word('R') ?? '0')}`];
+    if (has('T')) {
+      const ax = g(18) ? 'Y' : g(19) ? 'X' : 'Z';
+      const extra = ['S', 'F', 'DL', 'DR'].filter(has).map((k) => ` ${k}${word(k)}`).join('');
+      out.push(`TOOL CALL ${word('T')} ${ax}${extra}`);
+      if (ms.length) out.push(ms.join(' '));
+      return out;
+    }
+    if (g(98) && has('L')) return [`LBL ${word('L')}`];
+    if (has('L') && /,/.test(word('L') ?? '')) {
+      const [n, rep] = word('L')!.split(',');
+      return [rep && +rep > 0 ? `CALL LBL ${n} REP ${rep}` : `CALL LBL ${n}`];
+    }
+    if (g(38)) return ['STOP'];
+    if (g(4)) return [`DWELL ${word('F') ?? '0'}`];
+    const big = gs.find((n) => n >= 200 && n <= 299);
+    if (big !== undefined) return [`CYCL DEF ${big} ${rest || W.filter((w) => w.k !== 'G').map((w) => w.k + w.v).join(' ')}`.trim()];
+    if (g(79)) return [`CYCL CALL${feed}${ms.length ? ' ' + ms.join(' ') : ''}`];
+    if (g(83) || g(84)) {
+      // 옛 사이클 1(쪼기)·2(탭): P01 안전 거리 P02 깊이 P03 절입(탭은 휴지) P04 휴지(탭은 이송) P05 이송
+      const pv = (k: string): string => {
+        const r = new RegExp(`P0?${k}\\s*([-+]?(?:\\d+\\.?\\d*|\\.\\d+|Q\\d+))`, 'i').exec(t);
+        return r ? r[1]! : '0';
+      };
+      if (g(83)) return ['CYCL DEF 1.0', `CYCL DEF 1.1 SET UP ${pv('1')}`, `CYCL DEF 1.2 DEPTH ${pv('2')}`, `CYCL DEF 1.3 PECKG ${pv('3')}`, `CYCL DEF 1.4 DWELL ${pv('4')}`, `CYCL DEF 1.5 F${pv('5')}`];
+      return ['CYCL DEF 2.0', `CYCL DEF 2.1 SET UP ${pv('1')}`, `CYCL DEF 2.2 DEPTH ${pv('2')}`, `CYCL DEF 2.3 DWELL ${pv('3')}`, `CYCL DEF 2.4 F${pv('4')}`];
+    }
+    if (g(54)) return ['CYCL DEF 7.0', ...['X', 'Y', 'Z'].filter(has).map((a, k) => `CYCL DEF 7.${k + 1} ${inc}${a}${sgn(word(a)!)}`)];
+    if (g(28)) return ['CYCL DEF 8.0', `CYCL DEF 8.1 ${['X', 'Y', 'Z'].filter(has).join(' ')}`.trim()];
+    if (g(73)) return ['CYCL DEF 10.0', `CYCL DEF 10.1 ${inc}ROT${sgn(word('H') ?? '0')}`];
+    if (g(72)) return ['CYCL DEF 11.0', `CYCL DEF 11.1 SCL${word('F') ?? '1'}`];
+    if (g(80)) {
+      this.w.add('DIN/ISO G80(기울인 작업 평면)은 지원하지 않음(변환 없이 그림)', line);
+      return [];
+    }
+    if (g(53)) {
+      this.w.add('DIN/ISO G53(원점 표)는 읽지 않음', line);
+      return [];
+    }
+    if (g(24) || g(25)) {
+      this.w.add(`${g(24) ? 'CHF' : 'RND'}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, line);
+      return [];
+    }
+    if (g(26) || g(27)) this.w.add('APPR·DEP(접근·이탈)는 끝점까지 직선으로 그림', line);
+    // 원 중심(극) I·J·K, G29 = 마지막 자리
+    const ijk = ['I', 'J', 'K'].filter(has);
+    if (ijk.length) out.push(`CC ${ijk.map((k) => `${inc}${'XYZ'['IJK'.indexOf(k)]}${sgn(word(k)!)}`).join(' ')}`);
+    if (g(29)) out.push('CC');
+    // 이동
+    const xyz = axes(['X', 'Y', 'Z']);
+    const comp = this.isoComp === 1 ? 'RL' : this.isoComp === 2 ? 'RR' : 'R0';
+    const tail = `${feed}${ms.length ? ' ' + ms.join(' ') : ''}`;
+    const mot = this.isoMot;
+    const hasPolar = has('H') || (has('R') && (mot === 10 || mot === 11));
+    if (mot === 10 || mot === 11 ? hasPolar : mot >= 12 && mot <= 16 ? has('H') : !!xyz) {
+      if (mot === 0 || mot === 1 || mot === 7) out.push(`L ${xyz} ${comp}${mot === 0 ? ' FMAX' : ''}${tail}`);
+      else if (mot === 2 || mot === 3) out.push(has('R') ? `CR ${xyz} R${sgn(word('R')!)} DR${mot === 2 ? '-' : '+'}${tail}` : `C ${xyz} DR${mot === 2 ? '-' : '+'}${tail}`);
+      else if (mot === 5) out.push(`C ${xyz}${tail}`);
+      else if (mot === 6) out.push(`CT ${xyz}${tail}`);
+      else if (mot === 10 || mot === 11) {
+        const pr = has('R') ? ` ${this.isoAbs ? '' : 'I'}PR${sgn(word('R')!)}` : '';
+        const pa = has('H') ? ` ${this.isoAbs ? '' : 'I'}PA${sgn(word('H')!)}` : '';
+        out.push(`LP${pr}${pa} ${comp}${mot === 10 ? ' FMAX' : ''}${tail}`);
+      } else {
+        const pa = ` ${this.isoAbs ? '' : 'I'}PA${sgn(word('H')!)}`;
+        const z = has('Z') ? ` ${inc}Z${sgn(word('Z')!)}` : '';
+        out.push(`CP${pa}${z}${mot === 12 ? ' DR-' : mot === 13 ? ' DR+' : ''}${tail}`);
+      }
+    } else if (feed || ms.length || gs.some((n) => n >= 40 && n <= 42)) out.push(`L ${comp}${tail}`.trim());
+    return out;
+  }
+
+  /** D 함수 → FN 글 */
+  private isoFn(k: number, body: string, line: number): string {
+    const toks = body.trim().split(/\s+/);
+    const target = /^Q[LRS]?\d+$/i.test(toks[0] ?? '') ? toks.shift()! : '';
+    // P01 값 P02 값 P03 값
+    const p: string[] = [];
+    for (let i = 0; i < toks.length; i++) {
+      const m = /^P0?(\d)$/i.exec(toks[i]!);
+      if (m) p[+m[1]! - 1] = toks[++i] ?? '0';
+    }
+    const v = (i: number): string => p[i] ?? '0';
+    switch (k) {
+      case 0:
+        return `FN 0: ${target} = ${v(0)}`;
+      case 1:
+        return `FN 1: ${target} = ${v(0)} + ${v(1)}`;
+      case 2:
+        return `FN 2: ${target} = ${v(0)} - ${v(1)}`;
+      case 3:
+        return `FN 3: ${target} = ${v(0)} * ${v(1)}`;
+      case 4:
+        return `FN 4: ${target} = ${v(0)} DIV ${v(1)}`;
+      case 5:
+        return `FN 5: ${target} = SQRT ${v(0)}`;
+      case 6:
+        return `FN 6: ${target} = SIN ${v(0)}`;
+      case 7:
+        return `FN 7: ${target} = COS ${v(0)}`;
+      case 8:
+        return `FN 8: ${target} = ${v(0)} LEN ${v(1)}`;
+      case 9:
+      case 10:
+      case 11:
+      case 12:
+        return `FN ${k}: IF ${v(0)} ${['EQU', 'NE', 'GT', 'LT'][k - 9]} ${v(1)} GOTO LBL ${v(2)}`;
+      case 13:
+        return `FN 13: ${target} = ${v(0)} ANG ${v(1)}`;
+      case 14:
+        return 'FN 14: ERROR';
+    }
+    this.w.add(`D${String(k).padStart(2, '0')} 함수는 지원하지 않음`, line);
+    return '';
   }
 
   // ── 값 ──
@@ -176,6 +381,11 @@ class HRunner extends NcEmitter {
     if (t0 === 'BEGIN') return;
     if (t0 === 'END' && t1 === 'PGM') {
       this.ended = true;
+      return;
+    }
+    if (t0 === 'DWELL') {
+      // DIN/ISO G04 F(초)
+      this.dwell(this.value(t1 || '0'));
       return;
     }
     if (t0 === 'BLK' && t1 === 'FORM') return this.blkForm(T, line);
@@ -633,8 +843,10 @@ class HRunner extends NcEmitter {
   private findLabel(name: string): number {
     if (!this.labels) {
       this.labels = new Map();
+      // 평문 LBL 이름, DIN/ISO G98 L 번호
+      const re = this.iso ? /^\s*(?:N?\d+\s+)?G98\s+L\s*(\d+)\b/i : /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i;
       for (let i = 0; i < this.src.lineCount; i++) {
-        const m = /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i.exec(sourceLine(this.src, i));
+        const m = re.exec(sourceLine(this.src, i));
         if (m && !this.labels.has(m[1]!.toUpperCase())) this.labels.set(m[1]!.toUpperCase(), i);
       }
     }
@@ -686,7 +898,8 @@ class HRunner extends NcEmitter {
 
   /** 줄 a와 b 사이에 LBL 0이 있는지 */
   private lbl0Between(a: number, b: number): boolean {
-    for (let i = a + 1; i < b; i++) if (/^\s*(?:N?\d+\s+)?LBL\s+"?0"?\s*(?:;|$)/i.test(sourceLine(this.src, i))) return true;
+    const re = this.iso ? /^\s*(?:N?\d+\s+)?G98\s+L\s*0\b/i : /^\s*(?:N?\d+\s+)?LBL\s+"?0"?\s*(?:;|$)/i;
+    for (let i = a + 1; i < b; i++) if (re.test(sourceLine(this.src, i))) return true;
     return false;
   }
 

@@ -478,6 +478,8 @@ export function looksSiemens(head: string): boolean {
 export function detectGcodeDialect(head: string): NcDialect {
   if (/^\s*\d*\s*BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
     return 'heidenhain';
+  // Heidenhain DIN/ISO: "%이름 G71 *" 머리, 블록 끝 * 과 G30/G31 공작물
+  if (/^\s*%[^\s*;(]+\s+G7[01]\b/im.test(head) || /^\s*N\d+\s+G3[01]\b[^\n]*\*\s*$/im.test(head)) return 'heidenhain';
   if (looksSiemens(head)) return 'siemens';
   if (/^\s*o(?:\d+|<[^>]+>)\s*(?:sub|call|if|while|do|repeat)\b/im.test(head) || /#<[_a-z]/i.test(head) || /linuxcnc|\bemc2?\b/i.test(head))
     return 'linuxcnc';
