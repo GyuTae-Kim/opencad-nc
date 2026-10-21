@@ -295,8 +295,8 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
     const { root } = makeApp();
     const fine = [...root.querySelectorAll('.start .fine-only')].map((e) => e.textContent);
     const coarse = [...root.querySelectorAll('.start .coarse-only')].map((e) => e.textContent);
-    expect(fine).toEqual(['NC 파일을 여기에 끌어다 놓으십시오', '창 어디에 놓아도 열립니다. 한 번에 파일 하나를 엽니다.', expect.stringMatching(/^키: F 전체 보기/)]);
-    expect(coarse).toEqual(['NC 파일을 골라 여십시오', '한 번에 파일 하나를 엽니다.', '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준']);
+    expect(fine).toEqual(['NC 파일을 여기에 끌어다 놓으십시오', '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.', expect.stringMatching(/^키: F 전체 보기/)]);
+    expect(coarse).toEqual(['NC 파일을 골라 여십시오', '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.', '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준']);
   });
 
   it('모르는 확장자는 앞부분만 읽어 이진 파일(사진·동영상)을 바로 막는다 — 파일 전체를 읽지 않는다', async () => {

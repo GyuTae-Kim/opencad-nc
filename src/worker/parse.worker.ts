@@ -1,5 +1,6 @@
 /**
  * NC 해석 워커: G-code·Heidenhain·woodWOP MPR 파일을 화면 밖에서 해석해 Scene3d와 패널 자료로 돌려준다.
+ * 함께 연 파일(extra)이 있으면 주 프로그램과 이어 한 작업으로 읽는다(job.ts).
  * 결과의 형식 배열은 이전 가능한 버퍼로 넘긴다(protocol.ts collectTransfers). 해석 길은 payload.ts parseForView(시험과 같다).
  */
 /// <reference lib="webworker" />
@@ -15,7 +16,8 @@ function post(msg: ParseResponse, transfer: Transferable[] = []): void {
 function open(req: ParseRequest): ParseResult {
   const id = req.id;
   const progress = (fraction: number, stage: string): void => post({ id, type: 'progress', fraction: Math.max(0, Math.min(1, fraction)), stage });
-  return parseForView(req.name, new Uint8Array(req.bytes), req.nc ?? {}, progress);
+  const extra = (req.extra ?? []).map((f) => ({ name: f.name, bytes: new Uint8Array(f.bytes) }));
+  return parseForView(req.name, new Uint8Array(req.bytes), req.nc ?? {}, progress, extra);
 }
 
 ctx.onmessage = (ev: MessageEvent<ParseRequest>) => {

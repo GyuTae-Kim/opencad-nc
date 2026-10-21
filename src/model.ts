@@ -208,8 +208,11 @@ export interface NcRotaryOptions {
  * 'dialect' 글로 판별한 방언(dialect)으로 읽음
  */
 export interface NcNotice {
-  kind: 'lathe-auto' | 'integer-units' | 'dialect';
+  /** missing-program = 다른 파일에 있을 프로그램을 찾지 못함(programs에 이름) */
+  kind: 'lathe-auto' | 'integer-units' | 'dialect' | 'missing-program';
   dialect?: NcDialect | 'heidenhain-iso' | 'okuma';
+  /** 찾지 못한 프로그램 이름·번호(O1001·SUB1·L100 — 처음 나온 차례, 20개까지) */
+  programs?: string[];
 }
 
 /**

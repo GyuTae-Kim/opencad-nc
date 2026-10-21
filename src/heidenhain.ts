@@ -19,7 +19,7 @@ import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, 
 const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
 import { makeSource, sourceLine, type NcSource } from './text';
-import { isSource } from './gcode';
+import { isSource, jobFileLines } from './gcode';
 
 export interface HeidenhainOptions {
   name?: string;
@@ -36,6 +36,16 @@ export interface HeidenhainOptions {
   machineOffset?: [number, number, number];
   /** 기계·읽기 설정(mm 기준, 앱 설정 — GcodeOptions.machine과 같음) */
   machine?: NcMachineOptions;
+}
+
+/** 프로그램 이름 → 비교용(따옴표·경로·확장자를 떼고 대문자): "TNC:\\DIR\\SUB1.H" → SUB1 */
+function pgmBase(s: string): string {
+  return s
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/^.*[\\/:]/, '')
+    .replace(/\.[^.]*$/, '')
+    .toUpperCase();
 }
 
 const AXES = 'XYZ';
@@ -72,7 +82,14 @@ class HRunner extends NcEmitter {
   private cycle: { n: number; ok: boolean } | null = null;
   private modalCall = false;
   private labels: Map<string, number> | null = null;
-  private stack: { ret: number; reps: number; start: number }[] = [];
+  /** 부르기 쌓기: LBL 부프로그램과 CALL PGM(pgmEnd = 그 프로그램 구획 끝 줄) */
+  private stack: { ret: number; reps: number; start: number; pgmEnd?: number }[] = [];
+  /** 프로그램 구획(BEGIN PGM·%이름 G7x·함께 연 파일 줄마다): 이름들·머리 줄·본문 첫 줄·끝(다음 구획 머리) */
+  private pgms: { names: string[]; head: number; body: number; end: number; job: boolean }[] | null = null;
+  /** 여러 파일을 한 작업으로 열었는지(함께 연 파일 줄이 있음) — 주 프로그램은 자기 구획 끝에서 멈춘다 */
+  private multi = false;
+  /** SEL PGM으로 고른 프로그램(CALL SELECTED PGM) */
+  private selPgm: string | null = null;
   private sectionReps = new Map<number, number>();
   private pc = 0;
   private ended = false;
@@ -99,6 +116,7 @@ class HRunner extends NcEmitter {
     this.o = opts;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
     this.maxMoves = opts.maxMoves ?? 8_000_000;
+    this.multi = jobFileLines(src) !== null;
     // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)
     for (let i = 0; i < Math.min(src.lineCount, 50); i++) {
       const t = sourceLine(src, i);
@@ -155,7 +173,17 @@ class HRunner extends NcEmitter {
   }
 
   run(): void {
-    while (!this.ended && this.pc < this.src.lineCount) {
+    // 여러 파일 작업이면 글 끝(마지막 파일 끝)에서도 불린 프로그램은 돌아간다(아래 구획 끝 확인)
+    while (!this.ended && (this.pc < this.src.lineCount || this.multi)) {
+      // 여러 파일을 함께 열었으면: 불린 프로그램은 자기 구획 끝에서 돌아가고, 주 프로그램은 다음 파일 앞에서 멈춘다
+      if (this.multi) {
+        const f = this.stack.findLast((x) => x.pgmEnd !== undefined);
+        const end = f ? f.pgmEnd! : (this.pgmIndex()[0]?.end ?? this.src.lineCount);
+        if (this.pc >= end) {
+          if (this.returnPgm()) continue;
+          break;
+        }
+      }
       if (++this.blocks > this.maxBlocks) {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, this.pc);
         break;
@@ -200,7 +228,10 @@ class HRunner extends NcEmitter {
         this.isoSeenStart = true;
         return [];
       }
-      return m[1]!.toUpperCase() === this.name.toUpperCase() ? ['END PGM'] : [`CALL PGM ${m[1]}`];
+      // 지금 프로그램 구획의 이름이면 끝(불린 프로그램이면 돌아간다)
+      const nm = pgmBase(m[1]!);
+      const here = this.pgmIndex()[this.sectionAt(line)];
+      return (here ? here.names.includes(nm) : nm === pgmBase(this.name)) ? ['END PGM'] : [`CALL PGM ${m[1]}`];
     }
     // Q 공식(Q1 = …)은 그대로
     if (/^Q[LRS]?\d+\s*=/.test(t)) return [t];
@@ -392,7 +423,7 @@ class HRunner extends NcEmitter {
     if (t0 === '*' || t0.startsWith('*')) return; // 구조 주석
     if (t0 === 'BEGIN') return;
     if (t0 === 'END' && t1 === 'PGM') {
-      this.ended = true;
+      if (!this.returnPgm()) this.ended = true;
       return;
     }
     if (t0 === 'DWELL') {
@@ -426,7 +457,7 @@ class HRunner extends NcEmitter {
     if (t0 === 'LBL') {
       // LBL 0 = 부프로그램 끝(부른 곳으로 돌아간다). 다른 LBL은 표지일 뿐
       const f = this.stack[this.stack.length - 1];
-      if ((T[1] === '0' || T[1] === '"0"') && f) {
+      if ((T[1] === '0' || T[1] === '"0"') && f && f.pgmEnd === undefined) {
         if (f.reps > 1) {
           f.reps--;
           this.pc = f.start;
@@ -438,8 +469,15 @@ class HRunner extends NcEmitter {
       return;
     }
     if (t0 === 'CALL' && t1 === 'LBL') return this.callLbl(T, line);
-    if (t0 === 'CALL' && t1 === 'PGM') {
-      this.w.add('CALL PGM(다른 프로그램 부르기)은 읽지 않음', line);
+    if (t0 === 'CALL' && t1 === 'PGM') return this.callPgm(/^CALL\s+PGM\s+("[^"]*"|\S+)/i.exec(b.text)?.[1] ?? '', line);
+    // SEL PGM 이름 … CALL SELECTED PGM: 고른 프로그램 부르기
+    if (t0 === 'SEL' && t1 === 'PGM') {
+      this.selPgm = /^SEL\s+PGM\s+("[^"]*"|\S+)/i.exec(b.text)?.[1] ?? null;
+      return;
+    }
+    if (t0 === 'CALL' && t1 === 'SELECTED') {
+      if (this.selPgm) return this.callPgm(this.selPgm, line);
+      this.w.add('CALL SELECTED PGM: 앞에 SEL PGM이 없음', line);
       return;
     }
     if (t0 === 'FN') return this.fn(b, line);
@@ -852,22 +890,95 @@ class HRunner extends NcEmitter {
     }
   }
 
-  private findLabel(name: string): number {
+  /** 표지 줄(여러 파일을 함께 열었으면 지금 줄이 든 프로그램 구획 안에서만 — 표지는 프로그램마다 따로) */
+  private findLabel(name: string, at: number): number {
     if (!this.labels) {
       this.labels = new Map();
       // 평문 LBL 이름, DIN/ISO G98 L 번호
       const re = this.iso ? /^\s*(?:N?\d+\s+)?G98\s+L\s*(\d+)\b/i : /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i;
       for (let i = 0; i < this.src.lineCount; i++) {
         const m = re.exec(sourceLine(this.src, i));
-        if (m && !this.labels.has(m[1]!.toUpperCase())) this.labels.set(m[1]!.toUpperCase(), i);
+        if (!m) continue;
+        const key = `${this.multi ? this.sectionAt(i) : 0}:${m[1]!.toUpperCase()}`;
+        if (!this.labels.has(key)) this.labels.set(key, i);
       }
     }
-    return this.labels.get(name.toUpperCase()) ?? -1;
+    return this.labels.get(`${this.multi ? this.sectionAt(at) : 0}:${name.toUpperCase()}`) ?? -1;
+  }
+
+  // ── 다른 프로그램 부르기(CALL PGM, DIN/ISO %이름) — 함께 연 파일·같은 글의 BEGIN PGM 구획 ──
+  private pgmIndex(): { names: string[]; head: number; body: number; end: number; job: boolean }[] {
+    if (this.pgms) return this.pgms;
+    const out: { names: string[]; head: number; body: number; end: number; job: boolean }[] = [];
+    const reBegin = /^\s*(?:N?\d+\s+)?BEGIN\s+PGM\s+("[^"]*"|\S+)/i;
+    const reIso = /^\s*%([^\s*;]+)\s+G7[01]\b/i;
+    const jobs = jobFileLines(this.src);
+    let last: (typeof out)[number] | null = null;
+    for (let i = 0; i < this.src.lineCount; i++) {
+      const job = jobs?.get(i);
+      if (job !== undefined) {
+        last = { names: [pgmBase(job)], head: i, body: i + 1, end: this.src.lineCount, job: true };
+        out.push(last);
+        continue;
+      }
+      const t = sourceLine(this.src, i);
+      const m = reBegin.exec(t) ?? reIso.exec(t);
+      if (!m) continue;
+      if (last?.job && last.names.length === 1) {
+        // 함께 연 파일의 머리: 파일 이름과 프로그램 이름 모두로 부를 수 있다
+        last.names.push(pgmBase(m[1]!));
+        last.body = i + 1;
+      } else {
+        last = { names: [pgmBase(m[1]!)], head: i, body: i + 1, end: this.src.lineCount, job: false };
+        out.push(last);
+      }
+    }
+    // 주 프로그램에 머리가 없으면(조각) 맨 앞을 주 프로그램 구획으로
+    if (!out.length || out[0]!.job) out.unshift({ names: [pgmBase(this.name)], head: 0, body: 0, end: this.src.lineCount, job: false });
+    for (let k = 0; k < out.length - 1; k++) out[k]!.end = out[k + 1]!.head;
+    return (this.pgms = out);
+  }
+
+  /** 줄 i가 든 프로그램 구획 번호(첫 머리 앞이면 0) */
+  private sectionAt(i: number): number {
+    const p = this.pgmIndex();
+    let k = 0;
+    while (k + 1 < p.length && p[k + 1]!.head <= i) k++;
+    return k;
+  }
+
+  private callPgm(arg: string, line: number): void {
+    const want = pgmBase(arg);
+    const p = this.pgmIndex();
+    const cur = this.sectionAt(line);
+    const target = p.findIndex((s, k) => k !== cur && s.names.includes(want));
+    if (target < 0) {
+      this.missingProgram(want, `CALL PGM ${want}: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
+      return;
+    }
+    if (this.stack.length > 64) {
+      this.w.add('부프로그램 호출이 너무 깊음 — 멈춤', line);
+      this.ended = true;
+      return;
+    }
+    const s = p[target]!;
+    this.stack.push({ ret: this.pc, reps: 1, start: s.body, pgmEnd: s.end });
+    this.pc = s.body;
+  }
+
+  /** 불린 프로그램의 끝(END PGM·구획 끝): 부른 곳으로 돌아간다. 불린 프로그램 안이 아니면 false */
+  private returnPgm(): boolean {
+    let k = this.stack.length - 1;
+    while (k >= 0 && this.stack[k]!.pgmEnd === undefined) k--;
+    if (k < 0) return false;
+    this.pc = this.stack[k]!.ret;
+    this.stack.length = k;
+    return true;
   }
 
   private callLbl(T: string[], line: number): void {
     const name = T[2] ?? '';
-    const target = this.findLabel(name);
+    const target = this.findLabel(name, line);
     if (target < 0) {
       this.w.add(`CALL LBL ${name}: 표지가 없음`, line);
       return;
@@ -947,7 +1058,7 @@ class HRunner extends NcEmitter {
       const op = c[2]!.toUpperCase();
       const ok = op === 'EQU' ? Math.abs(x - y) < 1e-9 : op === 'NE' ? Math.abs(x - y) >= 1e-9 : op === 'GT' ? x > y : x < y;
       if (ok) {
-        const t = this.findLabel(c[4]!);
+        const t = this.findLabel(c[4]!, line);
         if (t >= 0) this.pc = t + 1;
         else this.w.add(`FN ${k}: LBL ${c[4]}이 없음`, line);
       }

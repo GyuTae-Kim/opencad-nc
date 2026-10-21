@@ -93,6 +93,14 @@ export class NcEmitter {
   protected compEvents: CompEvent[] = [];
   /** 화면이 띠로 알릴 해석 판단 */
   protected notices: NcNotice[] = [];
+  /** 찾지 못한 프로그램(다른 파일에 있을 부프로그램 — 함께 열면 읽는다) */
+  private missingPrograms = new Set<string>();
+
+  /** 부른 프로그램을 찾지 못함: 경고(줄과 함께)를 남기고 이름을 모아 화면 띠로 알린다 */
+  protected missingProgram(name: string, msg: string, line: number): void {
+    this.w.add(msg, line);
+    if (this.missingPrograms.size < 20) this.missingPrograms.add(name);
+  }
 
   // ── 안전 확인(공구 길이 보정·주축·급속 깊이) ──
   /** H·D 번호가 공구 번호와 다르면 경고(기본 켬) */
@@ -944,6 +952,7 @@ export class NcEmitter {
     }
     if (this.latheMode) prog.lathe = true;
     if (this.sawRotary) prog.rotaryAxes = true;
+    if (this.missingPrograms.size) this.notices.push({ kind: 'missing-program', programs: [...this.missingPrograms] });
     if (this.notices.length) prog.notices = this.notices.slice();
     return prog;
   }

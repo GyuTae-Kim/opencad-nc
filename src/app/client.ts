@@ -15,8 +15,14 @@ export class ParseWorkerClient {
   private seq = 0;
   private pending = new Map<number, Pending>();
 
-  /** 파일 해석(data는 이전되어 비워진다) */
-  open(name: string, data: ArrayBuffer, nc: NcOpenOptions = {}, progress?: (fraction: number, stage: string) => void): Promise<ParseResult> {
+  /** 파일 해석(data와 함께 여는 파일 extra는 이전되어 비워진다) */
+  open(
+    name: string,
+    data: ArrayBuffer,
+    nc: NcOpenOptions = {},
+    progress?: (fraction: number, stage: string) => void,
+    extra: { name: string; bytes: ArrayBuffer }[] = [],
+  ): Promise<ParseResult> {
     let w: Worker;
     try {
       w = this.ensure();
@@ -26,9 +32,9 @@ export class ParseWorkerClient {
     const id = ++this.seq;
     return new Promise<ParseResult>((resolve, reject) => {
       this.pending.set(id, { resolve, reject, progress });
-      const req: ParseRequest = { id, type: 'open', name, bytes: data, nc };
+      const req: ParseRequest = { id, type: 'open', name, bytes: data, nc, ...(extra.length ? { extra } : {}) };
       try {
-        w.postMessage(req, [data]);
+        w.postMessage(req, [data, ...extra.map((f) => f.bytes)]);
       } catch (e) {
         this.pending.delete(id);
         reject(e instanceof Error ? e : new Error(String(e)));

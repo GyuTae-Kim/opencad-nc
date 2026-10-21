@@ -12,9 +12,10 @@ import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
 import { mprToScene, ncToScene, type MprSceneOptions, type NcSceneOptions } from './scene';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from './extensions';
 import { makeSource } from './text';
+import { combineNcJob, type NcJob, type NcJobFile } from './job';
 
 export * from './model';
-export { parseGcode, detectGcodeDialect, detectLathe, looksSiemens, type GcodeOptions } from './gcode';
+export { parseGcode, detectGcodeDialect, detectLathe, jobFileLines, looksSiemens, type GcodeOptions } from './gcode';
 export { parseSiemens } from './siemens';
 export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
@@ -22,6 +23,7 @@ export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContou
 export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions } from './scene';
 export { makeSource, sourceLine, splitLines, type NcSource } from './text';
 export { evalMprExpr } from './expr';
+export { combineNcJob, splitNcJob, type NcJob, type NcJobFile } from './job';
 
 export type NcFileKind = 'gcode' | 'heidenhain' | 'mpr';
 
@@ -48,6 +50,11 @@ export function detectNcFormat(name: string, data: Uint8Array | string): NcFileK
   const words = head.match(/(?:^|[\s\dA-Z])[GM]\s*\d{1,3}\b/gim)?.length ?? 0;
   const axes = head.match(/[XYZ]\s*[-+]?\d*\.?\d+/gi)?.length ?? 0;
   return words >= 3 && axes >= 3 ? 'gcode' : null;
+}
+
+/** 여러 파일을 한 작업으로 잇는다(주 프로그램 + 부프로그램·불리는 프로그램 파일, job.ts). main = 주 프로그램 파일 이름(없으면 고른다) */
+export function combineNcFiles(files: NcJobFile[], main?: string): NcJob {
+  return combineNcJob(files, detectNcFormat, main);
 }
 
 export type NcParsed = { kind: 'gcode' | 'heidenhain'; program: NcProgram } | { kind: 'mpr'; part: MprPart };

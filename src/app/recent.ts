@@ -5,6 +5,7 @@
  * 시작 화면의 "최근 문서"에서 파일 앱을 다시 거치지 않고 바로 다시 연다.
  * - 새것이 먼저, 8개까지(넘치면 오래된 것부터 지운다). 60MB보다 큰 파일과 빈 파일은 두지 않는다.
  * - 같은 이름·크기는 한 항목(다시 열면 시각만 새로).
+ * - 여러 파일을 한 작업으로 연 것은 이은 글을 주 프로그램 이름으로 둔다(files = 파일 수). 다시 열면 같은 작업으로 읽힌다.
  * - IndexedDB를 못 쓰면(비공개 창·막힌 저장소·용량 부족) 조용히 아무 일도 하지 않는다.
  * - 목록(이름·크기·시각)과 내용은 열쇠를 나눠(`meta:`·`data:`) 두어, 목록을 읽을 때 파일 내용을 읽지 않는다.
  * - 연결은 일마다 열고 닫는다: 휴대폰(iOS WebKit)이 뒤로 간 페이지의 연결을 끊거나 사이트 자료를 지워도
@@ -23,6 +24,8 @@ export interface RecentEntry {
   size: number;
   /** 마지막으로 연 시각(ms) */
   time: number;
+  /** 여러 파일을 한 작업으로 연 것이면 파일 수(내용은 이은 글 — 다시 열면 같은 작업으로 읽힌다) */
+  files?: number;
 }
 
 /** 파일 내용: 고른 파일(File·Blob) 그대로 또는 바이트 */
@@ -111,12 +114,12 @@ export class RecentStore {
     }
   }
 
-  /** 열린 파일을 둔다. 두었으면 true(너무 큰 파일·저장 실패는 false) */
-  async add(name: string, data: RecentData, now = Date.now()): Promise<boolean> {
+  /** 열린 파일을 둔다(files = 여러 파일 작업의 파일 수). 두었으면 true(너무 큰 파일·저장 실패는 false) */
+  async add(name: string, data: RecentData, now = Date.now(), files = 1): Promise<boolean> {
     const size = sizeOf(data);
     if (!this.backend || !fitsRecent(size)) return false;
     try {
-      await this.backend.put({ id: recentId(name, size), name, size, time: now }, data);
+      await this.backend.put({ id: recentId(name, size), name, size, time: now, ...(files > 1 ? { files } : {}) }, data);
       const extra = overflowIds(await this.backend.list());
       if (extra.length) await this.backend.remove(extra);
       return true;

@@ -24,7 +24,7 @@ import { sourceLine } from '../text';
 import { idRange, moveEndTime, playbackAt } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint } from './measure';
-import type { MprPayload, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
+import type { MprPayload, NcJobInfo, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
 export type PanelTab = 'code' | 'tools' | 'info' | 'ops' | 'vars';
 
@@ -38,6 +38,8 @@ export interface NcDoc {
   nc: NcPayload | null;
   mpr: MprPayload | null;
   ncOptions: NcOpenOptions;
+  /** 여러 파일을 한 작업으로 열었으면 그 파일들(이름 = 주 프로그램) — 아니면 null */
+  job: NcJobInfo | null;
   /** 해석 시간(ms) */
   ms: number;
   // ── 보기 상태 ──
@@ -69,6 +71,7 @@ export function createDoc(name: string, size: number, res: ParseResult, ncOption
     nc: res.nc ?? null,
     mpr: res.mpr ?? null,
     ncOptions: { ...ncOptions },
+    job: res.job ?? null,
     ms: res.ms,
     dismissedNotices: new Set(),
     hiddenGroups: new Set(),
@@ -92,6 +95,11 @@ export function replaceResult(d: NcDoc, res: ParseResult, opts: NcOpenOptions): 
   d.mpr = res.mpr ?? null;
   d.ms = res.ms;
   d.ncOptions = { ...opts };
+  // 작업: 주 프로그램을 바꾸면 이름도 바꾼다. 다시 읽은 글에는 잇지 않은 파일이 없으므로 앞의 것을 둔다
+  if (res.job) {
+    d.job = { ...res.job, skipped: res.job.skipped.length ? res.job.skipped : (d.job?.skipped ?? []) };
+    d.name = res.job.main;
+  } else d.job = null;
   d.hiddenGroups.clear();
   d.highlight = [];
   d.pick = null;
@@ -121,7 +129,8 @@ export function cutRangeText(min: readonly number[], max: readonly number[], uni
 export interface NoticeView {
   key: string;
   text: string;
-  action?: { label: string; opts?: NcOpenOptions; tab?: PanelTab };
+  /** opts = 그 설정으로 다시 읽기, tab = 패널 탭 열기, add = 이 작업에 파일 더하기 */
+  action?: { label: string; opts?: NcOpenOptions; tab?: PanelTab; add?: boolean };
 }
 
 const DIALECT_NOTICE: Record<string, string> = {
@@ -131,14 +140,23 @@ const DIALECT_NOTICE: Record<string, string> = {
 };
 
 /** 문서의 해석 판단 → 띠(닫은 것은 뺀다) */
-export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotices'>): NoticeView[] {
+export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotices'> & Partial<Pick<NcDoc, 'job'>>): NoticeView[] {
   const out: NoticeView[] = [];
+  const job = d.job;
+  if (job && (job.files.length > 1 || job.skipped.length) && !d.dismissedNotices.has('job')) {
+    const skipped = job.skipped.length ? ` · 잇지 않은 파일 ${job.skipped.length}개` : '';
+    out.push({ key: 'job', text: `파일 ${job.files.length}개를 한 작업으로 읽었습니다 — 주 프로그램 ${job.main}${skipped}`, action: { label: '작업 파일', tab: 'info' } });
+  }
   for (const n of d.nc?.notices ?? []) {
     let v: NoticeView | null = null;
     if (n.kind === 'lathe-auto') v = { key: 'lathe-auto', text: '선반 프로그램으로 보여 선반 모드(X 지름·선반 사이클·XZ 단면)로 읽었습니다.', action: { label: '밀링으로 읽기', opts: { ...d.ncOptions, lathe: false } } };
     else if (n.kind === 'integer-units')
       v = { key: 'integer-units', text: '소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.', action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
     else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: DIALECT_NOTICE[n.dialect]!, action: { label: '방언 바꾸기', tab: 'info' } };
+    else if (n.kind === 'missing-program' && n.programs?.length) {
+      const names = n.programs.length > 6 ? `${n.programs.slice(0, 6).join(', ')}, …` : n.programs.join(', ');
+      v = { key: 'missing-program', text: `다른 파일의 프로그램 ${names}을(를) 찾지 못했습니다 — 그 파일을 더하면 이어서 그립니다.`, action: { label: '파일 더하기', add: true } };
+    }
     if (v && !d.dismissedNotices.has(v.key)) out.push(v);
   }
   return out;

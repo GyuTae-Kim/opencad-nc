@@ -14,7 +14,7 @@ import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint } from './measure';
-import type { NcOpenOptions } from './protocol';
+import type { NcJobInfo, NcOpenOptions } from './protocol';
 import { defaultSettings, type NcSettings } from './settings';
 
 /** 이보다 좁으면 패널을 아래 시트로 */
@@ -53,6 +53,8 @@ export interface PanelHost {
   groups(): { name: string; visible: boolean; count: number }[];
   reparse(opts: NcOpenOptions): void;
   togglePanel(on?: boolean): void;
+  /** 파일 고르기(add = 열린 작업에 더하기) */
+  chooseFile(add?: boolean): void;
   /** 기계·읽기 설정(앱 전체, 기억된다) */
   readonly settings: NcSettings;
   setSettings(s: NcSettings): void;
@@ -717,6 +719,7 @@ export class NcPanel {
     if (c.segments) rows.push(row('선분', c.segments.toLocaleString('ko-KR')));
     if (c.triangles) rows.push(row('삼각형', c.triangles.toLocaleString('ko-KR')));
     this.body.append(group('문서', ...rows));
+    if (d.job) this.body.append(this.jobGroup(d, d.job));
 
     const cb = d.nc?.cutBounds;
     if (cb)
@@ -760,6 +763,44 @@ export class NcPanel {
       warns.length
         ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
         : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
+    );
+  }
+
+  /**
+   * 작업 파일(여러 파일을 한 작업으로 열었을 때): 주 프로그램 고르기(바꾸면 다시 잇는다), 파일마다 코드 탭의 시작 줄로 가기,
+   * 파일 더하기, 잇지 않은 파일과 찾지 못한 부르기
+   */
+  private jobGroup(d: NcDoc, job: NcJobInfo): HTMLElement {
+    const main = h('select', { class: 'select', 'aria-label': '주 프로그램' });
+    for (const f of job.files) main.append(h('option', { value: f }, f));
+    main.value = job.main;
+    main.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, jobMain: main.value }));
+    const list = h('ul', { class: 'warn-list job-files' });
+    job.files.forEach((f, k) => {
+      const line = job.starts[k] ?? -1;
+      const b = h(
+        'button',
+        { class: 'warn-item', type: 'button', title: '누르면 코드 탭에서 이 파일이 시작하는 줄로', disabled: line < 0 },
+        h('span', { class: 'ln' }, k === 0 ? '주 프로그램' : `${line + 1}번 줄`),
+        h('span', { class: 'msg', translate: 'no' }, f),
+      );
+      b.addEventListener('click', () => {
+        d.panelTab = 'code';
+        this.render();
+        this.host.selectLine(line, undefined, true);
+      });
+      list.append(h('li', {}, b));
+    });
+    const add = h('button', { class: 'btn small', type: 'button', title: '부프로그램 파일을 골라 이 작업에 더합니다(같은 이름은 바꿉니다)' }, '파일 더하기');
+    add.addEventListener('click', () => this.host.chooseFile(true));
+    const missing = d.nc?.notices?.find((n) => n.kind === 'missing-program')?.programs ?? [];
+    return group(
+      `작업 파일 ${job.files.length}개`,
+      h('label', { class: 'prop-row edit', title: '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일' }, h('span', { class: 'k' }, '주 프로그램'), main),
+      list,
+      job.skipped.length ? h('p', { class: 'hint' }, `잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${job.skipped.join(', ')}`) : null,
+      missing.length ? h('p', { class: 'hint' }, `찾지 못한 프로그램: ${missing.join(', ')} — 해석 경고에서 그 줄로 갑니다.`) : null,
+      add,
     );
   }
 

@@ -2,7 +2,7 @@
  * 워커 쪽 도움(순수 함수): 들어온 바이트가 NC 프로그램으로 읽을 만한지 보고, 해석 결과를 화면에 보낼 자료로 줄인다.
  * 해석기를 가져오므로 화면 코드(app.ts·panel.ts)에서는 부르지 않는다(워커와 시험만).
  */
-import { detectNcFormat, ncParsedToScene, parseNcFile, type NcFileKind, type NcParseOptions } from '../index';
+import { combineNcFiles, detectNcFormat, jobFileLines, ncParsedToScene, parseNcFile, splitNcJob, type NcFileKind, type NcParseOptions } from '../index';
 import { NC_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
 import { BINARY_MESSAGE, looksBinary } from './format';
@@ -71,10 +71,35 @@ export function parseOptions(kind: NcFileKind | null, o: NcOpenOptions): NcParse
  * 파일 하나를 화면 자료로(워커가 부른다. 시험도 같은 길로): 확인 → 해석 → 장면 → 패널 자료.
  * 읽을 수 없으면 Error(사람이 읽는 글)
  */
-export function parseForView(name: string, bytes: Uint8Array, o: NcOpenOptions = {}, progress: (fraction: number, stage: string) => void = () => {}): ParseResult {
+export function parseForView(
+  name: string,
+  bytes: Uint8Array,
+  o: NcOpenOptions = {},
+  progress: (fraction: number, stage: string) => void = () => {},
+  extra: { name: string; bytes: Uint8Array }[] = [],
+): ParseResult {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const base = name.replace(/^.*[\\/]/, '');
+  let base = name.replace(/^.*[\\/]/, '');
   progress(0.05, '파일 확인 중');
+  let job: ParseResult['job'];
+  // 이미 이은 작업(다시 읽기·최근 문서)이면 파일로 다시 나눈다 — 주 프로그램을 바꾸거나 파일을 더할 때 다시 잇는다
+  const parts = splitNcJob(base, bytes);
+  if (extra.length || (parts && o.jobMain && o.jobMain !== base)) {
+    // 여러 파일을 한 작업으로: 읽을 수 없는 파일(빈·이진·NC 아님)은 빼고 주 프로그램 뒤에 잇는다
+    const bad: string[] = [];
+    const named = extra.map((f) => ({ name: f.name.replace(/^.*[\\/]/, ''), bytes: f.bytes }));
+    // 같은 이름을 다시 더하면 새 파일로 바꾼다
+    const kept = (parts ?? [{ name: base, bytes }]).filter((p, k) => k === 0 || !named.some((f) => f.name === p.name));
+    const files = [...kept, ...named].filter((f) => checkNcInput(f.name, f.bytes).ok || (bad.push(f.name), false));
+    if (!files.length) {
+      const c = checkNcInput(base, bytes);
+      throw new Error(c.ok ? NOT_NC_MESSAGE : c.message);
+    }
+    const j = combineNcFiles(files, o.jobMain);
+    base = j.main;
+    bytes = j.bytes;
+    job = { main: j.main, files: j.files, starts: [], skipped: [...bad, ...j.skipped] };
+  } else if (parts) job = { main: base, files: parts.map((p) => p.name), starts: [], skipped: [] };
   const check = checkNcInput(base, bytes);
   if (!check.ok) throw new Error(check.message);
   progress(0.15, check.kind === 'mpr' ? 'woodWOP MPR 읽는 중' : check.kind === 'heidenhain' ? 'Heidenhain 프로그램 읽는 중' : 'G-code 읽는 중');
@@ -85,6 +110,12 @@ export function parseForView(name: string, bytes: Uint8Array, o: NcOpenOptions =
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
   if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
   else out.nc = ncPayload(parsed.program);
+  if (job) {
+    // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄
+    const marks = parsed.kind === 'mpr' ? null : jobFileLines(parsed.program.source);
+    job.starts = [0, ...(marks ? [...marks.keys()] : [])].slice(0, job.files.length);
+    out.job = job;
+  }
   out.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
   return out;
 }

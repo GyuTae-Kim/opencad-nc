@@ -953,10 +953,15 @@ button.linkish {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.recent-meta {
+.recent-meta,
+.recent-files {
   color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+/* 여러 파일 작업(이은 글) */
+.recent-files {
+  color: var(--accent-text, var(--accent));
 }
 .recent-del {
   display: inline-flex;
@@ -1424,6 +1429,11 @@ tr.off td:not(:first-child) {
 }
 .warn-list li {
   margin: 2px 0;
+}
+/* 작업 파일 목록(누르면 그 파일이 시작하는 줄로) */
+.warn-list.job-files {
+  padding-left: 0;
+  list-style: none;
 }
 .hint {
   margin: 6px 0;

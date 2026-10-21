@@ -23,6 +23,7 @@ import { NcEmitter } from './emitter';
 import {
   FLAG_CYCLE,
   FLAG_MACHINE,
+  JOB_FILE_MARK,
   MODAL_INC,
   MODAL_POLAR,
   MODAL_XF,
@@ -564,6 +565,31 @@ function prescanSiemensUnits(src: NcSource): boolean | undefined {
   return undefined;
 }
 
+/**
+ * 함께 연 파일이 시작하는 줄: "(OPENCAD-JOB-FILE 이름)" 또는 "; OPENCAD-JOB-FILE 이름"(앱이 여러 파일을 한 작업으로 이을 때 넣는다).
+ * 줄 번호 → 파일 이름, 없으면 null
+ */
+export function jobFileLines(src: NcSource): Map<number, string> | null {
+  const b = src.bytes;
+  const mark = JOB_FILE_MARK;
+  let out: Map<number, string> | null = null;
+  for (let i = 0; i < src.lineCount; i++) {
+    const [s, e] = lineRange(src, i);
+    let k = s;
+    while (k < e && (b[k] === 32 || b[k] === 9)) k++;
+    if (b[k] !== 40 && b[k] !== 59) continue;
+    k++;
+    while (k < e && b[k] === 32) k++;
+    if (e - k < mark.length) continue;
+    let ok = true;
+    for (let j = 0; j < mark.length && ok; j++) ok = b[k + j] === mark.charCodeAt(j);
+    if (!ok) continue;
+    const name = decodeRange(src, k + mark.length, e).replace(/\)\s*$/, '').trim();
+    (out ??= new Map()).set(i, name);
+  }
+  return out;
+}
+
 /** 앞쪽 줄에서 처음 나오는 G20/G21로 표시 단위를 정한다(true = inch) */
 function prescanUnits(src: NcSource): boolean | undefined {
   const b = new Block();
@@ -755,6 +781,8 @@ export class Runner extends NcEmitter {
   protected namedGlobals = new Map<string, number>();
   protected loops: { m: number; line: number }[] = [];
   protected oIndex: Map<number, number> | null = null;
+  /** 함께 연 파일이 시작하는 줄(JOB_FILE_MARK 주석 줄) → 파일 이름. 없으면 null */
+  protected jobLines: Map<number, string> | null = null;
   protected nIndex: Map<number, number[]> | null = null;
   protected oCodes: Map<string, { line: number; kw: string }[]> | null = null;
   protected ifTaken = new Map<string, boolean>();
@@ -817,7 +845,25 @@ export class Runner extends NcEmitter {
           this.wcsKnown.add(idx);
         }
       }
+    this.jobLines = jobFileLines(src);
     this.stack.push({ kind: 'main', ret: -1, start: 0, reps: 1, locals: new Map(), named: new Map() });
+  }
+
+  /** 함께 연 파일 경계에 닿음: 주 프로그램이면 끝(true), 부프로그램이 M99 없이 파일 끝에 닿았으면 M99처럼 돌아간다 */
+  protected jobFileEnd(): boolean {
+    const f = this.stack[this.stack.length - 1]!;
+    if (f.kind === 'main') {
+      this.ended = true;
+      return true;
+    }
+    if (f.reps > 1) {
+      f.reps--;
+      this.pc = f.start;
+      return false;
+    }
+    this.stack.pop();
+    this.pc = f.ret;
+    return false;
   }
 
   run(): void {
@@ -828,12 +874,22 @@ export class Runner extends NcEmitter {
     const onComment = (cs: number, ce: number): void => {
       cm.push(cs, ce);
     };
-    while (!this.ended && this.pc < src.lineCount) {
+    while (!this.ended) {
+      // 글 끝: 여러 파일 작업이면 마지막 파일의 부프로그램이 M99 없이 끝에 닿은 것이니 돌아간다
+      if (this.pc >= src.lineCount) {
+        if (!this.jobLines || this.jobFileEnd()) break;
+        continue;
+      }
       const line = this.pc++;
       if (++this.blocks > this.maxBlocks) {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, line);
         this.hitLimit = true;
         break;
+      }
+      // 함께 연 다음 파일: 주 프로그램은 여기서 끝, 부프로그램이 M99 없이 파일 끝에 닿으면 돌아간다
+      if (this.jobLines?.has(line)) {
+        if (this.jobFileEnd()) break;
+        continue;
       }
       blk.reset();
       cm.length = 0;
@@ -1152,7 +1208,8 @@ export class Runner extends NcEmitter {
   // ── 블록 실행 ──
   protected exec(blk: Block, line: number): void {
     if (blk.percent) {
-      if (this.started) this.ended = true;
+      // 부프로그램 안의 % (함께 연 부프로그램 파일의 머리·꼬리)는 프로그램 끝이 아니다
+      if (this.started && this.stack[this.stack.length - 1]!.kind === 'main') this.ended = true;
       return;
     }
     if (blk.comments.length) this.onComments(blk, line);
@@ -2850,6 +2907,13 @@ export class Runner extends NcEmitter {
       }
       if (!map.has(n)) map.set(n, i);
     }
+    // 함께 연 파일: O 번호 줄이 없으면 파일 이름(O1001.nc·1001.nc)을 프로그램 번호로
+    if (this.jobLines)
+      for (const [i, name] of this.jobLines) {
+        const m = /^O?(\d+)(?:\.[^.]*)?$/i.exec(name.replace(/^.*[\\/]/, ''));
+        // 값 = 표지 줄(부르기는 그다음 줄, 곧 파일 첫 줄부터 실행한다 — O 줄과 같은 꼴)
+        if (m && !map.has(+m[1]!)) map.set(+m[1]!, i);
+      }
     return (this.oIndex = map);
   }
 
@@ -3009,7 +3073,7 @@ export class Runner extends NcEmitter {
           .get(label)
           ?.find((x) => x.kw === 'SUB');
         if (!def) {
-          this.w.add(`o${label} call: 같은 파일에 sub 정의가 없음(외부 파일 부프로그램은 읽지 않음)`, line);
+          this.missingProgram(`o<${label}>`, `o${label} call: sub 정의를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
           return;
         }
         if (this.stack.length >= MAX_CALL_DEPTH) {
@@ -3104,7 +3168,7 @@ export class Runner extends NcEmitter {
     }
     const start = idx.get(prog);
     if (start === undefined) {
-      this.w.add(`M98 P${prog}: 같은 파일에 O${prog}가 없음(다른 파일 부프로그램은 읽지 않음)`, line);
+      this.missingProgram(`O${prog}`, `M98 P${prog}: O${prog}를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
       return;
     }
     if (reps <= 0) return;
@@ -3160,7 +3224,12 @@ export class Runner extends NcEmitter {
     const prog = Math.round(blk.val[LP]!);
     const start = this.buildOIndex().get(prog);
     if (start === undefined) {
-      this.w.add(`G65 P${prog}: 같은 파일에 O${prog}가 없음`, line);
+      // O9000번대는 대개 기계에 든 매크로(프로브·공구 측정 등)
+      this.missingProgram(
+        `O${prog}`,
+        prog >= 9000 && prog <= 9999 ? `G65 P${prog}: O${prog}를 찾지 못해 건너뜀 — 기계에 든 매크로(O9000번대)로 보임, 파일이 있으면 함께 열어야 읽음` : `G65 P${prog}: O${prog}를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`,
+        line,
+      );
       return;
     }
     if (this.stack.length >= MAX_CALL_DEPTH) {

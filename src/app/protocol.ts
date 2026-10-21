@@ -31,6 +31,16 @@ export interface NcOpenOptions {
   blockDelete?: boolean;
   checkToolNumbers?: boolean;
   machine?: NcMachineOptions;
+  /** 여러 파일을 한 작업으로 열 때 주 프로그램 파일 이름(없으면 해석기가 고른다) */
+  jobMain?: string;
+}
+
+/** 여러 파일 작업: 주 프로그램, 이은 차례(주 프로그램 먼저), 파일마다 이은 글에서 시작하는 줄(0부터 — 둘째부터는 표지 줄), 잇지 않은 파일(형식이 다르거나 NC가 아님) */
+export interface NcJobInfo {
+  main: string;
+  files: string[];
+  starts: number[];
+  skipped: string[];
 }
 
 export interface ParseRequest {
@@ -41,6 +51,8 @@ export interface ParseRequest {
   /** 파일 바이트(이전된다) */
   bytes: ArrayBuffer;
   nc?: NcOpenOptions;
+  /** 함께 여는 파일(부프로그램·불리는 프로그램 — 이전된다) */
+  extra?: { name: string; bytes: ArrayBuffer }[];
 }
 
 export type ParseResponse =
@@ -101,6 +113,8 @@ export interface ParseResult {
   scene: Scene3d;
   nc?: NcPayload;
   mpr?: MprPayload;
+  /** 여러 파일을 한 작업으로 열었을 때 */
+  job?: NcJobInfo;
   /** 해석 시간(ms) */
   ms: number;
 }

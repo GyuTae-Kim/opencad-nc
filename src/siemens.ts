@@ -142,6 +142,8 @@ class SiemensRunner extends Runner {
   private sections = new Map<string, Section>();
   private sectionLines = new Map<number, Section>();
   private mainHeader = -1;
+  /** 앞 머리에 이어진 머리 줄(같은 프로그램의 시작 — 지나가도 프로그램 끝이 아니다) */
+  private chainedHeads = new Set<number>();
   private labels = new Map<string, number[]>();
   private nLines = new Map<number, number[]>();
   private kwAt: (string | undefined)[] = [];
@@ -166,6 +168,8 @@ class SiemensRunner extends Runner {
     const n = this.src.lineCount;
     this.kwAt = new Array(n);
     let firstCode = -1;
+    // 본문이 아직 없는 머리(함께 연 파일 표지 → %_N_…_SPF → PROC처럼 이어지면 마지막 머리가 본문 시작)
+    let pending: Section | null = null;
     for (let i = 0; i < n; i++) {
       const raw = sourceLine(this.src, i);
       const { code, comment } = splitLine(raw);
@@ -181,7 +185,13 @@ class SiemensRunner extends Runner {
       }
       if (sec) {
         this.sectionLines.set(i, sec);
+        // 머리 바로 뒤의 머리(파일 표지 뒤 %_N_…_SPF, 그 뒤 PROC): 앞 머리 이름으로 불러도 뒤 머리(인수 포함) 다음부터
+        if (pending) {
+          for (const [k, v] of this.sections) if (v === pending) this.sections.set(k, sec);
+          this.chainedHeads.add(i);
+        }
         if (!this.sections.has(sec.name)) this.sections.set(sec.name, sec);
+        pending = sec;
         if (firstCode < 0) {
           firstCode = i;
           this.mainHeader = i;
@@ -189,6 +199,7 @@ class SiemensRunner extends Runner {
         continue;
       }
       if (!t) continue;
+      if (t !== '%') pending = null;
       if (firstCode < 0 && t !== '%') firstCode = i;
       let s = t.replace(/^\/\d?\s*/, '');
       if ((m = /^N(\d+)\s*/.exec(s))) {
@@ -258,7 +269,13 @@ class SiemensRunner extends Runner {
   override run(): void {
     this.index();
     this.pc = 0;
-    while (!this.ended && this.pc < this.src.lineCount) {
+    while (!this.ended) {
+      // 글 끝: 마지막 파일의 부프로그램이 RET·M17 없이 끝에 닿았으면 돌아간다
+      if (this.pc >= this.src.lineCount) {
+        if (!this.sStack.some((f) => f.kind === 'sub')) break;
+        this.subReturn(-1);
+        continue;
+      }
       const line = this.pc++;
       if (++this.blocks > this.maxBlocks) {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, line);
@@ -267,6 +284,7 @@ class SiemensRunner extends Runner {
       }
       // 다른 프로그램(부프로그램 머리·PROC·함께 연 파일)이 시작하는 줄
       if (this.sectionLines.has(line) && line !== this.mainHeader) {
+        if (this.chainedHeads.has(line)) continue;
         if (this.sStack.some((f) => f.kind === 'sub')) this.subReturn(line);
         else break;
         continue;
@@ -754,7 +772,7 @@ class SiemensRunner extends Runner {
   private callSub(name: string, reps: number, args: (number | undefined)[], line: number, modal: boolean): void {
     const sec = this.sections.get(name) ?? this.sections.get(name.replace(/^L0*(\d+)$/, 'L$1'));
     if (!sec) {
-      this.w.add(`부프로그램 ${name}을(를) 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
+      this.missingProgram(name, `부프로그램 ${name}을(를) 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
       return;
     }
     if (reps <= 0) return;

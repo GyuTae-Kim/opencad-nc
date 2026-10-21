@@ -99,12 +99,18 @@ export interface AppState {
   aiming: boolean;
   /** 단면 보기(꺼져 있으면 null) */
   section: { axis: SectionAxis | null; t: number; flip: boolean } | null;
+  /** 여러 파일 작업이면 이은 파일(주 프로그램 먼저), 아니면 null */
+  jobFiles: string[] | null;
 }
 
 export interface OpencadAppApi {
   readonly state: AppState;
   readonly viewer: Viewer3d | null;
   open(name: string, data: ArrayBuffer | Uint8Array | string, opts?: NcOpenOptions): Promise<boolean>;
+  /** 여러 파일을 한 작업으로(주 프로그램은 고르거나 앱이 정한다) — 파일 고르기에서 여럿 고른 것과 같은 길 */
+  openJob(files: { name: string; data: ArrayBuffer | Uint8Array | string }[]): Promise<boolean>;
+  /** 열린 작업에 파일을 더한다(부프로그램 등) */
+  addFiles(files: { name: string; data: ArrayBuffer | Uint8Array | string }[]): Promise<boolean>;
   openUrl(url: string, name?: string): Promise<boolean>;
   openSample(): Promise<boolean>;
   reparse(opts: NcOpenOptions): Promise<void>;
@@ -149,6 +155,11 @@ function viewportSize(): { width: number; height: number } {
   return { width: el.clientWidth || window.innerWidth, height: el.clientHeight || window.innerHeight };
 }
 
+/** 자동화 API의 파일(이름 + 글·바이트) → File(파일 고르기와 같은 길로 연다) */
+function asFile(f: { name: string; data: ArrayBuffer | Uint8Array | string }): File {
+  return new File([typeof f.data === 'string' ? f.data : f.data instanceof Uint8Array ? f.data.slice() : f.data.slice(0)], f.name);
+}
+
 /** 메뉴 항목 단추: 명령(menuitem) · 하나 고르기(menuitemradio) · 켜고 끄기(menuitemcheckbox) */
 function menuItem(label: string, role: 'menuitem' | 'menuitemradio' | 'menuitemcheckbox', run: () => void): HTMLButtonElement {
   const b = h('button', { type: 'button', role, 'aria-checked': role === 'menuitem' ? null : 'false' }, h('span', {}, label));
@@ -188,6 +199,8 @@ export class NcViewerApp implements PanelHost {
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
+  /** 다음 파일 고르기가 열린 작업에 더할 파일인지 */
+  private pickAdd = false;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -240,12 +253,18 @@ export class NcViewerApp implements PanelHost {
     document.documentElement.dataset.theme = this.theme;
 
     // ── 열기 상자 ──
-    this.fileInput = h('input', { type: 'file', hidden: true, 'aria-hidden': 'true', tabindex: -1 });
+    // 여러 파일을 고르면 한 작업(주 프로그램 + 부프로그램 파일)으로 연다
+    this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, 'aria-hidden': 'true', tabindex: -1 });
     this.syncAccept();
     this.fileInput.addEventListener('change', () => {
-      const f = this.fileInput.files?.[0];
+      const files = [...(this.fileInput.files ?? [])];
+      const add = this.pickAdd;
+      this.pickAdd = false;
       this.fileInput.value = '';
-      if (f) void this.openFile(f);
+      if (!files.length) return;
+      if (add && this.doc?.nc) void this.addFiles(files);
+      else if (files.length > 1) void this.openFiles(files);
+      else void this.openFile(files[0]!);
     });
 
     // ── 제목 막대 ──
@@ -450,9 +469,9 @@ export class NcViewerApp implements PanelHost {
       h('div', { class: 'dz-icon', html: icon('drop') }),
       // 손가락 기기에는 끌어다 놓기가 없으니 고르기 안내로(styles.css fine-only·coarse-only)
       h('p', { class: 'dz-title fine-only' }, 'NC 파일을 여기에 끌어다 놓으십시오'),
-      h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 한 번에 파일 하나를 엽니다.'),
+      h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.'),
       h('p', { class: 'dz-title coarse-only' }, 'NC 파일을 골라 여십시오'),
-      h('p', { class: 'dz-sub coarse-only' }, '한 번에 파일 하나를 엽니다.'),
+      h('p', { class: 'dz-sub coarse-only' }, '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.'),
       h('div', { class: 'dz-actions' }, open, sample),
     );
     zone.addEventListener('click', () => this.chooseFile());
@@ -519,6 +538,8 @@ export class NcViewerApp implements PanelHost {
       'button',
       { class: 'recent-open', type: 'button' },
       h('span', { class: 'recent-name', translate: 'no' }, e.name),
+      // 여러 파일 작업이면 파일 수(번역되는 글), 크기·시각은 화면 언어 형식 그대로
+      e.files ? h('span', { class: 'recent-files' }, `파일 ${e.files}개 작업`) : null,
       h('span', { class: 'recent-meta', translate: 'no' }, `${formatBytes(e.size)} · ${formatRecentTime(e.time, now, lang)}`),
     );
     open.addEventListener('click', () => void this.openRecent(e));
@@ -723,8 +744,94 @@ export class NcViewerApp implements PanelHost {
 
   // ───────────────────────── 열기 ─────────────────────────
 
-  chooseFile(): void {
+  /** 파일 고르기. add = 열린 작업에 더할 파일(부프로그램 등) */
+  chooseFile(add = false): void {
+    this.pickAdd = add;
     this.fileInput.click();
+  }
+
+  /** 고른 파일 읽기: 모르는 확장자의 이진 파일·읽지 못한 파일은 빼고 이유를 모은다 */
+  private async readFiles(files: File[]): Promise<{ ok: { file: File; buf: ArrayBuffer }[]; bad: string[] }> {
+    const ok: { file: File; buf: ArrayBuffer }[] = [];
+    const bad: string[] = [];
+    for (const f of files) {
+      try {
+        if (!isNcFileName(f.name) && looksBinary(new Uint8Array(await f.slice(0, 4096).arrayBuffer()))) {
+          bad.push(f.name);
+          continue;
+        }
+        ok.push({ file: f, buf: await f.arrayBuffer() });
+      } catch {
+        bad.push(f.name);
+      }
+    }
+    return { ok, bad };
+  }
+
+  /**
+   * 여러 파일을 한 작업으로 연다: 주 프로그램(다른 파일이 부르지 않고 M30으로 끝나는 파일 — 정보 탭에서 바꾼다) 뒤에
+   * 나머지 파일을 잇고, M98·G65 P·CALL PGM·Siemens 이름 부르기를 함께 연 파일에서 찾는다. 최근 문서에는 이은 글을 둔다
+   */
+  async openFiles(files: File[]): Promise<boolean> {
+    if (files.length === 1) return this.openFile(files[0]!);
+    const attempt = beginOpen('local', files[0]!.name.split('.').pop() ?? 'other');
+    const { ok, bad } = await this.readFiles(files);
+    if (!ok.length) {
+      this.showError(`${bad.join(', ')}: ${BINARY_MESSAGE}`);
+      attempt.error('unsupported');
+      return false;
+    }
+    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    const [first, ...rest] = ok;
+    const opened = await this.openBuffer(
+      first!.file.name,
+      first!.buf,
+      {},
+      attempt,
+      rest.map((f) => ({ name: f.file.name, bytes: f.buf })),
+    );
+    if (opened) this.rememberDoc(ok.map((f) => f.file));
+    return opened;
+  }
+
+  /** 열린 작업(또는 파일 하나)에 파일을 더해 다시 잇는다 — 주 프로그램은 그대로, 같은 이름은 새 파일로 바꾼다 */
+  async addFiles(files: File[]): Promise<boolean> {
+    const d = this.doc;
+    if (!d?.nc) return this.openFiles(files);
+    const attempt = beginOpen('local', files[0]?.name.split('.').pop() ?? 'other');
+    const { ok, bad } = await this.readFiles(files);
+    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    if (!ok.length) {
+      attempt.error('unsupported');
+      return false;
+    }
+    const copy = d.nc.source.bytes.slice().buffer as ArrayBuffer;
+    const opened = await this.openBuffer(
+      d.name,
+      copy,
+      { ...d.ncOptions, jobMain: d.name },
+      attempt,
+      ok.map((f) => ({ name: f.file.name, bytes: f.buf })),
+    );
+    if (opened) this.rememberDoc([]);
+    return opened;
+  }
+
+  /**
+   * 연 문서를 최근 문서에 둔다: 여러 파일 작업이면 이은 글(다시 열면 같은 작업으로 읽힌다 — 목록에 파일 수를 보인다),
+   * 파일 하나만 열렸으면(나머지는 형식이 달라 잇지 않음) 고른 파일 가운데 그 파일 그대로
+   */
+  private rememberDoc(files: File[]): void {
+    const d = this.doc;
+    if (!d) return;
+    const job = d.job;
+    const file = files.find((f) => f.name.replace(/^.*[\\/]/, '') === d.name);
+    let saved: Promise<boolean> | null = null;
+    if (d.nc && job && job.files.length > 1) saved = this.recent.add(d.name, d.nc.source.bytes.slice().buffer as ArrayBuffer, Date.now(), job.files.length);
+    else if (file) saved = this.recent.add(file.name, file);
+    void saved?.then((ok) => {
+      if (ok) void this.renderRecent();
+    });
   }
 
   async openFile(f: File): Promise<boolean> {
@@ -834,15 +941,27 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 파일 열기(data는 워커로 이전되어 비워진다). 열었으면 true */
-  async openBuffer(name: string, data: ArrayBuffer, opts: NcOpenOptions = {}, attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other')): Promise<boolean> {
+  async openBuffer(
+    name: string,
+    data: ArrayBuffer,
+    opts: NcOpenOptions = {},
+    attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other'),
+    extra: { name: string; bytes: ArrayBuffer }[] = [],
+  ): Promise<boolean> {
     const seq = ++this.loadSeq;
-    const size = data.byteLength;
+    const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
     this.closeMenu();
     this.setBusy('여는 중', 0.02, name);
     try {
-      const res = await this.client.open(name, data, { ...opts, ...settingsOpenOptions(this.settings) }, (f, stage) => {
-        if (seq === this.loadSeq) this.setBusy(stage, f, name);
-      });
+      const res = await this.client.open(
+        name,
+        data,
+        { ...opts, ...settingsOpenOptions(this.settings) },
+        (f, stage) => {
+          if (seq === this.loadSeq) this.setBusy(stage, f, name);
+        },
+        extra,
+      );
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
         attempt.error('empty');
@@ -850,7 +969,8 @@ export class NcViewerApp implements PanelHost {
         throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
       }
       this.ensureViewer();
-      this.setDoc(createDoc(name, size, res, opts));
+      // 여러 파일 작업이면 이름 = 주 프로그램, 크기 = 이은 글
+      this.setDoc(createDoc(res.job?.main ?? name, res.job && res.nc ? res.nc.source.bytes.length : size, res, opts));
       attempt.success();
       return true;
     } catch (e) {
@@ -873,7 +993,7 @@ export class NcViewerApp implements PanelHost {
     else if (d.mpr) copy = new TextEncoder().encode(`${d.mpr.lines.join('\n')}\n`).buffer as ArrayBuffer;
     else return;
     // 단위·선반·회전축을 바꾸면 모양이 달라지므로 카메라를 새로 맞춘다
-    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || opts.lathe !== d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary || !!opts.integerUnits !== !!d.ncOptions.integerUnits;
+    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || opts.lathe !== d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary || !!opts.integerUnits !== !!d.ncOptions.integerUnits || (opts.jobMain ?? d.name) !== (d.ncOptions.jobMain ?? d.name);
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {
@@ -986,8 +1106,9 @@ export class NcViewerApp implements PanelHost {
       this.dropMask.hidden = true;
       const files = [...(e.dataTransfer?.files ?? [])];
       if (!files.length) return;
-      if (files.length > 1) toast(`한 번에 파일 하나만 엽니다. ${files[0]!.name}을(를) 엽니다.`, 'info', 5000);
-      void this.openFile(files[0]!);
+      // 여러 파일은 한 작업(주 프로그램 + 부프로그램 파일)으로
+      if (files.length > 1) void this.openFiles(files);
+      else void this.openFile(files[0]!);
     });
   }
 
@@ -1568,7 +1689,8 @@ export class NcViewerApp implements PanelHost {
         const act = n.action;
         const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
         b.addEventListener('click', () => {
-          if (act.opts) void this.reparse(act.opts);
+          if (act.add) this.chooseFile(true);
+          else if (act.opts) void this.reparse(act.opts);
           else if (act.tab && d) {
             d.panelTab = act.tab;
             this.panel.show(d);
@@ -1714,6 +1836,7 @@ export class NcViewerApp implements PanelHost {
       playing: this.playing,
       playSec: d?.playSec ?? null,
       selLine: d?.selLine ?? -1,
+      jobFiles: d?.job ? [...d.job.files] : null,
       theme: this.theme,
       measuring: this.measuring,
       aiming: !!this.aim?.aiming,
@@ -1737,6 +1860,8 @@ export class NcViewerApp implements PanelHost {
         const buf = typeof data === 'string' ? (new TextEncoder().encode(data).buffer as ArrayBuffer) : data instanceof Uint8Array ? (data.slice().buffer as ArrayBuffer) : data;
         return app.openBuffer(name, buf, opts);
       },
+      openJob: (files) => app.openFiles(files.map(asFile)),
+      addFiles: (files) => app.addFiles(files.map(asFile)),
       openUrl: (url, name) => app.openUrl(url, name),
       openSample: () => app.openSample(),
       reparse: (opts) => app.reparse(opts),
