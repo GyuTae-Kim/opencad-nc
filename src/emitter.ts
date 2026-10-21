@@ -370,7 +370,8 @@ export class NcEmitter {
     if (endHigh !== 0 || this.machLast !== 0) {
       // 추정 높이에 닿거나 머무는 이동·거기서 출발한 급속은 추정 이동. 거기서 출발한 이송·호·드릴은 보통 이동(출발점만 추정)
       est = endHigh !== 0 || kind === MOVE_RAPID;
-      this.mb.flags[i] = this.mb.flags[i]! | (est ? FLAG_MACHINE_EST : FLAG_START_EST);
+      // FLAG_START_EST = 출발점만 추정(끝점은 실제) — 추정 높이에서 출발한 급속은 추정 묶음이지만 끝점은 범위·급속 깊이 확인에 넣는다
+      this.mb.flags[i] = this.mb.flags[i]! | (est ? FLAG_MACHINE_EST : 0) | (endHigh === 0 ? FLAG_START_EST : 0);
       if (endHigh !== 0) this.machFix.push(i + 1, endHigh);
       this.machLast = endHigh;
     }
@@ -657,7 +658,9 @@ export class NcEmitter {
       lx = w[0]!;
       ly = w[1]!;
       lz = w[2]!;
-      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, k === 1 && startEst && !estFlag ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
+      // 출발점만 추정: 이송은 첫 조각에, 추정 급속은 끝점이 실제인 마지막 조각에 FLAG_START_EST
+      const startOnly = startEst && this.machHigh === 0 && (estFlag ? k === n : k === 1);
+      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, startOnly ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
       this.mb.time[i] = t / n;
       acc.moveCount++;
     }
@@ -778,9 +781,9 @@ export class NcEmitter {
     const box = emptyBox();
     const c = [0, 0, 0];
     for (let i = 0; i < n; i++) {
-      if (mb.flags[i]! & FLAG_MACHINE_EST) continue;
       const k = i * 3;
       if (mb.flags[i]! & FLAG_START_EST) extendBox(box, pts[k + 3]!, pts[k + 4]!, pts[k + 5]!);
+      else if (mb.flags[i]! & FLAG_MACHINE_EST) continue;
       else if (mb.kind[i] === MOVE_ARC && mb.arc[i]! >= 0) {
         const ai = mb.arc[i]!;
         c[0] = mb.arcCenter[ai * 3]!;
@@ -852,8 +855,12 @@ export class NcEmitter {
     const c = [0, 0, 0];
     for (let i = 0; i < moves.count; i++) {
       // 기계 좌표 쪽 추정 이동(안전 높이)은 범위에 넣지 않는다
-      if (moves.flags[i]! & FLAG_MACHINE_EST) continue;
       const k = i * 3;
+      if (moves.flags[i]! & FLAG_MACHINE_EST) {
+        // 추정 높이에서 출발한 급속: 끝점은 실제라 전체 범위에 넣는다
+        if (moves.flags[i]! & FLAG_START_EST) extendBox(all, pts[k + 3]!, pts[k + 4]!, pts[k + 5]!);
+        continue;
+      }
       s[0] = pts[k]!;
       s[1] = pts[k + 1]!;
       s[2] = pts[k + 2]!;
@@ -906,11 +913,17 @@ export class NcEmitter {
       const top = o.stock ? o.stock.max[2] : undefined;
       const fz = (v: number): string => String(Number(v.toFixed(this.displayInch ? 4 : 3)));
       for (let i = 0; i < moves.count; i++) {
-        if (moves.kind[i] !== MOVE_RAPID || moves.flags[i]! & FLAG_MACHINE_EST) continue;
+        const fl = moves.flags[i]!;
+        if (moves.kind[i] !== MOVE_RAPID || (fl & FLAG_MACHINE_EST && !(fl & FLAG_START_EST))) continue;
         const k = i * 3;
-        const z0 = pts[k + 2]!;
         const z1 = pts[k + 5]!;
         const line = moves.line[i]!;
+        // 추정 높이에서 출발한 급속은 끝점만 본다(출발 높이는 추정)
+        if (fl & FLAG_MACHINE_EST) {
+          if (z1 < minCut - tol) this.w.add(`급속 이동이 가장 깊은 절삭(Z${fz(minCut)})보다 아래로 내려감`, line);
+          continue;
+        }
+        const z0 = pts[k + 2]!;
         const xy = Math.hypot(pts[k + 3]! - pts[k]!, pts[k + 4]! - pts[k + 1]!) > tol;
         // 끝이 가장 깊은 절삭보다 아래거나, 그 아래에서 옆으로 움직이는 급속(곧장 올라오는 것은 앞 이동의 결과라 세지 않음)
         if (z1 < minCut - tol || (z0 < minCut - tol && xy)) this.w.add(`급속 이동이 가장 깊은 절삭(Z${fz(minCut)})보다 아래로 내려감`, line);

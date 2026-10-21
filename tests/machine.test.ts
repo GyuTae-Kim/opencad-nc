@@ -176,4 +176,14 @@ describe('기계 좌표 쪽 이동(G53·G28·M91)', () => {
     for (const i of drills) expect(startEst(p)[i]).toBe(false);
     expect(p.bounds!.max[2]).toBe(5);
   });
+
+  it('추정 높이에서 출발한 급속(추정 묶음)도 끝점은 실제: 범위에 넣고, 가장 깊은 절삭보다 아래로 가면 경고', () => {
+    const p = parseGcode(`O1000\nG21 G90 G17\nT1 M6\nG0 G54 X0 Y0 S1000 M3\nG43 H1 Z5.\nG1 Z-5. F100\nX20.\nG0 Z5.\nG91 G28 Z0.\nG90\nT2 M6\nG0 X10. Y10. S1000 M3\nG43 H2 Z-10.\nG0 Z5.\nM30`, { initialPosition: [0, 0, 50] });
+    const i = Array.from(p.moves.line).indexOf(12);
+    expect(est(p)[i]).toBe(true);
+    expect(startEst(p)[i]).toBe(true);
+    expect(moveEnd(p.moves, i)[2]).toBe(-10);
+    expect(p.bounds!.min[2]).toBe(-10);
+    expect(p.warnings.some((w) => w.startsWith('13번 줄: 급속 이동이 가장 깊은 절삭(Z-5)보다 아래로 내려감'))).toBe(true);
+  });
 });
