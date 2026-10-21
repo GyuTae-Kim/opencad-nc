@@ -1,25 +1,37 @@
 /**
- * 정밀 조준(터치 길게 누르기): 측정 중 한 손가락을 움직이지 않고(AIM_SLOP_PX 안) AIM_HOLD_MS 동안 누르면
+ * 정밀 조준(터치 길게 누르기): 측정 중 한 손가락을 거의 움직이지 않고(AIM_SLOP_PX = 코어의 터치 끌기 시작 거리 안) AIM_HOLD_MS 동안 누르면
  * 손가락 위 AIM_OFFSET_PX에 십자선을 띄우고, 끌면 궤도 대신 십자선이 따라간다. 떼면 십자선 자리를 누른 것으로 친다.
  *
  * 코어(Viewer3d)는 고치지 않고 캔버스 부모(.v3d)의 캡처 단계에서 먼저 받는다(코어 듣기는 캔버스에 있다):
- * - 조준을 시작하면 코어에 pointercancel을 보내 그 손가락의 끌기 상태를 잊게 한다. 그 뒤 움직임은 막고(stopPropagation)
+ * - 조준을 시작하면 코어에 pointercancel('touch')을 보내 그 손가락의 끌기 상태를 잊게 한다. 그 뒤 움직임은 막고(stopPropagation)
  *   십자선 자리로 pointermove를 보낸다 — 코어가 붙잡을 점(꼭짓점·끝점)·고무줄·거리를 마우스처럼 미리 그린다.
- * - 떼면 진짜 pointerup을 막고 십자선 자리에서 pointerdown·pointerup을 보내, 코어의 누르기 처리
- *   (4화소 안에서 떼면 click — 측정 점 찍기)를 그대로 쓴다. 이어 pointerleave로 미리 보기를 지운다.
- * - 둘째 손가락이 닿으면 조준을 그만두고 첫 손가락을 지금 자리에서 다시 눌린 것으로 알려, 코어가 두 손가락 확대·이동을 한다.
+ * - 떼면 진짜 pointerup을 막고 십자선 자리에서 pointerdown·pointerup을 보내, 코어의 누르기 처리(움직이지 않고 떼면 click —
+ *   측정 점 찍기)를 그대로 쓴다. 이어 pointerleave로 미리 보기를 지운다.
+ * - 십자선 자리의 미리 보기·누르기는 pointerType AIM_POINTER_TYPE('pen')으로 보낸다: 코어는 터치에만 넓은 허용 거리
+ *   (touchPickTolerance 14화소, 끝점 붙잡기 14화소)를 쓰므로, 십자선은 마우스·펜의 좁은 허용 거리(6화소, 끝점 10화소)로
+ *   정확히 그 자리를 고르고, 미리 보기와 찍힌 점이 같다. 조준하지 않은 보통 누르기는 그대로 'touch'(넓은 허용 거리)다.
+ * - 둘째 손가락이 닿으면 조준을 그만두고 첫 손가락을 지금 자리에서 다시 눌린 것('touch')으로 알려, 코어가 두 손가락 확대·이동을 한다.
  * - pointercancel은 그대로 넘기고 조준만 그만둔다. 밖에서 cancel()하면 그 손가락은 뗄 때까지 코어에 넘기지 않는다.
- * 보내는 이벤트는 같은 pointerId·pointerType 'touch'이고, PointerEvent가 없으면 MouseEvent에 두 값을 덧붙인다.
+ * 보내는 이벤트는 같은 pointerId이고, PointerEvent가 없으면 MouseEvent에 pointerId·pointerType을 덧붙인다.
+ * NC 앱은 이 이벤트의 pointerType을 보지 않는다(코어의 허용 거리만 가른다).
  *
  * opencad-step 커밋 5465e63의 src/app/aim.ts를 옮겼다(NC는 면 고르기가 없어 측정에만 쓴다).
  */
+
+import { TOUCH_DRAG_START_PX } from 'opencad-viewer3d';
+
+/** 십자선 자리 미리 보기·누르기의 포인터 종류: 코어가 마우스·펜의 좁은 허용 거리로 고르게 */
+export const AIM_POINTER_TYPE = 'pen';
 
 /** 이만큼(ms) 움직이지 않고 누르고 있으면 정밀 조준 */
 export const AIM_HOLD_MS = 350;
 /** 십자선을 손가락 위로 띄우는 거리(화소) — 손가락에 가리지 않게 */
 export const AIM_OFFSET_PX = 64;
-/** 누르기로 볼 최대 움직임(화소, 코어 끌기 시작과 같다) */
-export const AIM_SLOP_PX = 4;
+/**
+ * 누르기로 볼 최대 움직임(화소): 코어의 터치 끌기 시작 거리(TOUCH_DRAG_START_PX, 10)와 같다.
+ * 손가락이 6~9화소 떨려도 코어는 돌리지 않으므로 길게 누르기(정밀 조준)도 그대로 시작한다
+ */
+export const AIM_SLOP_PX = TOUCH_DRAG_START_PX;
 
 export interface AimOptions {
   /** 조준을 받을 때인지(측정 중) */
@@ -52,8 +64,8 @@ export function aimPoint(x: number, y: number, rect: Rect): { x: number; y: numb
   return { x: clamp(x, rect.left, rect.right - 1), y: clamp(y - AIM_OFFSET_PX, rect.top, rect.bottom - 1) };
 }
 
-/** 코어에 보낼 터치 포인터 이벤트(PointerEvent가 없는 브라우저·시험에서는 MouseEvent + pointerId·pointerType) */
-export function touchPointerEvent(type: string, pointerId: number, clientX: number, clientY: number): MouseEvent {
+/** 코어에 보낼 포인터 이벤트(기본 'touch'. PointerEvent가 없는 브라우저·시험에서는 MouseEvent + pointerId·pointerType) */
+export function touchPointerEvent(type: string, pointerId: number, clientX: number, clientY: number, pointerType: 'touch' | 'pen' = 'touch'): MouseEvent {
   const down = type === 'pointerdown' || type === 'pointermove';
   const init = {
     bubbles: type !== 'pointerleave',
@@ -64,13 +76,13 @@ export function touchPointerEvent(type: string, pointerId: number, clientX: numb
     button: type === 'pointermove' ? -1 : 0,
     buttons: down ? 1 : 0,
     pointerId,
-    pointerType: 'touch',
+    pointerType,
     isPrimary: true,
   };
   if (typeof PointerEvent === 'function') return new PointerEvent(type, init);
   const e = new MouseEvent(type, init);
   Object.defineProperty(e, 'pointerId', { value: pointerId });
-  Object.defineProperty(e, 'pointerType', { value: 'touch' });
+  Object.defineProperty(e, 'pointerType', { value: pointerType });
   Object.defineProperty(e, 'isPrimary', { value: true });
   return e;
 }
@@ -180,8 +192,9 @@ export class TouchAim {
     if (cancel) return;
     e.stopPropagation();
     if (aimed && this.opts.enabled()) {
-      this.relay('pointerdown', id, at);
-      this.relay('pointerup', id, at);
+      // 십자선 자리를 좁은 허용 거리로(미리 보기와 같은 점)
+      this.relay('pointerdown', id, at, AIM_POINTER_TYPE);
+      this.relay('pointerup', id, at, AIM_POINTER_TYPE);
     }
   }
 
@@ -218,14 +231,14 @@ export class TouchAim {
     this.at = at;
     const lr = this.opts.layer.getBoundingClientRect();
     this.reticle.style.transform = `translate(${at.x - lr.left}px, ${at.y - lr.top}px)`;
-    if (this.heldId !== null) this.relay('pointermove', this.heldId, at);
+    if (this.heldId !== null) this.relay('pointermove', this.heldId, at, AIM_POINTER_TYPE);
   }
 
   /** 십자선을 감추고 코어의 미리 보기를 지운다(손가락은 아직 코어가 모른다) */
   private hide(): void {
     this.aimOn = false;
     this.reticle.hidden = true;
-    if (this.heldId !== null) this.relay('pointerleave', this.heldId, this.at);
+    if (this.heldId !== null) this.relay('pointerleave', this.heldId, this.at, AIM_POINTER_TYPE);
     this.opts.onChange?.(false);
   }
 
@@ -239,10 +252,10 @@ export class TouchAim {
     if (p) this.relay('pointerdown', id, p);
   }
 
-  private relay(type: string, id: number, at: { x: number; y: number }): void {
+  private relay(type: string, id: number, at: { x: number; y: number }, pointerType: 'touch' | 'pen' = 'touch'): void {
     this.relaying = true;
     try {
-      this.canvas.dispatchEvent(touchPointerEvent(type, id, at.x, at.y));
+      this.canvas.dispatchEvent(touchPointerEvent(type, id, at.x, at.y, pointerType));
     } finally {
       this.relaying = false;
     }
