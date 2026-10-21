@@ -465,52 +465,162 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
 
 // ───────────────────────── 방언 판별 ─────────────────────────
 
+/** Fanuc 제어 낱말(이 뒤의 괄호는 식이 아니라 주석): GOTO10(…)·DO1(…)·END1(…)·THEN(…) */
+const FANUC_WORD_BEFORE_PAREN = /^(?:GOTO|DO|END|THEN|EQ|NE|GT|LT|GE|LE|AND|OR|XOR)\d*$/i;
+
+/** text[i]의 "("가 Siemens 함수 인수·식 괄호인지: 두 글자 넘는 이름 바로 뒤(CYCLE81(·AC(·SIN(), = 또는 연산자·쉼표 뒤 */
+function codeParen(text: string, i: number): boolean {
+  const before = text.charCodeAt(i - 1);
+  // 이름(글자·숫자·_)이 바로 붙어 있으면: 앞의 두 글자가 글자여야 함수 이름(N1(…)·T1M6(…)·X0(…)은 주석)
+  if ((before >= 48 && before <= 57) || (before >= 65 && before <= 90) || (before >= 97 && before <= 122) || before === 95) {
+    let k = i - 1;
+    while (k > 0) {
+      const c = text.charCodeAt(k - 1);
+      if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95) k--;
+      else break;
+    }
+    const name = text.slice(k, i);
+    return /^[A-Z_][A-Z_]/i.test(name) && !FANUC_WORD_BEFORE_PAREN.test(name);
+  }
+  // 빈칸을 건너 바로 앞 글자: = 와 연산자·쉼표는 식 괄호(Siemens X=(R1+2)·R3=R1*(R2+1)). 줄 앞 '/'는 블록 건너뛰기
+  let k = i - 1;
+  while (k >= 0 && (text.charCodeAt(k) === 32 || text.charCodeAt(k) === 9)) k--;
+  if (k < 0) return false;
+  const c = text[k]!;
+  if (c === '=' || c === '*' || c === '+' || c === '-' || c === ',') return true;
+  if (c === '/') {
+    let j = k - 1;
+    while (j >= 0 && (text.charCodeAt(j) === 32 || text.charCodeAt(j) === 9)) j--;
+    return j >= 0 && text.charCodeAt(j) !== 10;
+  }
+  return false;
+}
+
+let stripCache: { text: string; out: string } | null = null;
+
+/**
+ * 괄호 주석 "( … )"을 떼고 빈칸으로 바꾼다(판별용). 낱말에 붙은 주석(N1(…)·T1M6(…)·G0X0(…))과 겹친 주석 "((…))"도 뗀다.
+ * Siemens 함수 인수(CYCLE81(…)·=AC(…)·SIN(…))와 식 괄호(= ·연산자 뒤)는 남긴다. 닫히지 않은 주석은 줄 끝까지
+ */
+export function stripParenComments(text: string): string {
+  if (stripCache && stripCache.text === text) return stripCache.out;
+  if (text.indexOf('(') < 0) return text;
+  const parts: string[] = [];
+  let last = 0;
+  let keep = 0; // 남긴(식) 괄호 깊이
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10) {
+      keep = 0;
+      continue;
+    }
+    if (c === 41) {
+      if (keep > 0) keep--;
+      continue;
+    }
+    if (c !== 40) continue;
+    if (keep > 0 || codeParen(text, i)) {
+      keep++;
+      continue;
+    }
+    let j = i + 1;
+    let depth = 1;
+    while (j < n) {
+      const cj = text.charCodeAt(j);
+      if (cj === 10) break;
+      if (cj === 40) depth++;
+      else if (cj === 41 && --depth === 0) break;
+      j++;
+    }
+    parts.push(text.slice(last, i), ' ');
+    last = j < n && text.charCodeAt(j) === 41 ? j + 1 : j;
+    i = last - 1;
+  }
+  parts.push(text.slice(last));
+  const out = parts.join('');
+  stripCache = { text, out };
+  return out;
+}
+
+/** Siemens 표지(주석을 뗀 글에서): 맞은 표지 종류 수 */
+const SIEMENS_MARKS: RegExp[] = [
+  /\bMCALL\b/i,
+  /\b(?:CYCLE\d{2,3}|HOLES[12]|POCKET[1-4]|SLOT[12]|LONGHOLE)\s*\(/i,
+  /\bT\s*=\s*"/i,
+  /\bCR\s*=\s*[-+.\dR(]/i,
+  /=\s*(?:AC|IC)\s*\(/i,
+  /\bGOTO[FB]\b/i,
+  /\bDEF\s+(?:REAL|INT|BOOL|CHAR|STRING|AXIS|FRAME)\b/i,
+  /\b(?:SUPA|ATRANS|AROT|AMIRROR|ASCALE)\b/i,
+  /^\s*(?:N\d+\s+)?(?:TRANS|ROT|MIRROR|SCALE)\s+(?:[XYZ][-+.\d]|RPL\s*=)/im,
+  /(?:^|\s)G(?:64[1-5]|700|710|500|50[5-9]|5[1-9]\d)(?![\d.])/im,
+  /^\s*(?:N\d+\s+)?R\d+\s*=/im,
+];
+
+/** 판별용 코드 글: 괄호 주석과 ; 주석을 뗀다 */
+let codeCache: { head: string; code: string } | null = null;
+function detectCode(head: string): string {
+  if (codeCache && codeCache.head === head) return codeCache.code;
+  const code = stripParenComments(head).replace(/;[^\n]*/g, ' ');
+  codeCache = { head, code };
+  return code;
+}
+
+function siemensHeader(head: string): boolean {
+  return /^\s*%_N_\w+_(?:MPF|SPF)\b/im.test(head) || /\$PATH\s*=\s*\/_N_/i.test(head);
+}
+
+/** Siemens 표지 종류 수(%_N_ 머리·$PATH는 따로) */
+function siemensMarks(code: string): number {
+  let n = 0;
+  for (const re of SIEMENS_MARKS) if (re.test(code)) n++;
+  return n;
+}
+
 /**
  * Siemens Sinumerik 표지: %_N_…_MPF/SPF 머리·$PATH, MCALL, CYCLE8x(…)·HOLES·CYCLE800, T="이름", CR=, =AC(…)·=IC(…),
- * GOTOF/GOTOB, DEF REAL/INT, SUPA, TRANS/ATRANS/AROT/AMIRROR, G64x, G700/G710, R 변수 대입(;주석과 함께)
+ * GOTOF/GOTOB, DEF REAL/INT, SUPA, TRANS/ATRANS/AROT/AMIRROR, G64x, G700/G710, R 변수 대입. 주석(; …·괄호 주석)은 떼고 본다
  */
 export function looksSiemens(head: string): boolean {
-  if (/^\s*%_N_\w+_(?:MPF|SPF)\b/im.test(head) || /\$PATH\s*=\s*\/_N_/i.test(head)) return true;
-  // 주석(; …)과 Fanuc 꼴 괄호 주석(줄 앞이나 빈칸 뒤의 "( … )" — Siemens 함수 인수 NAME(…)·=(…)는 남는다)을 떼고 본다
-  const code = head.replace(/;[^\n]*/g, ' ').replace(/(^|[ \t])\([^()\n]*\)/gm, '$1 ');
-  return (
-    /\bMCALL\b/i.test(code) ||
-    /\b(?:CYCLE\d{2,3}|HOLES[12]|POCKET[1-4]|SLOT[12]|LONGHOLE)\s*\(/i.test(code) ||
-    /\bT\s*=\s*"/i.test(code) ||
-    /\bCR\s*=\s*[-+.\dR(]/i.test(code) ||
-    /=\s*(?:AC|IC)\s*\(/i.test(code) ||
-    /\bGOTO[FB]\b/i.test(code) ||
-    /\bDEF\s+(?:REAL|INT|BOOL|CHAR|STRING|AXIS|FRAME)\b/i.test(code) ||
-    /\b(?:SUPA|ATRANS|AROT|AMIRROR|ASCALE)\b/i.test(code) ||
-    /^\s*(?:N\d+\s+)?(?:TRANS|ROT|MIRROR|SCALE)\s+(?:[XYZ][-+.\d]|RPL\s*=)/im.test(code) ||
-    /(?:^|\s)G(?:64[1-5]|700|710|500|50[5-9]|5[1-9]\d)(?![\d.])/im.test(code) ||
-    /^\s*(?:N\d+\s+)?R\d+\s*=/im.test(code)
-  );
+  return siemensHeader(head) || siemensMarks(detectCode(head)) > 0;
 }
 
 /** Okuma OSP 표지: CALL O…, VC 변수 대입, G15 H, NLAP, RTS(부프로그램 끝) */
 export function looksOkuma(head: string): boolean {
-  const code = head.replace(/\([^)\n]*\)/g, ' ');
+  const code = stripParenComments(head);
   return /\bCALL\s+O\w+/i.test(code) || /(?:^|\s)VC\d+\s*=/im.test(code) || /\bG15\s*H\d/i.test(code) || /\bNLAP\b/i.test(code) || /^\s*(?:N\d+\s+)?RTS\b/im.test(code) || /\bokuma\b/i.test(head);
 }
 
-/** 글 앞부분으로 방언을 판별한다 */
+/**
+ * 글 앞부분으로 방언을 판별한다.
+ * Siemens 표지가 하나뿐이면 Fanuc·LinuxCNC의 뚜렷한 표지(O 번호 줄, # 변수, M98·G65 P 부르기, o-코드 부프로그램)가 없을 때만
+ * Siemens로 본다(표지가 둘 넘으면 Siemens). Haas는 주석의 HAAS나 Haas만 쓰는 코드로 본다
+ */
 export function detectGcodeDialect(head: string): NcDialect {
   if (/^\s*\d*\s*BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
     return 'heidenhain';
   // Heidenhain DIN/ISO: "%이름 G71 *" 머리, 블록 끝 * 과 G30/G31 공작물
   if (/^\s*%[^\s*;(]+\s+G7[01]\b/im.test(head) || /^\s*N\d+\s+G3[01]\b[^\n]*\*\s*$/im.test(head)) return 'heidenhain';
-  if (looksSiemens(head)) return 'siemens';
-  if (/^\s*o(?:\d+|<[^>]+>)\s*(?:sub|call|if|while|do|repeat)\b/im.test(head) || /#<[_a-z]/i.test(head) || /linuxcnc|\bemc2?\b/i.test(head))
-    return 'linuxcnc';
+  if (siemensHeader(head)) return 'siemens';
+  const code = detectCode(head);
+  const linuxSub = /^\s*o(?:\d+|<[^>]+>)\s*(?:sub|call|if|while|do|repeat)\b/im.test(code) || /#<[_a-z]/i.test(code);
+  const fanucStrong = /^\s*(?:N\d+\s*)?O\d{1,8}(?!\d)/im.test(code) || /#\d/.test(code) || /(?:^|[^A-Z0-9.#])(?:M\s*98|G\s*65)\s*P/im.test(code);
+  const sm = siemensMarks(code);
+  if (sm >= 2 || (sm === 1 && !linuxSub && !fanucStrong)) return 'siemens';
+  if (linuxSub || /linuxcnc|\bemc2?\b/i.test(head)) return 'linuxcnc';
   if (/\bgrbl\b/i.test(head) || /^\s*\$[A-Z0-9$#]/m.test(head)) return 'grbl';
   if (/\bmach\s*[34]\b/i.test(head)) return 'mach3';
-  // Haas: 주석의 "HAAS"(Fusion·Mastercam 포스트 머리), Haas만 쓰는 코드 G187·G103·G154·G110~G129·G150·M97·M130
+  // Haas: 주석의 "HAAS"(Fusion·Mastercam 포스트 머리), Haas만 쓰는 코드 G187·G103·G154·G110~G129·G150·M130.
+  // 선반 프로그램의 G112·G113(극좌표 보간)은 빼고, M97(Haas 지역 부프로그램)은 다른 기계도 쓸 수 있어 표지로 보지 않는다(어느 방언이든 읽는다)
+  if (/\(\s*[^)\n]*\bhaas\b/i.test(head)) return 'haas';
   {
-    const code = head.replace(/\([^)\n]*\)/g, ' ');
-    if (/\(\s*[^)\n]*\bhaas\b/i.test(head) || /(?:^|[^A-Z0-9.#])G\s*(?:187|103|154|1[12]\d|150)(?![\d.])/im.test(code) || /(?:^|[^A-Z0-9.#])M\s*(?:97|130)(?!\d)/im.test(code)) return 'haas';
+    let lathe: boolean | undefined;
+    const re = /(?:^|[^A-Z0-9.#])G\s*(187|103|154|1[12]\d|150)(?![\d.])/gim;
+    for (let m = re.exec(code); m; m = re.exec(code)) if (!((m[1] === '112' || m[1] === '113') && (lathe ??= detectLathe(head)))) return 'haas';
+    if (/(?:^|[^A-Z0-9.#])M\s*130(?!\d)/im.test(code)) return 'haas';
   }
-  if (/^\s*[O:]\d{1,8}\b/m.test(head) || /\b(?:G65|WHILE\s*\[|IF\s*\[|GOTO\s*\d)/i.test(head) || /#[1-9]\d{2,3}\s*=/.test(head) || /\bfanuc\b/i.test(head))
+  if (/^\s*[O:]\d{1,8}\b/m.test(code) || /\b(?:G65|WHILE\s*\[|IF\s*\[|GOTO\s*\d)/i.test(code) || /#[1-9]\d{2,3}\s*=/.test(code) || /\bfanuc\b/i.test(head))
     return 'fanuc';
   return 'iso';
 }
@@ -520,7 +630,7 @@ export function detectGcodeDialect(head: string): NcDialect {
  * 선택(lathe: 'auto')과 밀링으로 읽을 때의 안내 경고에 쓴다.
  */
 export function detectLathe(head: string): boolean {
-  const code = head.replace(/\([^)\n]*\)/g, ' ').replace(/;[^\n]*/g, ' ');
+  const code = detectCode(head);
   let score = 0;
   if (/(?:^|[^A-Z])T\s*\d{4}(?!\d)/im.test(code)) score += 2;
   if (/(?:^|[^A-Z0-9.])G\s*0?9[67](?!\d)/im.test(code)) score += 2;
@@ -1558,8 +1668,8 @@ export class Runner extends NcEmitter {
           motionG = 10;
           break;
         default:
-          if (g >= 1100 && g <= 1290 && g % 10 === 0 && this.dialect !== 'linuxcnc') {
-            // Haas G110~G129 = G154 P1~P20
+          if (g >= 1100 && g <= 1290 && g % 10 === 0 && this.dialect === 'haas' && !(this.lathe && (g === 1120 || g === 1130))) {
+            // Haas G110~G129 = G154 P1~P20(Fanuc 계열에서는 사용자 매크로 G일 수 있고, 선반 G112·G113은 극좌표 보간)
             this.selectWcs(5 + (g / 10 - 109), line);
             break;
           }
@@ -3324,7 +3434,10 @@ export function parseGcode(input: Uint8Array | ArrayBuffer | string | NcSource, 
   }
   const r = new Runner(src, opts, dialect, getHead);
   r.run();
-  return r.finish(opts);
+  const p = r.finish(opts);
+  // Haas로 판별했으면 알린다(G73·G83의 K = 최소 절입, G70~G72 = 볼트 구멍 패턴처럼 뜻이 바뀌는 코드가 있다)
+  if (dialect === 'haas' && (!opts.dialect || opts.dialect === 'auto')) (p.notices ??= []).unshift({ kind: 'dialect', dialect });
+  return p;
 }
 
 /** 따로 된 방언 해석기(siemens.ts가 등록한다 — gcode.ts가 그것을 불러오면 순환 참조가 되므로) */

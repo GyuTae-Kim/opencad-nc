@@ -135,6 +135,7 @@ export interface NoticeView {
 
 const DIALECT_NOTICE: Record<string, string> = {
   siemens: 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).',
+  haas: 'Haas 프로그램으로 읽었습니다(판별) — G73·G83의 K는 최소 절입(반복은 L), G70~G72는 볼트 구멍 패턴, G110~G129는 좌표계로 봅니다.',
   'heidenhain-iso': 'Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).',
   okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·NLAP는 읽지 않아 경로가 모자랄 수 있습니다(G15 H 좌표계는 읽음).',
 };

@@ -105,6 +105,7 @@
   "G{0}(LinuxCNC 선반 사이클)은 지원하지 않음": "G{0} (LinuxCNC lathe cycle) is not supported",
   "G{0}(부드러운 접근·이탈)은 끝점까지 이송 직선으로 그림": "G{0} (smooth approach/retract) is drawn as a straight feed move to the end point",
   "G{0}의 I·J·K를 Haas 쪼기(첫 절입·줄이는 양·최소 절입)로 봄 — 반복은 L": "I·J·K of G{0} read as Haas pecking (first peck · reduction · minimum peck) — repeats use L",
+  "Haas 프로그램으로 읽었습니다(판별) — G73·G83의 K는 최소 절입(반복은 L), G70~G72는 볼트 구멍 패턴, G110~G129는 좌표계로 봅니다.": "Read as a Haas program (detected) — K in G73/G83 is the minimum peck (repeats use L), G70–G72 are bolt hole patterns and G110–G129 are work offsets.",
   "Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).": "Read as a Heidenhain DIN/ISO program (detected).",
   "Heidenhain 평문": "Heidenhain plaintext",
   "Heidenhain 프로그램 읽는 중": "Reading the Heidenhain program",

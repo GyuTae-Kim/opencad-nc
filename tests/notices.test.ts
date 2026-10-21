@@ -94,4 +94,14 @@ describe('선반 자동 판별 띠', () => {
     const s = createDoc('s.mpf', 1, parseForView('s.mpf', enc.encode('N10 G71 G90 G0 X0 Y0 Z5\nN20 G1 X=IC(10) F100\nN30 M30')));
     expect(noticeViews(s).map((n) => [n.key, n.action?.tab])).toEqual([['dialect-siemens', 'info']]);
   });
+
+  it('화면: Haas로 판별하면 띠로 알린다(방언 바꾸기), 방언을 고르면 띠가 없다', () => {
+    const text = '%\nO1000 (HAAS VF2)\nG20 G90 G0 X0 Y0 Z1.\nG83 Z-0.5 Q0.1 K0.05 R0.1 F5.\nG80\nM30\n%';
+    const d = createDoc('h.nc', 1, parseForView('h.nc', enc.encode(text)));
+    const v = noticeViews(d);
+    expect(v.map((n) => [n.key, n.action?.tab])).toEqual([['dialect-haas', 'info']]);
+    expect(v[0]!.text).toContain('G73·G83의 K는 최소 절입');
+    expect(parseGcode(text, { dialect: 'haas' }).notices).toBeUndefined();
+    expect(parseGcode(text).notices).toEqual([{ kind: 'dialect', dialect: 'haas' }]);
+  });
 });

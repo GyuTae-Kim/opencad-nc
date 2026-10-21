@@ -34,7 +34,9 @@ describe('Haas 방언', () => {
     expect(detectGcodeDialect('%\nO1000 (HAAS VF2)\nG0 X0')).toBe('haas');
     expect(detectGcodeDialect('%\nO1000\nG187 P1 E0.01\nG0 X0')).toBe('haas');
     expect(detectGcodeDialect('%\nO1000\nG0 G154 P2 X1. Y1.')).toBe('haas');
-    expect(detectGcodeDialect('%\nO1000\nM97 P100\nM30')).toBe('haas');
+    // M97(지역 부프로그램)은 다른 기계도 쓸 수 있어 표지로 보지 않는다(어느 방언이든 M97 P는 읽는다)
+    expect(detectGcodeDialect('%\nO1000\nM97 P100\nM30')).toBe('fanuc');
+    expect(detectGcodeDialect('%\nO1000\nM130 (VIDEO.MP4)\nM30')).toBe('haas');
     expect(detectGcodeDialect('%\nO1000\n#100=5\nG0 X0')).toBe('fanuc');
     expect(detectGcodeDialect(HAAS)).toBe('fanuc');
     expect(detectGcodeDialect(`(MACHINE: HAAS VF-2)\n${HAAS}`)).toBe('haas');

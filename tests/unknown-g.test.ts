@@ -38,6 +38,24 @@ G1 X20 F100`);
     expect(p.warnings.filter((w) => w.includes('지원하지 않는'))).toEqual([]);
   });
 
+  it('G110~G129 좌표계는 Haas에서만: Fanuc 계열에서는 사용자 매크로일 수 있어 모르는 G, 선반 G112·G113은 극좌표 보간', () => {
+    const f = run(`G0 X1. Y1.\nG110 X2. Y2.\nG1 X3. F100`, { dialect: 'fanuc' });
+    expect(ends(f)).toEqual([
+      [1, 1, 50],
+      [3, 1, 50],
+    ]);
+    expect(f.warnings.some((w) => w.includes('지원하지 않는 G110'))).toBe(true);
+    expect(Array.from(f.moves.wcs)).toEqual([0, 0]);
+    // Fanuc 선반의 G112(극좌표 보간)는 Haas 표지가 아니고, Haas 선반에서도 좌표계가 아니다
+    const lathe = `%\nO0009(MILLTURN)\nG21 G99\nT0101\nG97 S1000 M3\nG0 X50. Z2.\nG1 Z-20. F0.2\nG0 X60.\nG112\nG1 X20. C10. F100\nG113\nG0 X100. Z100.\nM30\n%`;
+    const p = parseGcode(lathe, { lathe: 'auto' });
+    expect(p.dialect).toBe('fanuc');
+    const h = parseGcode(lathe, { lathe: true, dialect: 'haas' });
+    expect(h.warnings.some((w) => w.includes('G54.1'))).toBe(false);
+    expect(h.warnings.some((w) => w.includes('지원하지 않는 G112'))).toBe(true);
+    expect(Array.from(h.moves.wcs).every((w) => w === 0)).toBe(true);
+  });
+
   it('G9·G62·G63은 이동을 그대로, G60·G27·G29는 급속 한 번(모달은 그대로)', () => {
     const p = run(`G1 X5 F100
 G9 G1 X10

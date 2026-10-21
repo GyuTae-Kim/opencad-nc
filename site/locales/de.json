@@ -105,6 +105,7 @@
   "G{0}(LinuxCNC 선반 사이클)은 지원하지 않음": "G{0} (LinuxCNC-Drehzyklus) wird nicht unterstützt",
   "G{0}(부드러운 접근·이탈)은 끝점까지 이송 직선으로 그림": "G{0} (weiches An-/Abfahren) wird als gerade Vorschubbewegung zum Endpunkt gezeichnet",
   "G{0}의 I·J·K를 Haas 쪼기(첫 절입·줄이는 양·최소 절입)로 봄 — 반복은 L": "I·J·K von G{0} als Haas-Tieflochbohren gelesen (erste Zustellung · Abnahme · Mindestzustellung) — Wiederholungen mit L",
+  "Haas 프로그램으로 읽었습니다(판별) — G73·G83의 K는 최소 절입(반복은 L), G70~G72는 볼트 구멍 패턴, G110~G129는 좌표계로 봅니다.": "Als Haas-Programm gelesen (erkannt) — K in G73/G83 ist die minimale Zustellung (Wiederholungen mit L), G70–G72 sind Lochkreis-/Lochmuster und G110–G129 Nullpunkte.",
   "Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).": "Als Heidenhain-DIN/ISO-Programm gelesen (erkannt).",
   "Heidenhain 평문": "Heidenhain-Klartext",
   "Heidenhain 프로그램 읽는 중": "Lektüre des Heidenhain-Programms",
