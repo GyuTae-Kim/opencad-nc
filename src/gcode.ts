@@ -83,6 +83,8 @@ export interface GcodeOptions {
    * mm 0.001·inch 0.0001, A·B·C는 0.001도. 끄면 소수점 없는 큰 좌표가 많을 때 notices에 'integer-units'를 단다
    */
   integerUnits?: boolean;
+  /** 공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고(기본 true) */
+  checkToolNumbers?: boolean;
 }
 
 /** 소수점 없으면 최소 입력 단위로 읽는 낱말(X Y Z U V W I J K R Q A B C) */
@@ -774,6 +776,10 @@ export class Runner extends NcEmitter {
     this.updateScale();
     this.tol = this.displayInch ? 0.0001 : 0.002;
     this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
+    // 안전 확인: 공구 길이 보정(G43)은 밀링 Fanuc 계열에서, 주축은 GRBL(레이저 M3 S0)이 아니면
+    this.checkNumbers = opts.checkToolNumbers !== false;
+    this.checkTlc = !this.lathe && dialect !== 'grbl' && dialect !== 'siemens';
+    this.checkSpindle = dialect !== 'grbl';
     this.peck = opts.peckClearance ?? (this.displayInch ? 0.02 : 0.5);
     this.arcAbs = !!opts.arcCenterAbsolute;
     this.maxMoves = opts.maxMoves ?? 8_000_000;
@@ -1156,6 +1162,8 @@ export class Runner extends NcEmitter {
     let pocket = -1;
     /** LinuxCNC G33.1 강성 탭(들어갔다 나온다) */
     let tapOneShot = false;
+    /** 이 블록에 G43·G44·G43.4/5(공구 길이 보정)가 있음 */
+    let tlcOn = false;
     for (let k = 0; k < blk.gCount; k++) {
       const g = blk.g[k]!;
       if (this.lathe) {
@@ -1302,6 +1310,7 @@ export class Runner extends NcEmitter {
         case 434:
         case 435:
           this.tlc = true;
+          tlcOn = true;
           if (g === 434 || g === 435) {
             if (this.rotAxis) {
               this.rotOff = true;
@@ -1473,6 +1482,9 @@ export class Runner extends NcEmitter {
       this.seenM6 = true;
       if (this.selTool >= 0) this.changeTool(this.selTool, line);
     }
+    // 안전 확인: 공구 길이 보정 번호(H)·반경 보정 번호(D)가 공구 번호와 다른지(공구 교환 뒤에 본다)
+    if (tlcOn) this.noteToolLength(blk.has[7] ? Math.round(blk.val[7]!) : undefined, line);
+    if ((this.comp === 1 || this.comp === 2) && blk.has[LD] && !compDirect && this.dialect !== 'siemens') this.checkToolNumber('D', Math.round(blk.val[LD]!), line);
 
     // 휴지
     if (nonModal === 40) {

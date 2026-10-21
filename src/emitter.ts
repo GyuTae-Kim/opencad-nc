@@ -12,6 +12,7 @@ import {
   FLAG_COMP_LEFT,
   FLAG_COMP_RIGHT,
   FLAG_COOLANT,
+  FLAG_CYCLE,
   FLAG_INVERSE_TIME,
   FLAG_MACHINE,
   FLAG_MACHINE_EST,
@@ -91,6 +92,54 @@ export class NcEmitter {
   protected compEvents: CompEvent[] = [];
   /** 화면이 띠로 알릴 해석 판단 */
   protected notices: NcNotice[] = [];
+
+  // ── 안전 확인(공구 길이 보정·주축·급속 깊이) ──
+  /** H·D 번호가 공구 번호와 다르면 경고(기본 켬) */
+  protected checkNumbers = true;
+  /** 공구 길이 보정을 확인할지(G-code 밀링만) */
+  protected checkTlc = false;
+  /** 프로그램 어디선가 공구 길이 보정을 썼는지 */
+  private tlcAny = false;
+  /** 지금 공구로 바꾼 뒤 공구 길이 보정을 했는지 */
+  private tlcTool = false;
+  /** 공구 길이 보정 없이 절삭한 공구(첫 줄) — 끝에 tlcAny면 경고 */
+  private noTlcCut = new Map<number, number>();
+  /** 주축이 멈춘 채 절삭한 공구(첫 줄) — 끝에 주축을 돌린 적이 있으면 경고 */
+  private stoppedCut = new Map<number, number>();
+  private spindleSeen = false;
+  /** 주축 확인을 할지(GRBL 레이저 M3 S0 등은 끔) */
+  protected checkSpindle = true;
+  private warnedNumber = new Set<string>();
+
+  /** G43/G44(h = H 번호) — 공구 바꾼 뒤 보정 했음, H≠T면 경고 */
+  protected noteToolLength(h: number | undefined, line: number): void {
+    this.tlcAny = true;
+    this.tlcTool = true;
+    if (h !== undefined && h !== 0) this.checkToolNumber('H', h, line);
+  }
+
+  /** H·D 번호 ≠ 공구 번호면 경고(공구마다 한 번) */
+  protected checkToolNumber(letter: 'H' | 'D', n: number, line: number): void {
+    const t = this.tool;
+    if (!this.checkNumbers || t < 0 || t >= 100000 || n === t) return;
+    const key = `${letter}${n}T${t}`;
+    if (this.warnedNumber.has(key)) return;
+    this.warnedNumber.add(key);
+    this.w.add(`T${t}인데 ${letter === 'H' ? '공구 길이 보정' : '반경 보정'}이 ${letter}${n} — 번호가 맞는지 확인하십시오`, line);
+  }
+
+  /** 절삭 이동 하나의 안전 확인(공구 길이 보정·주축) */
+  private safetyCut(line: number): void {
+    const t = this.tool;
+    if (this.checkTlc && !this.tlcTool && t >= 0 && !this.noTlcCut.has(t)) this.noTlcCut.set(t, line);
+    if (this.checkSpindle && (this.spindleDir === 0 || !(this.speed > 0)) && !this.stoppedCut.has(t)) this.stoppedCut.set(t, line);
+  }
+
+  /** 끝에서: 모아 둔 안전 확인 경고 */
+  private safetyFinish(): void {
+    if (this.tlcAny) for (const [t, line] of this.noTlcCut) this.w.add(`T${t}: 공구 교환 뒤 공구 길이 보정(G43 H) 없이 절삭`, line);
+    if (this.spindleSeen) for (const [t, line] of this.stoppedCut) this.w.add(`${t >= 0 && t < 100000 ? `T${t}: ` : ''}주축이 멈춘 채(M5·S0) 절삭 이동`, line);
+  }
   /** 선반 모드로 읽음(build에서 NcProgram.lathe) */
   protected latheMode = false;
   /** 회전축 낱말을 보았음 */
@@ -224,7 +273,8 @@ export class NcEmitter {
       this.mb.flags[i] = this.mb.flags[i]! | FLAG_MACHINE_EST;
       if (endHigh !== 0) this.machFix.push(i + 1, endHigh);
       this.machLast = endHigh;
-    }
+    } else if (kind !== MOVE_RAPID) this.safetyCut(line);
+    if (this.spindleDir !== 0) this.spindleSeen = true;
     const sm = this.seenMax;
     if (x > sm[0]! && !(endHigh & 1)) sm[0] = x;
     if (y > sm[1]! && !(endHigh & 2)) sm[1] = y;
@@ -461,6 +511,8 @@ export class NcEmitter {
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const flags = this.flags() | extraFlags | estFlag;
+    if (kind !== MOVE_RAPID && !estFlag) this.safetyCut(line);
+    if (this.spindleDir !== 0) this.spindleSeen = true;
     const acc = this.toolAcc();
     if (acc.firstLine < 0) acc.firstLine = line;
     let lx = this.mb.lastX();
@@ -571,6 +623,7 @@ export class NcEmitter {
   protected changeTool(t: number, line: number): void {
     if (t === this.tool) return;
     this.tool = t;
+    this.tlcTool = false;
     this.toolChanges++;
     const acc = this.toolAcc();
     if (acc.firstLine < 0) acc.firstLine = line;
@@ -698,6 +751,25 @@ export class NcEmitter {
           extendBox(cut, s[0], s[1], s[2]);
           extendBox(cut, e[0], e[1], e[2]);
         }
+      }
+    }
+    // 안전 확인: 공구 길이 보정·주축(모아 둔 것), 급속이 가장 깊은 절삭보다 아래로·공작물 윗면 아래 급속 수평 이동
+    this.safetyFinish();
+    if (!this.latheMode && cut[2]! <= cut[5]!) {
+      const tol = this.displayInch ? 0.0005 : 0.01;
+      const minCut = cut[2]!;
+      const top = o.stock ? o.stock.max[2] : undefined;
+      const fz = (v: number): string => String(Number(v.toFixed(this.displayInch ? 4 : 3)));
+      for (let i = 0; i < moves.count; i++) {
+        if (moves.kind[i] !== MOVE_RAPID || moves.flags[i]! & FLAG_MACHINE_EST) continue;
+        const k = i * 3;
+        const z0 = pts[k + 2]!;
+        const z1 = pts[k + 5]!;
+        const line = moves.line[i]!;
+        const xy = Math.hypot(pts[k + 3]! - pts[k]!, pts[k + 4]! - pts[k + 1]!) > tol;
+        // 끝이 가장 깊은 절삭보다 아래거나, 그 아래에서 옆으로 움직이는 급속(곧장 올라오는 것은 앞 이동의 결과라 세지 않음)
+        if (z1 < minCut - tol || (z0 < minCut - tol && xy)) this.w.add(`급속 이동이 가장 깊은 절삭(Z${fz(minCut)})보다 아래로 내려감`, line);
+        else if (top !== undefined && !(moves.flags[i]! & FLAG_CYCLE) && Math.max(z0, z1) < top - tol && xy) this.w.add(`공작물 윗면(Z${fz(top)})보다 낮은 높이에서 급속 수평 이동`, line);
       }
     }
     const tools: NcTool[] = [];
