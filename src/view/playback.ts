@@ -4,8 +4,27 @@
  */
 import { ncMoveAtTime } from '../model';
 
-export const PLAY_SPEEDS = [1, 10, 100] as const;
+export const PLAY_SPEEDS = [1, 10, 100, 1000] as const;
 export type PlaySpeed = (typeof PLAY_SPEEDS)[number];
+
+/**
+ * 한 이동씩 걷기: 지금 이동(cur, 없으면 -1)에서 delta만큼(처음·끝에서 멈춤). 이동이 없으면 -1
+ */
+export function stepTarget(cur: number, delta: number, count: number): number {
+  if (count <= 0) return -1;
+  // 전체 경로를 보고 있으면 앞으로는 처음부터, 뒤로는 끝부터
+  if (cur < 0) return delta > 0 ? Math.min(count - 1, delta - 1) : Math.max(0, count + delta);
+  return Math.max(0, Math.min(count - 1, cur + delta));
+}
+
+/** 줄 line의 이동 가운데 첫 이동부터 이어진 마지막 이동(그 줄을 "여기까지" 그릴 때). 이동이 없으면 -1 */
+export function lastMoveOfLine(lineOf: ArrayLike<number>, first: number): number {
+  if (first < 0) return -1;
+  const l = lineOf[first];
+  let i = first;
+  while (i + 1 < lineOf.length && lineOf[i + 1] === l) i++;
+  return i;
+}
 
 /** 전체 시간(초) */
 export function totalTime(timeline: Float64Array): number {

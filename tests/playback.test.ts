@@ -85,3 +85,21 @@ describe('시간 글·위치', () => {
     expect(idRange(ids, 9)).toEqual([7, 7]);
   });
 });
+
+import { lastMoveOfLine, stepTarget } from '../src/view/playback';
+describe('한 이동씩 걷기', () => {
+  it('stepTarget: 처음·끝에서 멈추고, 전체 경로면 앞으로는 처음부터·뒤로는 끝부터', () => {
+    expect(stepTarget(-1, 1, 5)).toBe(0);
+    expect(stepTarget(-1, 10, 5)).toBe(4);
+    expect(stepTarget(-1, -1, 5)).toBe(4);
+    expect(stepTarget(2, 1, 5)).toBe(3);
+    expect(stepTarget(4, 1, 5)).toBe(4);
+    expect(stepTarget(1, -10, 5)).toBe(0);
+    expect(stepTarget(0, 1, 0)).toBe(-1);
+  });
+  it('lastMoveOfLine: 첫 이동부터 같은 줄이 이어진 마지막', () => {
+    expect(lastMoveOfLine([0, 1, 1, 1, 2, 1], 1)).toBe(3);
+    expect(lastMoveOfLine([0, 1], 1)).toBe(1);
+    expect(lastMoveOfLine([0], -1)).toBe(-1);
+  });
+});

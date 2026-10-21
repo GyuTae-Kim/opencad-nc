@@ -467,13 +467,269 @@ kbd {
   opacity: 0.42;
   cursor: default;
 }
+/* 재생 띠가 있으면 알림은 그 위로(띠 높이 약 120px + 띠 아래 10px + 상태 막대 — 넓은 화면·휴대폰 같음).
+   앱이 아래쪽 띠(해석 판단·재생·측정) 맨 위를 재어 --toast-clear로 주면 그 위로(띠 두 개 + 재생 띠도 가리지 않게) */
+body:has(.play-strip:not([hidden])) .toasts {
+  bottom: max(calc(160px + env(safe-area-inset-bottom, 0px)), var(--toast-clear, 0px));
+}
 @media (max-width: 759.98px), (pointer: coarse) {
   .measure-bar:not([hidden]) {
     display: flex;
   }
   /* 띠가 있으면 알림은 그 위로 */
   body:has(.measure-bar:not([hidden])) .toasts {
-    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    bottom: max(calc(96px + env(safe-area-inset-bottom, 0px)), var(--toast-clear, 0px));
+  }
+}
+
+/* 경고 목록: 누르면 그 줄로 */
+.warn-list .warn-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.warn-list .warn-item:hover,
+.warn-list .warn-item:focus-visible {
+  background: var(--accent-soft);
+}
+.warn-list .warn-item .ln {
+  flex: none;
+  color: var(--accent-text, var(--accent));
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted;
+}
+.warn-list .warn-item .msg {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+.warn-list .warn-item .cnt {
+  flex: none;
+  color: var(--text-faint);
+}
+/* 경고가 난 코드 줄: 줄 번호에 표시(마우스를 올리면 경고 글) */
+.vlist-row.warn .ln {
+  color: #e8a33d;
+  font-weight: 700;
+}
+.vlist-row.warn .ln::before {
+  content: '▲';
+  margin-right: 2px;
+  font-size: 0.75em;
+}
+
+/* 코드 찾기 칸 */
+.code-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.code-search .find-icon {
+  display: inline-flex;
+  color: var(--text-faint);
+}
+.code-search .find-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.code-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+}
+@media (pointer: coarse) {
+  .code-search input {
+    height: 38px;
+    font-size: 16px;
+  }
+}
+.code-search .find-count {
+  flex: none;
+  min-width: 3ch;
+  font-size: 11.5px;
+  text-align: right;
+}
+.vlist-row.hit {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.vlist-row.hit .tx {
+  color: var(--text);
+}
+.btn.icon-only {
+  min-width: 30px;
+  padding: 0 6px;
+}
+.btn.icon-only svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 현재 블록 상태(패널 아래 띠·재생 막대) */
+.panel-foot .state,
+.play-state {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.play-state {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+}
+.play-state[hidden] {
+  display: none;
+}
+
+/* 표 안의 글처럼 보이는 단추(Z 최저 → 그 줄로) */
+button.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text, var(--accent));
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+/* 재생 띠(패널이 닫혔을 때 — 휴대폰 시트를 열지 않고 재생·걷기·시간 막대) */
+.play-strip {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(560px, calc(100% - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+.play-strip[hidden] {
+  display: none;
+}
+.play-strip .ps-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.play-strip .ps-state {
+  flex: 1 1 100%;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.play-strip .ps-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.play-strip .ps-acts .select {
+  margin-left: auto;
+}
+.play-strip input[type='range'] {
+  width: 100%;
+}
+
+/* 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언): 3D 보기 위 가운데, 행동 단추와 닫기 */
+.notice-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  max-width: calc(100% - 140px);
+  transform: translateX(-50%);
+}
+.notice-bar[hidden] {
+  display: none;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.notice .nt-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice .mb-btn {
+  height: 32px;
+}
+.notice .mb-btn.icon {
+  width: 32px;
+}
+@media (max-width: 759.98px) {
+  .notice-bar {
+    max-width: calc(100% - 16px);
+    top: auto;
+    bottom: 10px;
+  }
+  /* 측정 띠가 있으면 그 위로, 재생 띠(더 높다)면 그 위로 */
+  .view:has(.measure-bar:not([hidden])) .notice-bar {
+    bottom: 76px;
+  }
+  .view:has(.play-strip:not([hidden])) .notice-bar {
+    bottom: 140px;
+  }
+  /* 띠 글은 두 줄까지(띠가 둘 넘거나 재생 띠가 있으면 한 줄), 글을 누르면 펼친다 — 3D 보기를 덜 가리게 */
+  .notice .nt-text {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    cursor: pointer;
+  }
+  .notice-bar:has(.notice + .notice) .notice .nt-text,
+  .view:has(.play-strip:not([hidden])) .notice .nt-text {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+  }
+  .notice.open .nt-text {
+    display: block;
+    overflow: visible;
   }
 }
 
@@ -719,10 +975,15 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.recent-meta {
+.recent-meta,
+.recent-files {
   color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+/* 여러 파일 작업(이은 글) */
+.recent-files {
+  color: var(--accent-text, var(--accent));
 }
 .recent-del {
   display: inline-flex;
@@ -839,7 +1100,7 @@ kbd {
 .toasts {
   position: fixed;
   left: 50%;
-  bottom: calc(38px + env(safe-area-inset-bottom, 0px));
+  bottom: max(calc(38px + env(safe-area-inset-bottom, 0px)), var(--toast-clear, 0px));
   z-index: 80;
   display: flex;
   flex-direction: column;
@@ -1191,6 +1452,11 @@ tr.off td:not(:first-child) {
 .warn-list li {
   margin: 2px 0;
 }
+/* 작업 파일 목록(누르면 그 파일이 시작하는 줄로) */
+.warn-list.job-files {
+  padding-left: 0;
+  list-style: none;
+}
 .hint {
   margin: 6px 0;
   color: var(--text-faint);
@@ -1485,4 +1751,30 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
 }
 @media (max-width: 1000px) {
   .titlebar .tbtn .lbl { display: none; }
+}
+
+/* 기계·읽기 설정: 숫자 칸(축 셋은 한 줄) */
+.num-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.xyz-input {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+@media (pointer: coarse) {
+  .num-input {
+    height: 36px;
+    font-size: 16px;
+  }
 }

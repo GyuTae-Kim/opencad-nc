@@ -9,7 +9,7 @@
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
 import type { PanelFileKind } from '../extensions';
-import type { NcDialect, NcStats, NcTool } from '../model';
+import type { NcDialect, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -20,12 +20,28 @@ export interface NcOpenOptions {
   units?: 'mm' | 'inch';
   /** 반경 보정 경로(공구 중심)를 따로 그릴지(G-code·Heidenhain) */
   comp?: boolean;
-  /** 선반 모드로 읽기(G-code) */
+  /** 선반 모드로 읽기(G-code). 없으면 글로 판별(선반처럼 보이면 선반 모드 — 화면이 띠로 알린다) */
   lathe?: boolean;
+  /** 소수점 없는 좌표 값을 최소 입력 단위로(G-code, Fanuc DPI = 0 꼴) */
+  integerUnits?: boolean;
   /** 회전축 A·B·C 감기(G-code) */
   rotary?: boolean;
   /** 꺼진 가공도 그리기(MPR·PGI·XML) */
   mprDisabled?: boolean;
+  /** 기계·읽기 설정(앱 설정에서 덧붙인다): '/' 블록 건너뛰기, H·D 번호 확인, 기계 설정(mm) */
+  blockDelete?: boolean;
+  checkToolNumbers?: boolean;
+  machine?: NcMachineOptions;
+  /** 여러 파일을 한 작업으로 열 때 주 프로그램 파일 이름(없으면 해석기가 고른다) */
+  jobMain?: string;
+}
+
+/** 여러 파일 작업: 주 프로그램, 이은 차례(주 프로그램 먼저), 파일마다 이은 글에서 시작하는 줄(0부터 — 둘째부터는 표지 줄), 잇지 않은 파일(형식이 다르거나 NC가 아님) */
+export interface NcJobInfo {
+  main: string;
+  files: string[];
+  starts: number[];
+  skipped: string[];
 }
 
 export interface ParseRequest {
@@ -36,6 +52,8 @@ export interface ParseRequest {
   /** 파일 바이트(이전된다) */
   bytes: ArrayBuffer;
   nc?: NcOpenOptions;
+  /** 함께 여는 파일(부프로그램·불리는 프로그램 — 이전된다) */
+  extra?: { name: string; bytes: ArrayBuffer }[];
 }
 
 export type ParseResponse =
@@ -58,13 +76,29 @@ export interface NcPayload {
     line: Uint32Array;
     tool: Int32Array;
     feed: Float32Array;
+    /** 현재 블록 표시용: 주축(부호 = 방향)·FLAG_*·작업 좌표계·모달 상태·H·D 번호·호 표 번호 */
+    spindle: Float32Array;
+    flags: Uint16Array;
+    wcs: Uint8Array;
+    modal: Uint16Array;
+    hNum: Int16Array;
+    dNum: Int16Array;
+    arc: Int32Array;
   };
+  /** 호 표(중심·평면·중심각) */
+  arcs: { center: Float64Array; plane: Uint8Array; sweep: Float64Array };
   /** 이동마다 끝난 시각(초, 누적) */
   timeline: Float64Array;
   /** 줄 → 이동(CSR) */
   lineMoves: { offsets: Uint32Array; moves: Uint32Array };
   tools: NcTool[];
   stats: NcStats;
+  /** 절삭(이송·호·드릴) 범위 — 급속·기계 좌표 쪽 추정 이동 빼고 */
+  cutBounds?: { min: [number, number, number]; max: [number, number, number] };
+  /** 띠로 알릴 해석 판단(선반 자동·소수점 없는 좌표·판별한 방언) */
+  notices: NcNotice[];
+  /** 해석 경고(줄 번호와 따로 — 누르면 그 줄로, 코드 줄 앞 표시) */
+  warnItems: NcWarningItem[];
 }
 
 /** 판재 가공(MPR·PGI·XML) 패널 자료(가공·변수는 scene.meta에 있다) */
@@ -80,6 +114,8 @@ export interface ParseResult {
   scene: Scene3d;
   nc?: NcPayload;
   mpr?: MprPayload;
+  /** 여러 파일을 한 작업으로 열었을 때 */
+  job?: NcJobInfo;
   /** 해석 시간(ms) */
   ms: number;
 }

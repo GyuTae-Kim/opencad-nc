@@ -10,12 +10,13 @@ import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint } from './measure';
-import type { NcOpenOptions } from './protocol';
+import type { NcJobInfo, NcOpenOptions } from './protocol';
+import { defaultSettings, type NcSettings } from './settings';
 
 /** 이보다 좁으면 패널을 아래 시트로 */
 export const NARROW_WIDTH = 760;
@@ -40,6 +41,10 @@ export interface PanelHost {
   togglePlay(): void;
   stopPlay(): void;
   setSpeed(s: PlaySpeed): void;
+  /** 한 이동씩 앞·뒤로 */
+  stepMove(delta: number): void;
+  /** 고른 줄까지 그리기 */
+  drawToLine(line?: number): void;
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
   selectMprOp(i: number, reveal?: boolean): void;
   setHighlight(ids: string[]): void;
@@ -49,6 +54,11 @@ export interface PanelHost {
   groups(): { name: string; visible: boolean; count: number }[];
   reparse(opts: NcOpenOptions): void;
   togglePanel(on?: boolean): void;
+  /** 파일 고르기(add = 열린 작업에 더하기) */
+  chooseFile(add?: boolean): void;
+  /** 기계·읽기 설정(앱 전체, 기억된다) */
+  readonly settings: NcSettings;
+  setSettings(s: NcSettings): void;
 }
 
 const MPR_KIND: Record<string, string> = {
@@ -61,7 +71,7 @@ const MPR_KIND: Record<string, string> = {
   other: '기타',
 };
 
-const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'linuxcnc', 'grbl', 'mach3'];
+const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
 
 const row = (k: string, v: string): HTMLElement => h('div', { class: 'prop-row' }, h('span', { class: 'k' }, k), h('span', { class: 'v', title: v }, v));
 const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
@@ -92,7 +102,7 @@ export class NcPanel {
   private code: VirtualList | null = null;
   private codeFor: object | null = null;
   private lastPlayLine = -2;
-  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement } | null = null;
+  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement; toHere: HTMLButtonElement } | null = null;
 
   constructor(
     private readonly host: PanelHost,
@@ -208,6 +218,7 @@ export class NcPanel {
       if (reveal && d.selLine >= 0) this.code?.reveal(d.selLine, true);
     } else if (d.panelTab === 'ops' || d.panelTab === 'tools') this.render();
     this.renderFoot();
+    if (this.playEls) this.playEls.toHere.disabled = d.selLine < 0;
   }
 
   onMeasure(): void {
@@ -230,8 +241,13 @@ export class NcPanel {
     p.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
     p.range.setAttribute('aria-valuetext', `${formatDuration(info.sec)} / ${formatDuration(info.total)}`);
     p.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
-    p.line.textContent = info.line >= 0 ? `줄 ${(info.line + 1).toLocaleString('ko-KR')}` : '전체 경로';
+    p.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '전체 경로';
+    const nc = this.doc?.nc;
+    const st = nc && info.move >= 0 ? moveState(nc, info.move, unitLabel(this.doc!.scene.units)) : null;
+    p.state.hidden = !st;
+    if (st) p.state.textContent = `${st.motion} · ${st.modal}\n${st.pos}`;
     p.speed.value = String(this.host.speed);
+    p.toHere.disabled = !this.doc || this.doc.selLine < 0;
     if (info.line !== this.lastPlayLine) {
       this.lastPlayLine = info.line;
       if (this.doc?.panelTab === 'code' && this.code) {
@@ -304,8 +320,19 @@ export class NcPanel {
     });
     const time = h('span', { class: 'mono-dim' });
     const line = h('span', { class: 'mono-dim' });
-    this.play.append(h('div', { class: 'play-row' }, first, btn, all, speed, h('span', { class: 'play-info' }, time, line)), range);
-    this.playEls = { btn, range, time, line, speed };
+    // 한 이동씩(← →, Shift면 10)·고른 줄까지 그리기
+    const iconBtn = (ic: 'stepBack' | 'stepFwd' | 'toHere', label: string, title: string, run: () => void): HTMLButtonElement => {
+      const b = h('button', { class: 'btn small icon-only', type: 'button', title, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', run);
+      return b;
+    };
+    const back = iconBtn('stepBack', '이전 이동', '이전 이동 (←, Shift+← 10개)', () => this.host.stepMove(-1));
+    const fwd = iconBtn('stepFwd', '다음 이동', '다음 이동 (→, Shift+→ 10개)', () => this.host.stepMove(1));
+    const toHere = iconBtn('toHere', '여기까지 그리기', '고른 줄까지 그리기', () => this.host.drawToLine());
+    // 재생 중인 이동의 상태(끝점·이송·주축·공구·모달 G)
+    const state = h('div', { class: 'play-state', 'aria-live': 'off' });
+    this.play.append(h('div', { class: 'play-row' }, first, back, btn, fwd, all, toHere, speed, h('span', { class: 'play-info' }, time, line)), range, state);
+    this.playEls = { btn, range, time, line, speed, state, toHere };
   }
 
   // ───────────────────────── 코드 보기 ─────────────────────────
@@ -334,9 +361,10 @@ export class NcPanel {
         if (!doc) return;
         const digits = String(Math.max(1, this.lineCount(doc))).length;
         const play = this.host.playbackInfo();
-        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}`;
+        const warn = this.warnAt(i);
+        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}${warn ? ' warn' : ''}`;
         el.textContent = '';
-        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch` }, String(i + 1)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
+        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch`, ...(warn ? { title: warn } : {}) }, lineNumberText(doc, i)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
       },
       onClick: (i) => this.clickLine(i),
     });
@@ -353,13 +381,155 @@ export class NcPanel {
       c.scrollTop = 0;
     }
     this.body.textContent = '';
-    this.body.append(c.el);
+    this.body.append(this.ensureFind(), c.el);
+    if (this.findFor !== src) {
+      // 새 문서: 찾은 줄은 다시 찾는다(찾는 글은 둔다)
+      this.findFor = src;
+      this.findHits = null;
+      this.findCount.textContent = '';
+    }
     requestAnimationFrame(() => {
       if (this.doc !== d) return;
       const row = this.focusRow();
       if (row >= 0) c.reveal(row);
       else c.refresh();
     });
+  }
+
+  // ───────────────────────── 코드 찾기 ─────────────────────────
+
+  private findBar: HTMLElement | null = null;
+  private findInput!: HTMLInputElement;
+  private findCount!: HTMLSpanElement;
+  private findFor: object | null = null;
+  /** 찾은 줄(오름차순). null = 아직 안 찾음 */
+  private findHits: Int32Array | null = null;
+  private findTimer = 0;
+
+  /** 코드 위 찾기 칸: 글(대소문자 무시)·N 번호·":줄 번호"(그 줄로 가기). Enter 다음, Shift+Enter 이전, Esc 닫기 */
+  private ensureFind(): HTMLElement {
+    if (this.findBar) return this.findBar;
+    const input = h('input', { type: 'search', class: 'input small', placeholder: '찾기 — T5 · G43 · N100 · :120(줄로 가기)', 'aria-label': '코드에서 찾기', spellcheck: 'false', autocomplete: 'off' });
+    const count = h('span', { class: 'mono-dim find-count', 'aria-live': 'polite' });
+    const mk = (ic: 'up' | 'down', label: string, dir: number): HTMLButtonElement => {
+      const b = h('button', { class: 'btn small icon-only', type: 'button', title: label, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', () => this.findGo(dir));
+      return b;
+    };
+    input.addEventListener('input', () => {
+      this.findHits = null;
+      clearTimeout(this.findTimer);
+      // 칠 때마다 다시 찾지 않고 잠깐 멈추면 센다(큰 파일)
+      this.findTimer = window.setTimeout(() => this.findScan(), 250);
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        this.findGo(ev.shiftKey ? -1 : 1);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        input.value = '';
+        this.findHits = null;
+        this.findCount.textContent = '';
+        this.code?.refresh();
+        this.code?.el.focus();
+      }
+    });
+    this.findInput = input;
+    this.findCount = count;
+    this.findBar = h('div', { class: 'code-search', role: 'search' }, h('span', { class: 'find-icon', 'aria-hidden': 'true', html: icon('search') }), input, count, mk('up', '이전 찾기 (Shift+Enter)', -1), mk('down', '다음 찾기 (Enter)', 1));
+    return this.findBar;
+  }
+
+  /** 찾기 칸에 초점(next면 다음으로) */
+  focusFind(next = false): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.panelTab !== 'code') {
+      d.panelTab = 'code';
+      this.render();
+    }
+    this.ensureFind();
+    this.findInput.focus();
+    this.findInput.select();
+    if (next && this.findInput.value) this.findGo(1);
+  }
+
+  private isHit(i: number): boolean {
+    const a = this.findHits;
+    if (!a || !a.length) return false;
+    let lo = 0;
+    let hi = a.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (a[mid]! === i) return true;
+      if (a[mid]! < i) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return false;
+  }
+
+  /** 지금 글로 찾은 줄을 센다(":줄"이면 없음) */
+  private findScan(): Int32Array {
+    const d = this.doc;
+    const q = this.findInput.value.trim();
+    const out: number[] = [];
+    if (d && q && !/^:\s*\d+$/.test(q)) {
+      const n = this.lineCount(d);
+      const nm = /^N0*(\d+)$/i.exec(q);
+      const re = nm ? new RegExp(`^\\s*(?:/\\d?\\s*)?N0*${nm[1]}(?!\\d)`, 'i') : null;
+      const needle = q.toUpperCase();
+      for (let i = 0; i < n && out.length < 200000; i++) {
+        const t = this.lineText(d, i);
+        if (re ? re.test(t) : t.toUpperCase().includes(needle)) out.push(i);
+      }
+    }
+    this.findHits = Int32Array.from(out);
+    this.findCount.textContent = q && !/^:/.test(q) ? (out.length ? `${out.length.toLocaleString('ko-KR')}개` : '없음') : '';
+    this.code?.refresh();
+    return this.findHits;
+  }
+
+  /** 다음(1)·이전(-1) 찾은 줄로. ":120"이면 120번 줄로 */
+  private findGo(dir: number): void {
+    const d = this.doc;
+    if (!d) return;
+    const q = this.findInput.value.trim();
+    const go = /^:\s*(\d+)$/.exec(q);
+    if (go) {
+      // 여러 파일 작업이면 고른 줄이 있는 파일(없으면 주 프로그램)의 줄 번호
+      const j = jobLineOf(d.job, d.selLine >= 0 ? d.selLine : 0);
+      const want = j ? jobLineToGlobal(d.job, j.index, +go[1]!) : +go[1]! - 1;
+      const line = Math.max(0, Math.min(this.lineCount(d) - 1, want));
+      this.selectFound(line);
+      return;
+    }
+    const hits = this.findHits ?? this.findScan();
+    if (!hits.length) return;
+    const cur = d.selLine;
+    let k = -1;
+    if (dir > 0) {
+      k = hits.findIndex((l) => l > cur);
+      if (k < 0) k = 0;
+    } else {
+      for (let j = hits.length - 1; j >= 0; j--)
+        if (hits[j]! < cur) {
+          k = j;
+          break;
+        }
+      if (k < 0) k = hits.length - 1;
+    }
+    this.findCount.textContent = `${(k + 1).toLocaleString('ko-KR')}/${hits.length.toLocaleString('ko-KR')}`;
+    this.selectFound(hits[k]!);
+  }
+
+  private selectFound(line: number): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.nc) this.host.selectLine(line, undefined, true);
+    else this.clickLine(line);
+    this.code?.reveal(line, true);
   }
 
   private clickLine(i: number): void {
@@ -395,7 +565,8 @@ export class NcPanel {
     for (const t of tools) {
       const g = toolGroup(d.scene, t.number);
       const visible = g ? !d.hiddenGroups.has(g) : true;
-      const label = t.number >= 0 && t.number < 100000 ? `T${t.number}` : '공구 없음';
+      // 이름만 있는 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 번호 칸을 비우고 이름 칸에 보인다
+      const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
       const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': `${label} ${visible ? '숨기기' : '보이기'}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
       eye.disabled = !g;
       eye.addEventListener('click', (ev) => {
@@ -414,9 +585,11 @@ export class NcPanel {
         h('td', {}, label),
         h('td', { class: 'wrap', translate: 'no' }, t.name ?? ''),
         h('td', { class: 'num' }, t.diameter ? `Ø${fmtNum(t.diameter)}` : ''),
+        this.minZCell(t),
         h('td', { class: 'num' }, formatDuration(t.time)),
         h('td', { class: 'num' }, `${fmtNum(t.feedLength, 1)}${u}`),
       );
+      if (t.cutMin && t.cutMax) tr.title = `${tr.title} · ${cutRangeText(t.cutMin, t.cutMax, u)}`;
       const selLine = toolSelectLine(nc, t.number, t.firstLine);
       tr.addEventListener('click', (ev) => {
         if (ev.detail >= 2) {
@@ -435,9 +608,36 @@ export class NcPanel {
       tbody.append(tr);
     }
     this.body.append(
-      h('div', { class: 'table-wrap' }, h('table', { class: 'grid tools' }, h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))), tbody)),
-      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 단추로 켜고 끕니다.'),
+      h(
+        'div',
+        { class: 'table-wrap' },
+        h(
+          'table',
+          { class: 'grid tools' },
+          h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num', title: '이 공구의 절삭(이송·호·드릴) 가운데 가장 낮은 Z' }, 'Z 최저'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))),
+          tbody,
+        ),
+      ),
+      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 단추로 켜고 끕니다. Z 최저를 누르면 가장 깊은 절삭 줄로 갑니다(줄에 마우스를 올리면 절삭 범위).'),
     );
+  }
+
+  /** 공구 표의 "Z 최저" 칸: 누르면 그 줄로 */
+  private minZCell(t: { cutMin?: number[]; minZLine?: number }): HTMLElement {
+    if (!t.cutMin) return h('td', { class: 'num faint' }, '');
+    const b = h('button', { class: 'linkish', type: 'button', title: '가장 깊은 절삭 줄로' }, fmtNum(t.cutMin[2]!));
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (t.minZLine !== undefined && t.minZLine >= 0) {
+        this.host.selectLine(t.minZLine);
+        const d = this.doc;
+        if (d) {
+          d.panelTab = 'code';
+          this.render();
+        }
+      }
+    });
+    return h('td', { class: 'num' }, b);
   }
 
   // ───────────────────────── 판재 가공(MPR·PGI·XML) ─────────────────────────
@@ -516,13 +716,26 @@ export class NcPanel {
     const b = s.bounds;
     const rows: HTMLElement[] = [row('파일', d.name), row('형식', docLabel(d)), row('크기', formatBytes(d.size)), row('단위', u || '모름'), row('읽은 시간', formatMs(d.ms))];
     if (b) {
-      rows.push(row('범위 크기', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
+      // 장면 범위 = 급속·공작물 포함(기계 좌표 쪽 추정 이동은 뺌). 절삭만의 범위는 아래 "절삭 범위"
+      rows.push(row('범위 크기(급속 포함)', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
       rows.push(row('최소', fmtPt(b.min)), row('최대', fmtPt(b.max)));
     }
     if (c.segments) rows.push(row('선분', c.segments.toLocaleString('ko-KR')));
     if (c.triangles) rows.push(row('삼각형', c.triangles.toLocaleString('ko-KR')));
     this.body.append(group('문서', ...rows));
+    if (d.job) this.body.append(this.jobGroup(d, d.job));
 
+    const cb = d.nc?.cutBounds;
+    if (cb)
+      this.body.append(
+        group(
+          '절삭 범위(이송·호·드릴)',
+          row('크기', `${fmtNum(cb.max[0] - cb.min[0])} × ${fmtNum(cb.max[1] - cb.min[1])} × ${fmtNum(cb.max[2] - cb.min[2])} ${u}`),
+          row('최소', fmtPt(cb.min)),
+          row('최대', fmtPt(cb.max)),
+          row('가장 깊은 Z', `${fmtNum(cb.min[2])} ${u}`),
+        ),
+      );
     if (d.nc) this.ncInfo(d);
     if (isPanelKind(d.kind)) {
       const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;
@@ -540,11 +753,94 @@ export class NcPanel {
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];
+    const items = d.nc?.warnItems ?? [];
+    // NC: 경고마다 단추(줄 번호·글·횟수 따로 — 누르면 그 줄로, 다시 누르면 같은 경고가 난 다음 줄로). 그 밖(장면 경고·MPR)은 글
+    const lis: HTMLElement[] = items.slice(0, 300).map((it) => {
+      if (it.line < 0) return h('li', {}, it.text);
+      const b = h(
+        'button',
+        { class: 'warn-item', type: 'button', title: it.lines.length > 1 ? '누르면 그 줄로(다시 누르면 같은 경고가 난 다음 줄로)' : '누르면 그 줄로' },
+        h('span', { class: 'ln' }, lineAtLabel(d, it.line)),
+        h('span', { class: 'msg' }, it.text),
+        it.count > 1 ? h('span', { class: 'cnt' }, `모두 ${it.count}번`) : null,
+      );
+      b.addEventListener('click', () => this.gotoWarning(it));
+      return h('li', {}, b);
+    });
+    for (const w of warns.slice(items.length, 300)) lis.push(h('li', {}, w));
     this.body.append(
       warns.length
-        ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...warns.slice(0, 300).map((w) => h('li', {}, w))), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
+        ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
         : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
     );
+  }
+
+  /**
+   * 작업 파일(여러 파일을 한 작업으로 열었을 때): 주 프로그램 고르기(바꾸면 다시 잇는다), 파일마다 코드 탭의 시작 줄로 가기,
+   * 파일 더하기, 잇지 않은 파일과 찾지 못한 부르기
+   */
+  private jobGroup(d: NcDoc, job: NcJobInfo): HTMLElement {
+    const main = h('select', { class: 'select', 'aria-label': '주 프로그램' });
+    for (const f of job.files) main.append(h('option', { value: f }, f));
+    main.value = job.main;
+    main.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, jobMain: main.value }));
+    const list = h('ul', { class: 'warn-list job-files' });
+    job.files.forEach((f, k) => {
+      const line = job.starts[k] ?? -1;
+      const b = h(
+        'button',
+        { class: 'warn-item', type: 'button', title: '누르면 코드 탭에서 이 파일이 시작하는 줄로', disabled: line < 0 },
+        h('span', { class: 'ln' }, k === 0 ? '주 프로그램' : '함께 연 파일'),
+        h('span', { class: 'msg', translate: 'no' }, f),
+      );
+      b.addEventListener('click', () => {
+        d.panelTab = 'code';
+        this.render();
+        this.host.selectLine(line, undefined, true);
+      });
+      list.append(h('li', {}, b));
+    });
+    const add = h('button', { class: 'btn small', type: 'button', title: '부프로그램 파일을 골라 이 작업에 더합니다(같은 이름은 바꿉니다)' }, '파일 더하기');
+    add.addEventListener('click', () => this.host.chooseFile(true));
+    const missing = d.nc?.notices?.find((n) => n.kind === 'missing-program')?.programs ?? [];
+    return group(
+      `작업 파일 ${job.files.length}개`,
+      h('label', { class: 'prop-row edit', title: '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일' }, h('span', { class: 'k' }, '주 프로그램'), main),
+      list,
+      job.skipped.length ? h('p', { class: 'hint' }, `잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${job.skipped.join(', ')}`) : null,
+      missing.length ? h('p', { class: 'hint' }, `찾지 못한 프로그램: ${missing.join(', ')} — 해석 경고에서 그 줄로 갑니다.`) : null,
+      add,
+    );
+  }
+
+  /** 누른 경고가 다음에 갈 자리(경고 글 → 그 경고가 난 줄 차례) */
+  private warnNext = new Map<string, number>();
+
+  /** 경고의 줄로(다시 누르면 같은 경고가 난 다음 줄로) — 코드 탭을 연다 */
+  private gotoWarning(it: { text: string; line: number; lines: number[] }): void {
+    const d = this.doc;
+    if (!d) return;
+    const list = it.lines.length ? it.lines : [it.line];
+    const k = (this.warnNext.get(it.text) ?? 0) % list.length;
+    this.warnNext.set(it.text, k + 1);
+    d.panelTab = 'code';
+    this.render();
+    this.host.selectLine(list[k]!, undefined, true);
+  }
+
+  /** 줄 → 그 줄의 경고 글(코드 줄 앞 표시) */
+  private warnLines: Map<number, string> | null = null;
+  private warnLinesFor: object | null = null;
+  private warnAt(i: number): string | undefined {
+    const nc = this.doc?.nc;
+    if (!nc) return undefined;
+    if (this.warnLinesFor !== nc) {
+      this.warnLinesFor = nc;
+      const m = new Map<number, string>();
+      for (const it of nc.warnItems) for (const l of it.lines.length ? it.lines : it.line >= 0 ? [it.line] : []) m.set(l, m.has(l) ? `${m.get(l)}\n${it.text}` : it.text);
+      this.warnLines = m;
+    }
+    return this.warnLines?.get(i);
   }
 
   private ncInfo(d: NcDoc): void {
@@ -567,6 +863,7 @@ export class NcPanel {
           '해석 설정',
           h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '방언'), dialect),
           h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
+          this.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
           h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
         ),
       );
@@ -580,7 +877,7 @@ export class NcPanel {
         for (const r of f.compRuns.slice(0, 20))
           opts.push(
             row(
-              `${r.line + 1}번 줄 ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
+              `${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
               r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음',
             ),
           );
@@ -602,14 +899,80 @@ export class NcPanel {
         row('이송 · 급속 · 휴지', `${formatDuration(st.feedTime)} · ${formatDuration(st.rapidTime)} · ${formatDuration(st.dwellTime)}`),
         row('급속 속도(계산용)', `${fmtNum(st.rapidFeed, 0)} ${u}/분`),
         row('공구 교환 · 원호 · 구멍', `${st.toolChanges} · ${st.arcCount.toLocaleString('ko-KR')} · ${st.holeCount.toLocaleString('ko-KR')}`),
+        st.toolChangeTime > 0 ? row('공구 교환 시간', formatDuration(st.toolChangeTime)) : null,
       ),
+    );
+    this.body.append(this.settingsGroup());
+  }
+
+  /** 기계·읽기 설정(앱 전체, 이 브라우저에 기억): 바꾸면 지금 프로그램을 다시 읽는다 */
+  private settingsGroup(): HTMLElement {
+    const s = this.host.settings;
+    const set = (patch: Partial<NcSettings>): void => this.host.setSettings({ ...this.host.settings, ...patch });
+    const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = ''): HTMLInputElement => {
+      const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label, placeholder });
+      el.value = v === null ? '' : String(v);
+      el.addEventListener('change', () => {
+        const t = el.value.trim();
+        const n = t === '' ? null : Number(t);
+        onSet(n === null || Number.isFinite(n) ? n : null);
+      });
+      return el;
+    };
+    const one = (label: string, hint: string, v: number | null, onSet: (n: number | null) => void, placeholder: string): HTMLElement =>
+      h('label', { class: 'prop-row edit', title: hint }, h('span', { class: 'k' }, label), numIn(v, label, onSet, placeholder));
+    const tri = (label: string, hint: string, key: 'offsetMm' | 'referenceMm' | 'limitMin' | 'limitMax'): HTMLElement =>
+      h(
+        'div',
+        { class: 'prop-row edit', title: hint },
+        h('span', { class: 'k' }, label),
+        h(
+          'span',
+          { class: 'xyz-input' },
+          ...[0, 1, 2].map((a) =>
+            numIn(
+              s[key][a]!,
+              `${label} — ${'XYZ'[a]}`,
+              (n) => {
+                const v = [...this.host.settings[key]] as NcSettings[typeof key];
+                v[a] = n;
+                set({ [key]: v });
+              },
+              'XYZ'[a]!,
+            ),
+          ),
+        ),
+      );
+    const check = (label: string, hint: string, key: 'blockDelete' | 'checkToolNumbers' | 'dogleg' | 'toolSize'): HTMLElement => {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = s[key];
+      cb.addEventListener('change', () => set({ [key]: cb.checked }));
+      return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label));
+    };
+    const reset = h('button', { type: 'button', class: 'btn small' }, '기본값으로');
+    reset.addEventListener('click', () => this.host.setSettings(defaultSettings()));
+    return group(
+      '기계·읽기 설정',
+      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000'),
+      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0'),
+      check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
+      check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
+      check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
+      tri('G54 원점의 기계 좌표(mm)', '세 축을 모두 넣으면 G53·M91 값과 G28·G30 기준점을 실제 위치로 그립니다(없으면 공구 축만 안전 높이로 추정).', 'offsetMm'),
+      tri('G28 기준점 기계 좌표(mm)', 'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.', 'referenceMm'),
+      tri('허용 범위 최소(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMin'),
+      tri('허용 범위 최대(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMax'),
+      check('공구를 실제 크기로 표시', '재생 중 공구 표시를 주석·공구 정의에서 읽은 지름 크기로 그립니다(모양은 공구 이름: 볼·드릴·엔드밀).', 'toolSize'),
+      h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
+      reset,
     );
   }
 
   /** 다시 읽는 켜고 끄기(선택 기능) */
-  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled', label: string, hint: string): HTMLElement {
+  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled' | 'integerUnits', label: string, hint: string): HTMLElement {
     const cb = h('input', { type: 'checkbox' });
-    cb.checked = !!d.ncOptions[key];
+    // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다
+    cb.checked = key === 'lathe' ? sceneFeatures(d.scene).lathe : !!d.ncOptions[key];
     cb.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, [key]: cb.checked }));
     return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label), h('span', { class: 'hint inline' }, '다시 읽음'));
   }
@@ -628,11 +991,19 @@ export class NcPanel {
     const u = unitLabel(d.scene.units);
     const p = d.pick;
     if (d.selLine >= 0 && (d.nc || d.mpr)) {
-      lines.push(h('div', {}, h('b', {}, `줄 ${(d.selLine + 1).toLocaleString('ko-KR')}`), ` ${selectedLineText(d, 80)}`));
+      lines.push(h('div', {}, h('b', {}, lineLabel(d, d.selLine)), ` ${selectedLineText(d, 80)}`));
       if (d.nc) {
-        if (p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count) lines.push(h('div', { class: 'dim' }, `${moveSummary(d.nc, p.index)} · ${fmtPt(p.point)}`));
-        else if (d.selMoves.length) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다.`));
-        else lines.push(h('div', { class: 'dim' }, '이 줄은 이동을 만들지 않습니다.'));
+        const picked = p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count ? p.index : -1;
+        const mi = picked >= 0 ? picked : (d.selMoves[0] ?? -1);
+        const st = mi >= 0 ? moveState(d.nc, mi, u) : null;
+        if (st) {
+          // 현재 블록 상태: 이동·이송·주축 / 공구·보정·모달 G / 끝점(고른 점) / 원호
+          lines.push(h('div', { class: 'state' }, st.motion));
+          lines.push(h('div', { class: 'state' }, st.modal));
+          lines.push(h('div', { class: 'dim' }, `끝점 ${st.pos}${picked >= 0 ? ` · 고른 점 ${fmtPt(p!.point)}` : ''}`));
+          if (st.arc) lines.push(h('div', { class: 'dim' }, st.arc));
+          if (picked < 0 && d.selMoves.length > 1) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다(첫 이동의 상태).`));
+        } else lines.push(h('div', { class: 'dim' }, '이 줄은 이동을 만들지 않습니다.'));
       }
     } else if (p) {
       const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);

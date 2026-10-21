@@ -169,6 +169,19 @@ G1 X4`);
     expect(p.stats.toolChanges).toBe(2);
   });
 
+  it('프로그램 머리 주석(O 줄·프로그램 이름)은 바로 뒤 공구의 이름이 되지 않는다(공구처럼 보이는 첫 주석은 그대로)', () => {
+    const o = run(`%\nO1000 (ARC TEST)\nT1 M6\nG1 X1 F100`);
+    expect(o.name).toBe('ARC TEST');
+    expect(o.tools.map((t) => [t.number, t.name])).toEqual([[1, undefined]]);
+    const first = run(`%\n(ARC TEST)\nT1 M6\nG1 X1 F100`);
+    expect(first.name).toBe('ARC TEST');
+    expect(first.tools[0]!.name).toBeUndefined();
+    const tool = run(`%\nO0001\n(10MM ENDMILL)\nT1 M6\nG1 X1 F100`);
+    expect(tool.tools.map((t) => [t.number, t.diameter, t.name])).toEqual([[1, 10, '10MM ENDMILL']]);
+    const same = run(`%\nO1000 (PART)\nT2 M6 (6MM DRILL)\nG1 X1 F100`);
+    expect(same.tools.map((t) => [t.number, t.diameter, t.name])).toEqual([[2, 6, '6MM DRILL']]);
+  });
+
   it('M6가 없는 프로그램은 T만으로 공구가 바뀐다', () => {
     const p = run(`T3
 G1 X1 F10
@@ -206,13 +219,14 @@ G53 G0 Z50`);
     expect(p.moves.flags[3]! & FLAG_MACHINE).toBe(FLAG_MACHINE);
   });
 
-  it('G28은 중간점까지, 기준점을 주면 거기까지', () => {
+  it('G28은 중간점까지, 기준점을 모르면 공구 축만 안전 높이로, 기준점을 주면 거기까지', () => {
     const p = run(`G1 X10 Z-1 F100
 G91 G28 Z5
 G90`);
     expect(ends(p)).toEqual([
       [10, 0, -1],
       [10, 0, 4],
+      [10, 0, 29],
     ]);
     expect(p.warnings.some((w) => w.includes('G28'))).toBe(true);
     const q = run(`G1 X10 F100

@@ -4,16 +4,20 @@
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
 import { detectGcodeDialect, parseGcode, type GcodeOptions } from './gcode';
+// Siemens 해석기를 G-code 방언으로 등록한다(parseGcode가 dialect 'siemens'면 부른다)
+import './siemens';
 import { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 import type { NcProgram } from './model';
 import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
 import { mprToScene, ncToScene, type MprSceneOptions, type NcSceneOptions } from './scene';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, type PanelFileKind } from './extensions';
 import { makeSource } from './text';
+import { combineNcJob, type NcJob, type NcJobFile } from './job';
 import { looksLikeKdtXml, looksLikePgi, parseKdtXml, parsePgi, type PanelReadOptions } from './wangs';
 
 export * from './model';
-export { parseGcode, detectGcodeDialect, detectLathe, type GcodeOptions } from './gcode';
+export { parseGcode, detectGcodeDialect, detectLathe, jobFileLines, looksSiemens, type GcodeOptions } from './gcode';
+export { parseSiemens } from './siemens';
 export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprOtherOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions, type PanelFace } from './mpr';
@@ -22,6 +26,7 @@ export { parseXml, xmlRootName, type XmlElement } from './xml';
 export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions } from './scene';
 export { makeSource, sourceLine, splitLines, type NcSource } from './text';
 export { evalMprExpr } from './expr';
+export { combineNcJob, splitNcJob, type NcJob, type NcJobFile } from './job';
 
 export type NcFileKind = 'gcode' | 'heidenhain' | PanelFileKind;
 
@@ -51,6 +56,11 @@ export function detectNcFormat(name: string, data: Uint8Array | string): NcFileK
   const words = head.match(/(?:^|[\s\dA-Z])[GM]\s*\d{1,3}\b/gim)?.length ?? 0;
   const axes = head.match(/[XYZ]\s*[-+]?\d*\.?\d+/gi)?.length ?? 0;
   return words >= 3 && axes >= 3 ? 'gcode' : null;
+}
+
+/** 여러 파일을 한 작업으로 잇는다(주 프로그램 + 부프로그램·불리는 프로그램 파일, job.ts). main = 주 프로그램 파일 이름(없으면 고른다) */
+export function combineNcFiles(files: NcJobFile[], main?: string): NcJob {
+  return combineNcJob(files, detectNcFormat, main);
 }
 
 export type NcParsed = { kind: 'gcode' | 'heidenhain'; program: NcProgram } | { kind: PanelFileKind; part: MprPart };

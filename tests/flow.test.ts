@@ -33,6 +33,20 @@ describe('식 계산', () => {
     expect(g('-[#1]')).toBe(-3);
     expect(g('ROUND[2.5]+FIX[-1.5]+FUP[1.2]')).toBe(3 - 2 + 2);
   });
+  it('FIX·FUP: Fanuc·ISO·Haas는 소수 버림·올림(음수도 절댓값 기준), LinuxCNC는 floor·ceil', () => {
+    const fanuc = (s: string): number => new GExpr(s, 0, { get: () => undefined, fanucRounding: true }).expr();
+    expect([fanuc('FIX[-1.2]'), fanuc('FUP[-1.2]'), fanuc('FIX[1.8]'), fanuc('FUP[1.2]'), fanuc('FUP[-2]')]).toEqual([-1, -2, 1, 2, -2]);
+    expect([g('FIX[-1.2]'), g('FUP[-1.2]')]).toEqual([-2, -1]);
+    const text = '#1=-1.2\n#2=FIX[#1]\n#3=FUP[#1]\nG0 X#2 Y#3 Z5\n';
+    const end = (dialect: string): number[] => {
+      const p = run(text, { dialect });
+      return moveEnd(p.moves, p.moves.count - 1).map((v) => Math.round(v * 1000) / 1000);
+    };
+    expect(end('fanuc')).toEqual([-1, -2, 5]);
+    expect(end('iso')).toEqual([-1, -2, 5]);
+    expect(end('haas')).toEqual([-1, -2, 5]);
+    expect(end('linuxcnc')).toEqual([-2, -1, 5]);
+  });
   it('MPR 식: 이름·괄호·함수·비교·IF', () => {
     const env = new Map<string, number>([
       ['L', 600],

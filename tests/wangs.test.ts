@@ -3,8 +3,8 @@ import { detectNcFormat, loadNcFile, parseKdtXml, parseNcFile, parsePgi, type Mp
 import { earClip } from '../src/mesh';
 import { mprToScene } from '../src/scene';
 import { decodeXmlBytes, parseXml, xmlRootName } from '../src/xml';
-import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput } from '../src/app/payload';
-import { createDoc, docLabel, mprOps, panelTabs, statusParts } from '../src/app/doc';
+import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput, parseForView } from '../src/app/payload';
+import { createDoc, docLabel, mprOps, noticeViews, panelTabs, statusParts } from '../src/app/doc';
 import type { ParseResult } from '../src/app/protocol';
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 + 0;
@@ -412,5 +412,27 @@ describe('판별·장면·화면', () => {
       expect(docLabel(d)).toBe(label);
       expect(statusParts(d)).toContain(`가공 ${mprOps(d.scene).length}개`);
     }
+  });
+
+  it('화면 길(parseForView): PGI·XML은 판재 패널 자료로 열리고, 여러 파일 작업에는 잇지 않는다(G-code와 함께 골라도)', () => {
+    const stages: string[] = [];
+    const pgi = parseForView('board.pgi', enc.encode(PGI), {}, (_f, st) => stages.push(st));
+    expect(pgi.kind).toBe('pgi');
+    expect(pgi.mpr!.lines.length).toBeGreaterThan(10);
+    expect(pgi.nc).toBeUndefined();
+    expect(pgi.job).toBeUndefined();
+    expect(stages).toContain('WangShi PGI 읽는 중');
+    const xml = parseForView('board.xml', enc.encode(XML));
+    expect(xml.kind).toBe('xml');
+    expect(mprOps(xml.scene).length).toBeGreaterThan(0);
+    // 판재 파일 + G-code 파일: 판재 파일은 주 프로그램이 되지 않고 G-code에 잇지도 않는다
+    const job = parseForView('main.nc', enc.encode('G21 G90\nG0 X0 Y0 Z5\nG1 Z-1 F100\nX10\nM30\n'), {}, () => {}, [{ name: 'board.pgi', bytes: enc.encode(PGI) }]);
+    expect(job.kind).toBe('gcode');
+    expect(job.job).toMatchObject({ main: 'main.nc', files: ['main.nc'], skipped: ['board.pgi'] });
+    const d = createDoc('main.nc', 1, job);
+    expect(noticeViews(d).map((n) => n.key)).toEqual(['job']);
+    const pd = createDoc('board.pgi', 1, pgi);
+    expect(pd.panelTab).toBe('ops');
+    expect(noticeViews(pd)).toEqual([]);
   });
 });

@@ -31,14 +31,33 @@ export const FLAG_CYCLE = 16; // 고정 사이클이 만든 이동
 export const FLAG_INVERSE_TIME = 32; // G93
 export const FLAG_PER_REV = 64; // G95
 export const FLAG_COOLANT = 128; // M7/M8 켜짐
+/**
+ * 기계 좌표 쪽 추정 이동(G53·G28·G30·M91·SUPA 등): 작업 원점의 기계 위치를 몰라 공구 축을 "안전 높이"(경로 맨 위 + 여유)로
+ * 정해 그린 이동, 그 높이에 머무는 이동, 그 높이에서 출발한 급속. 장면은 따로 점선 묶음으로 그리고 범위 계산에서 뺀다
+ */
+export const FLAG_MACHINE_EST = 256;
+/**
+ * 출발점만 추정 안전 높이이고 끝점은 실제인 이동. 이송·호·드릴(예: G28 Z0 뒤의 G1 Z-5 진입)은 보통 묶음으로 그리고 안전 확인도 하며
+ * 범위·공구별 절삭 범위·최저 Z에는 끝점만 넣는다. FLAG_MACHINE_EST와 함께면 추정 높이에서 출발한 급속(추정 묶음) — 끝점은 범위와
+ * 급속 깊이 확인에 넣는다
+ */
+export const FLAG_START_EST = 512;
+
+/**
+ * 여러 파일을 한 작업으로 열 때(주 프로그램 + 부프로그램 파일) 이어 붙인 글에서 파일이 시작하는 줄의 표지.
+ * G-code는 "(OPENCAD-JOB-FILE 이름)", Siemens·Heidenhain은 "; OPENCAD-JOB-FILE 이름" 꼴 주석 줄이다
+ */
+export const JOB_FILE_MARK = 'OPENCAD-JOB-FILE';
 
 /** 평면: 0 XY(G17), 1 ZX(G18), 2 YZ(G19) */
 export type NcPlane = 0 | 1 | 2;
 
-export type NcDialect = 'iso' | 'fanuc' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
+export type NcDialect = 'iso' | 'fanuc' | 'haas' | 'siemens' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
 export const NC_DIALECT_NAMES: Record<NcDialect, string> = {
   iso: '일반 ISO',
   fanuc: 'Fanuc',
+  haas: 'Haas',
+  siemens: 'Siemens Sinumerik',
   linuxcnc: 'LinuxCNC',
   grbl: 'GRBL',
   mach3: 'Mach3/Mach4',
@@ -63,12 +82,27 @@ export interface NcMoves {
   /** 호 표 번호(호가 아니면 -1) */
   arc: Int32Array;
   /** FLAG_* 비트 */
-  flags: Uint8Array;
+  flags: Uint16Array;
   /** 작업 좌표계(0 = G54 … 5 = G59, 6~ = G54.1 P1~ 또는 G59.1~, 255 = 기계 좌표) */
   wcs: Uint8Array;
   /** 걸린 시간(초, 이동 뒤 휴지 포함) */
   time: Float32Array;
+  /** 모달 상태 비트(MODAL_*): 평면·증분·극좌표·좌표 변환, 위 8비트 = 고정 사이클 G 번호(81 …, 0 = 없음) */
+  modal: Uint16Array;
+  /** 켜진 공구 길이 보정 H 번호(-1 = 없음) */
+  hNum: Int16Array;
+  /** 켜진 반경 보정 D 번호(-1 = 없음) */
+  dNum: Int16Array;
 }
+
+/** 모달 상태 비트: 평면(0 G17·1 G18·2 G19) */
+export const MODAL_PLANE = 3;
+/** G91 증분 */
+export const MODAL_INC = 4;
+/** G16 극좌표 */
+export const MODAL_POLAR = 8;
+/** 좌표 변환(회전·배율·거울·프레임·기울인 평면)이 켜짐 */
+export const MODAL_XF = 16;
 
 /** 호 표(호 이동만) */
 export interface NcArcs {
@@ -110,6 +144,11 @@ export interface NcTool {
   rapidLength: number;
   /** 예상 시간(초) */
   time: number;
+  /** 이 공구의 절삭(이송·호·드릴) 이동이 지난 범위(표시 좌표 — 급속·기계 좌표 쪽 추정 이동 빼고, 없으면 undefined) */
+  cutMin?: [number, number, number];
+  cutMax?: [number, number, number];
+  /** 가장 깊은(Z 최저) 절삭 이동의 줄(0부터) */
+  minZLine?: number;
 }
 
 export interface NcStats {
@@ -125,6 +164,8 @@ export interface NcStats {
   rapidTime: number;
   feedTime: number;
   dwellTime: number;
+  /** 공구 교환 시간 합(초, 기계 설정 toolChangeSec이 있을 때) */
+  toolChangeTime: number;
   /** 실행한 블록 수(반복·부프로그램 포함) */
   blocks: number;
   /** 계산에 쓴 급속 속도(표시 단위/분) */
@@ -167,6 +208,37 @@ export interface NcRotaryOptions {
   stepDeg?: number;
 }
 
+/**
+ * 화면이 띠로 알릴 해석 판단(경고와 따로 — 사용자가 바로 바꿀 수 있는 것):
+ * 'lathe-auto' 선반 프로그램으로 보여 선반 모드로 읽음, 'integer-units' 소수점 없는 큰 좌표가 많음(최소 입력 단위일 수 있음),
+ * 'dialect' 글로 판별한 방언(dialect)으로 읽음
+ */
+export interface NcNotice {
+  /** missing-program = 다른 파일에 있을 프로그램을 찾지 못함(programs에 이름) */
+  kind: 'lathe-auto' | 'integer-units' | 'dialect' | 'missing-program';
+  dialect?: NcDialect | 'heidenhain-iso' | 'okuma';
+  /** 찾지 못한 프로그램 이름·번호(O1001·SUB1·L100 — 처음 나온 차례, 20개까지) */
+  programs?: string[];
+}
+
+/**
+ * 기계 설정(화면의 "기계·읽기 설정" — 값은 mm, 해석기가 프로그램 단위로 바꾼다)
+ */
+export interface NcMachineOptions {
+  /** 급속 속도(mm/분, 시간 계산) */
+  rapidFeedMm?: number;
+  /** 공구 교환 한 번에 걸리는 시간(초, 두 번째 공구부터) */
+  toolChangeSec?: number;
+  /** 첫 작업 좌표계 원점의 기계 좌표(mm) — 주면 G53·M91 값과 G28 기준점을 실제 위치로 */
+  offsetMm?: [number, number, number];
+  /** G28·G30 기준점의 기계 좌표(mm, 기본 0,0,0 — offsetMm과 함께) */
+  referenceMm?: [number, number, number];
+  /** 작업 좌표로 허용하는 범위(mm, 축마다 null이면 보지 않음) — 넘으면 경고 */
+  limitsMm?: { min: (number | null)[]; max: (number | null)[] };
+  /** 급속을 축마다 따로 움직이는 꺾인 길(도그레그)로 그리고 시간도 가장 긴 축으로 */
+  dogleg?: boolean;
+}
+
 /** 해석 결과 */
 export interface NcProgram {
   name: string;
@@ -193,7 +265,20 @@ export interface NcProgram {
   lathe?: boolean;
   /** 회전축(A·B·C) 낱말이 있었는지 */
   rotaryAxes?: boolean;
+  /** 화면이 띠로 알릴 해석 판단(있을 때만) */
+  notices?: NcNotice[];
+  /** 해석 경고(사람이 읽는 글 — "N번 줄: …" 꼴) */
   warnings: string[];
+  /** 같은 경고를 줄 번호와 따로(화면이 누르면 그 줄로 가게) — warnings와 같은 차례 */
+  warningItems?: NcWarningItem[];
+}
+
+/** 경고 하나: 글(줄 번호 없이)·첫 줄(0부터, -1 = 줄 없음)·횟수·난 줄들(200까지) */
+export interface NcWarningItem {
+  text: string;
+  line: number;
+  count: number;
+  lines: number[];
 }
 
 /** 평면(XY) 윤곽 점열의 점 — MPR 윤곽·공구 경로 */
@@ -209,12 +294,21 @@ export interface PathPoint {
 
 /** 같은 경고를 묶어 첫 줄 번호와 횟수만 남긴다 */
 export class NcWarnings {
-  private map = new Map<string, { line: number; count: number }>();
+  private map = new Map<string, { line: number; count: number; lines: number[] }>();
   constructor(private max = 300) {}
   add(msg: string, line = -1): void {
     const w = this.map.get(msg);
-    if (w) w.count++;
-    else if (this.map.size < this.max) this.map.set(msg, { line, count: 1 });
+    if (w) {
+      w.count++;
+      // 같은 경고가 난 줄(줄 앞 표시·다시 누르면 다음 자리로) — 메시지마다 200줄까지
+      if (line >= 0 && w.lines.length < 200 && !w.lines.includes(line)) w.lines.push(line);
+    } else if (this.map.size < this.max) this.map.set(msg, { line, count: 1, lines: line >= 0 ? [line] : [] });
+  }
+  /** 경고마다 글·첫 줄(-1 = 줄 없음)·횟수·난 줄들 */
+  items(): NcWarningItem[] {
+    const out: NcWarningItem[] = [];
+    for (const [text, w] of this.map) out.push({ text, line: w.line, count: w.count, lines: w.lines.slice() });
+    return out;
   }
   list(): string[] {
     const out: string[] = [];
@@ -228,7 +322,7 @@ export class NcWarnings {
 
 // ───────────────────────── 이동 쌓기 ─────────────────────────
 
-function grow<T extends Float64Array | Float32Array | Uint32Array | Int32Array | Uint8Array | Uint16Array>(a: T, n: number): T {
+function grow<T extends Float64Array | Float32Array | Uint32Array | Int32Array | Uint8Array | Uint16Array | Int16Array>(a: T, n: number): T {
   const b = new (a.constructor as new (n: number) => T)(n);
   b.set(a);
   return b;
@@ -245,9 +339,12 @@ export class MoveBuilder {
   feed: Float32Array;
   spindle: Float32Array;
   arc: Int32Array;
-  flags: Uint8Array;
+  flags: Uint16Array;
   wcs: Uint8Array;
   time: Float32Array;
+  modal: Uint16Array;
+  hNum: Int16Array;
+  dNum: Int16Array;
 
   arcCount = 0;
   private arcCap = 64;
@@ -273,9 +370,12 @@ export class MoveBuilder {
     this.feed = new Float32Array(cap);
     this.spindle = new Float32Array(cap);
     this.arc = new Int32Array(cap);
-    this.flags = new Uint8Array(cap);
+    this.flags = new Uint16Array(cap);
     this.wcs = new Uint8Array(cap);
     this.time = new Float32Array(cap);
+    this.modal = new Uint16Array(cap);
+    this.hNum = new Int16Array(cap);
+    this.dNum = new Int16Array(cap);
     this.points[0] = start[0]!;
     this.points[1] = start[1]!;
     this.points[2] = start[2]!;
@@ -313,13 +413,19 @@ export class MoveBuilder {
     this.flags = grow(this.flags, n);
     this.wcs = grow(this.wcs, n);
     this.time = grow(this.time, n);
+    this.modal = grow(this.modal, n);
+    this.hNum = grow(this.hNum, n);
+    this.dNum = grow(this.dNum, n);
     this.cap = n;
   }
 
   /** 이동 하나를 더한다(시작점은 마지막 점). 이동 번호를 돌려준다 */
-  push(kind: number, x: number, y: number, z: number, line: number, tool: number, feed: number, spindle: number, flags: number, wcs: number, arc = -1): number {
+  push(kind: number, x: number, y: number, z: number, line: number, tool: number, feed: number, spindle: number, flags: number, wcs: number, arc = -1, modal = 0, h = -1, d = -1): number {
     this.ensure();
     const i = this.count;
+    this.modal[i] = modal;
+    this.hNum[i] = h;
+    this.dNum[i] = d;
     this.kind[i] = kind;
     this.line[i] = line;
     this.tool[i] = tool;
@@ -394,6 +500,9 @@ export class MoveBuilder {
         flags: this.flags.slice(0, n),
         wcs: this.wcs.slice(0, n),
         time: this.time.slice(0, n),
+        modal: this.modal.slice(0, n),
+        hNum: this.hNum.slice(0, n),
+        dNum: this.dNum.slice(0, n),
       },
       arcs: { count: a, center: this.arcCenter.slice(0, a * 3), plane: this.arcPlane.slice(0, a), sweep: this.arcSweep.slice(0, a) },
       holes: {
@@ -579,6 +688,11 @@ export function toolInfoFromComment(text: string, units: 'mm' | 'inch'): { diame
   if (diameter === undefined) {
     m = /(\d+)\s*\/\s*(\d+)\s*("|in\b|inch)/i.exec(t);
     if (m && +m[2]! !== 0) diameter = conv(+m[1]! / +m[2]!, m[3]);
+  }
+  if (diameter === undefined && units === 'inch') {
+    // inch 프로그램의 단위 없는 분수 + 공구 이름("1/2 ENDMILL", "3/8 DRILL", "1/4-20 TAP")
+    m = /(?:^|[^\d./])(\d+)\s*\/\s*(\d+)(?=[\s-]*(?:\d+\s+)?(?:FLAT|BALL|BULL|END|E\/?M\b|DRILL|TAP|REAM|MILL|SPOT|CHAMF|CENTER|BORE|CUTTER|BIT|SLOT|FACE))/i.exec(t);
+    if (m && +m[2]! !== 0) diameter = +m[1]! / +m[2]!;
   }
   if (diameter === undefined) {
     m = /(\d+(?:\.\d*)?|\.\d+)\s*(mm|"|in\b|inch)/i.exec(t);

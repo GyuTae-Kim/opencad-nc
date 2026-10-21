@@ -6,7 +6,7 @@
 /** G-code로 보는 확장자 */
 export const GCODE_EXTENSIONS = ['nc', 'ngc', 'gcode', 'gco', 'gc', 'g', 'tap', 'cnc', 'ncc', 'nc1', 'mpf', 'spf', 'eia', 'iso', 'anc', 'din', 'ptp', 'fnc', 'min', 'hnc', 'ncd', 'xpi', 'cut'];
 /** Heidenhain 평문 확장자 */
-export const HEIDENHAIN_EXTENSIONS = ['h'];
+export const HEIDENHAIN_EXTENSIONS = ['h', 'i'];
 /** woodWOP 확장자 */
 export const MPR_EXTENSIONS = ['mpr'];
 /** WangShi PGI 확장자 */

@@ -8,16 +8,18 @@
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
  * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프.
  * 근사: RND·CHF는 모서리 그대로, APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
- * 지원하지 않음: PLANE·회전·대칭·배율 사이클, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF, CALL PGM(경고).
+ * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
+ * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF(경고).
  */
+import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
-import { FLAG_CYCLE, FLAG_MACHINE, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcPlane, type NcProgram } from './model';
+import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcMachineOptions, type NcPlane, type NcProgram } from './model';
 
 const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
 import { makeSource, sourceLine, type NcSource } from './text';
-import { isSource } from './gcode';
+import { isSource, jobFileLines } from './gcode';
 
 export interface HeidenhainOptions {
   name?: string;
@@ -30,6 +32,20 @@ export interface HeidenhainOptions {
   maxMoves?: number;
   /** 반경 보정·포켓 사이클용 공구 표(표시 단위, 키 = 공구 번호). 없으면 TOOL DEF R + TOOL CALL DR */
   toolTable?: Record<number, { diameter?: number; radius?: number }>;
+  /** 공작물 원점의 기계 좌표(표시 단위). 주면 M91 값을 실제 위치로 그린다. 없으면 공구 축을 안전 높이(추정)로 */
+  machineOffset?: [number, number, number];
+  /** 기계·읽기 설정(mm 기준, 앱 설정 — GcodeOptions.machine과 같음) */
+  machine?: NcMachineOptions;
+}
+
+/** 프로그램 이름 → 비교용(따옴표·경로·확장자를 떼고 대문자): "TNC:\\DIR\\SUB1.H" → SUB1 */
+function pgmBase(s: string): string {
+  return s
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/^.*[\\/:]/, '')
+    .replace(/\.[^.]*$/, '')
+    .toUpperCase();
 }
 
 const AXES = 'XYZ';
@@ -48,6 +64,12 @@ interface HBlock {
 class HRunner extends NcEmitter {
   private o: HeidenhainOptions;
   private plane: NcPlane = 0;
+  // 좌표 변환 사이클: 8 대칭(축별 ±1)·10 회전(도, 작업 평면)·11 배율·26 축별 배율(중심) — 원점(cycle 7) 둘레
+  private mirror = [1, 1, 1];
+  private rotDeg = 0;
+  private scaleF = 1;
+  private scale26 = [1, 1, 1];
+  private center26 = [0, 0, 0];
   private cc: [number, number] | null = null;
   private lastDir: [number, number] | null = null;
   private dr = 1;
@@ -60,7 +82,14 @@ class HRunner extends NcEmitter {
   private cycle: { n: number; ok: boolean } | null = null;
   private modalCall = false;
   private labels: Map<string, number> | null = null;
-  private stack: { ret: number; reps: number; start: number }[] = [];
+  /** 부르기 쌓기: LBL 부프로그램과 CALL PGM(pgmEnd = 그 프로그램 구획 끝 줄) */
+  private stack: { ret: number; reps: number; start: number; pgmEnd?: number }[] = [];
+  /** 프로그램 구획(BEGIN PGM·%이름 G7x·함께 연 파일 줄마다): 이름들·머리 줄·본문 첫 줄·끝(다음 구획 머리) */
+  private pgms: { names: string[]; head: number; body: number; end: number; job: boolean }[] | null = null;
+  /** 여러 파일을 한 작업으로 열었는지(함께 연 파일 줄이 있음) — 주 프로그램은 자기 구획 끝에서 멈춘다 */
+  private multi = false;
+  /** SEL PGM으로 고른 프로그램(CALL SELECTED PGM) */
+  private selPgm: string | null = null;
   private sectionReps = new Map<number, number>();
   private pc = 0;
   private ended = false;
@@ -74,24 +103,51 @@ class HRunner extends NcEmitter {
   private toolDR = 0;
   private maxBlocks: number;
   private maxMoves: number;
+  // ── DIN/ISO(%이름 G71 * 꼴) ──
+  private iso = false;
+  private isoAbs = true;
+  /** 이동 모드: 0 급속, 1 직선, 2 시계, 3 반시계, 5 방향 없는 원호, 6 접선 원호, 10/11 극 직선, 12/13/15 극 원호 */
+  private isoMot = 1;
+  private isoComp = 0;
+  private isoSeenStart = false;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
     super(src, opts.initialPosition);
     this.o = opts;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
     this.maxMoves = opts.maxMoves ?? 8_000_000;
-    // 단위: BEGIN PGM … MM|INCH
+    this.multi = jobFileLines(src) !== null;
+    // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)
     for (let i = 0; i < Math.min(src.lineCount, 50); i++) {
-      const m = /BEGIN\s+PGM\s+(\S+)\s+(MM|INCH)/i.exec(sourceLine(src, i));
+      const t = sourceLine(src, i);
+      const m = /BEGIN\s+PGM\s+(\S+)\s+(MM|INCH)/i.exec(t);
       if (m) {
         this.name = m[1]!;
         this.displayInch = m[2]!.toUpperCase() === 'INCH';
         break;
       }
+      const iso = /^\s*%([^\s*;]+)\s+G7([01])\b/i.exec(t);
+      if (iso) {
+        this.iso = true;
+        this.name = iso[1]!;
+        this.displayInch = iso[2] === '0';
+        this.notices.push({ kind: 'dialect', dialect: 'heidenhain-iso' });
+        break;
+      }
     }
     this.tol = this.displayInch ? 0.0001 : 0.002;
-    this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
+    this.rapidFeed = this.displayInch ? 400 : 10000;
+    if (opts.machine) {
+      const mc = this.applyMachine(opts.machine);
+      if (!opts.machineOffset && mc.offset) this.o = { ...opts, machineOffset: mc.offset };
+    }
+    if (opts.rapidFeed) this.rapidFeed = opts.rapidFeed;
     this.feedMode = 94;
+  }
+
+  /** 이동마다 남기는 모달 상태: 작업 평면·좌표 변환(사이클 번호는 200번대라 남기지 않는다) */
+  protected override modalState(): number {
+    return this.plane | (this.outXf ? MODAL_XF : 0);
   }
 
   /** 줄 i부터 블록 하나(~ 이어 쓰기 포함) */
@@ -110,13 +166,24 @@ class HRunner extends NcEmitter {
       j++;
       if (!cont || j >= this.src.lineCount) break;
     }
-    // 블록 번호 떼기
+    // 블록 번호 떼기(DIN/ISO는 블록 끝 * 도)
     text = text.replace(/^\s*N?\d+(?:\s+|$)/, '').trim();
+    if (this.iso) text = text.replace(/\s*\*\s*$/, '').trim();
     return { line: i, next: j, toks: tokenize(text), text };
   }
 
   run(): void {
-    while (!this.ended && this.pc < this.src.lineCount) {
+    // 여러 파일 작업이면 글 끝(마지막 파일 끝)에서도 불린 프로그램은 돌아간다(아래 구획 끝 확인)
+    while (!this.ended && (this.pc < this.src.lineCount || this.multi)) {
+      // 여러 파일을 함께 열었으면: 불린 프로그램은 자기 구획 끝에서 돌아가고, 주 프로그램은 다음 파일 앞에서 멈춘다
+      if (this.multi) {
+        const f = this.stack.findLast((x) => x.pgmEnd !== undefined);
+        const end = f ? f.pgmEnd! : (this.pgmIndex()[0]?.end ?? this.src.lineCount);
+        if (this.pc >= end) {
+          if (this.returnPgm()) continue;
+          break;
+        }
+      }
       if (++this.blocks > this.maxBlocks) {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, this.pc);
         break;
@@ -125,7 +192,13 @@ class HRunner extends NcEmitter {
       this.pc = b.next;
       if (!b.toks.length) continue;
       try {
-        this.exec(b);
+        if (this.iso) {
+          // DIN/ISO 블록을 평문 블록(하나 이상)으로 옮겨 같은 길로 실행
+          for (const t of this.isoBlock(b.text, b.line)) {
+            this.exec({ line: b.line, next: b.next, text: t, toks: tokenize(t) });
+            if (this.ended || this.pc !== b.next) break;
+          }
+        } else this.exec(b);
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, b.line);
@@ -135,6 +208,191 @@ class HRunner extends NcEmitter {
         break;
       }
     }
+  }
+
+  // ── DIN/ISO → 평문 ──
+  /**
+   * DIN/ISO 블록 하나를 평문 블록 글(하나 이상)로 옮긴다:
+   * G00/G01 → L(FMAX), G02/G03 → C·CR(R), G05 → C(방향 그대로), G06 → CT, G10/G11 R H → LP, G12/G13/G15 H → CP, I·J·K → CC(절대 원 중심),
+   * G29 → CC(마지막 자리), G40/G41/G42 → R0/RL/RR, G90/G91 → I 붙임, G30/G31 → BLK FORM, G99 T L R → TOOL DEF, T G17 S → TOOL CALL,
+   * G2xx → CYCL DEF, G79 → CYCL CALL, G83 P01… → 옛 쪼기 사이클 1, G54 → 사이클 7, G28 → 8, G73 H → 10, G72 F → 11,
+   * G98 L n → LBL n, L n,m → CALL LBL n REP m, D00~D13 → FN, G04 F → 휴지, G38 → STOP, %이름 → 시작·끝(다른 이름이면 CALL PGM)
+   */
+  private isoBlock(text: string, line: number): string[] {
+    const t = text.trim();
+    if (!t) return [];
+    // %이름 G71: 처음이면 시작, 그다음(N99999999 %이름 …)은 끝, 다른 이름이면 프로그램 부르기
+    let m = /^%([^\s*;]+)/.exec(t);
+    if (m) {
+      if (!this.isoSeenStart) {
+        this.isoSeenStart = true;
+        return [];
+      }
+      // 지금 프로그램 구획의 이름이면 끝(불린 프로그램이면 돌아간다)
+      const nm = pgmBase(m[1]!);
+      const here = this.pgmIndex()[this.sectionAt(line)];
+      return (here ? here.names.includes(nm) : nm === pgmBase(this.name)) ? ['END PGM'] : [`CALL PGM ${m[1]}`];
+    }
+    // Q 공식(Q1 = …)은 그대로
+    if (/^Q[LRS]?\d+\s*=/.test(t)) return [t];
+    // D 함수: D00 Q1 P01 +5 / D01 Q1 P01 Q2 P02 +3 / D09 P01 +Q1 P02 +10 P03 5
+    if ((m = /^D(\d+)\s+(.*)$/i.exec(t))) return [this.isoFn(+m[1]!, m[2]!, line)];
+    // 낱말: 글자 + 값(+5·-2.5·Q3·+Q3), L n,m(부르기)
+    const W: { k: string; v: string }[] = [];
+    const re = /([A-Z]+)\s*((?:[-+]?(?:\d+\.?\d*|\.\d+)(?:,\d+)?)|[-+]?Q[LRS]?\d+)?/gi;
+    let mm: RegExpExecArray | null;
+    let rest = '';
+    while ((mm = re.exec(t))) {
+      const k = mm[1]!.toUpperCase();
+      // 사이클 이름(BOHREN 등)·이름 뒤 Q 대입은 그대로 넘긴다
+      if (/^Q[LRS]?$/.test(k) && t[re.lastIndex] === '=') {
+        rest = t.slice(mm.index);
+        break;
+      }
+      W.push({ k, v: mm[2] ?? '' });
+    }
+    const gs = W.filter((w) => w.k === 'G').map((w) => Math.round(parseFloat(w.v)));
+    const word = (k: string): string | undefined => W.find((w) => w.k === k)?.v;
+    const has = (k: string): boolean => W.some((w) => w.k === k);
+    const out: string[] = [];
+    // 모드
+    for (const g of gs) {
+      if (g === 90) this.isoAbs = true;
+      else if (g === 91) this.isoAbs = false;
+      else if (g === 40) this.isoComp = 0;
+      else if (g === 41) this.isoComp = 1;
+      else if (g === 42) this.isoComp = 2;
+      else if ([0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 15, 16].includes(g)) this.isoMot = g;
+    }
+    const inc = this.isoAbs ? '' : 'I';
+    const sgn = (v: string): string => (/^[-+]/.test(v) ? v : `+${v}`);
+    const axes = (letters: string[]): string =>
+      letters
+        .filter((a) => has(a))
+        .map((a) => `${inc}${a}${sgn(word(a)!)}`)
+        .join(' ');
+    const ms = W.filter((w) => w.k === 'M').map((w) => `M${w.v}`);
+    const feed = has('F') ? ` F${word('F')}` : '';
+    const g = (n: number): boolean => gs.includes(n);
+    // 블록 꼴
+    if (g(30) || g(31)) {
+      const ax = g(18) ? 'Y' : g(19) ? 'X' : 'Z';
+      return [g(30) ? `BLK FORM 0.1 ${ax} ${axes(['X', 'Y', 'Z'])}` : `BLK FORM 0.2 ${axes(['X', 'Y', 'Z'])}`];
+    }
+    if (g(99) && has('T')) return [`TOOL DEF ${word('T')} L${sgn(word('L') ?? '0')} R${sgn(word('R') ?? '0')}`];
+    if (has('T')) {
+      const ax = g(18) ? 'Y' : g(19) ? 'X' : 'Z';
+      const extra = ['S', 'F', 'DL', 'DR'].filter(has).map((k) => ` ${k}${word(k)}`).join('');
+      out.push(`TOOL CALL ${word('T')} ${ax}${extra}`);
+      if (ms.length) out.push(ms.join(' '));
+      return out;
+    }
+    if (g(98) && has('L')) return [`LBL ${word('L')}`];
+    if (has('L') && /,/.test(word('L') ?? '')) {
+      const [n, rep] = word('L')!.split(',');
+      return [rep && +rep > 0 ? `CALL LBL ${n} REP ${rep}` : `CALL LBL ${n}`];
+    }
+    if (g(38)) return ['STOP'];
+    if (g(4)) return [`DWELL ${word('F') ?? '0'}`];
+    const big = gs.find((n) => n >= 200 && n <= 299);
+    if (big !== undefined) return [`CYCL DEF ${big} ${rest || W.filter((w) => w.k !== 'G').map((w) => w.k + w.v).join(' ')}`.trim()];
+    if (g(79)) return [`CYCL CALL${feed}${ms.length ? ' ' + ms.join(' ') : ''}`];
+    if (g(83) || g(84)) {
+      // 옛 사이클 1(쪼기)·2(탭): P01 안전 거리 P02 깊이 P03 절입(탭은 휴지) P04 휴지(탭은 이송) P05 이송
+      const pv = (k: string): string => {
+        const r = new RegExp(`P0?${k}\\s*([-+]?(?:\\d+\\.?\\d*|\\.\\d+|Q\\d+))`, 'i').exec(t);
+        return r ? r[1]! : '0';
+      };
+      if (g(83)) return ['CYCL DEF 1.0', `CYCL DEF 1.1 SET UP ${pv('1')}`, `CYCL DEF 1.2 DEPTH ${pv('2')}`, `CYCL DEF 1.3 PECKG ${pv('3')}`, `CYCL DEF 1.4 DWELL ${pv('4')}`, `CYCL DEF 1.5 F${pv('5')}`];
+      return ['CYCL DEF 2.0', `CYCL DEF 2.1 SET UP ${pv('1')}`, `CYCL DEF 2.2 DEPTH ${pv('2')}`, `CYCL DEF 2.3 DWELL ${pv('3')}`, `CYCL DEF 2.4 F${pv('4')}`];
+    }
+    if (g(54)) return ['CYCL DEF 7.0', ...['X', 'Y', 'Z'].filter(has).map((a, k) => `CYCL DEF 7.${k + 1} ${inc}${a}${sgn(word(a)!)}`)];
+    if (g(28)) return ['CYCL DEF 8.0', `CYCL DEF 8.1 ${['X', 'Y', 'Z'].filter(has).join(' ')}`.trim()];
+    if (g(73)) return ['CYCL DEF 10.0', `CYCL DEF 10.1 ${inc}ROT${sgn(word('H') ?? '0')}`];
+    if (g(72)) return ['CYCL DEF 11.0', `CYCL DEF 11.1 SCL${word('F') ?? '1'}`];
+    if (g(80)) {
+      this.w.add('DIN/ISO G80(기울인 작업 평면)은 지원하지 않음(변환 없이 그림)', line);
+      return [];
+    }
+    if (g(53)) {
+      this.w.add('DIN/ISO G53(원점 표)는 읽지 않음', line);
+      return [];
+    }
+    if (g(24) || g(25)) {
+      this.w.add(`${g(24) ? 'CHF' : 'RND'}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, line);
+      return [];
+    }
+    if (g(26) || g(27)) this.w.add('APPR·DEP(접근·이탈)는 끝점까지 직선으로 그림', line);
+    // 원 중심(극) I·J·K, G29 = 마지막 자리
+    const ijk = ['I', 'J', 'K'].filter(has);
+    if (ijk.length) out.push(`CC ${ijk.map((k) => `${inc}${'XYZ'['IJK'.indexOf(k)]}${sgn(word(k)!)}`).join(' ')}`);
+    if (g(29)) out.push('CC');
+    // 이동
+    const xyz = axes(['X', 'Y', 'Z']);
+    const comp = this.isoComp === 1 ? 'RL' : this.isoComp === 2 ? 'RR' : 'R0';
+    const tail = `${feed}${ms.length ? ' ' + ms.join(' ') : ''}`;
+    const mot = this.isoMot;
+    const hasPolar = has('H') || (has('R') && (mot === 10 || mot === 11));
+    if (mot === 10 || mot === 11 ? hasPolar : mot >= 12 && mot <= 16 ? has('H') : !!xyz) {
+      if (mot === 0 || mot === 1 || mot === 7) out.push(`L ${xyz} ${comp}${mot === 0 ? ' FMAX' : ''}${tail}`);
+      else if (mot === 2 || mot === 3) out.push(has('R') ? `CR ${xyz} R${sgn(word('R')!)} DR${mot === 2 ? '-' : '+'}${tail}` : `C ${xyz} DR${mot === 2 ? '-' : '+'}${tail}`);
+      else if (mot === 5) out.push(`C ${xyz}${tail}`);
+      else if (mot === 6) out.push(`CT ${xyz}${tail}`);
+      else if (mot === 10 || mot === 11) {
+        const pr = has('R') ? ` ${this.isoAbs ? '' : 'I'}PR${sgn(word('R')!)}` : '';
+        const pa = has('H') ? ` ${this.isoAbs ? '' : 'I'}PA${sgn(word('H')!)}` : '';
+        out.push(`LP${pr}${pa} ${comp}${mot === 10 ? ' FMAX' : ''}${tail}`);
+      } else {
+        const pa = ` ${this.isoAbs ? '' : 'I'}PA${sgn(word('H')!)}`;
+        const z = has('Z') ? ` ${inc}Z${sgn(word('Z')!)}` : '';
+        out.push(`CP${pa}${z}${mot === 12 ? ' DR-' : mot === 13 ? ' DR+' : ''}${tail}`);
+      }
+    } else if (feed || ms.length || gs.some((n) => n >= 40 && n <= 42)) out.push(`L ${comp}${tail}`.trim());
+    return out;
+  }
+
+  /** D 함수 → FN 글 */
+  private isoFn(k: number, body: string, line: number): string {
+    const toks = body.trim().split(/\s+/);
+    const target = /^Q[LRS]?\d+$/i.test(toks[0] ?? '') ? toks.shift()! : '';
+    // P01 값 P02 값 P03 값
+    const p: string[] = [];
+    for (let i = 0; i < toks.length; i++) {
+      const m = /^P0?(\d)$/i.exec(toks[i]!);
+      if (m) p[+m[1]! - 1] = toks[++i] ?? '0';
+    }
+    const v = (i: number): string => p[i] ?? '0';
+    switch (k) {
+      case 0:
+        return `FN 0: ${target} = ${v(0)}`;
+      case 1:
+        return `FN 1: ${target} = ${v(0)} + ${v(1)}`;
+      case 2:
+        return `FN 2: ${target} = ${v(0)} - ${v(1)}`;
+      case 3:
+        return `FN 3: ${target} = ${v(0)} * ${v(1)}`;
+      case 4:
+        return `FN 4: ${target} = ${v(0)} DIV ${v(1)}`;
+      case 5:
+        return `FN 5: ${target} = SQRT ${v(0)}`;
+      case 6:
+        return `FN 6: ${target} = SIN ${v(0)}`;
+      case 7:
+        return `FN 7: ${target} = COS ${v(0)}`;
+      case 8:
+        return `FN 8: ${target} = ${v(0)} LEN ${v(1)}`;
+      case 9:
+      case 10:
+      case 11:
+      case 12:
+        return `FN ${k}: IF ${v(0)} ${['EQU', 'NE', 'GT', 'LT'][k - 9]} ${v(1)} GOTO LBL ${v(2)}`;
+      case 13:
+        return `FN 13: ${target} = ${v(0)} ANG ${v(1)}`;
+      case 14:
+        return 'FN 14: ERROR';
+    }
+    this.w.add(`D${String(k).padStart(2, '0')} 함수는 지원하지 않음`, line);
+    return '';
   }
 
   // ── 값 ──
@@ -165,7 +423,12 @@ class HRunner extends NcEmitter {
     if (t0 === '*' || t0.startsWith('*')) return; // 구조 주석
     if (t0 === 'BEGIN') return;
     if (t0 === 'END' && t1 === 'PGM') {
-      this.ended = true;
+      if (!this.returnPgm()) this.ended = true;
+      return;
+    }
+    if (t0 === 'DWELL') {
+      // DIN/ISO G04 F(초)
+      this.dwell(this.value(t1 || '0'));
       return;
     }
     if (t0 === 'BLK' && t1 === 'FORM') return this.blkForm(T, line);
@@ -194,7 +457,7 @@ class HRunner extends NcEmitter {
     if (t0 === 'LBL') {
       // LBL 0 = 부프로그램 끝(부른 곳으로 돌아간다). 다른 LBL은 표지일 뿐
       const f = this.stack[this.stack.length - 1];
-      if ((T[1] === '0' || T[1] === '"0"') && f) {
+      if ((T[1] === '0' || T[1] === '"0"') && f && f.pgmEnd === undefined) {
         if (f.reps > 1) {
           f.reps--;
           this.pc = f.start;
@@ -206,8 +469,15 @@ class HRunner extends NcEmitter {
       return;
     }
     if (t0 === 'CALL' && t1 === 'LBL') return this.callLbl(T, line);
-    if (t0 === 'CALL' && t1 === 'PGM') {
-      this.w.add('CALL PGM(다른 프로그램 부르기)은 읽지 않음', line);
+    if (t0 === 'CALL' && t1 === 'PGM') return this.callPgm(/^CALL\s+PGM\s+("[^"]*"|\S+)/i.exec(b.text)?.[1] ?? '', line);
+    // SEL PGM 이름 … CALL SELECTED PGM: 고른 프로그램 부르기
+    if (t0 === 'SEL' && t1 === 'PGM') {
+      this.selPgm = /^SEL\s+PGM\s+("[^"]*"|\S+)/i.exec(b.text)?.[1] ?? null;
+      return;
+    }
+    if (t0 === 'CALL' && t1 === 'SELECTED') {
+      if (this.selPgm) return this.callPgm(this.selPgm, line);
+      this.w.add('CALL SELECTED PGM: 앞에 SEL PGM이 없음', line);
       return;
     }
     if (t0 === 'FN') return this.fn(b, line);
@@ -226,6 +496,7 @@ class HRunner extends NcEmitter {
       this.w.add('FSELECT(FK 해 고르기)는 무시함 — 한 블록으로 정해지는 해만 그림', line);
       return;
     }
+    if (t0 === 'TRANS') return this.transDatum(T, line);
     if (t0 === 'RND' || t0 === 'CHF') {
       this.w.add(`${t0}(모서리 둥글리기·모따기)는 모서리 그대로 그림`, line);
       return;
@@ -355,6 +626,70 @@ class HRunner extends NcEmitter {
           const v = this.value(m[3]!);
           this.shift[a] = m[1] ? this.shift[a]! + v : v;
         }
+        this.updateXf();
+        return;
+      }
+      if (major === 8) {
+        // 대칭: 8.1 X Y(대칭할 축, 없으면 끔)
+        if (sub === 1) {
+          this.mirror = [1, 1, 1];
+          for (const w of T.slice(3)) {
+            const a = AXES.indexOf(w.toUpperCase().replace(/^I/, ''));
+            if (a >= 0) this.mirror[a] = -1;
+          }
+          this.updateXf();
+        }
+        return;
+      }
+      if (major === 10) {
+        // 회전: 10.1 ROT+45(IROT는 더하기). 지금 작업 평면에서 원점 둘레
+        if (sub === 1) {
+          const tok = T.slice(3).join('').toUpperCase();
+          const m = /^(I?)ROT([-+]?.+)$/.exec(tok);
+          if (m) {
+            const v = this.value(m[2]!);
+            this.rotDeg = m[1] ? this.rotDeg + v : v;
+            this.updateXf();
+          }
+        }
+        return;
+      }
+      if (major === 11) {
+        // 배율: 11.1 SCL 0.75
+        if (sub === 1) {
+          const tok = T.slice(3).join('').toUpperCase();
+          const m = /^SCL([-+]?.+)$/.exec(tok);
+          if (m) {
+            const v = this.value(m[1]!);
+            if (v > 0) this.scaleF = v;
+            this.updateXf();
+          }
+        }
+        return;
+      }
+      if (major === 26) {
+        // 축별 배율: 26.1 X1.4 Y0.6 CCX+15 CCY+20
+        if (sub === 1) {
+          this.scale26 = [1, 1, 1];
+          this.center26 = [0, 0, 0];
+          for (const w of T.slice(3)) {
+            let m = /^CC([XYZ])(.+)$/i.exec(w);
+            if (m) {
+              this.center26[AXES.indexOf(m[1]!.toUpperCase())] = this.value(m[2]!);
+              continue;
+            }
+            m = /^([XYZ])(.+)$/i.exec(w);
+            if (m) {
+              const v = this.value(m[2]!);
+              if (v > 0) this.scale26[AXES.indexOf(m[1]!.toUpperCase())] = v;
+            }
+          }
+          this.updateXf();
+        }
+        return;
+      }
+      if (major === 19) {
+        if (sub === 0) this.w.add('CYCL DEF 19(기울인 작업 평면)은 지원하지 않음(변환 없이 그림)', line);
         return;
       }
       if (major === 1 || major === 2 || major === 17) {
@@ -364,10 +699,6 @@ class HRunner extends NcEmitter {
           const key = ['', 'O1', 'O2', 'O3', 'O4', 'O5'][sub];
           if (key) this.q.set('OLD' + key, v);
         }
-        return;
-      }
-      if (major === 8 || major === 10 || major === 11 || major === 26 || major === 19) {
-        if (sub === 0) this.w.add(`CYCL DEF ${major}(대칭·회전·배율·기울인 평면)은 지원하지 않음`, line);
         return;
       }
       if (sub === 0) this.w.add(`CYCL DEF ${major}은 지원하지 않음`, line);
@@ -382,6 +713,45 @@ class HRunner extends NcEmitter {
     if (major === 220 || major === 221) return this.patternCycle(major, line);
     this.cycle = { n: major, ok: false };
     this.w.add(`CYCL DEF ${num}은 지원하지 않음(호출해도 그리지 않음)`, line);
+  }
+
+  /**
+   * 좌표 변환(8 대칭·10 회전·11/26 배율)을 원점 이동(7·TRANS DATUM) 둘레의 출력 변환으로:
+   * 화면 = 원점 + M(R(S(p - 원점))) — 원점 이동 → 대칭 → 회전 → 배율 차례(Heidenhain)
+   */
+  private updateXf(): void {
+    const sh = this.shift;
+    const s = this.scaleF;
+    let L = composeAffine(diagAbout(ZERO3, this.mirror), rotAbout(ZERO3, this.rotDeg, this.plane));
+    L = composeAffine(L, composeAffine(diagAbout(ZERO3, [s, s, s]), diagAbout(this.center26, this.scale26)));
+    if (isIdentityAffine(L)) {
+      this.setOutXf(null);
+      return;
+    }
+    this.setOutXf(composeAffine(composeAffine(translateAffine(sh), L), translateAffine([-sh[0]!, -sh[1]!, -sh[2]!])));
+  }
+
+  /** TRANS DATUM AXIS X… Y…(원점 이동)·TRANS DATUM RESET */
+  private transDatum(T: string[], line: number): void {
+    const what = (T[2] ?? '').toUpperCase();
+    if ((T[1] ?? '').toUpperCase() !== 'DATUM') {
+      this.w.add(`${T.slice(0, 2).join(' ')} 블록은 지원하지 않음`, line);
+      return;
+    }
+    if (what === 'RESET') this.shift = [0, 0, 0];
+    else if (what === 'AXIS') {
+      for (const w of T.slice(3)) {
+        const m = /^(I?)([XYZ])(.+)$/i.exec(w);
+        if (!m) continue;
+        const a = AXES.indexOf(m[2]!.toUpperCase());
+        const v = this.value(m[3]!);
+        this.shift[a] = m[1] ? this.shift[a]! + v : v;
+      }
+    } else {
+      this.w.add(`TRANS DATUM ${what}(원점 표)는 읽지 않음`, line);
+      return;
+    }
+    this.updateXf();
   }
 
   /** 지금 위치에서 드릴 사이클 실행 */
@@ -464,7 +834,7 @@ class HRunner extends NcEmitter {
       top[da] = rD;
       const bottom = [top[0]!, top[1]!, top[2]!];
       bottom[da] = zD;
-      this.mb.pushHole(top, bottom, line, this.tool, c.n, first);
+      this.pushHoleOut(top, bottom, line, c.n, first);
     }
     this.feed = saveFeed;
   }
@@ -520,20 +890,95 @@ class HRunner extends NcEmitter {
     }
   }
 
-  private findLabel(name: string): number {
+  /** 표지 줄(여러 파일을 함께 열었으면 지금 줄이 든 프로그램 구획 안에서만 — 표지는 프로그램마다 따로) */
+  private findLabel(name: string, at: number): number {
     if (!this.labels) {
       this.labels = new Map();
+      // 평문 LBL 이름, DIN/ISO G98 L 번호
+      const re = this.iso ? /^\s*(?:N?\d+\s+)?G98\s+L\s*(\d+)\b/i : /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i;
       for (let i = 0; i < this.src.lineCount; i++) {
-        const m = /^\s*(?:N?\d+\s+)?LBL\s+("[^"]*"|[^"\s;]+)/i.exec(sourceLine(this.src, i));
-        if (m && !this.labels.has(m[1]!.toUpperCase())) this.labels.set(m[1]!.toUpperCase(), i);
+        const m = re.exec(sourceLine(this.src, i));
+        if (!m) continue;
+        const key = `${this.multi ? this.sectionAt(i) : 0}:${m[1]!.toUpperCase()}`;
+        if (!this.labels.has(key)) this.labels.set(key, i);
       }
     }
-    return this.labels.get(name.toUpperCase()) ?? -1;
+    return this.labels.get(`${this.multi ? this.sectionAt(at) : 0}:${name.toUpperCase()}`) ?? -1;
+  }
+
+  // ── 다른 프로그램 부르기(CALL PGM, DIN/ISO %이름) — 함께 연 파일·같은 글의 BEGIN PGM 구획 ──
+  private pgmIndex(): { names: string[]; head: number; body: number; end: number; job: boolean }[] {
+    if (this.pgms) return this.pgms;
+    const out: { names: string[]; head: number; body: number; end: number; job: boolean }[] = [];
+    const reBegin = /^\s*(?:N?\d+\s+)?BEGIN\s+PGM\s+("[^"]*"|\S+)/i;
+    const reIso = /^\s*%([^\s*;]+)\s+G7[01]\b/i;
+    const jobs = jobFileLines(this.src);
+    let last: (typeof out)[number] | null = null;
+    for (let i = 0; i < this.src.lineCount; i++) {
+      const job = jobs?.get(i);
+      if (job !== undefined) {
+        last = { names: [pgmBase(job)], head: i, body: i + 1, end: this.src.lineCount, job: true };
+        out.push(last);
+        continue;
+      }
+      const t = sourceLine(this.src, i);
+      const m = reBegin.exec(t) ?? reIso.exec(t);
+      if (!m) continue;
+      if (last?.job && last.names.length === 1) {
+        // 함께 연 파일의 머리: 파일 이름과 프로그램 이름 모두로 부를 수 있다
+        last.names.push(pgmBase(m[1]!));
+        last.body = i + 1;
+      } else {
+        last = { names: [pgmBase(m[1]!)], head: i, body: i + 1, end: this.src.lineCount, job: false };
+        out.push(last);
+      }
+    }
+    // 주 프로그램에 머리가 없으면(조각) 맨 앞을 주 프로그램 구획으로
+    if (!out.length || out[0]!.job) out.unshift({ names: [pgmBase(this.name)], head: 0, body: 0, end: this.src.lineCount, job: false });
+    for (let k = 0; k < out.length - 1; k++) out[k]!.end = out[k + 1]!.head;
+    return (this.pgms = out);
+  }
+
+  /** 줄 i가 든 프로그램 구획 번호(첫 머리 앞이면 0) */
+  private sectionAt(i: number): number {
+    const p = this.pgmIndex();
+    let k = 0;
+    while (k + 1 < p.length && p[k + 1]!.head <= i) k++;
+    return k;
+  }
+
+  private callPgm(arg: string, line: number): void {
+    const want = pgmBase(arg);
+    const p = this.pgmIndex();
+    const cur = this.sectionAt(line);
+    const target = p.findIndex((s, k) => k !== cur && s.names.includes(want));
+    if (target < 0) {
+      this.missingProgram(want, `CALL PGM ${want}: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
+      return;
+    }
+    if (this.stack.length > 64) {
+      this.w.add('부프로그램 호출이 너무 깊음 — 멈춤', line);
+      this.ended = true;
+      return;
+    }
+    const s = p[target]!;
+    this.stack.push({ ret: this.pc, reps: 1, start: s.body, pgmEnd: s.end });
+    this.pc = s.body;
+  }
+
+  /** 불린 프로그램의 끝(END PGM·구획 끝): 부른 곳으로 돌아간다. 불린 프로그램 안이 아니면 false */
+  private returnPgm(): boolean {
+    let k = this.stack.length - 1;
+    while (k >= 0 && this.stack[k]!.pgmEnd === undefined) k--;
+    if (k < 0) return false;
+    this.pc = this.stack[k]!.ret;
+    this.stack.length = k;
+    return true;
   }
 
   private callLbl(T: string[], line: number): void {
     const name = T[2] ?? '';
-    const target = this.findLabel(name);
+    const target = this.findLabel(name, line);
     if (target < 0) {
       this.w.add(`CALL LBL ${name}: 표지가 없음`, line);
       return;
@@ -576,7 +1021,8 @@ class HRunner extends NcEmitter {
 
   /** 줄 a와 b 사이에 LBL 0이 있는지 */
   private lbl0Between(a: number, b: number): boolean {
-    for (let i = a + 1; i < b; i++) if (/^\s*(?:N?\d+\s+)?LBL\s+"?0"?\s*(?:;|$)/i.test(sourceLine(this.src, i))) return true;
+    const re = this.iso ? /^\s*(?:N?\d+\s+)?G98\s+L\s*0\b/i : /^\s*(?:N?\d+\s+)?LBL\s+"?0"?\s*(?:;|$)/i;
+    for (let i = a + 1; i < b; i++) if (re.test(sourceLine(this.src, i))) return true;
     return false;
   }
 
@@ -612,7 +1058,7 @@ class HRunner extends NcEmitter {
       const op = c[2]!.toUpperCase();
       const ok = op === 'EQU' ? Math.abs(x - y) < 1e-9 : op === 'NE' ? Math.abs(x - y) >= 1e-9 : op === 'GT' ? x > y : x < y;
       if (ok) {
-        const t = this.findLabel(c[4]!);
+        const t = this.findLabel(c[4]!, line);
         if (t >= 0) this.pc = t + 1;
         else this.w.add(`FN ${k}: LBL ${c[4]}이 없음`, line);
       }
@@ -669,9 +1115,10 @@ class HRunner extends NcEmitter {
   }
 
   /** 반경 보정·이송·M 낱말 */
-  private modal(T: string[], line: number): { rapid: boolean; m99: boolean; machine: boolean } {
+  private modal(T: string[], line: number): { rapid: boolean; m99: boolean; machine: number } {
     let rapid = false;
-    let machine = false;
+    /** 0 = 아님, 91 = M91(기계 원점 기준), 92 = M92(기계 고정점 기준) */
+    let machine = 0;
     const compBefore = this.comp;
     for (let i = 1; i < T.length; i++) {
       const w = T[i]!.toUpperCase();
@@ -681,7 +1128,8 @@ class HRunner extends NcEmitter {
       else if (w === 'FMAX') rapid = true;
       else if (w === 'FAUTO' || (w === 'F' && (T[i + 1] ?? '').toUpperCase() === 'AUTO')) this.feed = this.autoFeed;
       else if (/^F[+-]?[\d.]+$/.test(w) || /^F[+-]?Q/.test(w)) this.feed = this.value(w.slice(1));
-      else if (w === 'M91' || w === 'M92') machine = true;
+      else if (w === 'M91') machine = 91;
+      else if (w === 'M92') machine = 92;
     }
     if (this.comp !== compBefore) this.compNote(line);
     const { m99 } = this.mWords(T, line, false);
@@ -703,6 +1151,19 @@ class HRunner extends NcEmitter {
     const [a0, a1] = PLANE_AXES[this.plane]!;
     const s0 = this.pos[a0]!;
     const s1 = this.pos[a1]!;
+    if (machine && c.some((v) => v !== undefined)) {
+      const mo = this.o.machineOffset;
+      if (machine === 91 && mo) {
+        // M91 값은 기계 원점 기준: 공작물 원점의 기계 좌표를 알면 실제 위치로
+        for (let a = 0; a < 3; a++) if (c[a] !== undefined) c[a] = c[a]! - this.shift[a]! - mo[a]!;
+      } else {
+        const mask = (c[0] !== undefined ? 1 : 0) | (c[1] !== undefined ? 2 : 0) | (c[2] !== undefined ? 4 : 0);
+        this.machSafeAxes = 1 << PLANE_AXES[this.plane]![2];
+        this.w.add(`M${machine} 기계 좌표 쪽 이동 — 작업 원점의 기계 위치를 몰라 공구 축을 안전 높이(경로 맨 위 + 여유)로 그림`, line);
+        if (this.machineRetract(mask, line, rapid ? MOVE_RAPID : MOVE_FEED)) this.w.add(`M${machine} X·Y 기계 위치를 몰라 그 축은 제자리에 둠`, line);
+        return this.afterMove(m99, line);
+      }
+    }
     const x = c[0] ?? this.pos[0]!;
     const y = c[1] ?? this.pos[1]!;
     const z = c[2] ?? this.pos[2]!;

@@ -17,17 +17,24 @@
  * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
+import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
 import { ExprError, GExpr, type GVarRef } from './expr';
 import { NcEmitter } from './emitter';
 import {
   FLAG_CYCLE,
   FLAG_MACHINE,
+  JOB_FILE_MARK,
+  MODAL_INC,
+  MODAL_POLAR,
+  MODAL_XF,
   MOVE_DRILL,
   MOVE_FEED,
   MOVE_RAPID,
   PLANE_AXES,
   arcPoints,
+  toolInfoFromComment,
   type NcDialect,
+  type NcMachineOptions,
   type NcPlane,
   type NcProgram,
   type NcRotaryOptions,
@@ -51,8 +58,15 @@ export interface GcodeOptions {
   maxBlocks?: number;
   /** 시작 위치(주면 첫 이동부터 그린다. 없으면 처음 지정되는 좌표부터) */
   initialPosition?: [number, number, number];
-  /** G28·G30 기준점(표시 좌표). 없으면 중간점에서 멈춘 것으로 본다 */
+  /** G28·G30 기준점(표시 좌표). 없고 machineOffset도 없으면 공구 축만 안전 높이(추정)로 옮긴다 */
   homePosition?: [number, number, number];
+  /**
+   * 첫 작업 좌표계 원점의 기계 좌표(표시 단위). 주면 G53 값과 G28·G30 기준점(referencePoint)을 실제 위치로 그린다.
+   * 없으면 기계 좌표 쪽 이동은 공구 축을 "안전 높이"(경로 맨 위 + 여유)로 그리고 FLAG_MACHINE_EST를 단다
+   */
+  machineOffset?: [number, number, number];
+  /** G28 기준점의 기계 좌표(machineOffset과 함께, 기본 0,0,0) */
+  referencePoint?: [number, number, number];
   /** IJK를 절대값으로 볼지(G90.1 기본, 일부 Mach3 설정) */
   arcCenterAbsolute?: boolean;
   /** 작업 좌표계 오프셋(기계 좌표, 표시 단위). 키: 'G54'…'G59', 'G54.1P1'… */
@@ -70,7 +84,22 @@ export interface GcodeOptions {
   latheDiameter?: boolean;
   /** 회전축 감기(기본 꺼짐 — A·B·C는 무시하고 경고). true면 A→X, B→Y, C→Z 축 둘레 */
   rotary?: boolean | NcRotaryOptions;
+  /**
+   * 소수점 없는 좌표 값을 최소 입력 단위로(Fanuc 매개변수 3401#0 DPI = 0 꼴, 기본 false): X·Y·Z·U·V·W·I·J·K·R·Q는
+   * mm 0.001·inch 0.0001, A·B·C는 0.001도. 끄면 소수점 없는 큰 좌표가 많을 때 notices에 'integer-units'를 단다
+   */
+  integerUnits?: boolean;
+  /** 공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고(기본 true) */
+  checkToolNumbers?: boolean;
+  /**
+   * 기계·읽기 설정(mm 기준, 앱 설정): 급속 속도·공구 교환 시간·도그레그 급속·축별 허용 범위, 기계 오프셋·기준점.
+   * 프로그램 단위가 inch면 바꿔 쓴다. rapidFeed·machineOffset·referencePoint를 따로 주면 그쪽이 먼저
+   */
+  machine?: NcMachineOptions;
 }
+
+/** 소수점 없으면 최소 입력 단위로 읽는 낱말(X Y Z U V W I J K R Q A B C) */
+const INT_LETTERS = [23, 24, 25, 20, 21, 22, 8, 9, 10, 17, 16, 0, 1, 2];
 
 // ───────────────────────── 블록 ─────────────────────────
 
@@ -105,7 +134,7 @@ type Ctrl =
   | { k: 'do'; m: number }
   | { k: 'o'; label: string; kw: string; val: number | undefined; args: number[] };
 
-class Block {
+export class Block {
   has = new Uint8Array(26);
   val = new Float64Array(26);
   dot = new Uint8Array(26);
@@ -119,6 +148,12 @@ class Block {
   words = 0;
   assigns: [GVarRef, number | undefined][] = [];
   ctrl: Ctrl | null = null;
+  // ── Siemens 꼴(siemens.ts가 채운다. G-code 해석은 늘 0·null) ──
+  /** 축별 절대(AC)·증분(IC) 덮어쓰기 비트(1 x, 2 y, 4 z) */
+  axAbs = 0;
+  axInc = 0;
+  /** 원호 중심 I·J·K 절대(AC) 비트(1 I, 2 J, 4 K) */
+  cAbs = 0;
   /** 낱말이 아닌 것만 있는 줄(빈 줄·주석) */
   reset(): void {
     this.has.fill(0);
@@ -130,6 +165,7 @@ class Block {
     this.words = 0;
     if (this.assigns.length) this.assigns = [];
     this.ctrl = null;
+    this.axAbs = this.axInc = this.cAbs = 0;
   }
   set(letter: number, v: number, dot: boolean): void {
     if (letter === 6) {
@@ -246,7 +282,11 @@ function parseFast(b: Uint8Array, s: number, e: number, blk: Block, onComment: (
 /** 느린 길에서 쓰는 변수 저장소 연결 */
 interface SlowEnv {
   get(ref: GVarRef): number | undefined;
+  readonly fanucRounding?: boolean;
 }
+
+/** 소수점 없는 수 낱말 값(부호 + 숫자, 뒤에 숫자·소수점이 더 없음) — lastIndex에서 맞춘다 */
+const INT_LITERAL = /[-+]?\d+(?![\d.])/y;
 
 const O_KEYWORDS = ['ENDSUB', 'SUB', 'CALL', 'RETURN', 'ELSEIF', 'ELSE', 'ENDIF', 'IF', 'ENDWHILE', 'WHILE', 'DO', 'ENDREPEAT', 'REPEAT', 'BREAK', 'CONTINUE'];
 
@@ -414,11 +454,17 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
       ex.pos++;
       // Siemens 꼴 X=식
       let v: number | undefined;
+      // 소수점 없는 수 그대로(X20000)인지 — 최소 입력 단위 읽기에 쓴다. 변수·식 값은 소수점이 있는 것으로 본다
+      let dot = true;
       if (s[ex.pos] === '=') {
         ex.pos++;
         v = ex.expr();
-      } else v = ex.unary();
-      if (v !== undefined) blk.set(c.charCodeAt(0) - A, v, true);
+      } else {
+        INT_LITERAL.lastIndex = ex.pos;
+        dot = !INT_LITERAL.test(s);
+        v = ex.unary();
+      }
+      if (v !== undefined) blk.set(c.charCodeAt(0) - A, v, dot);
       continue;
     }
     if (c === '%') return;
@@ -428,15 +474,162 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
 
 // ───────────────────────── 방언 판별 ─────────────────────────
 
-/** 글 앞부분으로 방언을 판별한다 */
+/** Fanuc 제어 낱말(이 뒤의 괄호는 식이 아니라 주석): GOTO10(…)·DO1(…)·END1(…)·THEN(…) */
+const FANUC_WORD_BEFORE_PAREN = /^(?:GOTO|DO|END|THEN|EQ|NE|GT|LT|GE|LE|AND|OR|XOR)\d*$/i;
+
+/** text[i]의 "("가 Siemens 함수 인수·식 괄호인지: 두 글자 넘는 이름 바로 뒤(CYCLE81(·AC(·SIN(), = 또는 연산자·쉼표 뒤 */
+function codeParen(text: string, i: number): boolean {
+  const before = text.charCodeAt(i - 1);
+  // 이름(글자·숫자·_)이 바로 붙어 있으면: 앞의 두 글자가 글자여야 함수 이름(N1(…)·T1M6(…)·X0(…)은 주석)
+  if ((before >= 48 && before <= 57) || (before >= 65 && before <= 90) || (before >= 97 && before <= 122) || before === 95) {
+    let k = i - 1;
+    while (k > 0) {
+      const c = text.charCodeAt(k - 1);
+      if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95) k--;
+      else break;
+    }
+    const name = text.slice(k, i);
+    return /^[A-Z_][A-Z_]/i.test(name) && !FANUC_WORD_BEFORE_PAREN.test(name);
+  }
+  // 빈칸을 건너 바로 앞 글자: = 와 연산자·쉼표는 식 괄호(Siemens X=(R1+2)·R3=R1*(R2+1)). 줄 앞 '/'는 블록 건너뛰기
+  let k = i - 1;
+  while (k >= 0 && (text.charCodeAt(k) === 32 || text.charCodeAt(k) === 9)) k--;
+  if (k < 0) return false;
+  const c = text[k]!;
+  if (c === '=' || c === '*' || c === '+' || c === '-' || c === ',') return true;
+  if (c === '/') {
+    let j = k - 1;
+    while (j >= 0 && (text.charCodeAt(j) === 32 || text.charCodeAt(j) === 9)) j--;
+    return j >= 0 && text.charCodeAt(j) !== 10;
+  }
+  return false;
+}
+
+let stripCache: { text: string; out: string } | null = null;
+
+/**
+ * 괄호 주석 "( … )"을 떼고 빈칸으로 바꾼다(판별용). 낱말에 붙은 주석(N1(…)·T1M6(…)·G0X0(…))과 겹친 주석 "((…))"도 뗀다.
+ * Siemens 함수 인수(CYCLE81(…)·=AC(…)·SIN(…))와 식 괄호(= ·연산자 뒤)는 남긴다. 닫히지 않은 주석은 줄 끝까지
+ */
+export function stripParenComments(text: string): string {
+  if (stripCache && stripCache.text === text) return stripCache.out;
+  if (text.indexOf('(') < 0) return text;
+  const parts: string[] = [];
+  let last = 0;
+  let keep = 0; // 남긴(식) 괄호 깊이
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10) {
+      keep = 0;
+      continue;
+    }
+    if (c === 41) {
+      if (keep > 0) keep--;
+      continue;
+    }
+    if (c !== 40) continue;
+    if (keep > 0 || codeParen(text, i)) {
+      keep++;
+      continue;
+    }
+    let j = i + 1;
+    let depth = 1;
+    while (j < n) {
+      const cj = text.charCodeAt(j);
+      if (cj === 10) break;
+      if (cj === 40) depth++;
+      else if (cj === 41 && --depth === 0) break;
+      j++;
+    }
+    parts.push(text.slice(last, i), ' ');
+    last = j < n && text.charCodeAt(j) === 41 ? j + 1 : j;
+    i = last - 1;
+  }
+  parts.push(text.slice(last));
+  const out = parts.join('');
+  stripCache = { text, out };
+  return out;
+}
+
+/** Siemens 표지(주석을 뗀 글에서): 맞은 표지 종류 수 */
+const SIEMENS_MARKS: RegExp[] = [
+  /\bMCALL\b/i,
+  /\b(?:CYCLE\d{2,3}|HOLES[12]|POCKET[1-4]|SLOT[12]|LONGHOLE)\s*\(/i,
+  /\bT\s*=\s*"/i,
+  /\bCR\s*=\s*[-+.\dR(]/i,
+  /=\s*(?:AC|IC)\s*\(/i,
+  /\bGOTO[FB]\b/i,
+  /\bDEF\s+(?:REAL|INT|BOOL|CHAR|STRING|AXIS|FRAME)\b/i,
+  /\b(?:SUPA|ATRANS|AROT|AMIRROR|ASCALE)\b/i,
+  /^\s*(?:N\d+\s+)?(?:TRANS|ROT|MIRROR|SCALE)\s+(?:[XYZ][-+.\d]|RPL\s*=)/im,
+  /(?:^|\s)G(?:64[1-5]|700|710|500|50[5-9]|5[1-9]\d)(?![\d.])/im,
+  /^\s*(?:N\d+\s+)?R\d+\s*=/im,
+];
+
+/** 판별용 코드 글: 괄호 주석과 ; 주석을 뗀다 */
+let codeCache: { head: string; code: string } | null = null;
+function detectCode(head: string): string {
+  if (codeCache && codeCache.head === head) return codeCache.code;
+  const code = stripParenComments(head).replace(/;[^\n]*/g, ' ');
+  codeCache = { head, code };
+  return code;
+}
+
+function siemensHeader(head: string): boolean {
+  return /^\s*%_N_\w+_(?:MPF|SPF)\b/im.test(head) || /\$PATH\s*=\s*\/_N_/i.test(head);
+}
+
+/** Siemens 표지 종류 수(%_N_ 머리·$PATH는 따로) */
+function siemensMarks(code: string): number {
+  let n = 0;
+  for (const re of SIEMENS_MARKS) if (re.test(code)) n++;
+  return n;
+}
+
+/**
+ * Siemens Sinumerik 표지: %_N_…_MPF/SPF 머리·$PATH, MCALL, CYCLE8x(…)·HOLES·CYCLE800, T="이름", CR=, =AC(…)·=IC(…),
+ * GOTOF/GOTOB, DEF REAL/INT, SUPA, TRANS/ATRANS/AROT/AMIRROR, G64x, G700/G710, R 변수 대입. 주석(; …·괄호 주석)은 떼고 본다
+ */
+export function looksSiemens(head: string): boolean {
+  return siemensHeader(head) || siemensMarks(detectCode(head)) > 0;
+}
+
+/** Okuma OSP 표지: CALL O…, VC 변수 대입, G15 H, NLAP, RTS(부프로그램 끝) */
+export function looksOkuma(head: string): boolean {
+  const code = stripParenComments(head);
+  return /\bCALL\s+O\w+/i.test(code) || /(?:^|\s)VC\d+\s*=/im.test(code) || /\bG15\s*H\d/i.test(code) || /\bNLAP\b/i.test(code) || /^\s*(?:N\d+\s+)?RTS\b/im.test(code) || /\bokuma\b/i.test(head);
+}
+
+/**
+ * 글 앞부분으로 방언을 판별한다.
+ * Siemens 표지가 하나뿐이면 Fanuc·LinuxCNC의 뚜렷한 표지(O 번호 줄, # 변수, M98·G65 P 부르기, o-코드 부프로그램)가 없을 때만
+ * Siemens로 본다(표지가 둘 넘으면 Siemens). Haas는 주석의 HAAS나 Haas만 쓰는 코드로 본다
+ */
 export function detectGcodeDialect(head: string): NcDialect {
   if (/^\s*\d*\s*BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
     return 'heidenhain';
-  if (/^\s*o(?:\d+|<[^>]+>)\s*(?:sub|call|if|while|do|repeat)\b/im.test(head) || /#<[_a-z]/i.test(head) || /linuxcnc|\bemc2?\b/i.test(head))
-    return 'linuxcnc';
+  // Heidenhain DIN/ISO: "%이름 G71 *" 머리, 블록 끝 * 과 G30/G31 공작물
+  if (/^\s*%[^\s*;(]+\s+G7[01]\b/im.test(head) || /^\s*N\d+\s+G3[01]\b[^\n]*\*\s*$/im.test(head)) return 'heidenhain';
+  if (siemensHeader(head)) return 'siemens';
+  const code = detectCode(head);
+  const linuxSub = /^\s*o(?:\d+|<[^>]+>)\s*(?:sub|call|if|while|do|repeat)\b/im.test(code) || /#<[_a-z]/i.test(code);
+  const fanucStrong = /^\s*(?:N\d+\s*)?O\d{1,8}(?!\d)/im.test(code) || /#\d/.test(code) || /(?:^|[^A-Z0-9.#])(?:M\s*98|G\s*65)\s*P/im.test(code);
+  const sm = siemensMarks(code);
+  if (sm >= 2 || (sm === 1 && !linuxSub && !fanucStrong)) return 'siemens';
+  if (linuxSub || /linuxcnc|\bemc2?\b/i.test(head)) return 'linuxcnc';
   if (/\bgrbl\b/i.test(head) || /^\s*\$[A-Z0-9$#]/m.test(head)) return 'grbl';
   if (/\bmach\s*[34]\b/i.test(head)) return 'mach3';
-  if (/^\s*[O:]\d{1,8}\b/m.test(head) || /\b(?:G65|WHILE\s*\[|IF\s*\[|GOTO\s*\d)/i.test(head) || /#[1-9]\d{2,3}\s*=/.test(head) || /\bfanuc\b/i.test(head))
+  // Haas: 주석의 "HAAS"(Fusion·Mastercam 포스트 머리), Haas만 쓰는 코드 G187·G103·G154·G110~G129·G150·M130.
+  // 선반 프로그램의 G112·G113(극좌표 보간)은 빼고, M97(Haas 지역 부프로그램)은 다른 기계도 쓸 수 있어 표지로 보지 않는다(어느 방언이든 읽는다)
+  if (/\(\s*[^)\n]*\bhaas\b/i.test(head)) return 'haas';
+  {
+    let lathe: boolean | undefined;
+    const re = /(?:^|[^A-Z0-9.#])G\s*(187|103|154|1[12]\d|150)(?![\d.])/gim;
+    for (let m = re.exec(code); m; m = re.exec(code)) if (!((m[1] === '112' || m[1] === '113') && (lathe ??= detectLathe(head)))) return 'haas';
+    if (/(?:^|[^A-Z0-9.#])M\s*130(?!\d)/im.test(code)) return 'haas';
+  }
+  if (/^\s*[O:]\d{1,8}\b/m.test(code) || /\b(?:G65|WHILE\s*\[|IF\s*\[|GOTO\s*\d)/i.test(code) || /#[1-9]\d{2,3}\s*=/.test(code) || /\bfanuc\b/i.test(head))
     return 'fanuc';
   return 'iso';
 }
@@ -446,7 +639,7 @@ export function detectGcodeDialect(head: string): NcDialect {
  * 선택(lathe: 'auto')과 밀링으로 읽을 때의 안내 경고에 쓴다.
  */
 export function detectLathe(head: string): boolean {
-  const code = head.replace(/\([^)\n]*\)/g, ' ').replace(/;[^\n]*/g, ' ');
+  const code = detectCode(head);
   let score = 0;
   if (/(?:^|[^A-Z])T\s*\d{4}(?!\d)/im.test(code)) score += 2;
   if (/(?:^|[^A-Z0-9.])G\s*0?9[67](?!\d)/im.test(code)) score += 2;
@@ -477,75 +670,52 @@ interface Frame {
   backLine?: number;
 }
 
-/** 3×4 아핀 변환(행 우선 3×3 + 이동 3) */
-type Affine = Float64Array;
-
-function affine(m: number[], t: number[]): Affine {
-  return new Float64Array([...m, ...t]);
-}
-/** a∘b(b를 먼저) */
-function composeAffine(a: Affine, b: Affine): Affine {
-  const o = new Float64Array(12);
-  for (let i = 0; i < 3; i++) {
-    for (let j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3]! * b[j]! + a[i * 3 + 1]! * b[3 + j]! + a[i * 3 + 2]! * b[6 + j]!;
-    o[9 + i] = a[i * 3]! * b[9]! + a[i * 3 + 1]! * b[10]! + a[i * 3 + 2]! * b[11]! + a[9 + i]!;
-  }
-  return o;
-}
-function invertAffine(a: Affine): Affine | null {
-  const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = a as unknown as number[];
-  const c0 = m4! * m8! - m5! * m7!;
-  const c1 = m5! * m6! - m3! * m8!;
-  const c2 = m3! * m7! - m4! * m6!;
-  const det = m0! * c0 + m1! * c1 + m2! * c2;
-  if (Math.abs(det) < 1e-15) return null;
-  const inv = [
-    c0 / det,
-    (m2! * m7! - m1! * m8!) / det,
-    (m1! * m5! - m2! * m4!) / det,
-    c1 / det,
-    (m0! * m8! - m2! * m6!) / det,
-    (m2! * m3! - m0! * m5!) / det,
-    c2 / det,
-    (m1! * m6! - m0! * m7!) / det,
-    (m0! * m4! - m1! * m3!) / det,
-  ];
-  const t = [0, 1, 2].map((i) => -(inv[i * 3]! * a[9]! + inv[i * 3 + 1]! * a[10]! + inv[i * 3 + 2]! * a[11]!));
-  return affine(inv, t);
-}
-function applyAffine(a: Affine, p: ArrayLike<number>, out: number[] | Float64Array): void {
-  const x = p[0]!;
-  const y = p[1]!;
-  const z = p[2]!;
-  out[0] = a[0]! * x + a[1]! * y + a[2]! * z + a[9]!;
-  out[1] = a[3]! * x + a[4]! * y + a[5]! * z + a[10]!;
-  out[2] = a[6]! * x + a[7]! * y + a[8]! * z + a[11]!;
-}
-/** 중심 c에 대한 축별 배율(거울은 -1) */
-function diagAbout(c: number[], f: number[]): Affine {
-  return affine([f[0]!, 0, 0, 0, f[1]!, 0, 0, 0, f[2]!], [c[0]! * (1 - f[0]!), c[1]! * (1 - f[1]!), c[2]! * (1 - f[2]!)]);
-}
-/** 평면 plane에서 중심 c 둘레 deg도 회전(평면 법선 기준 반시계 +) */
-function rotAbout(c: number[], deg: number, plane: number): Affine {
-  const [a0, a1, a2] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
-  const t = (deg * Math.PI) / 180;
-  const m = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-  m[a0 * 3 + a0] = Math.cos(t);
-  m[a0 * 3 + a1] = -Math.sin(t);
-  m[a1 * 3 + a0] = Math.sin(t);
-  m[a1 * 3 + a1] = Math.cos(t);
-  m[a2 * 3 + a2] = 1;
-  const r = affine(m, [0, 0, 0]);
-  const rc = [0, 0, 0];
-  applyAffine(r, c, rc);
-  r[9] = c[0]! - rc[0]!;
-  r[10] = c[1]! - rc[1]!;
-  r[11] = c[2]! - rc[2]!;
-  return r;
-}
-const ZERO3 = [0, 0, 0];
+export { affine, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, ZERO3, type Affine } from './affine';
 
 const MAX_CALL_DEPTH = 64;
+
+/** Siemens: 앞쪽 줄에서 처음 나오는 G70/G700(inch)·G71/G710(mm) */
+function prescanSiemensUnits(src: NcSource): boolean | undefined {
+  const n = Math.min(src.lineCount, 5000);
+  for (let i = 0; i < n; i++) {
+    const t = sourceLine(src, i);
+    const c = t.indexOf(';');
+    const m = /(?:^|[^A-Z0-9_])G0*7(00|0|10|1)(?![0-9])/i.exec(c >= 0 ? t.slice(0, c) : t);
+    if (m) return m[1] === '0' || m[1] === '00';
+  }
+  return undefined;
+}
+
+/** 공구를 적은 주석인지(지름 또는 공구 종류 낱말): 프로그램 이름 주석과 가른다 */
+const TOOL_WORDS = /(?:END\s*MILL|ENDMILL|\bE\/?M\b|\bFLAT\b|\bBALL|\bBULL|DRILL|\bTAP\b|REAM|\bMILL\b|SPOT|CHAMF|CENTER|\bBOR(?:E|ING)\b|CUTTER|\bSLOT|INSERT|\bTOOL\b)/i;
+function looksLikeTool(text: string): boolean {
+  return TOOL_WORDS.test(text) || toolInfoFromComment(text, 'mm').diameter !== undefined;
+}
+
+/**
+ * 함께 연 파일이 시작하는 줄: "(OPENCAD-JOB-FILE 이름)" 또는 "; OPENCAD-JOB-FILE 이름"(앱이 여러 파일을 한 작업으로 이을 때 넣는다).
+ * 줄 번호 → 파일 이름, 없으면 null
+ */
+export function jobFileLines(src: NcSource): Map<number, string> | null {
+  const b = src.bytes;
+  const mark = JOB_FILE_MARK;
+  let out: Map<number, string> | null = null;
+  for (let i = 0; i < src.lineCount; i++) {
+    const [s, e] = lineRange(src, i);
+    let k = s;
+    while (k < e && (b[k] === 32 || b[k] === 9)) k++;
+    if (b[k] !== 40 && b[k] !== 59) continue;
+    k++;
+    while (k < e && b[k] === 32) k++;
+    if (e - k < mark.length) continue;
+    let ok = true;
+    for (let j = 0; j < mark.length && ok; j++) ok = b[k + j] === mark.charCodeAt(j);
+    if (!ok) continue;
+    const name = decodeRange(src, k + mark.length, e).replace(/\)\s*$/, '').trim();
+    (out ??= new Map()).set(i, name);
+  }
+  return out;
+}
 
 /** 앞쪽 줄에서 처음 나오는 G20/G21로 표시 단위를 정한다(true = inch) */
 function prescanUnits(src: NcSource): boolean | undefined {
@@ -564,99 +734,224 @@ function prescanUnits(src: NcSource): boolean | undefined {
   return undefined;
 }
 
-class Runner extends NcEmitter {
-  private blk = new Block();
-  private dialect: NcDialect;
-  private o: GcodeOptions;
+export class Runner extends NcEmitter {
+  protected blk = new Block();
+  protected dialect: NcDialect;
+  protected o: GcodeOptions;
 
   // 상태
-  private motion = 0; // ×10: 0, 10, 20, 30
-  private cycle = 0; // ×10: 0 = 없음, 810…
-  private cycleFresh = true;
-  private initLevel = 0;
-  private cz: number | undefined;
-  private cr: number | undefined;
-  private cq = 0;
-  private cp = 0;
-  private plane: NcPlane = 0;
-  private blockInch = false;
-  private scale = 1;
-  private absolute = true;
-  private arcAbs = false;
-  private retractR = false;
-  private selTool = -1;
-  private seenM6 = false;
-  private baseWcs = -1;
-  private wcsOff = new Map<number, [number, number, number]>();
-  private wcsKnown = new Set<number>();
-  private g92 = [0, 0, 0];
-  private g52 = [0, 0, 0];
-  private off = [0, 0, 0];
-  private stored28: [number, number, number] | null = null;
-  private stored30: [number, number, number] | null = null;
-  private peck: number;
+  protected motion = 0; // ×10: 0, 10, 20, 30
+  protected cycle = 0; // ×10: 0 = 없음, 810…
+  protected cycleFresh = true;
+  protected initLevel = 0;
+  /** 고정 사이클 처음 높이가 추정 안전 높이인지 */
+  protected initEst = false;
+  protected cz: number | undefined;
+  protected cr: number | undefined;
+  protected cq = 0;
+  protected cp = 0;
+  /** Haas 쪼기: 첫 절입 I·줄이는 양 J·최소 절입 K(표시 단위) */
+  protected cqI = 0;
+  protected cqJ = 0;
+  protected cqK = 0;
+  /** 첫 절입에 더할 길이(Siemens CYCLE83은 첫 깊이를 기준면에서 잰다 — R 점까지의 안전 거리) */
+  protected peckFirstExtra = 0;
+  // ── 소수점 없는 좌표(최소 입력 단위) ──
+  /** 0이 아닌 X·Y·Z 낱말 수와 그 가운데 소수점 없이 100 이상인 것 */
+  protected axisWords = 0;
+  protected intBig = 0;
+
+  /** integerUnits면 소수점 없는 좌표 값을 최소 입력 단위로 바꾸고, 아니면 안내용으로 센다 */
+  protected integerWords(blk: Block): void {
+    const opt = this.o.integerUnits;
+    for (const L of INT_LETTERS) {
+      if (!blk.has[L]) continue;
+      if (opt) {
+        // 반복 횟수 K(Fanuc 계열 고정 사이클·M98)는 길이가 아니다
+        if (L === LK && this.kIsCount(blk)) continue;
+        if (!blk.dot[L]) {
+          blk.val[L] = blk.val[L]! / (L <= 2 ? 1000 : this.blockInch ? 10000 : 1000);
+          blk.dot[L] = 1;
+        }
+        continue;
+      }
+      if (L >= LX && L <= LZ) {
+        const v = blk.val[L]!;
+        if (v !== 0) {
+          this.axisWords++;
+          if (!blk.dot[L] && Math.abs(v) >= 100) this.intBig++;
+        }
+      }
+    }
+  }
+
+  /**
+   * 이 블록의 K가 반복 횟수인지: M98·M97 블록, 또는 Fanuc 계열(LinuxCNC·Haas가 아닌) 고정 사이클 블록(이 블록에서 켜거나 켜져 있는 사이클 —
+   * G80·G0~G3이 같은 블록에 있으면 끈다). 선반 모드는 정면·측면 드릴 G81~G89만(G76 나사의 K는 높이)
+   */
+  protected kIsCount(blk: Block): boolean {
+    if (blk.hasM(98) || blk.hasM(97)) return true;
+    if (this.dialect === 'linuxcnc' || this.dialect === 'haas') return false;
+    let cyc = this.cycle;
+    for (let k = 0; k < blk.gCount; k++) {
+      const g = blk.g[k]!;
+      if (g === 0 || g === 10 || g === 20 || g === 30 || g === 800) cyc = 0;
+      else if (g >= 810 && g <= 890) cyc = g;
+      else if (g === 730 || g === 740 || g === 760) cyc = g;
+    }
+    return this.lathe ? cyc >= 810 && cyc <= 890 : cyc > 0;
+  }
+
+  // ── 극좌표(G16) ──
+  protected polar = false;
+  /** 극 원점(평면 두 축, 프로그램 좌표)·반지름·각(도) */
+  protected polarO: [number, number] = [0, 0];
+  protected polarR = 0;
+  protected polarA = 0;
+
+  /**
+   * G16 블록: 반지름(평면 첫 축 낱말)을 G90으로 주면 극 원점 = 작업 원점, G91로 주면 지금 자리.
+   * 각(둘째 축 낱말)은 G90이면 그 값, G91이면 앞 각에 더한다. 빠진 값은 앞 값. 결과를 절대 직교 좌표 낱말로 바꾼다
+   */
+  protected polarBlock(blk: Block): void {
+    this.polarAgain = null;
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    const L0 = AXIS_LETTER[a0]!;
+    const L1 = AXIS_LETTER[a1]!;
+    if (!blk.has[L0] && !blk.has[L1]) return;
+    const hasR = !!blk.has[L0];
+    const hasA = !!blk.has[L1];
+    const rv = blk.val[L0]!;
+    const av = blk.val[L1]!;
+    const abs = this.absolute;
+    const apply = (): void => {
+      const q = this.progPos();
+      if (hasR) {
+        this.polarR = rv * this.axScale[a0]!;
+        this.polarO = abs ? [0, 0] : [q[a0]!, q[a1]!];
+      }
+      if (hasA) this.polarA = abs ? av : this.polarA + av;
+      const t = (this.polarA * Math.PI) / 180;
+      blk.has[L0] = blk.has[L1] = 1;
+      blk.val[L0] = (this.polarO[0] + this.polarR * Math.cos(t)) / this.axScale[a0]!;
+      blk.val[L1] = (this.polarO[1] + this.polarR * Math.sin(t)) / this.axScale[a1]!;
+      blk.dot[L0] = blk.dot[L1] = 1;
+      blk.axAbs |= (1 << a0) | (1 << a1);
+    };
+    apply();
+    // 고정 사이클 반복(K·L)은 같은 낱말을 다시 준 것처럼(G91 각이면 반복마다 더 돈다)
+    this.polarAgain = apply;
+  }
+  /** 이 블록의 극좌표 바꾸기를 한 번 더(고정 사이클 반복용) */
+  protected polarAgain: (() => void) | null = null;
+
+  /** 낱말이 증분인지(블록의 축별 AC/IC 덮어쓰기 → G90/G91) */
+  protected incAxis(blk: Block, a: number): boolean {
+    return blk.axInc & (1 << a) ? true : blk.axAbs & (1 << a) ? false : !this.absolute;
+  }
+
+  /** 보링 시프트(G76·G87·Haas G77): 평면 두 축(프로그램 좌표)과 표시 좌표, Q로 정했는지 */
+  protected cShift: [number, number] = [0, 0];
+  protected cShiftD: [number, number] = [0, 0];
+  protected cShiftQ = false;
+
+  /** 보링 시프트 안내(한 번) */
+  protected noteShift(line: number): void {
+    if (this.cShiftQ) this.w.add('보링 사이클 시프트 Q는 평면 첫 축 + 방향으로 봄(기계 매개변수에 따라 다름)', line);
+    else if (!this.cShift[0] && !this.cShift[1]) this.w.add('보링 사이클에 시프트 양(Q 또는 I·J)이 없음 — 시프트 없이 그림', line);
+  }
+  protected plane: NcPlane = 0;
+  protected blockInch = false;
+  protected scale = 1;
+  protected absolute = true;
+  protected arcAbs = false;
+  protected retractR = false;
+  protected selTool = -1;
+  protected seenM6 = false;
+  protected baseWcs = -1;
+  protected wcsOff = new Map<number, [number, number, number]>();
+  protected wcsKnown = new Set<number>();
+  protected g92 = [0, 0, 0];
+  protected g52 = [0, 0, 0];
+  protected off = [0, 0, 0];
+  protected stored28: [number, number, number] | null = null;
+  protected stored30: [number, number, number] | null = null;
+  protected peck: number;
 
   // 반경 보정
-  private dReg: number | undefined;
-  private dDirect: number | undefined;
-  private radiusGeo = new Map<number, number>();
-  private radiusWear = new Map<number, number>();
+  protected dReg: number | undefined;
+  protected dDirect: number | undefined;
+  protected radiusGeo = new Map<number, number>();
+  protected radiusWear = new Map<number, number>();
 
   // 좌표 변환(거울·배율·회전) — 없으면 null(빠른 길)
-  private mirrorXf: { c: number[]; s: number[] } | null = null;
-  private scaleXf: { c: number[]; f: number[] } | null = null;
-  private rotXf: { c: number[]; deg: number; plane: NcPlane } | null = null;
-  private wcsRot = new Map<number, number>();
-  private xf: Affine | null = null;
-  private xfInv: Affine | null = null;
-  private pp = new Float64Array(3);
-  private ppT = new Float64Array(3);
-  private initLevelProg = 0;
+  protected mirrorXf: { c: number[]; s: number[] } | null = null;
+  protected scaleXf: { c: number[]; f: number[] } | null = null;
+  protected rotXf: { c: number[]; deg: number; plane: NcPlane } | null = null;
+  protected wcsRot = new Map<number, number>();
+  /** 가장 바깥 변환(Siemens 프레임) — 프로그램 좌표 → 작업 좌표 */
+  protected progXf: Affine | null = null;
+  /** G68.2·Haas G268 기울인 작업 평면(G68 회전 등 바깥) */
+  protected tiltXf: Affine | null = null;
+  protected xf: Affine | null = null;
+  protected xfInv: Affine | null = null;
+  protected pp = new Float64Array(3);
+  protected ppT = new Float64Array(3);
+  protected initLevelProg = 0;
   /** 축 낱말 값 → 표시 단위(단위 배율 × 선반 지름이면 X에 0.5) */
-  private axScale = new Float64Array([1, 1, 1]);
-  private tt = new Float64Array(3);
+  protected axScale = new Float64Array([1, 1, 1]);
+  protected tt = new Float64Array(3);
 
   // 선반
-  private lathe = false;
+  protected lathe = false;
   /** Fanuc 계열 선반(A 체계): U·W 증분, G90/G92/G94 사이클, G98/G99 이송 단위, G50 좌표 설정 */
-  private fanucLathe = false;
-  private xMul = 1;
-  private css = false;
-  private cssV = 0;
-  private maxRpm = 0;
-  private lcmd = 0;
-  private rangeEnd = -1;
-  private boxX = NaN;
-  private boxZ = NaN;
-  private roughD = 0;
-  private roughE = 0;
-  private g73: [number, number, number] = [0, 0, 1];
-  private peckE = 0;
-  private thread: { m: number; dmin: number; d: number } = { m: 1, dmin: 0, d: 0 };
+  protected fanucLathe = false;
+  protected xMul = 1;
+  protected css = false;
+  protected cssV = 0;
+  protected maxRpm = 0;
+  protected lcmd = 0;
+  protected rangeEnd = -1;
+  protected boxX = NaN;
+  protected boxZ = NaN;
+  protected roughD = 0;
+  protected roughE = 0;
+  protected g73: [number, number, number] = [0, 0, 1];
+  protected peckE = 0;
+  protected thread: { m: number; dmin: number; d: number } = { m: 1, dmin: 0, d: 0 };
 
   // 프로그램 흐름
-  private pc = 0;
-  private ended = false;
-  private started = false;
-  private stack: Frame[] = [];
-  private globals = new Map<number, number>();
-  private namedGlobals = new Map<string, number>();
-  private loops: { m: number; line: number }[] = [];
-  private oIndex: Map<number, number> | null = null;
-  private nIndex: Map<number, number[]> | null = null;
-  private oCodes: Map<string, { line: number; kw: string }[]> | null = null;
-  private ifTaken = new Map<string, boolean>();
-  private repeatLeft = new Map<string, number>();
-  private blocks = 0;
-  private maxBlocks: number;
-  private maxMoves: number;
-  private hitLimit = false;
+  protected pc = 0;
+  protected ended = false;
+  protected started = false;
+  protected stack: Frame[] = [];
+  protected globals = new Map<number, number>();
+  protected namedGlobals = new Map<string, number>();
+  protected loops: { m: number; line: number }[] = [];
+  protected oIndex: Map<number, number> | null = null;
+  /** 함께 연 파일이 시작하는 줄(JOB_FILE_MARK 주석 줄) → 파일 이름. 없으면 null */
+  protected jobLines: Map<number, string> | null = null;
+  protected nIndex: Map<number, number[]> | null = null;
+  protected oCodes: Map<string, { line: number; kw: string }[]> | null = null;
+  protected ifTaken = new Map<string, boolean>();
+  protected repeatLeft = new Map<string, number>();
+  protected blocks = 0;
+  protected maxBlocks: number;
+  protected maxMoves: number;
+  protected hitLimit = false;
 
   constructor(src: NcSource, opts: GcodeOptions, dialect: NcDialect, head: () => string) {
     super(src, opts.initialPosition);
     this.o = opts;
     this.dialect = dialect;
-    if (opts.lathe === true || (opts.lathe === 'auto' && detectLathe(head()))) {
+    // Okuma OSP: CALL O…·VC 변수·NLAP·RTS 등은 읽지 않으므로 띠와 경고로 알린다(G15 H는 작업 좌표계로 읽음)
+    if ((dialect === 'fanuc' || dialect === 'iso') && src.lineCount > 0 && looksOkuma(head())) {
+      this.notices.push({ kind: 'dialect', dialect: 'okuma' });
+      this.w.add('Okuma OSP 프로그램으로 보임 — CALL·VC 변수·NLAP·RTS는 읽지 않아 경로가 모자랄 수 있음');
+    }
+    const latheAuto = opts.lathe === 'auto' && detectLathe(head());
+    if (latheAuto) this.notices.push({ kind: 'lathe-auto' });
+    if (opts.lathe === true || latheAuto) {
       this.lathe = true;
       this.latheMode = true;
       this.fanucLathe = dialect !== 'linuxcnc' && dialect !== 'grbl';
@@ -664,16 +959,28 @@ class Runner extends NcEmitter {
       this.xMul = (opts.latheDiameter ?? this.fanucLathe) ? 0.5 : 1;
       // Fanuc 선반은 켜질 때 회전당 이송(G99)이 흔하다
       if (this.fanucLathe) this.feedMode = 95;
+      // 선반의 기계 원점은 +X·+Z 쪽(공구대가 멀리 물러난다)
+      this.machSafeAxes = 5;
     } else if (opts.lathe === undefined && src.lineCount > 0 && detectLathe(head()))
       this.w.add('선반 프로그램으로 보임 — 선반 모드로 읽으면 X를 지름으로 보고 선반 사이클을 그림');
     if (opts.rotary) this.setRotary(opts.rotary === true ? {} : opts.rotary);
-    const pre = prescanUnits(src);
+    const pre = dialect === 'siemens' ? prescanSiemensUnits(src) : prescanUnits(src);
     this.displayInch = pre ?? opts.units === 'inch';
-    if (pre === undefined && src.lineCount > 0) this.w.add(`단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
+    if (pre === undefined && src.lineCount > 0)
+      this.w.add(dialect === 'siemens' ? `단위 코드(G70/G71)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄` : `단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
     this.blockInch = this.displayInch;
     this.updateScale();
     this.tol = this.displayInch ? 0.0001 : 0.002;
-    this.rapidFeed = opts.rapidFeed ?? (this.displayInch ? 400 : 10000);
+    this.rapidFeed = this.displayInch ? 400 : 10000;
+    if (opts.machine) {
+      const mc = this.applyMachine(opts.machine);
+      this.o = { ...opts, machineOffset: opts.machineOffset ?? mc.offset, referencePoint: opts.referencePoint ?? mc.reference };
+    }
+    if (opts.rapidFeed) this.rapidFeed = opts.rapidFeed;
+    // 안전 확인: 공구 길이 보정(G43)은 밀링 Fanuc 계열에서, 주축은 GRBL(레이저 M3 S0)이 아니면
+    this.checkNumbers = opts.checkToolNumbers !== false;
+    this.checkTlc = !this.lathe && dialect !== 'grbl' && dialect !== 'siemens';
+    this.checkSpindle = dialect !== 'grbl';
     this.peck = opts.peckClearance ?? (this.displayInch ? 0.02 : 0.5);
     this.arcAbs = !!opts.arcCenterAbsolute;
     this.maxMoves = opts.maxMoves ?? 8_000_000;
@@ -686,7 +993,25 @@ class Runner extends NcEmitter {
           this.wcsKnown.add(idx);
         }
       }
+    this.jobLines = jobFileLines(src);
     this.stack.push({ kind: 'main', ret: -1, start: 0, reps: 1, locals: new Map(), named: new Map() });
+  }
+
+  /** 함께 연 파일 경계에 닿음: 주 프로그램이면 끝(true), 부프로그램이 M99 없이 파일 끝에 닿았으면 M99처럼 돌아간다 */
+  protected jobFileEnd(): boolean {
+    const f = this.stack[this.stack.length - 1]!;
+    if (f.kind === 'main') {
+      this.ended = true;
+      return true;
+    }
+    if (f.reps > 1) {
+      f.reps--;
+      this.pc = f.start;
+      return false;
+    }
+    this.stack.pop();
+    this.pc = f.ret;
+    return false;
   }
 
   run(): void {
@@ -697,12 +1022,22 @@ class Runner extends NcEmitter {
     const onComment = (cs: number, ce: number): void => {
       cm.push(cs, ce);
     };
-    while (!this.ended && this.pc < src.lineCount) {
+    while (!this.ended) {
+      // 글 끝: 여러 파일 작업이면 마지막 파일의 부프로그램이 M99 없이 끝에 닿은 것이니 돌아간다
+      if (this.pc >= src.lineCount) {
+        if (!this.jobLines || this.jobFileEnd()) break;
+        continue;
+      }
       const line = this.pc++;
       if (++this.blocks > this.maxBlocks) {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, line);
         this.hitLimit = true;
         break;
+      }
+      // 함께 연 다음 파일: 주 프로그램은 여기서 끝, 부프로그램이 M99 없이 파일 끝에 닿으면 돌아간다
+      if (this.jobLines?.has(line)) {
+        if (this.jobFileEnd()) break;
+        continue;
       }
       blk.reset();
       cm.length = 0;
@@ -735,6 +1070,11 @@ class Runner extends NcEmitter {
     }
   }
 
+  /** 식의 FIX·FUP를 Fanuc 매크로 B처럼(소수 버림·올림 — 음수도 절댓값 기준). LinuxCNC 등은 floor·ceil */
+  get fanucRounding(): boolean {
+    return this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas';
+  }
+
   // ── 변수 ──
   get(ref: GVarRef): number | undefined {
     const f = this.stack[this.stack.length - 1]!;
@@ -754,7 +1094,7 @@ class Runner extends NcEmitter {
     if (ref === 5400 || ref === 4014) return 54 + this.wcs;
     return this.globals.get(ref);
   }
-  private setVar(ref: GVarRef, v: number | undefined): void {
+  protected setVar(ref: GVarRef, v: number | undefined): void {
     const f = this.stack[this.stack.length - 1]!;
     if (typeof ref === 'string') {
       const m = ref.startsWith('_') ? this.namedGlobals : (f.named ??= new Map());
@@ -768,38 +1108,68 @@ class Runner extends NcEmitter {
     else m.set(ref, v);
   }
 
-  private progCoord(a: number): number {
+  protected progCoord(a: number): number {
     if (this.xfInv) return this.progPos()[a]! / this.scale;
     return (this.pos[a]! - this.off[a]!) / this.scale;
   }
 
   // ── 좌표 ──
-  private updateScale(): void {
+  protected updateScale(): void {
     this.scale = this.blockInch === this.displayInch ? 1 : this.blockInch ? 25.4 : 1 / 25.4;
     this.axScale[0] = this.scale * this.xMul;
     this.axScale[1] = this.scale;
     this.axScale[2] = this.scale;
   }
-  private updateOff(): void {
+  protected updateOff(): void {
     const w = this.wcsOff.get(this.wcs) ?? [0, 0, 0];
     const b = this.wcsOff.get(this.baseWcs < 0 ? this.wcs : this.baseWcs) ?? [0, 0, 0];
     for (let a = 0; a < 3; a++) this.off[a] = w[a]! - b[a]! + this.g92[a]! + this.g52[a]!;
   }
 
   /** 낱말 값을 표시 좌표로(절대·증분, G53) */
-  private target(blk: Block, a: number, machine: boolean, inc = !this.absolute): number {
+  protected target(blk: Block, a: number, machine: boolean, inc = !this.absolute): number {
     const L = AXIS_LETTER[a]!;
     if (!blk.has[L]) return this.pos[a]!;
     const v = blk.val[L]! * this.axScale[a]!;
+    if (blk.axInc & (1 << a)) inc = true;
+    else if (blk.axAbs & (1 << a)) inc = false;
     if (machine) {
-      const b = this.wcsOff.get(this.baseWcs < 0 ? this.wcs : this.baseWcs);
+      const b = this.machineBase();
       return v - (b ? b[a]! : 0);
     }
     return inc ? this.pos[a]! + v : v + this.off[a]!;
   }
 
+  /** 첫 작업 좌표계 원점의 기계 좌표(모르면 null) */
+  protected machineBase(): readonly number[] | null {
+    return this.o.machineOffset ?? this.wcsOff.get(this.baseWcs < 0 ? this.wcs : this.baseWcs) ?? null;
+  }
+
+  /** G28·G30 기준점(표시 좌표, 모르면 null) */
+  protected homeFor(g: number): readonly number[] | null {
+    const stored = g === 280 ? this.stored28 : this.stored30;
+    if (stored) return stored;
+    if (this.o.homePosition) return this.o.homePosition;
+    const mo = this.o.machineOffset;
+    if (mo) {
+      const r = this.o.referencePoint ?? [0, 0, 0];
+      return [r[0] - mo[0], r[1] - mo[1], r[2] - mo[2]];
+    }
+    return null;
+  }
+
+  /**
+   * 기계 위치를 모르는 기계 좌표 쪽 이동(G53·G28·G30 기준점): 공구 축(선반은 X·Z)을 안전 높이로, 나머지 축은 제자리에 두고 경고
+   * mask = 주어진 축 비트. what = 경고에 쓰는 코드 이름
+   */
+  protected machineEstimate(mask: number, line: number, what: string, kind = MOVE_RAPID): void {
+    this.w.add(`${what} 기계 좌표 쪽 이동 — 작업 원점의 기계 위치를 몰라 공구 축을 안전 높이(경로 맨 위 + 여유)로 그림`, line);
+    const rest = this.machineRetract(mask, line, kind);
+    if (rest) this.w.add(`${what} X·Y 기계 위치를 몰라 그 축은 제자리에 둠`, line);
+  }
+
   /** 블록의 끝점(표시 좌표) — 좌표 변환·선반 U/W를 함께 본다. 돌려주는 배열은 다음 부름에서 다시 쓴다 */
-  private targets(blk: Block, machine: boolean): Float64Array {
+  protected targets(blk: Block, machine: boolean): Float64Array {
     const t = this.tt;
     if (this.xf !== null && !machine) {
       this.targetXf(blk, t);
@@ -816,7 +1186,7 @@ class Runner extends NcEmitter {
   }
 
   /** 지금 위치의 프로그램 좌표(변환 전, 표시 단위). 돌려주는 배열은 다음 부름에서 다시 쓴다 */
-  private progPos(): Float64Array {
+  protected progPos(): Float64Array {
     const q = this.pp;
     q[0] = this.pos[0]! - this.off[0]!;
     q[1] = this.pos[1]! - this.off[1]!;
@@ -826,7 +1196,7 @@ class Runner extends NcEmitter {
   }
 
   /** 프로그램 좌표 → 표시 좌표(변환 + 오프셋) */
-  private toDisplay(p: ArrayLike<number>, out: number[] | Float64Array): void {
+  protected toDisplay(p: ArrayLike<number>, out: number[] | Float64Array): void {
     if (this.xf) applyAffine(this.xf, p, out);
     else {
       out[0] = p[0]!;
@@ -839,13 +1209,14 @@ class Runner extends NcEmitter {
   }
 
   /** 변환이 켜진 동안의 끝점: 프로그램 좌표에서 정하고(this.ppT) 변환한다 */
-  private targetXf(blk: Block, out: Float64Array): void {
+  protected targetXf(blk: Block, out: Float64Array): void {
     const q = this.progPos();
     for (let a = 0; a < 3; a++) {
       const L = AXIS_LETTER[a]!;
       if (!blk.has[L]) continue;
       const v = blk.val[L]! * this.axScale[a]!;
-      q[a] = this.absolute ? v : q[a]! + v;
+      const inc = blk.axInc & (1 << a) ? true : blk.axAbs & (1 << a) ? false : !this.absolute;
+      q[a] = inc ? q[a]! + v : v;
     }
     if (this.fanucLathe) {
       if (blk.has[LU] && !blk.has[LX]) q[0] = q[0]! + blk.val[LU]! * this.axScale[0]!;
@@ -856,7 +1227,7 @@ class Runner extends NcEmitter {
   }
 
   /** 거울·배율·회전을 하나의 변환으로 */
-  private rebuildXf(): void {
+  protected rebuildXf(): void {
     let m: Affine | null = null;
     const put = (n: Affine): void => {
       m = m ? composeAffine(n, m) : n;
@@ -866,6 +1237,9 @@ class Runner extends NcEmitter {
     if (this.rotXf) put(rotAbout(this.rotXf.c, this.rotXf.deg, this.rotXf.plane));
     const wr = this.wcsRot.get(this.wcs);
     if (wr) put(rotAbout(ZERO3, wr, 0));
+    // 가장 바깥: Siemens 프로그램 프레임(TRANS·ROT·SCALE·MIRROR)·G68.2 기울인 평면
+    if (this.tiltXf) put(this.tiltXf);
+    if (this.progXf) put(this.progXf);
     this.xf = m;
     this.xfInv = m ? invertAffine(m) : null;
     if (m && !this.xfInv) {
@@ -875,21 +1249,17 @@ class Runner extends NcEmitter {
   }
 
   /** 변환이 평면 plane을 그대로 두는지(원호를 원호로 옮길 수 있는지), 평면 안 방향 부호(거울이면 -1), 평면 안 배율이 고른지 */
-  private xfPlane(plane: number): { keeps: boolean; sign: number; uniform: boolean } {
-    const m = this.xf;
-    if (!m) return { keeps: true, sign: 1, uniform: true };
-    const [a0, a1, a2] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
-    const e = (i: number, j: number): number => m[i * 3 + j]!;
-    const keeps = Math.abs(e(a2, a0)) < 1e-12 && Math.abs(e(a2, a1)) < 1e-12 && Math.abs(e(a0, a2)) < 1e-12 && Math.abs(e(a1, a2)) < 1e-12;
-    const det = e(a0, a0) * e(a1, a1) - e(a0, a1) * e(a1, a0);
-    const c0 = Math.hypot(e(a0, a0), e(a1, a0));
-    const c1 = Math.hypot(e(a0, a1), e(a1, a1));
-    const dotc = e(a0, a0) * e(a0, a1) + e(a1, a0) * e(a1, a1);
-    return { keeps, sign: det < 0 ? -1 : 1, uniform: Math.abs(c0 - c1) < 1e-9 * Math.max(1, c0) && Math.abs(dotc) < 1e-9 };
+  /** 이동마다 남기는 모달 상태: 평면·G91·G16·좌표 변환·고정 사이클 번호 */
+  protected override modalState(): number {
+    return this.plane | (this.absolute ? 0 : MODAL_INC) | (this.polar ? MODAL_POLAR : 0) | (this.xf ? MODAL_XF : 0) | (Math.round(this.cycle / 10) << 8);
+  }
+
+  protected xfPlane(plane: number): { keeps: boolean; sign: number; uniform: boolean } {
+    return affinePlane(this.xf, plane);
   }
 
   /** G51(배율) — Fanuc: X·Y·Z 중심(없으면 지금 위치), P 모든 축 또는 I·J·K 축별. Mach3: X·Y·Z가 축별 배율 */
-  private g51(blk: Block, line: number): void {
+  protected g51(blk: Block, line: number): void {
     const cur = Array.from(this.progPos());
     let c = [0, 1, 2].map((a) => (blk.has[AXIS_LETTER[a]!] ? blk.val[AXIS_LETTER[a]!]! * this.axScale[a]! : cur[a]!));
     const factor = (L: number): number => {
@@ -915,7 +1285,7 @@ class Runner extends NcEmitter {
   }
 
   /** G51.1(거울): 주어진 축을 그 값의 축선에 대해 뒤집는다 */
-  private g511(blk: Block): void {
+  protected g511(blk: Block): void {
     const m = this.mirrorXf ?? { c: [0, 0, 0], s: [1, 1, 1] };
     for (let a = 0; a < 3; a++) {
       const L = AXIS_LETTER[a]!;
@@ -928,7 +1298,7 @@ class Runner extends NcEmitter {
   }
 
   /** G50.1: 주어진 축(없으면 모두)의 거울을 끈다 */
-  private g501(blk: Block): void {
+  protected g501(blk: Block): void {
     const m = this.mirrorXf;
     if (!m) return;
     const any = blk.has[LX] || blk.has[LY] || blk.has[LZ];
@@ -938,7 +1308,7 @@ class Runner extends NcEmitter {
   }
 
   /** G68(좌표 회전): 지금 평면에서 중심(평면 두 축 낱말, Mach3는 A·B도) 둘레로 R도. G91이면 R은 앞 각에 더한다 */
-  private g68(blk: Block, line: number): void {
+  protected g68(blk: Block, line: number): void {
     const plane = this.plane;
     const [a0, a1] = PLANE_AXES[plane]!;
     const cur = Array.from(this.progPos());
@@ -958,18 +1328,41 @@ class Runner extends NcEmitter {
     this.rebuildXf();
   }
 
+  /**
+   * G68.2(Fanuc)·G268(Haas) 기울인 작업 평면: X·Y·Z = 피처 좌표계 원점(지금 프로그램 좌표), I·J·K = 오일러 각(도).
+   * P0(기본)·Haas Q313 = Z-X-Z, Fanuc P1·Haas Q123 = X-Y-Z(고정 축 롤·피치·요). 그 밖은 경고하고 변환 없이.
+   * 이후 블록의 좌표(원호·고정 사이클 포함)는 이 평면에서 읽는다. G69로 끈다
+   */
+  protected g682(blk: Block, line: number): void {
+    const o = [0, 1, 2].map((a) => (blk.has[AXIS_LETTER[a]!] ? blk.val[AXIS_LETTER[a]!]! * this.axScale[a]! : 0));
+    const ang = [LI, LJ, LK].map((L) => (blk.has[L] ? blk.val[L]! : 0));
+    const haas = this.dialect === 'haas';
+    const p = blk.has[LP] ? Math.round(blk.val[LP]!) : 0;
+    const q = blk.has[LQ] ? Math.round(blk.val[LQ]!) : haas ? 313 : 0;
+    let r: Affine;
+    if ((!haas && p === 0) || (haas && q === 313)) r = composeAffine(composeAffine(rotAxis(2, ang[0]!), rotAxis(0, ang[1]!)), rotAxis(2, ang[2]!));
+    else if ((!haas && p === 1) || (haas && q === 123)) r = composeAffine(composeAffine(rotAxis(2, ang[2]!), rotAxis(1, ang[1]!)), rotAxis(0, ang[0]!));
+    else {
+      this.w.add(`G68.2 꼴(P${p}${haas ? ` Q${q}` : ''})은 지원하지 않음 — 변환 없이 그림`, line);
+      return;
+    }
+    this.tiltXf = composeAffine(translateAffine(o), r);
+    this.rebuildXf();
+  }
+
   /** P 낱말을 초로(Fanuc·ISO: 소수점 없는 P는 ms) */
-  private dwellSeconds(blk: Block, letter: number): number {
+  protected dwellSeconds(blk: Block, letter: number): number {
     const v = blk.val[letter]!;
     if (letter === LX) return v;
-    if ((this.dialect === 'fanuc' || this.dialect === 'iso') && !blk.dot[letter]) return v / 1000;
+    if ((this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && !blk.dot[letter]) return v / 1000;
     return v;
   }
 
   // ── 블록 실행 ──
-  private exec(blk: Block, line: number): void {
+  protected exec(blk: Block, line: number): void {
     if (blk.percent) {
-      if (this.started) this.ended = true;
+      // 부프로그램 안의 % (함께 연 부프로그램 파일의 머리·꼬리)는 프로그램 끝이 아니다
+      if (this.started && this.stack[this.stack.length - 1]!.kind === 'main') this.ended = true;
       return;
     }
     if (blk.comments.length) this.onComments(blk, line);
@@ -988,6 +1381,7 @@ class Runner extends NcEmitter {
       return;
     }
     this.started = true;
+    this.integerWords(blk);
     if (blk.hasG(650)) {
       // G65 블록의 낱말은 모두 인수(이송·공구로 보지 않는다)
       this.endBlock(blk, line, true);
@@ -1000,6 +1394,18 @@ class Runner extends NcEmitter {
     let machine = false;
     const compBefore = this.comp;
     let compDirect = false;
+    /** 그리지 않는(모르거나 매개변수만 받는) G — 이 블록의 좌표 낱말은 이동이 아니다 */
+    let unknownG = -1;
+    /** 한 블록만 급속 위치 결정(G60 한 방향 위치 결정·G27·G29) */
+    let oneShot = false;
+    /** Haas·Mach3 원형 포켓 G12(시계)·G13(반시계) */
+    let pocket = -1;
+    /** LinuxCNC G33.1 강성 탭(들어갔다 나온다) */
+    let tapOneShot = false;
+    /** 이 블록에 G43·G44·G43.4/5(공구 길이 보정)가 있음 */
+    let tlcOn = false;
+    /** Haas 볼트 구멍 패턴(G70·G71·G72) */
+    let boltG = -1;
     for (let k = 0; k < blk.gCount; k++) {
       const g = blk.g[k]!;
       if (this.lathe) {
@@ -1032,6 +1438,14 @@ class Runner extends NcEmitter {
         case 310:
           this.w.add('프로브(G38·G31) 이동은 끝점까지 직선으로 그림', line);
           motionG = 10;
+          break;
+        case 770:
+          // Haas G77 뒤 보링(밀링). 그 밖에서는 모르는 G
+          if (this.dialect === 'haas' && !this.lathe) cycleG = g;
+          else {
+            this.w.add('지원하지 않는 G77', line);
+            if (unknownG < 0) unknownG = g;
+          }
           break;
         case 730:
         case 740:
@@ -1082,10 +1496,22 @@ class Runner extends NcEmitter {
           }
           break;
         case 690:
-          if (this.rotXf) {
+          // G69: 좌표 회전과 기울인 평면(G68.2·Haas G268 대신 G269)을 끈다
+          if (this.rotXf || this.tiltXf) {
             this.rotXf = null;
+            this.tiltXf = null;
             this.rebuildXf();
           }
+          break;
+        case 2690:
+          if (this.dialect === 'haas' && this.tiltXf) {
+            this.tiltXf = null;
+            this.rebuildXf();
+          }
+          break;
+        case 531:
+        case 532:
+          // G53.1·G53.6 공구 축을 기울인 평면에 맞춤 — 공구 끝 경로는 그대로
           break;
         case 530:
           machine = true;
@@ -1126,6 +1552,7 @@ class Runner extends NcEmitter {
         case 434:
         case 435:
           this.tlc = true;
+          tlcOn = true;
           if (g === 434 || g === 435) {
             if (this.rotAxis) {
               this.rotOff = true;
@@ -1133,9 +1560,25 @@ class Runner extends NcEmitter {
             } else if (g === 434) this.w.add('G43.4 공구 끝점 제어는 위치만 그림(회전축 무시)', line);
           }
           break;
+        case 1430:
+        case 2340:
+          // Haas G143(5축 공구 길이 보정)·G234(공구 중심점 제어 TCPC): G43·G43.4처럼 공구 길이 보정을 켜고, 블록의 좌표는 이동
+          if (this.dialect !== 'haas') {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            if (unknownG < 0) unknownG = g;
+            break;
+          }
+          this.tlc = true;
+          tlcOn = true;
+          if (g === 2340 && this.rotAxis) {
+            this.rotOff = true;
+            this.w.add(`G${g / 10} 공구 끝점 제어: 프로그램 좌표를 공구 끝 경로로 그대로 그림(공구 방향은 그리지 않음)`, line);
+          }
+          break;
         case 490:
           this.tlc = false;
           this.rotOff = false;
+          this.hNum = -1;
           break;
         case 540:
         case 550:
@@ -1156,10 +1599,33 @@ class Runner extends NcEmitter {
         case 593:
           this.selectWcs(6 + (g - 591), line);
           break;
+        case 1540: {
+          // Haas G154 P1~P99 = 추가 작업 좌표계(G54.1 P와 같은 번호)
+          const p = blk.has[LP] ? Math.round(blk.val[LP]!) : 1;
+          blk.has[LP] = 0;
+          this.selectWcs(5 + p, line);
+          break;
+        }
+        case 150:
+          // G15 극좌표 끝. Okuma G15 Hn은 작업 좌표계 n 고르기
+          if (blk.has[7]) {
+            this.selectWcs(Math.max(0, Math.round(blk.val[7]!) - 1), line);
+            blk.has[7] = 0;
+          } else this.polar = false;
+          break;
+        case 700:
+        case 710:
+        case 720:
+          // Haas 밀링 볼트 구멍 패턴 G70(원)·G71(호)·G72(직선) — 선반 모드의 G70~G72는 latheCode가 먼저 받는다
+          if (this.dialect === 'haas') boltG = g;
+          else {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            if (unknownG < 0) unknownG = g;
+          }
+          break;
         case 610:
         case 611:
         case 640:
-        case 150:
         case 960:
         case 970:
         case 1030:
@@ -1192,10 +1658,49 @@ class Runner extends NcEmitter {
           this.retractR = true;
           break;
         case 160:
-          this.w.add('G16 극좌표는 지원하지 않음(직교 좌표로 읽음)', line);
+          // G16 극좌표: 평면 첫 축 = 반지름, 둘째 축 = 각(도). 처음 반지름·각은 지금 자리(원점 기준)
+          if (!this.polar) {
+            const q = this.progPos();
+            const [u0, u1] = PLANE_AXES[this.plane]!;
+            this.polar = true;
+            this.polarO = [0, 0];
+            this.polarR = Math.hypot(q[u0]!, q[u1]!);
+            this.polarA = (Math.atan2(q[u1]!, q[u0]!) * 180) / Math.PI;
+          }
           break;
         case 682:
-          this.w.add('G68.2 기울인 작업 평면은 지원하지 않음(변환 없이 그림)', line);
+          // G68.2 기울인 작업 평면: 이 블록의 X·Y·Z·I·J·K는 원점과 각(이동이 아니다)
+          nonModal = 682;
+          break;
+        case 2680:
+          // Haas G268(기울인 평면 — G68.2와 같은 꼴, Q는 오일러 차례)
+          if (this.dialect === 'haas') nonModal = 682;
+          else {
+            this.w.add('지원하지 않는 G268', line);
+            if (unknownG < 0) unknownG = g;
+          }
+          break;
+        case 90:
+        case 620:
+        case 630:
+          // G9 정확 정지(한 블록)·G62 모서리 이송 조정·G63 태핑 모드: 이동은 그대로
+          break;
+        case 600:
+        case 270:
+        case 290:
+          // G60 한 방향 위치 결정·G27 기준점 확인·G29 기준점에서 복귀: 끝점까지 급속 한 번
+          oneShot = true;
+          break;
+        case 331:
+          // LinuxCNC G33.1 강성 탭: 끝점까지 이송으로 들어갔다 같은 길로 나온다
+          tapOneShot = true;
+          break;
+        case 120:
+        case 130:
+          if (this.dialect === 'linuxcnc') {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            unknownG = g;
+          } else pocket = g;
           break;
         case 70:
         case 80:
@@ -1203,10 +1708,18 @@ class Runner extends NcEmitter {
           if (this.dialect === 'linuxcnc') this.w.add('G7/G8 선반 지름·반지름 모드는 선반 모드에서만 읽음', line);
           break;
         case 330:
-          this.w.add('나사 깎기(G33·G76)는 그리지 않음', line);
+          // 밀링의 G33 나사 깎기는 끝점까지 이송 직선(나사 이송은 리드 F)
+          this.w.add('나사 깎기(G33)는 끝점까지 이송 직선으로 그림', line);
+          motionG = 10;
           break;
         default:
+          if (g >= 1100 && g <= 1290 && g % 10 === 0 && this.dialect === 'haas' && !(this.lathe && (g === 1120 || g === 1130))) {
+            // Haas G110~G129 = G154 P1~P20(Fanuc 계열에서는 사용자 매크로 G일 수 있고, 선반 G112·G113은 극좌표 보간)
+            this.selectWcs(5 + (g / 10 - 109), line);
+            break;
+          }
           this.w.add(`지원하지 않는 G${(g / 10).toFixed(g % 10 ? 1 : 0)}`, line);
+          if (unknownG < 0) unknownG = g;
       }
     }
     // 반경 보정 구간 기록(보정 경로 계산용 — 프로그램 경로는 그대로)
@@ -1240,6 +1753,11 @@ class Runner extends NcEmitter {
       this.seenM6 = true;
       if (this.selTool >= 0) this.changeTool(this.selTool, line);
     }
+    // 안전 확인: 공구 길이 보정 번호(H)·반경 보정 번호(D)가 공구 번호와 다른지(공구 교환 뒤에 본다)
+    if (tlcOn) this.noteToolLength(blk.has[7] ? Math.round(blk.val[7]!) : undefined, line);
+    if ((this.comp === 1 || this.comp === 2) && blk.has[LD] && !compDirect && this.dialect !== 'siemens') this.checkToolNumber('D', Math.round(blk.val[LD]!), line);
+    // 현재 블록 표시용 D 번호(Siemens는 날 번호 그대로)
+    if (blk.has[LD] && !compDirect) this.dNum = Math.round(blk.val[LD]!);
 
     // 휴지
     if (nonModal === 40) {
@@ -1303,17 +1821,21 @@ class Runner extends NcEmitter {
       case 680:
         this.g68(blk, line);
         return this.endBlock(blk, line);
+      case 682:
+        this.g682(blk, line);
+        return this.endBlock(blk, line);
       case 280:
       case 300: {
         // 중간점 → 기준점
         const mid = this.targets(blk, false);
         this.emit(MOVE_RAPID, mid[0]!, mid[1]!, mid[2]!, line);
-        const home = (nonModal === 280 ? this.stored28 : this.stored30) ?? this.o.homePosition;
+        const home = this.homeFor(nonModal);
+        const all = !axisGiven;
+        const given = (a: number): boolean => all || !!blk.has[AXIS_LETTER[a]!] || (a === 0 && !!uw && !!blk.has[LU]) || (a === 2 && !!uw && !!blk.has[LW]);
         if (home) {
-          const all = !axisGiven;
-          const t = [0, 1, 2].map((a) => (all || blk.has[AXIS_LETTER[a]!] || (a === 0 && uw && blk.has[LU]) || (a === 2 && uw && blk.has[LW]) ? home[a]! : this.pos[a]!));
+          const t = [0, 1, 2].map((a) => (given(a) ? home[a]! : this.pos[a]!));
           this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_MACHINE);
-        } else this.w.add(`G${nonModal / 10} 기준점 위치를 몰라 중간점에서 멈춘 것으로 그림`, line);
+        } else this.machineEstimate((given(0) ? 1 : 0) | (given(1) ? 2 : 0) | (given(2) ? 4 : 0), line, `G${nonModal / 10}`);
         return this.endBlock(blk, line);
       }
       case 281:
@@ -1322,6 +1844,28 @@ class Runner extends NcEmitter {
       case 301:
         this.stored30 = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
         return this.endBlock(blk, line);
+    }
+
+    // 극좌표(G16): 평면 두 축 낱말(반지름·각)을 절대 직교 좌표로 바꿔 둔다(이동·고정 사이클 모두)
+    this.polarAgain = null;
+    if (this.polar && !this.lathe) this.polarBlock(blk);
+
+    // Haas 볼트 구멍 패턴: 지금 고정 사이클을 패턴 자리마다
+    if (boltG >= 0) {
+      this.boltPattern(boltG, blk, line);
+      return this.endBlock(blk, line);
+    }
+    // 원형 포켓(G12·G13): 지금 자리를 중심으로
+    if (pocket >= 0) {
+      this.circPocket(blk, line, pocket === 130);
+      return this.endBlock(blk, line);
+    }
+    // 모르는(또는 매개변수만 받는) G가 있는 블록의 좌표는 이동이 아니다 — 그리지 않는다
+    if (unknownG >= 0 && (axisGiven || rotGiven)) {
+      this.w.add(`G${(unknownG / 10).toFixed(unknownG % 10 ? 1 : 0)} 블록의 좌표는 이동으로 그리지 않음`, line);
+      // 이동은 그리지 않아도 같은 블록의 모달 낱말(G0~G3 이동 꼴, G80 취소·고정 사이클 고르기)은 다음 블록에 남는다
+      this.modalOnly(motionG, cycleG);
+      return this.endBlock(blk, line);
     }
 
     // 회전축 각(감기를 켰을 때) — 이번 블록의 이동이 이 각까지 고르게 돈다
@@ -1336,6 +1880,23 @@ class Runner extends NcEmitter {
       const c = this.lcmd;
       this.lcmd = 0;
       this.latheCmd(c, blk, line);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+
+    if (tapOneShot && axisGiven) {
+      const s = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+      const t = this.targets(blk, false);
+      this.emit(MOVE_DRILL, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
+      this.emit(MOVE_FEED, s[0]!, s[1]!, s[2]!, line, FLAG_CYCLE);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+    // 한 블록 위치 결정(G60·G27·G29): 모달 이동은 그대로 두고 끝점까지 급속
+    if (oneShot && axisGiven) {
+      const t = this.targets(blk, false);
+      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line);
+      this.known |= (blk.has[LX] ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] ? 4 : 0);
       this.finishAng();
       return this.endBlock(blk, line);
     }
@@ -1355,6 +1916,10 @@ class Runner extends NcEmitter {
     }
     if (this.cycle && motionG < 0) {
       if (axisGiven || blk.has[LR] || cycleG > 0) this.doCycle(blk, line);
+    } else if (axisGiven && machine && !this.machineBase()) {
+      // G53인데 작업 원점의 기계 위치를 모른다: 공구 축만 안전 높이로(추정)
+      const mask = (blk.has[LX] ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] ? 4 : 0);
+      this.machineEstimate(mask, line, 'G53', this.motion === 0 ? MOVE_RAPID : MOVE_FEED);
     } else if (axisGiven) {
       if (machine && this.motion > 10) this.w.add('G53과 원호는 함께 쓸 수 없음', line);
       const t = this.targets(blk, machine);
@@ -1377,8 +1942,22 @@ class Runner extends NcEmitter {
     this.endBlock(blk, line);
   }
 
+  /** 이동 없이 모달만: 이동 꼴(G0~G3이 고정 사이클을 끈다)과 G80 취소·고정 사이클 고르기(구멍은 다음 블록부터) */
+  protected modalOnly(motionG: number, cycleG: number): void {
+    if (motionG >= 0) {
+      if (motionG !== this.motion && motionG < 900) this.boxX = this.boxZ = NaN;
+      this.motion = motionG;
+      if (this.cycle) this.cancelCycle();
+    }
+    if (cycleG === 800) this.cancelCycle();
+    else if (cycleG > 0 && this.cycle !== cycleG) {
+      if (!this.cycle) this.cycleFresh = true;
+      this.cycle = cycleG;
+    }
+  }
+
   /** 블록에서 쓰지 않은 회전 각을 지금 각으로 */
-  private finishAng(): void {
+  protected finishAng(): void {
     if (this.angTo) {
       this.ang.set(this.angTo);
       this.angTo = null;
@@ -1386,15 +1965,15 @@ class Runner extends NcEmitter {
   }
 
   /** 반경 보정 상태·반지름 바뀜 기록. D: Fanuc 계열은 보정 번호, LinuxCNC는 공구 번호(없으면 지금 공구), G41.1/G42.1은 지름 */
-  private compChange(blk: Block, line: number, direct: boolean): void {
+  protected compChange(blk: Block, line: number, direct: boolean): void {
     if (blk.has[LD]) {
       if (direct) this.dDirect = Math.abs(blk.val[LD]!) * this.scale;
       else this.dReg = Math.round(blk.val[LD]!);
     }
     if (this.comp === 0) return this.noteComp(this.plane, line);
     if (direct && this.dDirect !== undefined) return this.noteComp(this.plane, line, this.dDirect / 2, `G4${this.comp === 1 ? 1 : 2}.1 D 지름`);
-    const linux = this.dialect === 'linuxcnc';
-    const d = this.dReg ?? (linux ? this.tool : -1);
+    const linux = this.dialect === 'linuxcnc' || this.dialect === 'siemens';
+    const d = this.dialect === 'siemens' ? this.tool : (this.dReg ?? (linux ? this.tool : -1));
     const name = `${linux ? 'T' : 'D'}${d}`;
     const tt = d >= 0 ? this.o.toolTable?.[d] : undefined;
     if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return this.noteComp(this.plane, line, tt.radius ?? tt.diameter! / 2, `공구 표 ${name}`, d);
@@ -1406,7 +1985,7 @@ class Runner extends NcEmitter {
   }
 
   /** 블록 끝: 프로그램 흐름 M 코드와 변수 대입 */
-  private endBlock(blk: Block, line: number, assignsOnly = false): void {
+  protected endBlock(blk: Block, line: number, assignsOnly = false): void {
     for (const [r, v] of blk.assigns) this.setVar(r, v);
     if (assignsOnly) return;
     for (let k = 0; k < blk.mCount; k++) {
@@ -1421,21 +2000,32 @@ class Runner extends NcEmitter {
     }
   }
 
-  private onComments(blk: Block, line: number): void {
+  protected onComments(blk: Block, line: number): void {
     const text = blk.comments.join(' ').trim();
     if (!text) return;
-    if (!this.started && !this.name && line < 5 && !/^\s*T\s*\d/i.test(text)) this.name = text.slice(0, 80);
+    // 프로그램 머리 주석(O 번호 줄의 주석, 시작 전 첫 주석이라 프로그램 이름이 된 것 — 공구처럼 보이지 않으면)은
+    // 바로 뒤 공구 교환의 공구 이름으로 쓰지 않는다("O1000 (ARC TEST)" 다음 줄 T1 M6)
+    let header = !!blk.has[LO];
+    if (!this.started && !this.name && line < 5 && !/^\s*T\s*\d/i.test(text)) {
+      this.name = text.slice(0, 80);
+      if (!looksLikeTool(text)) header = true;
+    }
     // 머리말의 공구 목록: (T1 D=6 ...) (TOOL 2 - ...)
     const m = /^\s*(?:T|TOOL)\s*#?\s*(\d+)\b/i.exec(text);
     if (m && !blk.has[LT]) this.addToolInfo(+m[1]!, text);
-    this.lastComment = { text, line };
+    this.lastComment = header ? null : { text, line };
   }
 
-  private selectWcs(idx: number, line: number): void {
+  /** 작업 좌표계 번호 → 이름(경고 글) */
+  protected wcsLabel(idx: number): string {
+    return wcsName(idx);
+  }
+
+  protected selectWcs(idx: number, line: number): void {
     if (this.baseWcs < 0) this.baseWcs = idx;
     if (idx !== this.wcs || this.baseWcs === idx) {
       if (idx !== this.baseWcs && !this.wcsKnown.has(idx))
-        this.w.add(`${wcsName(idx)} 오프셋 값을 몰라 ${wcsName(this.baseWcs)}와 같은 원점으로 그림`, line);
+        this.w.add(`${this.wcsLabel(idx)} 오프셋 값을 몰라 ${this.wcsLabel(this.baseWcs)}와 같은 원점으로 그림`, line);
     }
     const rotChanged = (this.wcsRot.get(this.wcs) ?? 0) !== (this.wcsRot.get(idx) ?? 0);
     this.wcs = idx;
@@ -1443,7 +2033,7 @@ class Runner extends NcEmitter {
     if (rotChanged) this.rebuildXf();
   }
 
-  private g10(blk: Block, line: number): void {
+  protected g10(blk: Block, line: number): void {
     const l = blk.has[LL] ? Math.round(blk.val[LL]!) : -1;
     if (l !== 2 && l !== 20) {
       if (l !== 1 && l !== 10 && l !== 11 && l !== 12 && l !== 13) this.w.add(`G10 L${l}은 무시함`, line);
@@ -1482,17 +2072,23 @@ class Runner extends NcEmitter {
     this.updateOff();
   }
 
-  private cancelCycle(): void {
+  protected cancelCycle(): void {
     this.cycle = 0;
     this.cycleFresh = true;
     this.cz = undefined;
     this.cr = undefined;
     this.cq = 0;
     this.cp = 0;
+    this.cqI = 0;
+    this.cqJ = 0;
+    this.cqK = 0;
+    this.cShift = [0, 0];
+    this.cShiftD = [0, 0];
+    this.cShiftQ = false;
   }
 
   // ── 원호 ──
-  private arc(blk: Block, line: number, x: number, y: number, z: number, noEnd = false): void {
+  protected arc(blk: Block, line: number, x: number, y: number, z: number, noEnd = false): void {
     if (this.xf) return this.arcXf(blk, line, noEnd);
     const g = this.arcGeom(blk, line, this.pos, [x, y, z], this.off);
     if (!g) {
@@ -1503,7 +2099,7 @@ class Runner extends NcEmitter {
   }
 
   /** 좌표 변환이 켜진 원호: 프로그램 좌표에서 중심을 구하고 옮긴다(거울이면 방향을 바꾼다) */
-  private arcXf(blk: Block, line: number, noEnd: boolean): void {
+  protected arcXf(blk: Block, line: number, noEnd: boolean): void {
     const sP = Array.from(this.progPos());
     const eP = noEnd ? sP.slice() : Array.from(this.ppT);
     const e = [0, 0, 0];
@@ -1533,7 +2129,7 @@ class Runner extends NcEmitter {
   }
 
   /** 원호 중심(c, 직선 축은 시작점)과 부호 있는 중심각. 만들 수 없으면 경고를 남기고 null(직선으로 그린다) */
-  private arcGeom(blk: Block, line: number, s: ArrayLike<number>, e: ArrayLike<number>, absOff: ArrayLike<number>): { c: number[]; sweep: number } | null {
+  protected arcGeom(blk: Block, line: number, s: ArrayLike<number>, e: ArrayLike<number>, absOff: ArrayLike<number>): { c: number[]; sweep: number } | null {
     const ccw = this.motion === 30;
     const [a0, a1, a2] = PLANE_AXES[this.plane]!;
     let c0: number;
@@ -1564,13 +2160,11 @@ class Runner extends NcEmitter {
       }
       const o0 = blk.has[OFFSET_LETTER[a0]!] ? blk.val[OFFSET_LETTER[a0]!]! * this.scale : 0;
       const o1 = blk.has[OFFSET_LETTER[a1]!] ? blk.val[OFFSET_LETTER[a1]!]! * this.scale : 0;
-      if (this.arcAbs) {
-        c0 = blk.has[OFFSET_LETTER[a0]!] ? o0 + absOff[a0]! : s[a0]!;
-        c1 = blk.has[OFFSET_LETTER[a1]!] ? o1 + absOff[a1]! : s[a1]!;
-      } else {
-        c0 = s[a0]! + o0;
-        c1 = s[a1]! + o1;
-      }
+      // 절대 중심: G90.1(arcAbs) 또는 Siemens I=AC(…)(축별)
+      const abs0 = this.arcAbs || (blk.cAbs & (1 << a0)) !== 0;
+      const abs1 = this.arcAbs || (blk.cAbs & (1 << a1)) !== 0;
+      c0 = abs0 ? (blk.has[OFFSET_LETTER[a0]!] ? o0 + absOff[a0]! : s[a0]!) : s[a0]! + o0;
+      c1 = abs1 ? (blk.has[OFFSET_LETTER[a1]!] ? o1 + absOff[a1]! : s[a1]!) : s[a1]! + o1;
     }
     const u0 = s[a0]! - c0;
     const v0 = s[a1]! - c1;
@@ -1605,7 +2199,7 @@ class Runner extends NcEmitter {
   }
 
   // ── 고정 사이클 ──
-  private doCycle(blk: Block, line: number): void {
+  protected doCycle(blk: Block, line: number): void {
     const code = this.cycle;
     // 선반 모드: 정면 드릴(G81~G86, Z 방향)·측면(G87~G89, X 방향)
     const cp = this.lathe ? (code >= 870 && code <= 890 ? 2 : 0) : this.plane;
@@ -1613,6 +2207,8 @@ class Runner extends NcEmitter {
     if (this.cycleFresh) {
       this.initLevel = this.pos[da]!;
       this.initLevelProg = this.progPos()[da]!;
+      // 처음 높이가 기계 좌표 쪽 추정 안전 높이면 그리로 돌아가는 이동도 추정(G53 Z0 뒤의 G98 사이클)
+      this.initEst = (this.machHigh & (1 << da)) !== 0;
       this.cycleFresh = false;
     }
     const sc = this.scale;
@@ -1622,9 +2218,50 @@ class Runner extends NcEmitter {
     if (blk.has[LR]) this.cr = blk.val[LR]! * sc;
     if (blk.has[LQ]) this.cq = Math.abs(blk.val[LQ]!) * sc;
     if (blk.has[LP]) this.cp = this.dwellSeconds(blk, LP);
+    // 쪼기 사이클(G73·G83)의 I·J·K: Haas는 첫 절입·줄이는 양·최소 절입(반복은 L). Fanuc 계열도 I·J가 있거나
+    // K가 정수가 아니면 Haas 꼴로 본다(K .05를 반복 0번으로 읽어 구멍이 사라지지 않게)
+    const peck = code === 730 || code === 830;
+    const kFrac = blk.has[LK] && !Number.isInteger(blk.val[LK]!);
+    const haasPeck = peck && (this.dialect === 'haas' || blk.has[LI] || blk.has[LJ] || kFrac);
+    if (haasPeck) {
+      if (this.dialect !== 'haas' && (blk.has[LI] || blk.has[LJ] || blk.has[LK])) this.w.add(`G${code / 10}의 I·J·K를 Haas 쪼기(첫 절입·줄이는 양·최소 절입)로 봄 — 반복은 L`, line);
+      if (blk.has[LI]) this.cqI = Math.abs(blk.val[LI]!) * sc;
+      if (blk.has[LJ]) this.cqJ = Math.abs(blk.val[LJ]!) * sc;
+      if (blk.has[LK]) this.cqK = Math.abs(blk.val[LK]!) * sc;
+    }
+    // 보링 시프트: Haas는 I·J(방향과 양), Fanuc은 Q(양, 소수점 없으면 최소 입력 단위)를 평면 첫 축 + 방향으로
+    if (!this.lathe && (code === 760 || code === 870 || code === 770)) {
+      const O0 = OFFSET_LETTER[p0]!;
+      const O1 = OFFSET_LETTER[p1]!;
+      if (blk.has[O0] || blk.has[O1]) {
+        this.cShift = [(blk.has[O0] ? blk.val[O0]! : 0) * sc, (blk.has[O1] ? blk.val[O1]! : 0) * sc];
+        this.cShiftQ = false;
+      } else if (blk.has[LQ]) {
+        const v = Math.abs(blk.val[LQ]!);
+        const fanucInt = (this.dialect === 'fanuc' || this.dialect === 'iso') && !blk.dot[LQ];
+        this.cShift = [(fanucInt ? v / (this.blockInch ? 10000 : 1000) : v) * sc, 0];
+        this.cShiftQ = true;
+      }
+      // 표시 좌표 방향(좌표 회전·거울이 있으면 함께 돌린다)
+      const v3 = [0, 0, 0];
+      v3[p0] = this.cShift[0];
+      v3[p1] = this.cShift[1];
+      if (this.xf) {
+        const o = [0, 0, 0];
+        const z = [0, 0, 0];
+        applyAffine(this.xf, v3, o);
+        applyAffine(this.xf, ZERO3, z);
+        this.cShiftD = [o[p0]! - z[p0]!, o[p1]! - z[p1]!];
+      } else this.cShiftD = [this.cShift[0], this.cShift[1]];
+    }
     let reps = 1;
     if (blk.has[LL]) reps = Math.round(blk.val[LL]!);
-    else if (blk.has[LK] && cp === 0 && this.dialect !== 'linuxcnc') reps = Math.round(blk.val[LK]!);
+    else if (blk.has[LK] && cp === 0 && this.dialect !== 'linuxcnc' && this.dialect !== 'haas' && !haasPeck) {
+      if (kFrac) {
+        this.w.add(`고정 사이클 반복 횟수 K${blk.val[LK]}가 정수가 아님 — 한 번으로 봄`, line);
+        reps = 1;
+      } else reps = Math.round(blk.val[LK]!);
+    }
     if (this.cr === undefined) this.cr = this.absolute ? (this.xf ? this.progPos()[da]! : this.pos[da]! - this.off[da]!) : 0;
     if (this.cz === undefined) {
       this.w.add('고정 사이클에 깊이(Z)가 없음', line);
@@ -1641,14 +2278,17 @@ class Runner extends NcEmitter {
       const zP = this.absolute ? this.cz : rP + this.cz;
       const top = [0, 0, 0];
       const bot = [0, 0, 0];
+      // 공구 축이 기울면(G68.2·Siemens ROT X/Y) 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다
+      const tilted = !this.xfPlane(cp).keeps;
+      const map = (v: number[]): void => this.toDisplay(v, v);
       for (let k = 0; k < reps; k++) {
+        if (k > 0 && this.polarAgain) this.polarAgain();
         const q = Array.from(this.progPos());
-        if (this.absolute) {
-          if (blk.has[L0]) q[p0] = blk.val[L0]! * s0;
-          if (blk.has[L1]) q[p1] = blk.val[L1]! * s1;
-        } else {
-          if (blk.has[L0]) q[p0] = q[p0]! + blk.val[L0]! * s0;
-          if (blk.has[L1]) q[p1] = q[p1]! + blk.val[L1]! * s1;
+        if (blk.has[L0]) q[p0] = this.incAxis(blk, p0) ? q[p0]! + blk.val[L0]! * s0 : blk.val[L0]! * s0;
+        if (blk.has[L1]) q[p1] = this.incAxis(blk, p1) ? q[p1]! + blk.val[L1]! * s1 : blk.val[L1]! * s1;
+        if (tilted) {
+          this.drillAt(code, p0, p1, da, q[p0]!, q[p1]!, rP, zP, line, map);
+          continue;
         }
         q[da] = rP;
         this.toDisplay(q, top);
@@ -1669,15 +2309,11 @@ class Runner extends NcEmitter {
       zD = rD + this.cz;
     }
     for (let k = 0; k < reps; k++) {
+      if (k > 0 && this.polarAgain) this.polarAgain();
       let x = this.pos[p0]!;
       let y = this.pos[p1]!;
-      if (this.absolute) {
-        if (blk.has[L0]) x = blk.val[L0]! * s0 + this.off[p0]!;
-        if (blk.has[L1]) y = blk.val[L1]! * s1 + this.off[p1]!;
-      } else {
-        if (blk.has[L0]) x += blk.val[L0]! * s0;
-        if (blk.has[L1]) y += blk.val[L1]! * s1;
-      }
+      if (blk.has[L0]) x = this.incAxis(blk, p0) ? x + blk.val[L0]! * s0 : blk.val[L0]! * s0 + this.off[p0]!;
+      if (blk.has[L1]) y = this.incAxis(blk, p1) ? y + blk.val[L1]! * s1 : blk.val[L1]! * s1 + this.off[p1]!;
       if (this.fanucLathe) {
         if (p0 === 0 && blk.has[LU] && !blk.has[LX]) x = this.pos[0]! + blk.val[LU]! * s0;
         if (p1 === 2 && blk.has[LW] && !blk.has[LZ]) y = this.pos[2]! + blk.val[LW]! * s1;
@@ -1687,19 +2323,40 @@ class Runner extends NcEmitter {
     this.known = 7;
   }
 
-  private drillAt(code: number, p0: number, p1: number, da: number, x: number, y: number, rD: number, zD: number, line: number): void {
+  /**
+   * 구멍 하나(고정 사이클 몸통). 위치·높이는 표시 좌표, map을 주면 프로그램 좌표(기울인 평면 — 점마다 map으로 표시 좌표로 옮긴다)
+   */
+  protected drillAt(code: number, p0: number, p1: number, da: number, x: number, y: number, rD: number, zD: number, line: number, map?: (q: number[]) => void): void {
     const up = rD >= zD ? 1 : -1;
-    const clear = this.retractR ? rD : up * (this.initLevel - rD) > 0 ? this.initLevel : rD;
+    const init = map ? this.initLevelProg : this.initLevel;
+    const clear = this.retractR ? rD : up * (init - rD) > 0 ? init : rD;
+    // 지금 자리(작업 공간 — map이 있으면 프로그램 좌표)
+    const cur = map ? Array.from(this.progPos()) : [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const pt = [0, 0, 0];
-    const go = (kind: number, depth: number, px = this.pos[p0]!, py = this.pos[p1]!): void => {
-      pt[p0] = px;
-      pt[p1] = py;
-      pt[da] = depth;
-      this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
+    // 처음 높이가 추정 안전 높이면 그리로 돌아가는 이동의 끝도 추정(build에서 안전 높이 값으로 고친다)
+    const estInit = this.initEst && !map;
+    const go = (kind: number, depth: number, px = cur[p0]!, py = cur[p1]!): void => {
+      cur[p0] = px;
+      cur[p1] = py;
+      cur[da] = depth;
+      pt[0] = cur[0]!;
+      pt[1] = cur[1]!;
+      pt[2] = cur[2]!;
+      if (map) map(pt);
+      if (estInit && depth === init) this.emitToEstimated(1 << da, kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
+      else this.emit(kind, pt[0]!, pt[1]!, pt[2]!, line, FLAG_CYCLE);
     };
-    if (up * (this.pos[da]! - rD) < 0) go(MOVE_RAPID, rD);
-    go(MOVE_RAPID, this.pos[da]!, x, y);
-    go(MOVE_RAPID, rD);
+    // 컨트롤러처럼: 지금 높이에서 구멍 자리로 옮긴 뒤 R 점으로(지금 높이가 R보다 낮으면 낮은 채 옮겨 간다 — 실제 위험을 숨기지 않게)
+    go(MOVE_RAPID, cur[da]!, x, y);
+    // 뒤 보링(Fanuc 밀링 G87·Haas G77): 시프트한 자리에서 구멍 아래(R)로 내려간다
+    const backBore = !this.lathe && ((code === 870 && this.dialect !== 'haas') || (code === 770 && this.dialect === 'haas'));
+    const [sx, sy] = map ? this.cShift : this.cShiftD;
+    if (backBore) {
+      this.noteShift(line);
+      go(MOVE_RAPID, cur[da]!, x + sx, y + sy);
+      go(MOVE_RAPID, rD, x + sx, y + sy);
+      go(MOVE_RAPID, rD, x, y);
+    } else go(MOVE_RAPID, rD);
     const first = this.mb.count;
     const top = [0, 0, 0];
     top[p0] = x;
@@ -1707,7 +2364,12 @@ class Runner extends NcEmitter {
     top[da] = rD;
     const bottom = [top[0]!, top[1]!, top[2]!];
     bottom[da] = zD;
-    const q = this.cq;
+    // Haas I·J·K 쪼기(첫 절입 I, 매번 J만큼 줄여 K까지)가 있으면 그것을, 없으면 일정한 Q
+    const haasPeck = this.cqI > 0;
+    let qb = haasPeck ? this.cqI : this.cq;
+    // 첫 절입은 R 점이 아니라 기준면에서 재는 꼴(Siemens CYCLE83)이면 그만큼 더
+    let q = haasPeck ? qb + this.peckFirstExtra : qb;
+    const qMin = haasPeck ? (this.cqK > 0 ? this.cqK : this.cqJ > 0 ? Math.min(this.cqI, this.cqJ) : this.cqI) : q;
     switch (code) {
       case 830:
       case 730:
@@ -1720,6 +2382,10 @@ class Runner extends NcEmitter {
             go(MOVE_DRILL, next);
             if (next !== zD) go(MOVE_RAPID, code === 830 ? rD : next + up * this.peck);
             d = next;
+            if (haasPeck) {
+              qb = Math.max(qMin, qb - this.cqJ);
+              q = qb;
+            }
           }
           go(MOVE_RAPID, clear);
           break;
@@ -1747,11 +2413,38 @@ class Runner extends NcEmitter {
         go(MOVE_FEED, rD);
         if (clear !== rD) go(MOVE_RAPID, clear);
         break;
-      case 860:
       case 760:
+        if (this.lathe) {
+          go(MOVE_DRILL, zD);
+          go(MOVE_RAPID, clear);
+          break;
+        }
+        // 정밀 보링: 바닥에서 휴지 → 주축 정위치 → 시프트(벽에서 떨어짐) → 급속 복귀 → 시프트 되돌림
+        this.noteShift(line);
+        go(MOVE_DRILL, zD);
+        this.dwell(this.cp);
+        go(MOVE_RAPID, zD, x + sx, y + sy);
+        go(MOVE_RAPID, clear, x + sx, y + sy);
+        go(MOVE_RAPID, clear, x, y);
+        break;
       case 870:
+      case 770:
+        if (backBore) {
+          // 뒤 보링: 아래(R)에서 위(Z)로 이송 → 휴지 → 시프트 → 늘 처음 높이로 급속 → 시프트 되돌림
+          go(MOVE_DRILL, zD);
+          this.dwell(this.cp);
+          go(MOVE_RAPID, zD, x + sx, y + sy);
+          go(MOVE_RAPID, init, x + sx, y + sy);
+          go(MOVE_RAPID, init, x, y);
+          break;
+        }
+        this.w.add(`G${code / 10} 사이클(수동 복귀)은 내려가서 급속 복귀로 그림`, line);
+        go(MOVE_DRILL, zD);
+        go(MOVE_RAPID, clear);
+        break;
+      case 860:
       case 880:
-        if (code !== 860) this.w.add(`G${code / 10} 사이클은 G86처럼(내려가서 급속 복귀) 그림`, line);
+        if (code === 880) this.w.add('G88 사이클(바닥 휴지 뒤 수동 복귀)은 급속 복귀로 그림', line);
         go(MOVE_DRILL, zD);
         if (code === 880) this.dwell(this.cp);
         go(MOVE_RAPID, clear);
@@ -1761,6 +2454,10 @@ class Runner extends NcEmitter {
         go(MOVE_RAPID, clear);
     }
     if (this.mb.count > first) {
+      if (map) {
+        map(top);
+        map(bottom);
+      }
       if (this.rotAxis && !this.rotOff && (this.ang[0] || this.ang[1] || this.ang[2])) {
         const w = [0, 0, 0];
         this.wrapPoint(top[0]!, top[1]!, top[2]!, this.ang, w);
@@ -1776,10 +2473,118 @@ class Runner extends NcEmitter {
     }
   }
 
+  /**
+   * Haas 볼트 구멍 패턴(지금 자리가 기준, 지금 고정 사이클을 자리마다):
+   * G70 I 반지름 J 시작 각 L 개수(원 둘레에 고르게), G71 I 반지름 J 시작 각 K 각 간격 L 개수(호),
+   * G72 I 간격 J 각 L 개수(지금 자리에서 그 방향으로 I씩 — 첫 구멍은 I만큼 떨어진 곳). 끝나면 마지막 구멍 자리에 있다
+   */
+  private boltPattern(g: number, blk: Block, line: number): void {
+    const name = `G${g / 10}`;
+    if (!this.cycle) {
+      this.w.add(`${name} 볼트 구멍 패턴 앞에 고정 사이클이 없음 — 그리지 않음`, line);
+      return;
+    }
+    const sc = this.scale;
+    const I = blk.has[LI] ? blk.val[LI]! * sc : 0;
+    const J = blk.has[LJ] ? blk.val[LJ]! : 0;
+    const K = blk.has[LK] ? blk.val[LK]! : 0;
+    const L = blk.has[LL] ? Math.max(0, Math.round(blk.val[LL]!)) : 0;
+    if (!L) {
+      this.w.add(`${name} 볼트 구멍 패턴에 구멍 수 L이 없음`, line);
+      return;
+    }
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    const c = this.progPos();
+    const cu = c[a0]!;
+    const cv = c[a1]!;
+    const pts: [number, number][] = [];
+    for (let k = 0; k < L; k++) {
+      if (g === 720) {
+        const t = (J * Math.PI) / 180;
+        pts.push([cu + (k + 1) * I * Math.cos(t), cv + (k + 1) * I * Math.sin(t)]);
+      } else {
+        const ang = ((J + k * (g === 700 ? 360 / L : K)) * Math.PI) / 180;
+        pts.push([cu + I * Math.cos(ang), cv + I * Math.sin(ang)]);
+      }
+    }
+    // 자리마다 절대 좌표 블록으로 고정 사이클을 부른다(R·Z·Q 등은 사이클의 모달 값)
+    const b = new Block();
+    for (const [u, v] of pts) {
+      b.reset();
+      b.set(AXIS_LETTER[a0]!, u / this.axScale[a0]!, true);
+      b.set(AXIS_LETTER[a1]!, v / this.axScale[a1]!, true);
+      b.axAbs = (1 << a0) | (1 << a1);
+      this.doCycle(b, line);
+    }
+  }
+
+  /** 지금 공구 반지름(D 번호 → G10 L12/L13·공구 표, 없으면 지금 공구의 공구 표·주석 지름). 모르면 undefined */
+  protected toolRadiusFor(d: number | undefined): number | undefined {
+    if (d !== undefined && d >= 0) {
+      const tt = this.o.toolTable?.[d];
+      if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return tt.radius ?? tt.diameter! / 2;
+      const g = this.radiusGeo.get(d);
+      const w = this.radiusWear.get(d);
+      if (g !== undefined || w !== undefined) return (g ?? 0) + (w ?? 0);
+    }
+    const t = this.tool;
+    const tt = this.o.toolTable?.[t];
+    if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return tt.radius ?? tt.diameter! / 2;
+    const dia = this.toolInfo.get(t)?.diameter;
+    return dia !== undefined ? dia / 2 : undefined;
+  }
+
+  /**
+   * Haas·Mach3 원형 포켓 G12(시계)·G13(반시계): 지금 자리가 중심. I = 첫 원 반지름(K 없으면 마무리), K = 마무리 반지름,
+   * Q = 반지름 증분(K와 함께), Z = 깊이(G91이면 증분, L번 반복하며 더 깊게), D = 공구 반지름 번호.
+   * 공구 중심은 포켓 반지름 - 공구 반지름. 원마다 중심에서 직선으로 나가 한 바퀴 돌고, 끝나면 중심으로 돌아온다.
+   */
+  protected circPocket(blk: Block, line: number, ccw: boolean): void {
+    const name = ccw ? 'G13' : 'G12';
+    const sc = this.scale;
+    if (!blk.has[LI]) {
+      this.w.add(`${name} 원형 포켓에 반지름 I가 없음 — 그리지 않음`, line);
+      return;
+    }
+    let tr = this.toolRadiusFor(blk.has[LD] ? Math.round(blk.val[LD]!) : undefined);
+    if (tr === undefined) {
+      this.w.add(`${name} 원형 포켓: 공구 반지름을 몰라 포켓 반지름 그대로 그림`, line);
+      tr = 0;
+    }
+    const r1 = Math.abs(blk.val[LI]!) * sc;
+    const rk = blk.has[LK] ? Math.abs(blk.val[LK]!) * sc : r1;
+    const q = blk.has[LQ] ? Math.abs(blk.val[LQ]!) * sc : 0;
+    const radii: number[] = [];
+    if (blk.has[LK] && q > 0) {
+      for (let r = r1; r < rk - 1e-9 && radii.length < 1000; r += q) radii.push(r);
+    } else if (blk.has[LK]) radii.push(r1);
+    radii.push(rk);
+    const path = radii.map((r) => r - tr!).filter((r) => r > 1e-9);
+    if (!path.length) {
+      this.w.add(`${name} 원형 포켓: 공구가 포켓보다 큼 — 그리지 않음`, line);
+      return;
+    }
+    const loops = Math.max(1, blk.has[LL] ? Math.round(blk.val[LL]!) : 1);
+    const cx = this.pos[0]!;
+    const cy = this.pos[1]!;
+    let z = this.pos[2]!;
+    const zStep = blk.has[LZ] ? blk.val[LZ]! * this.axScale[2]! : 0;
+    for (let n = 0; n < loops; n++) {
+      if (blk.has[LZ]) z = this.absolute ? zStep + this.off[2]! : z + zStep;
+      this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
+      for (const r of path) {
+        this.emit(MOVE_FEED, cx + r, cy, z, line, FLAG_CYCLE);
+        this.emitArc(0, [cx, cy, z], ccw ? Math.PI * 2 : -Math.PI * 2, cx + r, cy, z, line, FLAG_CYCLE);
+      }
+      this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
+    }
+    this.known = 7;
+  }
+
   // ── 선반 ──
 
   /** 선반 모드의 G 코드. -1 = 선반 코드가 아님(보통 처리), 0 = 처리함, 그 밖 = 이동 모드(×10) */
-  private latheCode(g: number, blk: Block, line: number): number {
+  protected latheCode(g: number, blk: Block, line: number): number {
     switch (g) {
       case 70:
       case 80:
@@ -1858,7 +2663,7 @@ class Runner extends NcEmitter {
   }
 
   /** 주속 일정(G96): 반지름 r에서의 회전수로 this.speed를 맞춘다(최고 회전수로 자름) */
-  private cssSpeed(r: number): void {
+  protected cssSpeed(r: number): void {
     if (!(this.cssV > 0)) return;
     const rr = Math.max(Math.abs(r), this.displayInch ? 0.02 : 0.5);
     let rpm = this.displayInch ? (12 * this.cssV) / (2 * Math.PI * rr) : (1000 * this.cssV) / (2 * Math.PI * rr);
@@ -1871,13 +2676,13 @@ class Runner extends NcEmitter {
   }
 
   /** 선반 이동(XZ, Y는 그대로) */
-  private lgo(kind: number, x: number, z: number, line: number): void {
+  protected lgo(kind: number, x: number, z: number, line: number): void {
     if (this.css) this.cssSpeed((Math.abs(this.pos[0]!) + Math.abs(x)) / 2);
     this.emit(kind, x, this.pos[1]!, z, line, FLAG_CYCLE);
   }
 
   /** G90(바깥·안지름)·G92(나사)·G94(단면) 단순 사이클: 시작점으로 돌아오는 네 이동. R = 테이퍼 */
-  private latheBox(code: number, xt: number, zt: number, blk: Block, line: number): void {
+  protected latheBox(code: number, xt: number, zt: number, blk: Block, line: number): void {
     const xs = this.pos[0]!;
     const zs = this.pos[2]!;
     // 사이클 값은 모달: 다음 블록에서 빠진 X·Z는 앞 사이클 값
@@ -1901,13 +2706,13 @@ class Runner extends NcEmitter {
   }
 
   /** P·Q 같은 소수점 없는 거리(최소 입력 단위 0.001 mm · 0.0001 inch) */
-  private incVal(blk: Block, L: number): number {
+  protected incVal(blk: Block, L: number): number {
     const v = Math.abs(blk.val[L]!);
     return (blk.dot[L] ? v : v / (this.blockInch ? 10000 : 1000)) * this.scale;
   }
 
   /** 선반 복합 사이클·좌표 설정 */
-  private latheCmd(c: number, blk: Block, line: number): void {
+  protected latheCmd(c: number, blk: Block, line: number): void {
     switch (c) {
       case 500: {
         // G50 X Z: 지금 위치의 좌표를 주어진 값으로(G92와 같음)
@@ -1938,7 +2743,7 @@ class Runner extends NcEmitter {
   }
 
   /** N 번호 P·Q로 윤곽 줄 범위 */
-  private profileRange(blk: Block, line: number, what: string): [number, number] | null {
+  protected profileRange(blk: Block, line: number, what: string): [number, number] | null {
     if (!blk.has[LP] || !blk.has[LQ]) {
       this.w.add(`${what}에 윤곽 범위 P·Q가 없음`, line);
       return null;
@@ -1955,7 +2760,7 @@ class Runner extends NcEmitter {
   }
 
   /** G70 P Q: 윤곽 블록을 그대로 실행하고 시작점으로 돌아온다 */
-  private g70(blk: Block, line: number): void {
+  protected g70(blk: Block, line: number): void {
     const r = this.profileRange(blk, line, 'G70');
     if (!r) return;
     if (this.stack.length >= MAX_CALL_DEPTH) return;
@@ -1976,7 +2781,7 @@ class Runner extends NcEmitter {
   }
 
   /** 줄 범위 실행(G70)이 끝남 */
-  private endRange(): void {
+  protected endRange(): void {
     const f = this.stack[this.stack.length - 1]!;
     if (f.endLine === undefined) {
       this.rangeEnd = -1;
@@ -1994,7 +2799,7 @@ class Runner extends NcEmitter {
   }
 
   /** 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 읽어 XZ 점열(표시 좌표, X = 반지름)로. 원호는 5도로 나눈다 */
-  private profile(s: number, e: number): number[] {
+  protected profile(s: number, e: number): number[] {
     const b = new Block();
     const bytes = this.src.bytes;
     let x = this.pos[0]!;
@@ -2013,6 +2818,8 @@ class Runner extends NcEmitter {
           continue;
         }
       }
+      // 윤곽 블록도 소수점 없는 값을 최소 입력 단위로(켰을 때만 — 끄면 세기는 실행할 때 한다)
+      if (this.o.integerUnits) this.integerWords(b);
       for (let k = 0; k < b.gCount; k++) {
         const g = b.g[k]!;
         if (g === 0 || g === 10 || g === 20 || g === 30) mot = g;
@@ -2064,7 +2871,7 @@ class Runner extends NcEmitter {
    * 첫 블록(G71 U R · G72 W R · G73 U W R)은 절입·물러남을 정하고, P·Q가 있는 블록이 윤곽(다듬질 여유 U·W만큼 옮김)을 따라 깎는다.
    * 끝나면 시작점으로 돌아오고 윤곽 블록 다음 줄부터 이어 읽는다.
    */
-  private roughCycle(code: number, blk: Block, line: number): void {
+  protected roughCycle(code: number, blk: Block, line: number): void {
     const name = `G${code / 10}`;
     if (!blk.has[LP] || !blk.has[LQ]) {
       // 첫 블록
@@ -2156,7 +2963,7 @@ class Runner extends NcEmitter {
   }
 
   /** G74(Z 방향 쪼아 드릴·정면 홈)·G75(X 방향 홈): 첫 블록 R = 물러남, 둘째 블록 X(U) Z(W) P Q */
-  private peckCycle(code: number, blk: Block, line: number): void {
+  protected peckCycle(code: number, blk: Block, line: number): void {
     const hasT = blk.has[LX] || blk.has[LU] || blk.has[LZ] || blk.has[LW];
     if (!hasT) {
       if (blk.has[LR]) this.peckE = Math.abs(blk.val[LR]!) * this.scale;
@@ -2210,7 +3017,7 @@ class Runner extends NcEmitter {
   }
 
   /** G76 나사 사이클: 깊이를 나눠 여러 번 깎는다(Fanuc 두 블록 꼴, LinuxCNC P·Z·I·J·K 꼴) */
-  private threadCycle(blk: Block, line: number): void {
+  protected threadCycle(blk: Block, line: number): void {
     const xs = this.pos[0]!;
     const zs = this.pos[2]!;
     const passes: number[] = [];
@@ -2271,7 +3078,7 @@ class Runner extends NcEmitter {
   }
 
   // ── 프로그램 흐름 ──
-  private buildOIndex(): Map<number, number> {
+  protected buildOIndex(): Map<number, number> {
     if (this.oIndex) return this.oIndex;
     const map = new Map<number, number>();
     const b = this.src.bytes;
@@ -2297,10 +3104,17 @@ class Runner extends NcEmitter {
       }
       if (!map.has(n)) map.set(n, i);
     }
+    // 함께 연 파일: O 번호 줄이 없으면 파일 이름(O1001.nc·1001.nc)을 프로그램 번호로
+    if (this.jobLines)
+      for (const [i, name] of this.jobLines) {
+        const m = /^O?(\d+)(?:\.[^.]*)?$/i.exec(name.replace(/^.*[\\/]/, ''));
+        // 값 = 표지 줄(부르기는 그다음 줄, 곧 파일 첫 줄부터 실행한다 — O 줄과 같은 꼴)
+        if (m && !map.has(+m[1]!)) map.set(+m[1]!, i);
+      }
     return (this.oIndex = map);
   }
 
-  private buildNIndex(): Map<number, number[]> {
+  protected buildNIndex(): Map<number, number[]> {
     if (this.nIndex) return this.nIndex;
     const map = new Map<number, number[]>();
     const b = this.src.bytes;
@@ -2322,7 +3136,7 @@ class Runner extends NcEmitter {
     return (this.nIndex = map);
   }
 
-  private findN(n: number): number {
+  protected findN(n: number): number {
     const list = this.buildNIndex().get(n);
     if (!list) return -1;
     const start = this.stack[this.stack.length - 1]!.start;
@@ -2330,7 +3144,7 @@ class Runner extends NcEmitter {
     return list[0]!;
   }
 
-  private buildOCodes(): Map<string, { line: number; kw: string }[]> {
+  protected buildOCodes(): Map<string, { line: number; kw: string }[]> {
     if (this.oCodes) return this.oCodes;
     const map = new Map<string, { line: number; kw: string }[]>();
     const b = this.src.bytes;
@@ -2353,12 +3167,12 @@ class Runner extends NcEmitter {
   }
 
   /** label의 kws 중 line 뒤에 처음 나오는 것 */
-  private nextO(label: string, line: number, kws: string[]): { line: number; kw: string } | undefined {
+  protected nextO(label: string, line: number, kws: string[]): { line: number; kw: string } | undefined {
     const list = this.buildOCodes().get(label);
     if (!list) return undefined;
     return list.find((x) => x.line > line && kws.includes(x.kw));
   }
-  private prevO(label: string, line: number, kws: string[]): { line: number; kw: string } | undefined {
+  protected prevO(label: string, line: number, kws: string[]): { line: number; kw: string } | undefined {
     const list = this.buildOCodes().get(label);
     if (!list) return undefined;
     let r: { line: number; kw: string } | undefined;
@@ -2366,7 +3180,7 @@ class Runner extends NcEmitter {
     return r;
   }
 
-  private control(c: Ctrl, line: number): void {
+  protected control(c: Ctrl, line: number): void {
     switch (c.k) {
       case 'goto': {
         const t = this.findN(c.n);
@@ -2411,7 +3225,7 @@ class Runner extends NcEmitter {
   }
 
   /** line 뒤에서 END m 줄을 찾는다 */
-  private findEnd(m: number, line: number): number {
+  protected findEnd(m: number, line: number): number {
     const re = new RegExp(`(^|[^A-Z])END${m}(?![0-9])`);
     for (let i = line + 1; i < this.src.lineCount; i++) {
       const t = sourceLine(this.src, i);
@@ -2421,7 +3235,7 @@ class Runner extends NcEmitter {
     return -1;
   }
 
-  private oControl(c: Extract<Ctrl, { k: 'o' }>, line: number): void {
+  protected oControl(c: Extract<Ctrl, { k: 'o' }>, line: number): void {
     const { label, kw } = c;
     const jumpPast = (kws: string[]): void => {
       const t = this.nextO(label, line, kws);
@@ -2456,7 +3270,7 @@ class Runner extends NcEmitter {
           .get(label)
           ?.find((x) => x.kw === 'SUB');
         if (!def) {
-          this.w.add(`o${label} call: 같은 파일에 sub 정의가 없음(외부 파일 부프로그램은 읽지 않음)`, line);
+          this.missingProgram(`o<${label}>`, `o${label} call: sub 정의를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
           return;
         }
         if (this.stack.length >= MAX_CALL_DEPTH) {
@@ -2537,7 +3351,7 @@ class Runner extends NcEmitter {
     }
   }
 
-  private m98(blk: Block, line: number): void {
+  protected m98(blk: Block, line: number): void {
     if (!blk.has[LP]) {
       this.w.add('M98에 P(프로그램 번호)가 없음', line);
       return;
@@ -2551,7 +3365,7 @@ class Runner extends NcEmitter {
     }
     const start = idx.get(prog);
     if (start === undefined) {
-      this.w.add(`M98 P${prog}: 같은 파일에 O${prog}가 없음(다른 파일 부프로그램은 읽지 않음)`, line);
+      this.missingProgram(`O${prog}`, `M98 P${prog}: O${prog}를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
       return;
     }
     if (reps <= 0) return;
@@ -2565,7 +3379,7 @@ class Runner extends NcEmitter {
     this.pc = start + 1;
   }
 
-  private m97(blk: Block, line: number): void {
+  protected m97(blk: Block, line: number): void {
     const n = blk.has[LP] ? Math.round(blk.val[LP]!) : -1;
     const t = n >= 0 ? this.findN(n) : -1;
     if (t < 0) {
@@ -2578,7 +3392,7 @@ class Runner extends NcEmitter {
     this.pc = t;
   }
 
-  private m99(blk: Block, line: number): void {
+  protected m99(blk: Block, line: number): void {
     const f = this.stack[this.stack.length - 1]!;
     if (f.kind === 'main') {
       if (this.started) this.w.add('주 프로그램의 M99(처음부터 반복) — 한 번만 그림', line);
@@ -2599,7 +3413,7 @@ class Runner extends NcEmitter {
   }
 
   /** G65 P… A… B…: 매크로 호출(인수 → 지역 변수) */
-  private macroCall(blk: Block, line: number): void {
+  protected macroCall(blk: Block, line: number): void {
     if (!blk.has[LP]) {
       this.w.add('G65에 P가 없음', line);
       return;
@@ -2607,7 +3421,12 @@ class Runner extends NcEmitter {
     const prog = Math.round(blk.val[LP]!);
     const start = this.buildOIndex().get(prog);
     if (start === undefined) {
-      this.w.add(`G65 P${prog}: 같은 파일에 O${prog}가 없음`, line);
+      // O9000번대는 대개 기계에 든 매크로(프로브·공구 측정 등)
+      this.missingProgram(
+        `O${prog}`,
+        prog >= 9000 && prog <= 9999 ? `G65 P${prog}: O${prog}를 찾지 못해 건너뜀 — 기계에 든 매크로(O9000번대)로 보임, 파일이 있으면 함께 열어야 읽음` : `G65 P${prog}: O${prog}를 찾지 못함 — 다른 파일이면 함께 열어야 읽음`,
+        line,
+      );
       return;
     }
     if (this.stack.length >= MAX_CALL_DEPTH) {
@@ -2626,6 +3445,11 @@ class Runner extends NcEmitter {
 
   finish(opts: GcodeOptions): NcProgram {
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
+    // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
+    if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
+      this.w.add(`소수점 없는 큰 좌표가 많음(${this.intBig}개) — Fanuc 최소 입력 단위(0.001)로 쓴 프로그램이면 "소수점 없는 값 = 최소 단위"를 켜십시오`);
+      this.notices.push({ kind: 'integer-units' });
+    }
     return this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
   }
 }
@@ -2660,9 +3484,34 @@ export function parseGcode(input: Uint8Array | ArrayBuffer | string | NcSource, 
   const getHead = (): string => (head ??= headText(src));
   let dialect = opts.dialect && opts.dialect !== 'auto' ? opts.dialect : detectGcodeDialect(getHead());
   if (dialect === 'heidenhain') dialect = 'iso';
+  const special = DIALECT_PARSERS[dialect];
+  if (special) {
+    const p = special(src, opts, getHead);
+    // 글로 판별해 따로 된 해석기(Siemens)로 읽었으면 알린다
+    if (!opts.dialect || opts.dialect === 'auto') (p.notices ??= []).unshift({ kind: 'dialect', dialect });
+    return p;
+  }
+  if (dialect === 'siemens') {
+    // Siemens 해석기(siemens.ts)를 불러오지 않은 채 부르면 ISO로 읽고 알린다
+    const r = new Runner(src, opts, 'iso', getHead);
+    r.run();
+    const p = r.finish(opts);
+    p.warnings.unshift('Siemens 해석기를 불러오지 않아 ISO로 읽음');
+    p.warningItems?.unshift({ text: 'Siemens 해석기를 불러오지 않아 ISO로 읽음', line: -1, count: 1, lines: [] });
+    return p;
+  }
   const r = new Runner(src, opts, dialect, getHead);
   r.run();
-  return r.finish(opts);
+  const p = r.finish(opts);
+  // Haas로 판별했으면 알린다(G73·G83의 K = 최소 절입, G70~G72 = 볼트 구멍 패턴처럼 뜻이 바뀌는 코드가 있다)
+  if (dialect === 'haas' && (!opts.dialect || opts.dialect === 'auto')) (p.notices ??= []).unshift({ kind: 'dialect', dialect });
+  return p;
+}
+
+/** 따로 된 방언 해석기(siemens.ts가 등록한다 — gcode.ts가 그것을 불러오면 순환 참조가 되므로) */
+const DIALECT_PARSERS: Partial<Record<NcDialect, (src: NcSource, opts: GcodeOptions, head: () => string) => NcProgram>> = {};
+export function registerDialectParser(d: NcDialect, fn: (src: NcSource, opts: GcodeOptions, head: () => string) => NcProgram): void {
+  DIALECT_PARSERS[d] = fn;
 }
 
 export function isSource(x: unknown): x is NcSource {

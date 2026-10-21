@@ -54,7 +54,18 @@ export type GVarRef = number | string;
 export interface GExprEnv {
   /** 변수 값(빈 변수는 undefined) */
   get(ref: GVarRef): number | undefined;
+  /**
+   * Fanuc 매크로 B의 FIX·FUP(Fanuc·ISO·Haas): FIX = 소수 버림(0 쪽, FIX[-1.2] = -1), FUP = 소수 올림(0에서 먼 쪽, FUP[-1.2] = -2).
+   * 없거나 false면 LinuxCNC처럼 FIX = floor, FUP = ceil
+   */
+  readonly fanucRounding?: boolean;
 }
+
+/** Fanuc FIX·FUP(음수도 절댓값 기준) */
+const FANUC_ROUND: Record<string, (x: number) => number> = {
+  FIX: Math.trunc,
+  FUP: (x) => Math.sign(x) * Math.ceil(Math.abs(x)),
+};
 
 /**
  * G-code 식을 읽는다. s는 대문자·공백 없는 글, pos부터 읽어 [값, 다음 위치]를 돌려준다.
@@ -173,7 +184,7 @@ export class GExpr {
           if (!this.eat(']')) throw new ExprError('] 없음');
           return v;
         }
-        const fn = FUNCS[f];
+        const fn = (this.env.fanucRounding && FANUC_ROUND[f]) || FUNCS[f];
         if (fn && this.s[this.pos + k] === '[') {
           this.pos += k + 1;
           const a = this.expr();

@@ -71,6 +71,19 @@ describe('키 고르기', () => {
     expect(viewKeyOf('nwIso')).toBeUndefined();
   });
 
+  it('← → 한 이동씩(Shift 10), ↑ ↓는 캔버스·코드 목록에서 줄, Ctrl/⌘+F·G 찾기', () => {
+    expect(k('ArrowRight')).toEqual({ type: 'step', delta: 1 });
+    expect(k('ArrowLeft', { shift: true })).toEqual({ type: 'step', delta: -10 });
+    expect(k('ArrowRight', { canPlay: false })).toEqual({ type: 'viewer' });
+    expect(k('ArrowRight', { editable: true })).toBeNull();
+    expect(k('ArrowDown', { onCanvas: true })).toEqual({ type: 'line', delta: 1 });
+    expect(k('ArrowUp', { inCode: true })).toEqual({ type: 'line', delta: -1 });
+    expect(k('ArrowUp')).toEqual({ type: 'viewer' });
+    expect(k('f', { ctrl: true, hasCode: true })).toEqual({ type: 'find', next: false });
+    expect(k('g', { meta: true, hasCode: true })).toEqual({ type: 'find', next: true });
+    expect(k('f', { ctrl: true, hasCode: false })).toBeNull();
+  });
+
   it('F7 격자, Space 재생(단추 위·재생 못 할 때는 아님)', () => {
     expect(k('F7')).toEqual({ type: 'grid' });
     expect(k(' ')).toEqual({ type: 'play' });

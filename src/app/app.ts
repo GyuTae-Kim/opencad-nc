@@ -19,12 +19,13 @@
 import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
-import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
+import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
+import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
+import { createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -98,12 +99,18 @@ export interface AppState {
   aiming: boolean;
   /** 단면 보기(꺼져 있으면 null) */
   section: { axis: SectionAxis | null; t: number; flip: boolean } | null;
+  /** 여러 파일 작업이면 이은 파일(주 프로그램 먼저), 아니면 null */
+  jobFiles: string[] | null;
 }
 
 export interface OpencadAppApi {
   readonly state: AppState;
   readonly viewer: Viewer3d | null;
   open(name: string, data: ArrayBuffer | Uint8Array | string, opts?: NcOpenOptions): Promise<boolean>;
+  /** 여러 파일을 한 작업으로(주 프로그램은 고르거나 앱이 정한다) — 파일 고르기에서 여럿 고른 것과 같은 길 */
+  openJob(files: { name: string; data: ArrayBuffer | Uint8Array | string }[]): Promise<boolean>;
+  /** 열린 작업에 파일을 더한다(부프로그램 등) */
+  addFiles(files: { name: string; data: ArrayBuffer | Uint8Array | string }[]): Promise<boolean>;
   openUrl(url: string, name?: string): Promise<boolean>;
   openSample(): Promise<boolean>;
   reparse(opts: NcOpenOptions): Promise<void>;
@@ -112,6 +119,10 @@ export interface OpencadAppApi {
   setPanelTab(tab: string): void;
   selectLine(line: number): void;
   seek(sec: number | null): void;
+  /** 한 이동씩 앞·뒤로 */
+  stepMove(delta: number): void;
+  /** 고른 줄(또는 line)까지 그리기 */
+  drawToLine(line?: number): void;
   togglePlay(): void;
   /** 읽는 중이면 멈춘다(앞 문서는 그대로). 멈췄으면 true */
   cancel(): boolean;
@@ -144,6 +155,11 @@ function viewportSize(): { width: number; height: number } {
   return { width: el.clientWidth || window.innerWidth, height: el.clientHeight || window.innerHeight };
 }
 
+/** 자동화 API의 파일(이름 + 글·바이트) → File(파일 고르기와 같은 길로 연다) */
+function asFile(f: { name: string; data: ArrayBuffer | Uint8Array | string }): File {
+  return new File([typeof f.data === 'string' ? f.data : f.data instanceof Uint8Array ? f.data.slice() : f.data.slice(0)], f.name);
+}
+
 /** 메뉴 항목 단추: 명령(menuitem) · 하나 고르기(menuitemradio) · 켜고 끄기(menuitemcheckbox) */
 function menuItem(label: string, role: 'menuitem' | 'menuitemradio' | 'menuitemcheckbox', run: () => void): HTMLButtonElement {
   const b = h('button', { type: 'button', role, 'aria-checked': role === 'menuitem' ? null : 'false' }, h('span', {}, label));
@@ -161,6 +177,8 @@ export class NcViewerApp implements PanelHost {
   viewer: Viewer3d | null = null;
   private readonly client = new ParseWorkerClient();
   readonly panel: NcPanel;
+  /** 기계·읽기 설정(앱 전체, localStorage) */
+  settings: NcSettings = loadSettings();
 
   private theme: ThemeName;
   private readonly storage = safeStorage();
@@ -181,6 +199,8 @@ export class NcViewerApp implements PanelHost {
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
+  /** 다음 파일 고르기가 열린 작업에 더할 파일인지 */
+  private pickAdd = false;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -215,6 +235,9 @@ export class NcViewerApp implements PanelHost {
   private readonly measureText: HTMLDivElement;
   private readonly measureClear: HTMLButtonElement;
   private readonly aimLayer: HTMLDivElement;
+  private readonly noticeBar: HTMLDivElement;
+  /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
+  private readonly playStrip: { el: HTMLDivElement; time: HTMLSpanElement; line: HTMLSpanElement; state: HTMLDivElement; play: HTMLButtonElement; range: HTMLInputElement; speed: HTMLSelectElement };
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
@@ -230,12 +253,18 @@ export class NcViewerApp implements PanelHost {
     document.documentElement.dataset.theme = this.theme;
 
     // ── 열기 상자 ──
-    this.fileInput = h('input', { type: 'file', hidden: true, 'aria-hidden': 'true', tabindex: -1 });
+    // 여러 파일을 고르면 한 작업(주 프로그램 + 부프로그램 파일)으로 연다
+    this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, 'aria-hidden': 'true', tabindex: -1 });
     this.syncAccept();
     this.fileInput.addEventListener('change', () => {
-      const f = this.fileInput.files?.[0];
+      const files = [...(this.fileInput.files ?? [])];
+      const add = this.pickAdd;
+      this.pickAdd = false;
       this.fileInput.value = '';
-      if (f) void this.openFile(f);
+      if (!files.length) return;
+      if (add && this.doc?.nc) void this.addFiles(files);
+      else if (files.length > 1) void this.openFiles(files);
+      else void this.openFile(files[0]!);
     });
 
     // ── 제목 막대 ──
@@ -355,7 +384,15 @@ export class NcViewerApp implements PanelHost {
     this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, h('div', { class: 'mb-acts' }, this.measureClear, measureClose));
     // 정밀 조준 십자선 층(캔버스 위, 누르기는 받지 않는다)
     this.aimLayer = h('div', { class: 'aim-layer', 'aria-hidden': 'true' });
-    this.viewEl.append(this.aimLayer, this.measureBar);
+    // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언)
+    this.noticeBar = h('div', { class: 'notice-bar', role: 'status', 'aria-live': 'polite', hidden: true });
+    this.playStrip = this.buildPlayStrip();
+    this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar, this.playStrip.el);
+    // 알림은 3D 보기 아래쪽 띠(해석 판단·재생·측정) 위로 올린다 — 띠가 나타나거나 크기가 바뀌면 다시 잰다
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => this.liftToasts());
+      for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) ro.observe(el);
+    }
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
     this.workspace.append(this.busyEl);
@@ -437,9 +474,9 @@ export class NcViewerApp implements PanelHost {
       h('div', { class: 'dz-icon', html: icon('drop') }),
       // 손가락 기기에는 끌어다 놓기가 없으니 고르기 안내로(styles.css fine-only·coarse-only)
       h('p', { class: 'dz-title fine-only' }, 'NC 파일을 여기에 끌어다 놓으십시오'),
-      h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 한 번에 파일 하나를 엽니다.'),
+      h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.'),
       h('p', { class: 'dz-title coarse-only' }, 'NC 파일을 골라 여십시오'),
-      h('p', { class: 'dz-sub coarse-only' }, '한 번에 파일 하나를 엽니다.'),
+      h('p', { class: 'dz-sub coarse-only' }, '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.'),
       h('div', { class: 'dz-actions' }, open, sample),
     );
     zone.addEventListener('click', () => this.chooseFile());
@@ -507,6 +544,8 @@ export class NcViewerApp implements PanelHost {
       'button',
       { class: 'recent-open', type: 'button' },
       h('span', { class: 'recent-name', translate: 'no' }, e.name),
+      // 여러 파일 작업이면 파일 수(번역되는 글), 크기·시각은 화면 언어 형식 그대로
+      e.files ? h('span', { class: 'recent-files' }, `파일 ${e.files}개 작업`) : null,
       h('span', { class: 'recent-meta', translate: 'no' }, `${formatBytes(e.size)} · ${formatRecentTime(e.time, now, lang)}`),
     );
     open.addEventListener('click', () => void this.openRecent(e));
@@ -711,8 +750,94 @@ export class NcViewerApp implements PanelHost {
 
   // ───────────────────────── 열기 ─────────────────────────
 
-  chooseFile(): void {
+  /** 파일 고르기. add = 열린 작업에 더할 파일(부프로그램 등) */
+  chooseFile(add = false): void {
+    this.pickAdd = add;
     this.fileInput.click();
+  }
+
+  /** 고른 파일 읽기: 모르는 확장자의 이진 파일·읽지 못한 파일은 빼고 이유를 모은다 */
+  private async readFiles(files: File[]): Promise<{ ok: { file: File; buf: ArrayBuffer }[]; bad: string[] }> {
+    const ok: { file: File; buf: ArrayBuffer }[] = [];
+    const bad: string[] = [];
+    for (const f of files) {
+      try {
+        if (!isNcFileName(f.name) && looksBinary(new Uint8Array(await f.slice(0, 4096).arrayBuffer()))) {
+          bad.push(f.name);
+          continue;
+        }
+        ok.push({ file: f, buf: await f.arrayBuffer() });
+      } catch {
+        bad.push(f.name);
+      }
+    }
+    return { ok, bad };
+  }
+
+  /**
+   * 여러 파일을 한 작업으로 연다: 주 프로그램(다른 파일이 부르지 않고 M30으로 끝나는 파일 — 정보 탭에서 바꾼다) 뒤에
+   * 나머지 파일을 잇고, M98·G65 P·CALL PGM·Siemens 이름 부르기를 함께 연 파일에서 찾는다. 최근 문서에는 이은 글을 둔다
+   */
+  async openFiles(files: File[]): Promise<boolean> {
+    if (files.length === 1) return this.openFile(files[0]!);
+    const attempt = beginOpen('local', files[0]!.name.split('.').pop() ?? 'other');
+    const { ok, bad } = await this.readFiles(files);
+    if (!ok.length) {
+      this.showError(`${bad.join(', ')}: ${BINARY_MESSAGE}`);
+      attempt.error('unsupported');
+      return false;
+    }
+    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    const [first, ...rest] = ok;
+    const opened = await this.openBuffer(
+      first!.file.name,
+      first!.buf,
+      {},
+      attempt,
+      rest.map((f) => ({ name: f.file.name, bytes: f.buf })),
+    );
+    if (opened) this.rememberDoc(ok.map((f) => f.file));
+    return opened;
+  }
+
+  /** 열린 작업(또는 파일 하나)에 파일을 더해 다시 잇는다 — 주 프로그램은 그대로, 같은 이름은 새 파일로 바꾼다 */
+  async addFiles(files: File[]): Promise<boolean> {
+    const d = this.doc;
+    if (!d?.nc) return this.openFiles(files);
+    const attempt = beginOpen('local', files[0]?.name.split('.').pop() ?? 'other');
+    const { ok, bad } = await this.readFiles(files);
+    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    if (!ok.length) {
+      attempt.error('unsupported');
+      return false;
+    }
+    const copy = d.nc.source.bytes.slice().buffer as ArrayBuffer;
+    const opened = await this.openBuffer(
+      d.name,
+      copy,
+      { ...d.ncOptions, jobMain: d.name },
+      attempt,
+      ok.map((f) => ({ name: f.file.name, bytes: f.buf })),
+    );
+    if (opened) this.rememberDoc([]);
+    return opened;
+  }
+
+  /**
+   * 연 문서를 최근 문서에 둔다: 여러 파일 작업이면 이은 글(다시 열면 같은 작업으로 읽힌다 — 목록에 파일 수를 보인다),
+   * 파일 하나만 열렸으면(나머지는 형식이 달라 잇지 않음) 고른 파일 가운데 그 파일 그대로
+   */
+  private rememberDoc(files: File[]): void {
+    const d = this.doc;
+    if (!d) return;
+    const job = d.job;
+    const file = files.find((f) => f.name.replace(/^.*[\\/]/, '') === d.name);
+    let saved: Promise<boolean> | null = null;
+    if (d.nc && job && job.files.length > 1) saved = this.recent.add(d.name, d.nc.source.bytes.slice().buffer as ArrayBuffer, Date.now(), job.files.length);
+    else if (file) saved = this.recent.add(file.name, file);
+    void saved?.then((ok) => {
+      if (ok) void this.renderRecent();
+    });
   }
 
   async openFile(f: File): Promise<boolean> {
@@ -822,15 +947,27 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 파일 열기(data는 워커로 이전되어 비워진다). 열었으면 true */
-  async openBuffer(name: string, data: ArrayBuffer, opts: NcOpenOptions = {}, attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other')): Promise<boolean> {
+  async openBuffer(
+    name: string,
+    data: ArrayBuffer,
+    opts: NcOpenOptions = {},
+    attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other'),
+    extra: { name: string; bytes: ArrayBuffer }[] = [],
+  ): Promise<boolean> {
     const seq = ++this.loadSeq;
-    const size = data.byteLength;
+    const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
     this.closeMenu();
     this.setBusy('여는 중', 0.02, name);
     try {
-      const res = await this.client.open(name, data, opts, (f, stage) => {
-        if (seq === this.loadSeq) this.setBusy(stage, f, name);
-      });
+      const res = await this.client.open(
+        name,
+        data,
+        { ...opts, ...settingsOpenOptions(this.settings) },
+        (f, stage) => {
+          if (seq === this.loadSeq) this.setBusy(stage, f, name);
+        },
+        extra,
+      );
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
         attempt.error('empty');
@@ -838,7 +975,8 @@ export class NcViewerApp implements PanelHost {
         throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
       }
       this.ensureViewer();
-      this.setDoc(createDoc(name, size, res, opts));
+      // 여러 파일 작업이면 이름 = 주 프로그램, 크기 = 이은 글
+      this.setDoc(createDoc(res.job?.main ?? name, res.job && res.nc ? res.nc.source.bytes.length : size, res, opts));
       attempt.success();
       return true;
     } catch (e) {
@@ -861,11 +999,11 @@ export class NcViewerApp implements PanelHost {
     else if (d.mpr) copy = new TextEncoder().encode(`${d.mpr.lines.join('\n')}\n`).buffer as ArrayBuffer;
     else return;
     // 단위·선반·회전축을 바꾸면 모양이 달라지므로 카메라를 새로 맞춘다
-    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || !!opts.lathe !== !!d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary;
+    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || opts.lathe !== d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary || !!opts.integerUnits !== !!d.ncOptions.integerUnits || (opts.jobMain ?? d.name) !== (d.ncOptions.jobMain ?? d.name);
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {
-      const res = await this.client.open(d.name, copy, opts, (f, stage) => {
+      const res = await this.client.open(d.name, copy, { ...opts, ...settingsOpenOptions(this.settings) }, (f, stage) => {
         if (seq === this.loadSeq) this.setBusy(stage, f, d.name);
       });
       if (seq !== this.loadSeq || this.doc !== d) return;
@@ -879,12 +1017,23 @@ export class NcViewerApp implements PanelHost {
       this.panel.setOpen(this.panelOpen);
       this.renderToolbar();
       this.renderStatus();
+      this.renderNotices();
       toast(`${d.name}: 다시 읽었습니다.`, 'info', 2500);
     } catch (e) {
       if (seq === this.loadSeq) this.showError(`${d.name}: 다시 읽지 못했습니다 — ${errorText(e)}`);
     } finally {
       if (seq === this.loadSeq) this.setBusy(null);
     }
+  }
+
+  /** 기계·읽기 설정을 바꾼다(기억하고, 해석에 쓰는 값이 바뀌었으면 지금 프로그램을 다시 읽는다) */
+  setSettings(s: NcSettings): void {
+    const before = this.settings;
+    this.settings = s;
+    saveSettings(s);
+    const d = this.doc;
+    if (d?.nc && settingsNeedReparse(before, s)) void this.reparse(d.ncOptions);
+    else if (d) this.applyPlayback(d);
   }
 
   private async startFromUrl(): Promise<void> {
@@ -963,8 +1112,9 @@ export class NcViewerApp implements PanelHost {
       this.dropMask.hidden = true;
       const files = [...(e.dataTransfer?.files ?? [])];
       if (!files.length) return;
-      if (files.length > 1) toast(`한 번에 파일 하나만 엽니다. ${files[0]!.name}을(를) 엽니다.`, 'info', 5000);
-      void this.openFile(files[0]!);
+      // 여러 파일은 한 작업(주 프로그램 + 부프로그램 파일)으로
+      if (files.length > 1) void this.openFiles(files);
+      else void this.openFile(files[0]!);
     });
   }
 
@@ -1015,10 +1165,9 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
     this.renderStatus();
     const w = d.scene.warnings?.length ?? 0;
-    // 선반처럼 보이는 G-code를 밀링으로 읽었으면 선반 모드를 알려 준다
-    const latheHint = d.kind === 'gcode' && !d.ncOptions.lathe && !!d.scene.warnings?.some((x) => x.includes('선반 프로그램으로 보임'));
-    if (latheHint) toast('선반 프로그램으로 보입니다 — 패널 "정보" 탭의 "선반 모드"를 켜면 X를 지름으로 보고 선반 사이클을 그립니다.', 'info', 7000);
-    else if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
+    // 선반 자동·소수점 없는 좌표·판별한 방언은 3D 보기 위 띠로(행동 단추와 함께), 경고는 알림으로
+    this.renderNotices();
+    if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
     this.viewer?.canvas.focus({ preventScroll: true });
   }
 
@@ -1229,12 +1378,14 @@ export class NcViewerApp implements PanelHost {
     this.panel.onMeasure();
     this.renderToolbar();
     this.renderStatus();
+    this.refreshPlayStrip();
   }
 
   togglePanel(on = !this.panelOpen): void {
     this.panelOpen = on;
     this.panel.setOpen(on);
     this.renderToolbar();
+    this.refreshPlayStrip();
     // 좁은 화면에서는 시트가 3D 보기 높이를 바꾸므로 크기가 정해진 뒤 다시 맞춘다
     if (window.innerWidth < NARROW_WIDTH && this.viewer) requestAnimationFrame(() => requestAnimationFrame(() => this.viewer?.fit(false)));
   }
@@ -1285,9 +1436,56 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc) return;
     const total = totalTime(d.nc.timeline);
     d.playSec = sec === null ? null : Math.max(0, Math.min(total, sec));
+    d.playMove = -1;
     this.applyPlayback(d);
-    this.panel.onPlayback();
+    this.notifyPlayback();
     this.renderToolbar();
+  }
+
+  /** 재생 자리를 이동 i가 끝난 곳으로(한 이동씩 걷기·여기까지 그리기) */
+  seekMove(i: number): void {
+    const d = this.doc;
+    if (!d?.nc || i < 0 || i >= d.nc.moves.count) return;
+    this.stopPlay();
+    d.playSec = moveEndTime(d.nc.timeline, i);
+    d.playMove = i;
+    this.applyPlayback(d);
+    this.notifyPlayback();
+    this.renderToolbar();
+  }
+
+  /** 한 이동씩 앞·뒤로(delta, Shift면 10). 전체 경로를 보고 있으면 앞으로는 처음부터, 뒤로는 끝부터 */
+  stepMove(delta: number): void {
+    const d = this.doc;
+    if (!d?.nc) return;
+    const cur = playPosition(d);
+    const target = stepTarget(cur ? cur.move : -1, delta, d.nc.moves.count);
+    if (target < 0) return;
+    this.seekMove(target);
+    // 코드 보기도 그 줄로(고른 줄은 그대로 두지 않고 따라간다)
+    this.selectLine(d.nc.moves.line[target]!, [target], true);
+  }
+
+  /** 고른 줄까지 그리기: 그 줄의 첫 이동부터 이어진 마지막 이동이 끝난 자리로 */
+  drawToLine(line = this.doc?.selLine ?? -1): void {
+    const d = this.doc;
+    if (!d?.nc || line < 0) return;
+    const [lo, hi] = [d.nc.lineMoves.offsets[line]!, d.nc.lineMoves.offsets[line + 1]!];
+    if (hi <= lo) {
+      toast('이 줄은 이동을 만들지 않습니다.', 'info', 2500);
+      return;
+    }
+    this.seekMove(lastMoveOfLine(d.nc.moves.line, d.nc.lineMoves.moves[lo]!));
+  }
+
+  /** 고른 줄을 앞·뒤로(코드 보기 키 ↑↓) */
+  stepLine(delta: number): void {
+    const d = this.doc;
+    if (!d) return;
+    const n = d.nc ? d.nc.source.lineCount : (d.mpr?.lines.length ?? 0);
+    if (!n) return;
+    const next = Math.max(0, Math.min(n - 1, (d.selLine < 0 ? (delta > 0 ? -1 : n) : d.selLine) + delta));
+    this.selectLine(next, undefined, true);
   }
 
   togglePlay(): void {
@@ -1295,12 +1493,13 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc || !d.nc.moves.count) return;
     if (this.playing) {
       this.stopPlay();
-      this.panel.onPlayback();
+      this.notifyPlayback();
       this.renderToolbar();
       return;
     }
     const total = totalTime(d.nc.timeline);
     if (d.playSec === null || d.playSec >= total) d.playSec = 0;
+    d.playMove = -1;
     this.playing = true;
     this.lastT = performance.now();
     const tick = (t: number) => {
@@ -1311,23 +1510,23 @@ export class NcViewerApp implements PanelHost {
       this.lastT = t;
       doc.playSec = r.sec;
       this.applyPlayback(doc);
-      this.panel.onPlayback();
+      this.notifyPlayback();
       if (r.done) {
         this.playing = false;
-        this.panel.onPlayback();
+        this.notifyPlayback();
         this.renderToolbar();
         return;
       }
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
-    this.panel.onPlayback();
+    this.notifyPlayback();
     this.renderToolbar();
   }
 
   setSpeed(s: PlaySpeed): void {
     if (PLAY_SPEEDS.includes(s)) this.speed = s;
-    this.panel.onPlayback();
+    this.notifyPlayback();
   }
 
   stopPlay(): void {
@@ -1342,7 +1541,7 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc) return null;
     const total = totalTime(d.nc.timeline);
     if (d.playSec === null) return { move: -1, frac: 0, line: -1, sec: total, total };
-    const { move, frac } = playbackAt(d.nc.timeline, d.playSec);
+    const { move, frac } = playPosition(d)!;
     return { move, frac, line: move >= 0 ? d.nc.moves.line[move]! : -1, sec: d.playSec, total };
   }
 
@@ -1354,7 +1553,7 @@ export class NcViewerApp implements PanelHost {
       v.setMarker(null);
       return;
     }
-    const { move, frac } = playbackAt(d.nc.timeline, d.playSec);
+    const { move, frac } = playPosition(d)!;
     if (move < 0) {
       v.setDrawLimitBySegmentId(null);
       v.setMarker(null);
@@ -1363,7 +1562,8 @@ export class NcViewerApp implements PanelHost {
     const end = v.setDrawLimitBySegmentId(move, { ghost: 0.14 });
     const seg = moveSegments(d.scene, [move], 4096);
     const pos = pointAlong(seg, frac) ?? end ?? moveEndPoint(d.nc, move);
-    v.setMarker(pos, 'cone');
+    const mk = toolMarker(d.nc, move, this.settings.toolSize);
+    v.setMarker(pos, mk.kind, mk.radius ? { radius: mk.radius } : {});
   }
 
   // ───────────────────────── 막대 그리기 ─────────────────────────
@@ -1416,6 +1616,120 @@ export class NcViewerApp implements PanelHost {
     this.refreshBar();
   }
 
+  /** 재생 띠(패널이 닫혔을 때): 시간·줄·이동 상태, 처음·이전·재생/멈춤·다음·속도·전체 경로(끝), 시간 막대 */
+  private buildPlayStrip(): NcViewerApp['playStrip'] {
+    const btn = (ic: IconName, label: string, run: () => void): HTMLButtonElement => {
+      const b = h('button', { class: 'mb-btn icon', type: 'button', title: label, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', run);
+      return b;
+    };
+    const time = h('span', { class: 'ps-time' });
+    const line = h('span', { class: 'ps-line' });
+    const state = h('div', { class: 'ps-state' });
+    const play = btn('play', '재생', () => this.togglePlay());
+    const speed = h('select', { class: 'select small', 'aria-label': '재생 속도', title: '재생 속도' });
+    for (const s of PLAY_SPEEDS) speed.append(h('option', { value: String(s) }, `×${s}`));
+    speed.addEventListener('change', () => this.setSpeed(Number(speed.value) as PlaySpeed));
+    const range = h('input', { type: 'range', min: 0, max: 1000, step: 1, value: 0, 'aria-label': '재생 위치' });
+    range.addEventListener('input', () => {
+      const info = this.playbackInfo();
+      if (info) this.seek((Number(range.value) / 1000) * info.total);
+    });
+    const el = h(
+      'div',
+      { class: 'play-strip', role: 'group', 'aria-label': '재생', hidden: true },
+      h('div', { class: 'ps-info' }, time, line, state),
+      h(
+        'div',
+        { class: 'ps-acts' },
+        btn('first', '처음으로', () => this.seek(0)),
+        btn('stepBack', '이전 이동', () => this.stepMove(-1)),
+        play,
+        btn('stepFwd', '다음 이동', () => this.stepMove(1)),
+        speed,
+        btn('close', '재생 끝내기(전체 경로)', () => {
+          this.stopPlay();
+          this.seek(null);
+        }),
+      ),
+      range,
+    );
+    return { el, time, line, state, play, range, speed };
+  }
+
+  /** 재생 막대(패널)와 재생 띠를 함께 맞춘다 */
+  private notifyPlayback(): void {
+    this.panel.onPlayback();
+    this.refreshPlayStrip();
+  }
+
+  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다 */
+  private refreshPlayStrip(): void {
+    const s = this.playStrip;
+    const d = this.doc;
+    const info = this.playbackInfo();
+    const on = !!d && !!info && !this.panelOpen && !this.busy && !this.measuring && (this.playing || d.playSec !== null);
+    s.el.hidden = !on;
+    if (!on || !d || !info) return;
+    s.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
+    s.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '';
+    const st = d.nc && info.move >= 0 ? moveState(d.nc, info.move, unitLabel(d.scene.units)) : null;
+    s.state.textContent = st ? `${st.motion} · ${st.modal}` : '';
+    s.play.innerHTML = icon(this.playing ? 'pause' : 'play');
+    s.play.setAttribute('aria-label', this.playing ? '재생 멈춤' : '재생');
+    s.play.title = this.playing ? '재생 멈춤' : '재생';
+    s.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
+    s.speed.value = String(this.speed);
+  }
+
+  /** 해석 판단 띠: 선반 자동·소수점 없는 좌표·판별한 방언. 단추는 다른 설정으로 다시 읽거나 패널 탭을 연다, ✕는 이 문서에서 닫는다 */
+  private renderNotices(): void {
+    const d = this.doc;
+    const bar = this.noticeBar;
+    bar.replaceChildren();
+    const list = d ? noticeViews(d) : [];
+    bar.hidden = !list.length;
+    for (const n of list) {
+      // 좁은 화면은 글을 한두 줄로 줄여 보이고(3D 보기를 덜 가리게), 글을 누르면 펼친다
+      const text = h('span', { class: 'nt-text', title: n.text }, n.text);
+      const row = h('div', { class: 'notice', 'data-notice': n.key }, text);
+      text.addEventListener('click', () => row.classList.toggle('open'));
+      if (n.action) {
+        const act = n.action;
+        const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
+        b.addEventListener('click', () => {
+          if (act.add) this.chooseFile(true);
+          else if (act.opts) void this.reparse(act.opts);
+          else if (act.tab && d) {
+            d.panelTab = act.tab;
+            this.panel.show(d);
+            this.togglePanel(true);
+          }
+        });
+        row.append(b);
+      }
+      const x = h('button', { class: 'mb-btn icon', type: 'button', title: '이 안내 닫기', 'aria-label': '이 안내 닫기', html: icon('close') });
+      x.addEventListener('click', () => {
+        d?.dismissedNotices.add(n.key);
+        this.renderNotices();
+      });
+      row.append(x);
+      bar.append(row);
+    }
+  }
+
+  /** 알림이 3D 보기 아래쪽 띠를 가리지 않게: 화면 아래쪽에 붙은 띠 가운데 맨 위의 높이(화면 아래에서 잰 px)를 --toast-clear로 */
+  private liftToasts(): void {
+    const vh = window.innerHeight;
+    let top = Infinity;
+    for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) {
+      if (el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > vh / 2 && r.top < top) top = r.top;
+    }
+    document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
+  }
+
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */
   private refreshBar(): void {
     const d = this.doc;
@@ -1453,16 +1767,21 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
+    // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
+    const onSlider = !!t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range';
     const a = keyAction({
       key: ev.key,
       ctrl: ev.ctrlKey,
       meta: ev.metaKey,
       alt: ev.altKey,
-      editable: isEditableTarget(t as (HTMLElement & { type?: string }) | null),
+      editable: isEditableTarget(t as (HTMLElement & { type?: string }) | null) || (onSlider && ev.key.startsWith('Arrow')),
       onButton: !!t && (t.tagName === 'BUTTON' || t.getAttribute?.('role') === 'button' || t.tagName === 'A'),
       onCanvas: !!v && t === v.canvas,
       hasDoc: !!this.doc && !!v && !this.busy,
       canPlay: this.canPlay(),
+      shift: ev.shiftKey,
+      inCode: !!t?.closest?.('.code-list, .code-search'),
+      hasCode: !!this.doc && (!!this.doc.nc || !!this.doc.mpr),
     });
     if (!a) return;
     if (a.type === 'open') {
@@ -1495,7 +1814,22 @@ export class NcViewerApp implements PanelHost {
     ev.preventDefault();
     ev.stopPropagation();
     if (a.type === 'grid') this.toggleGrid();
+    else if (a.type === 'step') this.stepMove(a.delta);
+    else if (a.type === 'line') this.stepLine(a.delta);
+    else if (a.type === 'find') this.openFind(a.next);
     else this.togglePlay();
+  }
+
+  /** 코드에서 찾기: 패널 코드 탭을 열고 찾기 칸에 초점(next면 다음 찾기) */
+  openFind(next = false): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.panelTab !== 'code') {
+      d.panelTab = 'code';
+      this.panel.show(d);
+    }
+    this.togglePanel(true);
+    this.panel.focusFind(next);
   }
 
   // ───────────────────────── 자동 확인용 ─────────────────────────
@@ -1523,6 +1857,7 @@ export class NcViewerApp implements PanelHost {
       playing: this.playing,
       playSec: d?.playSec ?? null,
       selLine: d?.selLine ?? -1,
+      jobFiles: d?.job ? [...d.job.files] : null,
       theme: this.theme,
       measuring: this.measuring,
       aiming: !!this.aim?.aiming,
@@ -1546,6 +1881,8 @@ export class NcViewerApp implements PanelHost {
         const buf = typeof data === 'string' ? (new TextEncoder().encode(data).buffer as ArrayBuffer) : data instanceof Uint8Array ? (data.slice().buffer as ArrayBuffer) : data;
         return app.openBuffer(name, buf, opts);
       },
+      openJob: (files) => app.openFiles(files.map(asFile)),
+      addFiles: (files) => app.addFiles(files.map(asFile)),
       openUrl: (url, name) => app.openUrl(url, name),
       openSample: () => app.openSample(),
       reparse: (opts) => app.reparse(opts),
@@ -1559,6 +1896,8 @@ export class NcViewerApp implements PanelHost {
       },
       selectLine: (line) => app.selectLine(line, undefined, true),
       seek: (sec) => app.seek(sec),
+      stepMove: (delta) => app.stepMove(delta),
+      drawToLine: (line) => app.drawToLine(line),
       togglePlay: () => app.togglePlay(),
       cancel: () => app.cancelLoad(),
       setSection: (axis, t, flip) => app.setSectionAxis(axis, t, flip),
