@@ -132,7 +132,7 @@ describe('원본 글·형식 판별', () => {
   it('parseNcFile은 형식에 맞는 해석기로', () => {
     const a = parseNcFile('dir/part.nc', new TextEncoder().encode('G0 X0 Y0 Z1\nG1 Z-1 F100'));
     expect(a.kind).toBe('gcode');
-    if (a.kind !== 'mpr') expect(a.program.name).toBe('part.nc');
+    if ('program' in a) expect(a.program.name).toBe('part.nc');
     const b = parseNcFile('p.mpr', '[H\nVERSION="4.0"\n<100 \\WerkStck\\\nLA="10"\nBR="5"\nDI="1"\n!\n');
     expect(b.kind).toBe('mpr');
     if (b.kind === 'mpr') expect(b.part.workpiece!.length).toBe(10);

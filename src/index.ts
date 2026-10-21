@@ -1,5 +1,5 @@
 /**
- * NC 형식(G-code·Heidenhain 평문·woodWOP MPR) 공개 진입점.
+ * NC 형식(G-code·Heidenhain 평문·woodWOP MPR·WangShi PGI·KDT XML) 공개 진입점.
  * 파일 이름·앞부분으로 형식을 고르고, 모델과 장면을 만든다. DOM·WebGL 없이 돈다(워커 가능).
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
@@ -8,21 +8,24 @@ import { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 import type { NcProgram } from './model';
 import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
 import { mprToScene, ncToScene, type MprSceneOptions, type NcSceneOptions } from './scene';
-import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from './extensions';
+import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, type PanelFileKind } from './extensions';
 import { makeSource } from './text';
+import { looksLikeKdtXml, looksLikePgi, parseKdtXml, parsePgi, type PanelReadOptions } from './wangs';
 
 export * from './model';
 export { parseGcode, detectGcodeDialect, detectLathe, type GcodeOptions } from './gcode';
 export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
-export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions } from './mpr';
+export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprOtherOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions, type PanelFace } from './mpr';
+export { parsePgi, parseKdtXml, looksLikePgi, looksLikeKdtXml, type PanelReadOptions } from './wangs';
+export { parseXml, xmlRootName, type XmlElement } from './xml';
 export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions } from './scene';
 export { makeSource, sourceLine, splitLines, type NcSource } from './text';
 export { evalMprExpr } from './expr';
 
-export type NcFileKind = 'gcode' | 'heidenhain' | 'mpr';
+export type NcFileKind = 'gcode' | 'heidenhain' | PanelFileKind;
 
-export { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, NC_EXTENSIONS } from './extensions';
+export { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, NC_EXTENSIONS, isPanelKind, type PanelFileKind } from './extensions';
 
 function ext(name: string): string {
   const m = /\.([^./\\]+)$/.exec(name);
@@ -30,15 +33,18 @@ function ext(name: string): string {
 }
 
 /**
- * 형식 판별. 앞부분 글로 먼저 보고(MPR·Heidenhain 표지), 없으면 확장자, 그래도 모르면 G-code로 본다.
- * G-code처럼 보이지도 않으면 null.
+ * 형식 판별. 앞부분 글로 먼저 보고(MPR·PGI·KDT XML·Heidenhain 표지), 없으면 확장자, 그래도 모르면 G-code로 본다.
+ * .xml은 확장자만으로 정하지 않는다(뿌리가 <KDTPanelFormat>일 때만). G-code처럼 보이지도 않으면 null.
  */
 export function detectNcFormat(name: string, data: Uint8Array | string): NcFileKind | null {
   const head = typeof data === 'string' ? data.slice(0, 65536) : new TextDecoder('latin1').decode(data.subarray(0, 65536));
   if (looksLikeMpr(head)) return 'mpr';
+  if (looksLikePgi(head)) return 'pgi';
+  if (looksLikeKdtXml(head)) return 'xml';
   if (detectGcodeDialect(head) === 'heidenhain') return 'heidenhain';
   const e = ext(name);
   if (MPR_EXTENSIONS.includes(e)) return 'mpr';
+  if (PGI_EXTENSIONS.includes(e)) return 'pgi';
   if (HEIDENHAIN_EXTENSIONS.includes(e)) return 'heidenhain';
   if (GCODE_EXTENSIONS.includes(e)) return 'gcode';
   // 내용으로: G·M 낱말이 여럿 보이면 G-code
@@ -47,12 +53,14 @@ export function detectNcFormat(name: string, data: Uint8Array | string): NcFileK
   return words >= 3 && axes >= 3 ? 'gcode' : null;
 }
 
-export type NcParsed = { kind: 'gcode' | 'heidenhain'; program: NcProgram } | { kind: 'mpr'; part: MprPart };
+export type NcParsed = { kind: 'gcode' | 'heidenhain'; program: NcProgram } | { kind: PanelFileKind; part: MprPart };
 
 export interface NcParseOptions {
   gcode?: GcodeOptions;
   heidenhain?: HeidenhainOptions;
   mpr?: MprOptions;
+  /** PGI·KDT XML */
+  panel?: PanelReadOptions;
   /** 형식을 정해 줄 때 */
   kind?: NcFileKind;
 }
@@ -63,6 +71,8 @@ export function parseNcFile(name: string, data: Uint8Array | ArrayBuffer | strin
   const kind = opts.kind ?? detectNcFormat(name, bytes) ?? 'gcode';
   const base = name.replace(/^.*[\\/]/, '');
   if (kind === 'mpr') return { kind, part: parseMpr(bytes, { name: base, ...opts.mpr }) };
+  if (kind === 'pgi') return { kind, part: parsePgi(bytes, { name: base, ...opts.panel }) };
+  if (kind === 'xml') return { kind, part: parseKdtXml(bytes, { name: base, ...opts.panel }) };
   const src = makeSource(bytes);
   if (kind === 'heidenhain') return { kind, program: parseHeidenhain(src, { name: base, ...opts.heidenhain }) };
   return { kind: 'gcode', program: parseGcode(src, { name: base, ...opts.gcode }) };
@@ -70,7 +80,7 @@ export function parseNcFile(name: string, data: Uint8Array | ArrayBuffer | strin
 
 /** 해석 결과를 장면으로 */
 export function ncParsedToScene(p: NcParsed, opts: { nc?: NcSceneOptions; mpr?: MprSceneOptions } = {}): Scene3d {
-  return p.kind === 'mpr' ? mprToScene(p.part, opts.mpr) : ncToScene(p.program, opts.nc);
+  return 'part' in p ? mprToScene(p.part, opts.mpr) : ncToScene(p.program, opts.nc);
 }
 
 /** 파일 → 모델 + 장면(한 번에) */

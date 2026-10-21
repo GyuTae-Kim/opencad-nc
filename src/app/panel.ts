@@ -1,10 +1,11 @@
 /**
  * 오른쪽 패널(폭 760px 미만이면 아래 시트): 열린 NC 문서의 코드·공구·정보.
  *
- * 탭: G-code·Heidenhain = 코드·공구·정보(+재생 막대), MPR = 가공·변수·코드·정보.
+ * 탭: G-code·Heidenhain = 코드·공구·정보(+재생 막대), 판재 가공(MPR·PGI·XML) = 가공·변수·코드·정보.
  * 아래 띠에는 고른 줄·객체와 측정 결과를 보인다. 코드 보기는 가상 목록(보이는 줄만 DOM, src/view/vlist.ts).
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/panel.ts를 이 앱(문서 하나, 리본 없음)에 맞게 옮겼다.
  */
+import { isPanelKind } from '../extensions';
 import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
@@ -439,7 +440,7 @@ export class NcPanel {
     );
   }
 
-  // ───────────────────────── MPR ─────────────────────────
+  // ───────────────────────── 판재 가공(MPR·PGI·XML) ─────────────────────────
 
   private renderOps(d: NcDoc): void {
     const meta = (d.scene.meta ?? {}) as { workpiece?: { length: number; width: number; thickness: number } };
@@ -523,14 +524,19 @@ export class NcPanel {
     this.body.append(group('문서', ...rows));
 
     if (d.nc) this.ncInfo(d);
-    if (d.kind === 'mpr') {
+    if (isPanelKind(d.kind)) {
       const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;
       if (st)
         this.body.append(
           group('가공 요약', row('구멍', `${st.holes ?? 0}개 (드릴 가공 ${st.drillOps ?? 0})`), row('윤곽 가공', String(st.contourOps ?? 0)), row('홈 · 포켓', `${st.grooves ?? 0} · ${st.pockets ?? 0}`), row('꺼진 가공', String(st.disabled ?? 0))),
         );
       if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled)
-        this.body.append(group('보기 선택', this.optToggle(d, 'mprDisabled', '꺼진 가공도 그리기', '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.')));
+        this.body.append(
+          group(
+            '보기 선택',
+            this.optToggle(d, 'mprDisabled', '꺼진 가공도 그리기', d.kind === 'mpr' ? '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.' : 'enable(Enable)이 0인 가공을 묶음 "꺼진 가공"으로 그립니다.'),
+          ),
+        );
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];

@@ -9,7 +9,7 @@ const HOST = 'gyutae-kim.github.io';
 const CONSENT_KEY = 'opencad.analytics-consent.v1';
 const PATHS: Record<AnalyticsTool, string> = { portfolio: '/', dwgdxf: '/opencad-dwgdxf/', nc: '/opencad-nc/', step: '/opencad-step/', skp: '/opencad-skp/' };
 const TITLES: Record<AnalyticsTool, string> = { portfolio: '포트폴리오 | 홈', dwgdxf: 'OpenCAD | DWG/DXF 캐드', nc: 'OpenCAD | NC 뷰어', step: 'OpenCAD | STEP 뷰어', skp: 'OpenCAD | SKP 뷰어' };
-const FORMATS = new Set(['skp', 'step', 'stp', 'p21', 'stpz', 'stpx', 'zip', 'gz', 'dxf', 'dwg', 'nc', 'gcode', 'ngc', 'h', 'mpr']);
+const FORMATS = new Set(['skp', 'step', 'stp', 'p21', 'stpz', 'stpx', 'zip', 'gz', 'dxf', 'dwg', 'nc', 'gcode', 'ngc', 'h', 'mpr', 'pgi', 'xml']);
 type AnalyticsWindow = Window & { dataLayer?: unknown[]; gtag?: (...args: unknown[]) => void };
 let active: { id: string; tool: AnalyticsTool } | undefined;
 let started = false;

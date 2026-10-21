@@ -8,6 +8,7 @@
  * 이 파일은 화면 쪽에서도 불러오므로 해석기(무거운 코드)를 가져오지 않는다 — 워커 쪽 도움은 payload.ts에 있다.
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
+import type { PanelFileKind } from '../extensions';
 import type { NcDialect, NcStats, NcTool } from '../model';
 import type { NcSource } from '../text';
 
@@ -23,7 +24,7 @@ export interface NcOpenOptions {
   lathe?: boolean;
   /** 회전축 A·B·C 감기(G-code) */
   rotary?: boolean;
-  /** 꺼진 가공도 그리기(MPR) */
+  /** 꺼진 가공도 그리기(MPR·PGI·XML) */
   mprDisabled?: boolean;
 }
 
@@ -66,13 +67,13 @@ export interface NcPayload {
   stats: NcStats;
 }
 
-/** MPR 패널 자료(가공·변수는 scene.meta에 있다) */
+/** 판재 가공(MPR·PGI·XML) 패널 자료(가공·변수는 scene.meta에 있다) */
 export interface MprPayload {
   /** 원본 줄 */
   lines: string[];
 }
 
-export type NcKind = 'gcode' | 'heidenhain' | 'mpr';
+export type NcKind = 'gcode' | 'heidenhain' | PanelFileKind;
 
 export interface ParseResult {
   kind: NcKind;

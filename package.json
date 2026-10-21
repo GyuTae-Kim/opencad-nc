@@ -2,7 +2,7 @@
   "name": "opencad-nc",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenCAD NC 뷰어·해석기: G-code·Heidenhain·woodWOP MPR 프로그램을 브라우저에서 읽어 3D 공구 경로로 보여 줌",
+  "description": "OpenCAD NC 뷰어·해석기: G-code·Heidenhain·woodWOP MPR·WangShi PGI·KDT XML 프로그램을 브라우저에서 읽어 3D 공구 경로로 보여 줌",
   "license": "MIT",
   "type": "module",
   "exports": {
