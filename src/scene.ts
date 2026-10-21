@@ -9,7 +9,7 @@
  * meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
-import { MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, type NcProgram, type PathPoint } from './model';
+import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
 import type { MprPart } from './mpr';
@@ -35,6 +35,7 @@ export interface NcSceneOptions {
 }
 
 const RAPID_COLOR: Rgba = [0.55, 0.55, 0.6, 1];
+const MACHINE_COLOR: Rgba = [0.85, 0.6, 0.25, 1];
 const COMP_COLOR: Rgba = [0.95, 0.3, 0.75, 1];
 const AXIS_COLOR: Rgba = [0.45, 0.6, 0.85, 1];
 const STOCK_COLOR: Rgba = [0.85, 0.72, 0.5, 0.22];
@@ -94,11 +95,16 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
   const segCut: number[] = [];
   const segDrill: number[] = [];
   let segRapid = 0;
+  let segMach = 0;
   let feedMin = Infinity;
   let feedMax = -Infinity;
   const arcN = new Uint32Array(a.count);
   for (let i = 0; i < n; i++) {
     const k = m.kind[i]!;
+    if (m.flags[i]! & FLAG_MACHINE_EST) {
+      segMach++;
+      continue;
+    }
     if (k === MOVE_RAPID) {
       segRapid++;
       continue;
@@ -138,6 +144,7 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     k: 0,
   });
   const rapid = mk(opts.rapids === false ? 0 : segRapid, false);
+  const mach = mk(segMach, false);
   const cut = toolOrder.map((_, s) => mk(segCut[s] ?? 0, byFeed));
   const drill = toolOrder.map((_, s) => mk(segDrill[s] ?? 0, byFeed));
   const put = (b: Buf, id: number, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, c?: Rgba): void => {
@@ -169,6 +176,10 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     const x1 = pts[o + 3]!;
     const y1 = pts[o + 4]!;
     const z1 = pts[o + 5]!;
+    if (m.flags[i]! & FLAG_MACHINE_EST) {
+      put(mach, i, x0, y0, z0, x1, y1, z1);
+      continue;
+    }
     if (k === MOVE_RAPID) {
       if (opts.rapids !== false) put(rapid, i, x0, y0, z0, x1, y1, z1);
       continue;
@@ -231,6 +242,9 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
   const lines: LineSet3d[] = [];
   if (rapid.k > 0)
     lines.push({ id: 'nc-rapid', name: '급속 이송', positions: rapid.pos, color: RAPID_COLOR, dashed: true, group: '급속 이송', segmentIds: rapid.ids });
+  // 기계 좌표 쪽 추정 이동(G53·G28·M91 등 — 안전 높이로 그림): 범위에 넣지 않는 따로 점선
+  if (mach.k > 0)
+    lines.push({ id: 'nc-machine', name: '기계 원점 쪽 이동(추정)', positions: mach.pos, color: MACHINE_COLOR, dashed: true, group: '기계 원점 쪽 이동(추정)', segmentIds: mach.ids });
   // 묶음 이름: T번호(이름만 있는 공구는 이름), 공구 없으면 '공구 없음'
   const toolName = (t: number): string => {
     if (t < 0) return '공구 없음';

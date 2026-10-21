@@ -206,13 +206,14 @@ G53 G0 Z50`);
     expect(p.moves.flags[3]! & FLAG_MACHINE).toBe(FLAG_MACHINE);
   });
 
-  it('G28은 중간점까지, 기준점을 주면 거기까지', () => {
+  it('G28은 중간점까지, 기준점을 모르면 공구 축만 안전 높이로, 기준점을 주면 거기까지', () => {
     const p = run(`G1 X10 Z-1 F100
 G91 G28 Z5
 G90`);
     expect(ends(p)).toEqual([
       [10, 0, -1],
       [10, 0, 4],
+      [10, 0, 29],
     ]);
     expect(p.warnings.some((w) => w.includes('G28'))).toBe(true);
     const q = run(`G1 X10 F100

@@ -51,8 +51,15 @@ export interface GcodeOptions {
   maxBlocks?: number;
   /** 시작 위치(주면 첫 이동부터 그린다. 없으면 처음 지정되는 좌표부터) */
   initialPosition?: [number, number, number];
-  /** G28·G30 기준점(표시 좌표). 없으면 중간점에서 멈춘 것으로 본다 */
+  /** G28·G30 기준점(표시 좌표). 없고 machineOffset도 없으면 공구 축만 안전 높이(추정)로 옮긴다 */
   homePosition?: [number, number, number];
+  /**
+   * 첫 작업 좌표계 원점의 기계 좌표(표시 단위). 주면 G53 값과 G28·G30 기준점(referencePoint)을 실제 위치로 그린다.
+   * 없으면 기계 좌표 쪽 이동은 공구 축을 "안전 높이"(경로 맨 위 + 여유)로 그리고 FLAG_MACHINE_EST를 단다
+   */
+  machineOffset?: [number, number, number];
+  /** G28 기준점의 기계 좌표(machineOffset과 함께, 기본 0,0,0) */
+  referencePoint?: [number, number, number];
   /** IJK를 절대값으로 볼지(G90.1 기본, 일부 Mach3 설정) */
   arcCenterAbsolute?: boolean;
   /** 작업 좌표계 오프셋(기계 좌표, 표시 단위). 키: 'G54'…'G59', 'G54.1P1'… */
@@ -664,6 +671,8 @@ class Runner extends NcEmitter {
       this.xMul = (opts.latheDiameter ?? this.fanucLathe) ? 0.5 : 1;
       // Fanuc 선반은 켜질 때 회전당 이송(G99)이 흔하다
       if (this.fanucLathe) this.feedMode = 95;
+      // 선반의 기계 원점은 +X·+Z 쪽(공구대가 멀리 물러난다)
+      this.machSafeAxes = 5;
     } else if (opts.lathe === undefined && src.lineCount > 0 && detectLathe(head()))
       this.w.add('선반 프로그램으로 보임 — 선반 모드로 읽으면 X를 지름으로 보고 선반 사이클을 그림');
     if (opts.rotary) this.setRotary(opts.rotary === true ? {} : opts.rotary);
@@ -792,10 +801,38 @@ class Runner extends NcEmitter {
     if (!blk.has[L]) return this.pos[a]!;
     const v = blk.val[L]! * this.axScale[a]!;
     if (machine) {
-      const b = this.wcsOff.get(this.baseWcs < 0 ? this.wcs : this.baseWcs);
+      const b = this.machineBase();
       return v - (b ? b[a]! : 0);
     }
     return inc ? this.pos[a]! + v : v + this.off[a]!;
+  }
+
+  /** 첫 작업 좌표계 원점의 기계 좌표(모르면 null) */
+  protected machineBase(): readonly number[] | null {
+    return this.o.machineOffset ?? this.wcsOff.get(this.baseWcs < 0 ? this.wcs : this.baseWcs) ?? null;
+  }
+
+  /** G28·G30 기준점(표시 좌표, 모르면 null) */
+  protected homeFor(g: number): readonly number[] | null {
+    const stored = g === 280 ? this.stored28 : this.stored30;
+    if (stored) return stored;
+    if (this.o.homePosition) return this.o.homePosition;
+    const mo = this.o.machineOffset;
+    if (mo) {
+      const r = this.o.referencePoint ?? [0, 0, 0];
+      return [r[0] - mo[0], r[1] - mo[1], r[2] - mo[2]];
+    }
+    return null;
+  }
+
+  /**
+   * 기계 위치를 모르는 기계 좌표 쪽 이동(G53·G28·G30 기준점): 공구 축(선반은 X·Z)을 안전 높이로, 나머지 축은 제자리에 두고 경고
+   * mask = 주어진 축 비트. what = 경고에 쓰는 코드 이름
+   */
+  protected machineEstimate(mask: number, line: number, what: string, kind = MOVE_RAPID): void {
+    this.w.add(`${what} 기계 좌표 쪽 이동 — 작업 원점의 기계 위치를 몰라 공구 축을 안전 높이(경로 맨 위 + 여유)로 그림`, line);
+    const rest = this.machineRetract(mask, line, kind);
+    if (rest) this.w.add(`${what} X·Y 기계 위치를 몰라 그 축은 제자리에 둠`, line);
   }
 
   /** 블록의 끝점(표시 좌표) — 좌표 변환·선반 U/W를 함께 본다. 돌려주는 배열은 다음 부름에서 다시 쓴다 */
@@ -1308,12 +1345,13 @@ class Runner extends NcEmitter {
         // 중간점 → 기준점
         const mid = this.targets(blk, false);
         this.emit(MOVE_RAPID, mid[0]!, mid[1]!, mid[2]!, line);
-        const home = (nonModal === 280 ? this.stored28 : this.stored30) ?? this.o.homePosition;
+        const home = this.homeFor(nonModal);
+        const all = !axisGiven;
+        const given = (a: number): boolean => all || !!blk.has[AXIS_LETTER[a]!] || (a === 0 && !!uw && !!blk.has[LU]) || (a === 2 && !!uw && !!blk.has[LW]);
         if (home) {
-          const all = !axisGiven;
-          const t = [0, 1, 2].map((a) => (all || blk.has[AXIS_LETTER[a]!] || (a === 0 && uw && blk.has[LU]) || (a === 2 && uw && blk.has[LW]) ? home[a]! : this.pos[a]!));
+          const t = [0, 1, 2].map((a) => (given(a) ? home[a]! : this.pos[a]!));
           this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_MACHINE);
-        } else this.w.add(`G${nonModal / 10} 기준점 위치를 몰라 중간점에서 멈춘 것으로 그림`, line);
+        } else this.machineEstimate((given(0) ? 1 : 0) | (given(1) ? 2 : 0) | (given(2) ? 4 : 0), line, `G${nonModal / 10}`);
         return this.endBlock(blk, line);
       }
       case 281:
@@ -1355,6 +1393,10 @@ class Runner extends NcEmitter {
     }
     if (this.cycle && motionG < 0) {
       if (axisGiven || blk.has[LR] || cycleG > 0) this.doCycle(blk, line);
+    } else if (axisGiven && machine && !this.machineBase()) {
+      // G53인데 작업 원점의 기계 위치를 모른다: 공구 축만 안전 높이로(추정)
+      const mask = (blk.has[LX] ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] ? 4 : 0);
+      this.machineEstimate(mask, line, 'G53', this.motion === 0 ? MOVE_RAPID : MOVE_FEED);
     } else if (axisGiven) {
       if (machine && this.motion > 10) this.w.add('G53과 원호는 함께 쓸 수 없음', line);
       const t = this.targets(blk, machine);

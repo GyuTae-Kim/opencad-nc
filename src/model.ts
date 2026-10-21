@@ -31,6 +31,11 @@ export const FLAG_CYCLE = 16; // 고정 사이클이 만든 이동
 export const FLAG_INVERSE_TIME = 32; // G93
 export const FLAG_PER_REV = 64; // G95
 export const FLAG_COOLANT = 128; // M7/M8 켜짐
+/**
+ * 기계 좌표 쪽 추정 이동(G53·G28·G30·M91·SUPA 등): 작업 원점의 기계 위치를 몰라 공구 축을 "안전 높이"(경로 맨 위 + 여유)로
+ * 정해 그린 이동과 그 높이에서 출발·도착한 이동. 장면은 따로 점선 묶음으로 그리고 범위 계산에서 뺀다
+ */
+export const FLAG_MACHINE_EST = 256;
 
 /** 평면: 0 XY(G17), 1 ZX(G18), 2 YZ(G19) */
 export type NcPlane = 0 | 1 | 2;
@@ -63,7 +68,7 @@ export interface NcMoves {
   /** 호 표 번호(호가 아니면 -1) */
   arc: Int32Array;
   /** FLAG_* 비트 */
-  flags: Uint8Array;
+  flags: Uint16Array;
   /** 작업 좌표계(0 = G54 … 5 = G59, 6~ = G54.1 P1~ 또는 G59.1~, 255 = 기계 좌표) */
   wcs: Uint8Array;
   /** 걸린 시간(초, 이동 뒤 휴지 포함) */
@@ -245,7 +250,7 @@ export class MoveBuilder {
   feed: Float32Array;
   spindle: Float32Array;
   arc: Int32Array;
-  flags: Uint8Array;
+  flags: Uint16Array;
   wcs: Uint8Array;
   time: Float32Array;
 
@@ -273,7 +278,7 @@ export class MoveBuilder {
     this.feed = new Float32Array(cap);
     this.spindle = new Float32Array(cap);
     this.arc = new Int32Array(cap);
-    this.flags = new Uint8Array(cap);
+    this.flags = new Uint16Array(cap);
     this.wcs = new Uint8Array(cap);
     this.time = new Float32Array(cap);
     this.points[0] = start[0]!;

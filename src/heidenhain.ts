@@ -30,6 +30,8 @@ export interface HeidenhainOptions {
   maxMoves?: number;
   /** 반경 보정·포켓 사이클용 공구 표(표시 단위, 키 = 공구 번호). 없으면 TOOL DEF R + TOOL CALL DR */
   toolTable?: Record<number, { diameter?: number; radius?: number }>;
+  /** 공작물 원점의 기계 좌표(표시 단위). 주면 M91 값을 실제 위치로 그린다. 없으면 공구 축을 안전 높이(추정)로 */
+  machineOffset?: [number, number, number];
 }
 
 const AXES = 'XYZ';
@@ -669,9 +671,10 @@ class HRunner extends NcEmitter {
   }
 
   /** 반경 보정·이송·M 낱말 */
-  private modal(T: string[], line: number): { rapid: boolean; m99: boolean; machine: boolean } {
+  private modal(T: string[], line: number): { rapid: boolean; m99: boolean; machine: number } {
     let rapid = false;
-    let machine = false;
+    /** 0 = 아님, 91 = M91(기계 원점 기준), 92 = M92(기계 고정점 기준) */
+    let machine = 0;
     const compBefore = this.comp;
     for (let i = 1; i < T.length; i++) {
       const w = T[i]!.toUpperCase();
@@ -681,7 +684,8 @@ class HRunner extends NcEmitter {
       else if (w === 'FMAX') rapid = true;
       else if (w === 'FAUTO' || (w === 'F' && (T[i + 1] ?? '').toUpperCase() === 'AUTO')) this.feed = this.autoFeed;
       else if (/^F[+-]?[\d.]+$/.test(w) || /^F[+-]?Q/.test(w)) this.feed = this.value(w.slice(1));
-      else if (w === 'M91' || w === 'M92') machine = true;
+      else if (w === 'M91') machine = 91;
+      else if (w === 'M92') machine = 92;
     }
     if (this.comp !== compBefore) this.compNote(line);
     const { m99 } = this.mWords(T, line, false);
@@ -703,6 +707,19 @@ class HRunner extends NcEmitter {
     const [a0, a1] = PLANE_AXES[this.plane]!;
     const s0 = this.pos[a0]!;
     const s1 = this.pos[a1]!;
+    if (machine && c.some((v) => v !== undefined)) {
+      const mo = this.o.machineOffset;
+      if (machine === 91 && mo) {
+        // M91 값은 기계 원점 기준: 공작물 원점의 기계 좌표를 알면 실제 위치로
+        for (let a = 0; a < 3; a++) if (c[a] !== undefined) c[a] = c[a]! - this.shift[a]! - mo[a]!;
+      } else {
+        const mask = (c[0] !== undefined ? 1 : 0) | (c[1] !== undefined ? 2 : 0) | (c[2] !== undefined ? 4 : 0);
+        this.machSafeAxes = 1 << PLANE_AXES[this.plane]![2];
+        this.w.add(`M${machine} 기계 좌표 쪽 이동 — 작업 원점의 기계 위치를 몰라 공구 축을 안전 높이(경로 맨 위 + 여유)로 그림`, line);
+        if (this.machineRetract(mask, line, rapid ? MOVE_RAPID : MOVE_FEED)) this.w.add(`M${machine} X·Y 기계 위치를 몰라 그 축은 제자리에 둠`, line);
+        return this.afterMove(m99, line);
+      }
+    }
     const x = c[0] ?? this.pos[0]!;
     const y = c[1] ?? this.pos[1]!;
     const z = c[2] ?? this.pos[2]!;

@@ -13,6 +13,7 @@ import {
   FLAG_COOLANT,
   FLAG_INVERSE_TIME,
   FLAG_MACHINE,
+  FLAG_MACHINE_EST,
   FLAG_PER_REV,
   FLAG_TOOL_LENGTH,
   MOVE_ARC,
@@ -104,6 +105,18 @@ export class NcEmitter {
   /** 다음 이동이 끝날 때의 각(블록에서 정한다. 이동이 쓰면 지운다) */
   protected angTo: Float64Array | null = null;
 
+  // ── 기계 좌표 쪽 추정 위치(G53·G28·M91 등, 작업 원점의 기계 위치를 모를 때) ──
+  /** 지금 "안전 높이"(추정)에 있는 축 비트(1 x, 2 y, 4 z) */
+  protected machHigh = 0;
+  /** 안전 높이로 옮기는 축(밀링 = 공구 축 Z, 선반 = X·Z) */
+  protected machSafeAxes = 4;
+  /** 마지막 점이 안전 높이였던 축 */
+  private machLast = 0;
+  /** build에서 안전 높이 값을 넣을 점 [점 번호, 축 비트]… */
+  private machFix: number[] = [];
+  /** 지금까지 지난 점의 축별 최댓값(안전 높이 추정용) */
+  private seenMax = [-Infinity, -Infinity, -Infinity];
+
   constructor(src: NcSource, start?: readonly number[]) {
     this.src = src;
     if (start) {
@@ -146,6 +159,9 @@ export class NcEmitter {
       this.mb.setLast(p[0]!, p[1]!, p[2]!);
     }
     const len = arcLen >= 0 ? arcLen : Math.hypot(x - p[0]!, y - p[1]!, z - p[2]!);
+    // 안전 높이(추정)에 있던 축이 다른 값으로 가면 그 축은 안전 높이를 떠난다
+    if (this.machHigh !== 0) this.leaveMachHigh(x, y, z);
+    if (this.machPending !== 0) this.machHigh |= this.machPending;
     p[0] = x;
     p[1] = y;
     p[2] = z;
@@ -153,6 +169,16 @@ export class NcEmitter {
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx);
+    const endHigh = this.machHigh;
+    if (endHigh !== 0 || this.machLast !== 0) {
+      this.mb.flags[i] = this.mb.flags[i]! | FLAG_MACHINE_EST;
+      if (endHigh !== 0) this.machFix.push(i + 1, endHigh);
+      this.machLast = endHigh;
+    }
+    const sm = this.seenMax;
+    if (x > sm[0]! && !(endHigh & 1)) sm[0] = x;
+    if (y > sm[1]! && !(endHigh & 2)) sm[1] = y;
+    if (z > sm[2]! && !(endHigh & 4)) sm[2] = z;
     let t = 0;
     const acc = this.toolAcc();
     if (acc.firstLine < 0) acc.firstLine = line;
@@ -179,6 +205,52 @@ export class NcEmitter {
     this.mb.time[i] = t;
     return true;
   }
+
+  private leaveMachHigh(x: number, y: number, z: number): void {
+    const p = this.pos;
+    if (this.machHigh & 1 && x !== p[0]) this.machHigh &= ~1;
+    if (this.machHigh & 2 && y !== p[1]) this.machHigh &= ~2;
+    if (this.machHigh & 4 && z !== p[2]) this.machHigh &= ~4;
+  }
+
+  /**
+   * 기계 좌표 쪽 이동(G53·G28·G30·M91·SUPA·G74 등)인데 작업 원점의 기계 위치를 모를 때: mask 축 가운데 안전 높이 축
+   * (machSafeAxes — 밀링 Z, 선반 X·Z)은 "안전 높이"(경로의 그 축 최댓값 + 여유, build에서 정한다)로 옮기고,
+   * 나머지 축(밀링 X·Y — 기계 원점 방향을 알 수 없다)은 제자리에 둔다. 옮기지 않은 축 비트를 돌려준다.
+   * 위치를 아직 모르는 첫 이동 전이면 이동 없이 시작점을 안전 높이로 둔다(뒤의 첫 진입이 위에서 내려오게).
+   */
+  protected machineRetract(mask: number, line: number, kind = MOVE_RAPID): number {
+    const safe = mask & this.machSafeAxes;
+    if (!safe) return mask;
+    const t = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
+    const margin = this.displayInch ? 1 : 25;
+    for (let a = 0; a < 3; a++) {
+      if (!(safe & (1 << a))) continue;
+      if (this.machHigh & (1 << a)) continue;
+      const top = Number.isFinite(this.seenMax[a]!) ? this.seenMax[a]! : this.pos[a]!;
+      // 프로그램 값과 우연히 같지 않게 조금 비튼 임시 값(build에서 고친다)
+      t[a] = top + margin + 0.000123457;
+    }
+    if (this.mb.count === 0 && this.known !== 7) {
+      // 첫 이동 전: 시작점을 안전 높이로
+      for (let a = 0; a < 3; a++)
+        if (safe & (1 << a)) {
+          this.pos[a] = t[a]!;
+          this.known |= 1 << a;
+        }
+      this.machHigh |= safe;
+      this.machLast = this.machHigh;
+      this.machFix.push(0, this.machHigh);
+      return mask & ~safe;
+    }
+    // 이동 끝에서 안전 높이 비트를 켠다(emit이 leaveMachHigh 다음에 더한다)
+    this.machPending = safe;
+    this.emit(kind, t[0]!, t[1]!, t[2]!, line, FLAG_MACHINE);
+    this.machPending = 0;
+    return mask & ~safe;
+  }
+  /** machineRetract가 내는 이동이 끝날 때 켤 안전 높이 비트 */
+  private machPending = 0;
 
   /** 호 이동: 중심 c(xyz, 직선 축 값은 시작점), 부호 있는 중심각 */
   protected emitArc(plane: number, c: readonly number[], sweep: number, x: number, y: number, z: number, line: number, extraFlags = 0): void {
@@ -254,6 +326,11 @@ export class NcEmitter {
     }
     const s = [p[0]!, p[1]!, p[2]!];
     const e = [x, y, z];
+    // 회전축 감기 중의 안전 높이(추정)는 값을 고치지 않고 표시만 한다
+    if (this.machHigh !== 0) this.leaveMachHigh(x, y, z);
+    if (this.machPending !== 0) this.machHigh |= this.machPending;
+    const estFlag = this.machHigh !== 0 || this.machLast !== 0 ? FLAG_MACHINE_EST : 0;
+    this.machLast = this.machHigh;
     const dA = [a1[0]! - a0[0]!, a1[1]! - a0[1]!, a1[2]! - a0[2]!];
     const dlin = arcLen >= 0 ? arcLen : Math.hypot(x - s[0]!, y - s[1]!, z - s[2]!);
     const combined = Math.hypot(dlin, dA[0]!, dA[1]!, dA[2]!);
@@ -293,7 +370,7 @@ export class NcEmitter {
     }
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
-    const flags = this.flags() | extraFlags;
+    const flags = this.flags() | extraFlags | estFlag;
     const acc = this.toolAcc();
     if (acc.firstLine < 0) acc.firstLine = line;
     let lx = this.mb.lastX();
@@ -411,8 +488,94 @@ export class NcEmitter {
     if (!this.toolInfo.get(t)?.name && lc && line - lc.line <= 2 && line >= lc.line) this.addToolInfo(t, lc.text);
   }
 
+  /** 이동 i의 길이(호·나선 포함) */
+  private moveLen(i: number): number {
+    const mb = this.mb;
+    const pts = mb.points;
+    const k = i * 3;
+    if (mb.kind[i] === MOVE_ARC && mb.arc[i]! >= 0) {
+      const ai = mb.arc[i]!;
+      const c = [mb.arcCenter[ai * 3]!, mb.arcCenter[ai * 3 + 1]!, mb.arcCenter[ai * 3 + 2]!];
+      return arcLength(pts.subarray(k, k + 3), pts.subarray(k + 3, k + 6), c, mb.arcPlane[ai]!, mb.arcSweep[ai]!);
+    }
+    return Math.hypot(pts[k + 3]! - pts[k]!, pts[k + 4]! - pts[k + 1]!, pts[k + 5]! - pts[k + 2]!);
+  }
+
+  /**
+   * 안전 높이(추정) 점에 값을 넣는다: 추정 이동이 아닌 이동이 지난 점의 축별 최댓값 + 여유(mm 25 · inch 1).
+   * 바뀐 점에 닿는 이동의 길이·시간·통계를 다시 맞춘다. 회전축 감기 중이면 임시 값을 그대로 둔다.
+   */
+  private fixMachine(): void {
+    const fix = this.machFix;
+    if (!fix.length || this.rotAxis !== null) return;
+    const mb = this.mb;
+    const n = mb.count;
+    const pts = mb.points;
+    const box = emptyBox();
+    const c = [0, 0, 0];
+    for (let i = 0; i < n; i++) {
+      if (mb.flags[i]! & FLAG_MACHINE_EST) continue;
+      const k = i * 3;
+      if (mb.kind[i] === MOVE_ARC && mb.arc[i]! >= 0) {
+        const ai = mb.arc[i]!;
+        c[0] = mb.arcCenter[ai * 3]!;
+        c[1] = mb.arcCenter[ai * 3 + 1]!;
+        c[2] = mb.arcCenter[ai * 3 + 2]!;
+        arcExtend(pts.subarray(k, k + 3), pts.subarray(k + 3, k + 6), c, mb.arcPlane[ai]!, mb.arcSweep[ai]!, box);
+      } else {
+        extendBox(box, pts[k]!, pts[k + 1]!, pts[k + 2]!);
+        extendBox(box, pts[k + 3]!, pts[k + 4]!, pts[k + 5]!);
+      }
+    }
+    for (let h = 0; h < mb.holeCount; h++) extendBox(box, mb.holeTop[h * 3]!, mb.holeTop[h * 3 + 1]!, mb.holeTop[h * 3 + 2]!);
+    const margin = this.displayInch ? 1 : 25;
+    const safe = [0, 1, 2].map((a) => (Number.isFinite(box[3 + a]!) ? box[3 + a]! : 0) + margin);
+    const changed = new Uint8Array(n + 1);
+    for (let j = 0; j < fix.length; j += 2) changed[fix[j]!] = 1;
+    const affected: number[] = [];
+    const oldLen: number[] = [];
+    for (let i = 0; i < n; i++)
+      if (changed[i] || changed[i + 1]) {
+        affected.push(i);
+        oldLen.push(this.moveLen(i));
+      }
+    for (let j = 0; j < fix.length; j += 2) {
+      const k = fix[j]! * 3;
+      const m = fix[j + 1]!;
+      for (let a = 0; a < 3; a++) if (m & (1 << a)) pts[k + a] = safe[a]!;
+    }
+    affected.forEach((i, q) => {
+      const dl = this.moveLen(i) - oldLen[q]!;
+      if (Math.abs(dl) < 1e-12) return;
+      const acc = this.tools.get(mb.tool[i]!);
+      let dt = 0;
+      if (mb.kind[i] === MOVE_RAPID) {
+        dt = (dl / this.rapidFeed) * 60;
+        this.rapidLen += dl;
+        this.rapidTime += dt;
+        if (acc) acc.rapidLength += dl;
+      } else {
+        const f = mb.feed[i]!;
+        const fl = mb.flags[i]!;
+        if (fl & FLAG_INVERSE_TIME) dt = 0;
+        else if (fl & FLAG_PER_REV) {
+          const s = Math.abs(mb.spindle[i]!);
+          dt = f > 0 && s > 0 ? (dl / (f * s)) * 60 : 0;
+        } else dt = f > 0 ? (dl / f) * 60 : 0;
+        this.feedLen += dl;
+        this.feedTime += dt;
+        if (acc) acc.feedLength += dl;
+      }
+      mb.time[i] = mb.time[i]! + dt;
+      if (acc) acc.time += dt;
+    });
+    // 끝난 위치도 고친다(build 뒤에 쓰지 않지만 일관되게)
+    for (let a = 0; a < 3; a++) if (this.machHigh & (1 << a)) this.pos[a] = safe[a]!;
+  }
+
   /** 모델로 마무리 */
   protected build(o: { name: string; format: NcProgram['format']; dialect: NcDialect; blocks: number; stock?: Box3 }): NcProgram {
+    this.fixMachine();
     const { moves, arcs, holes } = this.mb.finish();
     const all = emptyBox();
     const cut = emptyBox();
@@ -421,6 +584,8 @@ export class NcEmitter {
     const e = [0, 0, 0];
     const c = [0, 0, 0];
     for (let i = 0; i < moves.count; i++) {
+      // 기계 좌표 쪽 추정 이동(안전 높이)은 범위에 넣지 않는다
+      if (moves.flags[i]! & FLAG_MACHINE_EST) continue;
       const k = i * 3;
       s[0] = pts[k]!;
       s[1] = pts[k + 1]!;
