@@ -7,6 +7,9 @@
  * - 같은 이름·크기는 한 항목(다시 열면 시각만 새로).
  * - IndexedDB를 못 쓰면(비공개 창·막힌 저장소·용량 부족) 조용히 아무 일도 하지 않는다.
  * - 목록(이름·크기·시각)과 내용은 열쇠를 나눠(`meta:`·`data:`) 두어, 목록을 읽을 때 파일 내용을 읽지 않는다.
+ * - 연결은 일마다 열고 닫는다: 휴대폰(iOS WebKit)이 뒤로 간 페이지의 연결을 끊거나 사이트 자료를 지워도
+ *   다음 일은 새 연결로 한다. 끊긴 연결 오류(UnknownError·InvalidStateError)는 새 연결로 한 번 더 해 본다.
+ * - 읽기는 "없음"(지워졌다)과 "못 읽음"(잠깐의 실패)을 가른다 — 못 읽은 항목은 지우지 않는다.
  * - 저장 방식은 RecentBackend로 바꿔 끼운다(시험은 tests/app/recent-memory.ts의 메모리 바탕).
  *
  * 2dcad-viewer의 src/app/recent.ts(같은 한도)를 따라 다시 짰다.
@@ -24,6 +27,9 @@ export interface RecentEntry {
 
 /** 파일 내용: 고른 파일(File·Blob) 그대로 또는 바이트 */
 export type RecentData = Blob | ArrayBuffer;
+
+/** 읽은 결과: ok = 내용(바이트 사본), missing = 저장소에 내용이 없음, error = 저장소·파일을 지금 읽지 못함 */
+export type RecentRead = { kind: 'ok'; data: ArrayBuffer } | { kind: 'missing' } | { kind: 'error' };
 
 /** 저장 바탕(IndexedDB·시험용 메모리) */
 export interface RecentBackend {
@@ -119,15 +125,15 @@ export class RecentStore {
     }
   }
 
-  /** 내용(바이트 사본 — 워커로 넘겨도 저장한 것은 그대로). 없거나 못 읽으면 null */
-  async read(id: string): Promise<ArrayBuffer | null> {
-    if (!this.backend) return null;
+  /** 내용(바이트 사본 — 워커로 넘겨도 저장한 것은 그대로). 내용이 없으면 missing, 저장소·파일을 못 읽으면 error */
+  async read(id: string): Promise<RecentRead> {
+    if (!this.backend) return { kind: 'error' };
     try {
       const d = await this.backend.read(id);
-      if (!d) return null;
-      return isBlob(d) ? await d.arrayBuffer() : d.slice(0);
+      if (!d) return { kind: 'missing' };
+      return { kind: 'ok', data: isBlob(d) ? await d.arrayBuffer() : d.slice(0) };
     } catch {
-      return null;
+      return { kind: 'error' };
     }
   }
 
@@ -140,19 +146,25 @@ export class RecentStore {
     }
   }
 
-  async remove(id: string): Promise<void> {
+  /** 한 항목 지우기. 지웠으면 true */
+  async remove(id: string): Promise<boolean> {
+    if (!this.backend) return false;
     try {
-      await this.backend?.remove([id]);
+      await this.backend.remove([id]);
+      return true;
     } catch {
-      /* 저장소를 못 쓰면 넘어간다 */
+      return false;
     }
   }
 
-  async clear(): Promise<void> {
+  /** 모두 지우기. 지웠으면 true */
+  async clear(): Promise<boolean> {
+    if (!this.backend) return false;
     try {
-      await this.backend?.clear();
+      await this.backend.clear();
+      return true;
     } catch {
-      /* 저장소를 못 쓰면 넘어간다 */
+      return false;
     }
   }
 }
@@ -177,9 +189,12 @@ function finished(t: IDBTransaction): Promise<void> {
   });
 }
 
+/** 끊긴 연결로 보이는 오류(새 연결로 한 번 더 해 본다): iOS "Connection to Indexed Database server lost"·닫히는 연결 */
+const staleConnection = (e: unknown): boolean => e instanceof Error && (e.name === 'UnknownError' || e.name === 'InvalidStateError');
+
 /**
  * IndexedDB 바탕. 저장소 하나에 열쇠를 밖에 두고(out-of-line) 목록은 `meta:<id>`, 내용은 `data:<id>`(Blob)로 둔다.
- * IndexedDB가 없거나 막혀 있으면 null.
+ * 연결은 일마다 열고 거래가 끝나면 닫는다(뒤로 간 사이 끊긴 연결을 다시 쓰지 않게). IndexedDB가 없거나 막혀 있으면 null.
  */
 export function indexedDbBackend(dbName = RECENT_DB): RecentBackend | null {
   let factory: IDBFactory | undefined;
@@ -190,35 +205,41 @@ export function indexedDbBackend(dbName = RECENT_DB): RecentBackend | null {
   }
   if (!factory) return null;
   const idb = factory;
-  let opening: Promise<IDBDatabase> | null = null;
-  const open = (): Promise<IDBDatabase> => {
-    opening ??= new Promise<IDBDatabase>((resolve, reject) => {
+  const open = (): Promise<IDBDatabase> =>
+    new Promise<IDBDatabase>((resolve, reject) => {
       const r = idb.open(dbName, 1);
       r.onupgradeneeded = () => {
         if (!r.result.objectStoreNames.contains(RECENT_STORE)) r.result.createObjectStore(RECENT_STORE);
       };
       r.onsuccess = () => {
         const db = r.result;
-        // 다른 탭이 판을 올리면 닫고 다음에 다시 연다
-        db.onversionchange = () => {
-          db.close();
-          opening = null;
-        };
+        // 다른 탭이 판을 올리면 바로 닫는다
+        db.onversionchange = () => db.close();
         resolve(db);
       };
-      r.onerror = () => reject(r.error);
-    }).catch((e: unknown) => {
-      opening = null;
-      throw e;
+      r.onerror = () => reject(r.error ?? new Error('IndexedDB'));
+      r.onblocked = () => reject(new Error('IndexedDB blocked'));
     });
-    return opening;
+  /** 거래 하나(새 연결): fn이 돌려준 요청의 결과를 거래가 끝난 뒤(쓰기는 디스크에 남았을 때) 돌려준다 */
+  const once = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T> | null): Promise<T | undefined> => {
+    const db = await open();
+    try {
+      const t = db.transaction(RECENT_STORE, mode);
+      const r = fn(t.objectStore(RECENT_STORE));
+      const [value] = await Promise.all([r ? request(r) : undefined, finished(t)]);
+      return value;
+    } finally {
+      db.close();
+    }
   };
-  /** 거래 하나: fn이 돌려준 요청의 결과를 거래가 끝난 뒤 돌려준다 */
+  /** 끊긴 연결 오류면 새 연결로 한 번 더(일은 모두 같은 열쇠에 쓰고 지우기라 두 번 해도 같다) */
   const run = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T> | null): Promise<T | undefined> => {
-    const t = (await open()).transaction(RECENT_STORE, mode);
-    const r = fn(t.objectStore(RECENT_STORE));
-    const [value] = await Promise.all([r ? request(r) : undefined, finished(t)]);
-    return value;
+    try {
+      return await once(mode, fn);
+    } catch (e) {
+      if (!staleConnection(e)) throw e;
+      return once(mode, fn);
+    }
   };
   const metaRange = (): IDBKeyRange => IDBKeyRange.bound(META, `${META}\uffff`);
   return {

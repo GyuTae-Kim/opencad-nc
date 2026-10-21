@@ -3,13 +3,18 @@
  * IndexedDB 대신 메모리 바탕을 끼운다.
  */
 import { describe, expect, it } from 'vitest';
-import { RECENT_MAX, RECENT_MAX_SIZE, RecentStore, fitsRecent, formatRecentTime, overflowIds, recentId, sortRecent, type RecentEntry } from '../../src/app/recent';
+import { RECENT_MAX, RECENT_MAX_SIZE, RecentStore, fitsRecent, formatRecentTime, overflowIds, recentId, sortRecent, type RecentEntry, type RecentRead } from '../../src/app/recent';
 import { memoryBackend } from './recent-memory';
 
 const bytes = (n: number, fill = 1): ArrayBuffer => new Uint8Array(n).fill(fill).buffer as ArrayBuffer;
 /** 크기만 있는 가짜 Blob(60MB를 실제로 만들지 않는다) */
 const fakeBlob = (size: number): Blob => ({ size, arrayBuffer: async () => bytes(4) }) as unknown as Blob;
 const entry = (name: string, time: number, size = 10): RecentEntry => ({ id: recentId(name, size), name, size, time });
+/** 읽은 바이트(ok가 아니면 시험 실패) */
+const okData = (r: RecentRead): ArrayBuffer => {
+  expect(r.kind).toBe('ok');
+  return (r as { data: ArrayBuffer }).data;
+};
 
 describe('최근 문서 순수 함수', () => {
   it('새것이 먼저, 시각이 같으면 이름 순', () => {
@@ -83,23 +88,38 @@ describe('RecentStore', () => {
     await store.add('a.nc', bytes(8, 7), 1);
     await store.add('b.nc', bytes(8, 9), 2);
     const id = recentId('a.nc', 8);
-    const first = await store.read(id);
-    expect(new Uint8Array(first!)[0]).toBe(7);
-    structuredClone(first, { transfer: [first!] });
-    expect(first!.byteLength).toBe(0);
-    expect((await store.read(id))!.byteLength).toBe(8);
+    const first = okData(await store.read(id));
+    expect(new Uint8Array(first)[0]).toBe(7);
+    structuredClone(first, { transfer: [first] });
+    expect(first.byteLength).toBe(0);
+    expect(okData(await store.read(id)).byteLength).toBe(8);
     await store.touch(id, 5);
     expect((await store.list())[0]!.name).toBe('a.nc');
-    expect(await store.read('없는 id')).toBeNull();
+  });
+
+  it('읽기는 "내용 없음"(missing)과 "지금 못 읽음"(error)을 가른다 — 잠깐의 실패로 항목을 지우지 않게', async () => {
+    const backend = memoryBackend();
+    const store = new RecentStore(backend);
+    await store.add('a.nc', bytes(8), 1);
+    const id = recentId('a.nc', 8);
+    expect(await store.read('없는 id')).toEqual({ kind: 'missing' });
+    // 저장소 연결이 끊김
+    backend.fail = true;
+    expect(await store.read(id)).toEqual({ kind: 'error' });
+    backend.fail = false;
+    // 저장한 Blob을 못 읽음(NotReadableError·메모리 부족)
+    backend.entries.get(id)!.data = { size: 8, arrayBuffer: async () => Promise.reject(new DOMException('gone', 'NotReadableError')) } as unknown as Blob;
+    expect(await store.read(id)).toEqual({ kind: 'error' });
+    expect((await store.list()).map((e) => e.id)).toEqual([id]);
   });
 
   it('지우기와 모두 지우기', async () => {
     const store = new RecentStore(memoryBackend());
     await store.add('a.nc', bytes(3), 1);
     await store.add('b.nc', bytes(3), 2);
-    await store.remove(recentId('a.nc', 3));
+    expect(await store.remove(recentId('a.nc', 3))).toBe(true);
     expect((await store.list()).map((e) => e.name)).toEqual(['b.nc']);
-    await store.clear();
+    expect(await store.clear()).toBe(true);
     expect(await store.list()).toEqual([]);
   });
 
@@ -108,8 +128,8 @@ describe('RecentStore', () => {
     expect(none.available).toBe(false);
     expect(await none.add('a.nc', bytes(3))).toBe(false);
     expect(await none.list()).toEqual([]);
-    expect(await none.read('a.nc:3')).toBeNull();
-    await expect(none.clear()).resolves.toBeUndefined();
+    expect(await none.read('a.nc:3')).toEqual({ kind: 'error' });
+    expect(await none.clear()).toBe(false);
 
     const backend = memoryBackend();
     const store = new RecentStore(backend);
@@ -117,10 +137,11 @@ describe('RecentStore', () => {
     backend.fail = true;
     expect(await store.add('b.nc', bytes(3), 2)).toBe(false);
     expect(await store.list()).toEqual([]);
-    expect(await store.read(recentId('a.nc', 3))).toBeNull();
+    expect(await store.read(recentId('a.nc', 3))).toEqual({ kind: 'error' });
     await expect(store.touch(recentId('a.nc', 3))).resolves.toBeUndefined();
-    await expect(store.remove(recentId('a.nc', 3))).resolves.toBeUndefined();
-    await expect(store.clear()).resolves.toBeUndefined();
+    // 지우기 실패는 알린다(앱이 성공이라고 말하지 않게)
+    expect(await store.remove(recentId('a.nc', 3))).toBe(false);
+    expect(await store.clear()).toBe(false);
   });
 
   it('jsdom·Node처럼 indexedDB가 없으면 기본 저장소는 쓸 수 없음으로', () => {

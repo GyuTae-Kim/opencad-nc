@@ -739,16 +739,29 @@ export class NcViewerApp implements PanelHost {
     return ok;
   }
 
-  /** 최근 문서 다시 열기: 이 브라우저에 둔 내용을 읽어 연다. 열리면 맨 앞으로 */
+  /**
+   * 최근 문서 다시 열기: 이 브라우저에 둔 내용을 읽어(덮개·취소 가능) 연다. 열리면 맨 앞으로.
+   * 내용이 없으면 항목을 지우고, 잠깐 못 읽었으면(연결 끊김·메모리 부족 등) 항목을 두고 다시 해 보라고 알린다.
+   * 읽는 사이 다른 파일을 열거나 취소하면 읽은 결과는 버린다.
+   */
   async openRecent(e: RecentEntry): Promise<boolean> {
-    const data = await this.recent.read(e.id);
-    if (!data) {
-      this.showError(`${e.name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
-      await this.recent.remove(e.id);
-      await this.renderRecent();
+    const attempt = beginOpen('local', e.name.split('.').pop() ?? 'other');
+    const seq = ++this.loadSeq;
+    this.closeMenu();
+    this.setBusy('최근 문서 읽는 중', 0.02, e.name);
+    const r = await this.recent.read(e.id);
+    if (seq !== this.loadSeq) return false;
+    if (r.kind !== 'ok') {
+      this.setBusy(null);
+      attempt.error('read_error');
+      if (r.kind === 'missing') {
+        this.showError(`${e.name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
+        await this.recent.remove(e.id);
+        await this.renderRecent();
+      } else this.showError(`${e.name}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`);
       return false;
     }
-    const ok = await this.openBuffer(e.name, data, {}, beginOpen('local', e.name.split('.').pop() ?? 'other'));
+    const ok = await this.openBuffer(e.name, r.data, {}, attempt);
     if (ok) {
       await this.recent.touch(e.id);
       await this.renderRecent();
@@ -760,7 +773,7 @@ export class NcViewerApp implements PanelHost {
   private async removeRecent(id: string): Promise<void> {
     const rows = [...this.recentList.children];
     const at = rows.findIndex((li) => li.contains(document.activeElement));
-    await this.recent.remove(id);
+    if (!(await this.recent.remove(id))) toast('최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.', 'error', 5000);
     await this.renderRecent();
     if (at < 0) return;
     const next = this.recentList.children[Math.min(at, this.recentList.children.length - 1)];
@@ -768,8 +781,12 @@ export class NcViewerApp implements PanelHost {
   }
 
   private async clearRecent(): Promise<void> {
-    await this.recent.clear();
+    const ok = await this.recent.clear();
     await this.renderRecent();
+    if (!ok) {
+      toast('최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.', 'error', 5000);
+      return;
+    }
     this.startEl.querySelector<HTMLElement>('.dropzone')?.focus();
     toast('최근 문서를 모두 지웠습니다.', 'info', 2500);
   }

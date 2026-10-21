@@ -101,7 +101,14 @@ vi.mock('../../src/app/client', async () => {
   return { ParseWorkerClient };
 });
 
+// 알림(toast)은 그대로 띄우되 부른 글을 볼 수 있게 감싼다
+vi.mock('../../src/app/dom', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../../src/app/dom')>();
+  return { ...m, toast: vi.fn(m.toast) };
+});
+
 import { NcViewerApp } from '../../src/app/app';
+import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
 import { measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
 import { RecentStore, recentId } from '../../src/app/recent';
@@ -395,7 +402,13 @@ describe('최근 문서(시작 화면)', () => {
     await new RecentStore(backend).add(name, new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 1);
     const { root } = makeApp(true, true, false, backend);
     await vi.waitFor(() => expect(names(root)).toEqual([name]));
-    const texts = new Set<string>([`${name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`, '최근 문서를 모두 지웠습니다.']);
+    const texts = new Set<string>([
+      `${name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`,
+      `${name}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`,
+      '최근 문서를 모두 지웠습니다.',
+      '최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.',
+      '최근 문서 읽는 중…',
+    ]);
     const walk = (el: Element): void => {
       if (el.getAttribute('translate') === 'no') return;
       for (const a of ['title', 'aria-label']) if (el.hasAttribute(a)) texts.add(el.getAttribute(a)!);
@@ -405,7 +418,7 @@ describe('최근 문서(시작 화면)', () => {
       }
     };
     walk(card(root));
-    expect(texts.size).toBeGreaterThanOrEqual(7);
+    expect(texts.size).toBeGreaterThanOrEqual(10);
     for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
       for (const t of texts) {
         const out = translate(t, lang);
@@ -433,5 +446,86 @@ describe('최근 문서(시작 화면)', () => {
     expect(await b.app.openFile(textFile('part.nc', PROGRAM))).toBe(true);
     await new Promise((r) => setTimeout(r, 0));
     expect(card(b.root).hidden).toBe(true);
+  });
+
+  const enc = (t: string): ArrayBuffer => new TextEncoder().encode(t).buffer as ArrayBuffer;
+
+  it('잠깐 못 읽으면(연결 끊김·메모리 부족) 항목을 두고 다시 해 보라고 알린다', async () => {
+    const backend = memoryBackend();
+    await new RecentStore(backend).add('keep.nc', enc(PROGRAM), 1);
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['keep.nc']));
+    const read = backend.read;
+    backend.read = async () => {
+      throw new DOMException('Connection to Indexed Database server lost', 'UnknownError');
+    };
+    rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.start-error')!.textContent).toBe('keep.nc: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.'));
+    expect(app.state().busy).toBe(false);
+    expect(app.state().docName).toBeNull();
+    expect(backend.entries.size).toBe(1);
+    expect(names(root)).toEqual(['keep.nc']);
+    // 다시 누르면 열린다
+    backend.read = read;
+    rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    await vi.waitFor(() => expect(app.state().docName).toBe('keep.nc'));
+  });
+
+  it('읽는 동안 덮개(취소 가능)를 보이고, 그 사이 다른 파일을 열거나 취소하면 늦게 온 최근 문서는 버린다', async () => {
+    const backend = memoryBackend();
+    await new RecentStore(backend).add('old.nc', enc(PROGRAM), 1);
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['old.nc']));
+    const read = backend.read;
+    let release = (): void => {};
+    backend.read = async (id) => {
+      await new Promise<void>((r) => (release = r));
+      return read(id);
+    };
+    const open = (): void => rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+
+    open();
+    expect(app.state().busy).toBe(true);
+    expect(app.state().stage).toBe('최근 문서 읽는 중');
+    expect(root.querySelector('.busy-stage')!.textContent).toBe('최근 문서 읽는 중…');
+    expect(root.querySelector('.busy-name')!.textContent).toBe('old.nc');
+    // 그 사이 다른 파일을 열었다
+    const before = fake.parses;
+    expect(await app.openFile(textFile('new.nc', `${PROGRAM}\n`))).toBe(true);
+    release();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(app.state().docName).toBe('new.nc');
+    expect(fake.parses).toBe(before + 1);
+
+    // 취소(덮개의 취소·Esc)해도 버린다
+    const second = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(second.root)[0]).toBeDefined());
+    second.root.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    expect(second.app.state().busy).toBe(true);
+    expect(second.app.cancelLoad()).toBe(true);
+    release();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(second.app.state().busy).toBe(false);
+    expect(second.app.state().docName).toBeNull();
+    expect(second.app.state().error).toBeNull();
+  });
+
+  it('지우기에 실패하면 성공이라고 하지 않고 실패를 알린다(항목은 그대로)', async () => {
+    const backend = memoryBackend();
+    await new RecentStore(backend).add('a.nc', enc(PROGRAM), 1);
+    const { root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['a.nc']));
+    backend.clear = async () => {
+      throw new DOMException('lost', 'UnknownError');
+    };
+    backend.remove = backend.clear;
+    vi.mocked(toast).mockClear();
+    [...root.querySelectorAll<HTMLButtonElement>('.recent button')].find((b) => b.textContent === '모두 지우기')!.click();
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith('최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.', 'error', 5000));
+    expect(toast).not.toHaveBeenCalledWith('최근 문서를 모두 지웠습니다.', 'info', 2500);
+    rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-del')!.click();
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+    expect(names(root)).toEqual(['a.nc']);
+    expect(card(root).hidden).toBe(false);
   });
 });
