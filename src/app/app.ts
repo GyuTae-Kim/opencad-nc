@@ -46,8 +46,22 @@ const VIEW_MENU: ViewName[] = ['top', 'front', 'right', 'left', 'back', 'bottom'
 const CUBE_WIDE = 112;
 const CUBE_NARROW = 76;
 const NARROW_QUERY = `(max-width: ${NARROW_WIDTH - 0.02}px)`;
+/**
+ * 휴대폰: 좁은 화면이거나 손가락 기기의 낮은 가로 화면(폭은 760px을 넘을 수 있다).
+ * 한 줄 도구 막대(styles.css)·작은 뷰 큐브·처음엔 닫힌 패널로 3D 보기 자리를 지킨다
+ */
+const PHONE_QUERY = `${NARROW_QUERY}, (pointer: coarse) and (max-height: 499.98px)`;
 /** 손가락이 주인 기기(휴대폰·태블릿): 안내 글·파일 고르기를 맞춘다 */
 const COARSE_QUERY = '(pointer: coarse)';
+
+/** 지금 휴대폰 화면인지(PHONE_QUERY). matchMedia가 없으면 폭만 본다 */
+function isPhone(): boolean {
+  try {
+    return window.matchMedia(PHONE_QUERY).matches;
+  } catch {
+    return window.innerWidth < NARROW_WIDTH;
+  }
+}
 
 /** 자동 확인용 상태 */
 export interface AppState {
@@ -142,7 +156,7 @@ export class NcViewerApp implements PanelHost {
 
   private theme: ThemeName;
   private readonly storage = safeStorage();
-  private panelOpen = window.innerWidth >= NARROW_WIDTH;
+  private panelOpen = !isPhone();
   private playing = false;
   private raf = 0;
   private lastT = 0;
@@ -345,7 +359,7 @@ export class NcViewerApp implements PanelHost {
       if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
     });
     try {
-      window.matchMedia(NARROW_QUERY).addEventListener('change', () => {
+      window.matchMedia(PHONE_QUERY).addEventListener('change', () => {
         // 넓은 화면 ↔ 휴대폰: 막대 단추가 바뀌므로 펼친 메뉴를 닫는다
         this.closeMenu();
         this.viewer?.setViewCubeSize(this.cubeSizeFor());
@@ -1063,13 +1077,9 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
   }
 
-  /** 지금 화면 폭에 맞는 뷰 큐브 크기 */
+  /** 지금 화면에 맞는 뷰 큐브 크기(휴대폰은 작게) */
   private cubeSizeFor(): number {
-    try {
-      return window.matchMedia(NARROW_QUERY).matches ? CUBE_NARROW : CUBE_WIDE;
-    } catch {
-      return window.innerWidth < NARROW_WIDTH ? CUBE_NARROW : CUBE_WIDE;
-    }
+    return isPhone() ? CUBE_NARROW : CUBE_WIDE;
   }
 
   get measuring(): boolean {
