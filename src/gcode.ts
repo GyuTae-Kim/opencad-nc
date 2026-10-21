@@ -1558,6 +1558,21 @@ export class Runner extends NcEmitter {
             } else if (g === 434) this.w.add('G43.4 공구 끝점 제어는 위치만 그림(회전축 무시)', line);
           }
           break;
+        case 1430:
+        case 2340:
+          // Haas G143(5축 공구 길이 보정)·G234(공구 중심점 제어 TCPC): G43·G43.4처럼 공구 길이 보정을 켜고, 블록의 좌표는 이동
+          if (this.dialect !== 'haas') {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            if (unknownG < 0) unknownG = g;
+            break;
+          }
+          this.tlc = true;
+          tlcOn = true;
+          if (g === 2340 && this.rotAxis) {
+            this.rotOff = true;
+            this.w.add(`G${g / 10} 공구 끝점 제어: 프로그램 좌표를 공구 끝 경로로 그대로 그림(공구 방향은 그리지 않음)`, line);
+          }
+          break;
         case 490:
           this.tlc = false;
           this.rotOff = false;

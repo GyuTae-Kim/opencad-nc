@@ -78,4 +78,45 @@ describe('Haas 방언', () => {
   it('Haas G4 P는 소수점 없으면 ms', () => {
     expect(parseGcode('G21 G1 X1 F60\nG4 P1500', { dialect: 'haas' }).stats.dwellTime).toBeCloseTo(1.5);
   });
+
+  it('Haas 5축 G234(TCPC)·G143(5축 공구 길이 보정)은 G43처럼 보정을 켜고 같은 블록의 Z 진입을 그린다', () => {
+    const text = `%
+O0102 (HAAS UMC)
+G20 G90 G17
+T1 M6
+S5000 M3
+G0 G90 G54 X1. Y1. Z3. A0. C0.
+G0 G234 H1 Z1.
+G1 Z-0.1 F20.
+X2.
+G0 Z3.
+G49
+T2 M6
+G0 G54 X1. Y1.
+G143 H2 Z1.
+G1 Z-0.2 F20.
+G0 Z1.
+M30
+%`;
+    const p = parseGcode(text);
+    expect(p.dialect).toBe('haas');
+    const e: number[][] = [];
+    for (let i = 0; i < p.moves.count; i++) e.push(moveEnd(p.moves, i).map((v) => Math.round(v * 1000) / 1000));
+    expect(e).toEqual([
+      [1, 1, 1],
+      [1, 1, -0.1],
+      [2, 1, -0.1],
+      [2, 1, 3],
+      [1, 1, 3],
+      [1, 1, 1],
+      [1, 1, -0.2],
+      [1, 1, 1],
+    ]);
+    expect(Array.from(p.moves.hNum)).toEqual([1, 1, 1, 1, -1, 2, 2, 2]);
+    expect(p.warnings.some((w) => w.includes('G234') || w.includes('G143'))).toBe(false);
+    expect(p.warnings.some((w) => w.includes('공구 길이 보정(G43 H) 없이'))).toBe(false);
+    // Haas가 아니면 모르는 G(좌표를 이동으로 그리지 않음)
+    const f = parseGcode('G21 G90 G0 X0 Y0 Z10\nG143 H2 Z1.\nG1 Z-1 F100', { dialect: 'fanuc' });
+    expect(f.warnings.some((w) => w.includes('G143 블록의 좌표는 이동으로 그리지 않음'))).toBe(true);
+  });
 });
