@@ -467,6 +467,10 @@ kbd {
   opacity: 0.42;
   cursor: default;
 }
+/* 재생 띠가 있으면 알림은 그 위로(띠 높이 약 120px + 띠 아래 10px + 상태 막대 — 넓은 화면·휴대폰 같음) */
+body:has(.play-strip:not([hidden])) .toasts {
+  bottom: calc(160px + env(safe-area-inset-bottom, 0px));
+}
 @media (max-width: 759.98px), (pointer: coarse) {
   .measure-bar:not([hidden]) {
     display: flex;
@@ -474,9 +478,6 @@ kbd {
   /* 띠가 있으면 알림은 그 위로 */
   body:has(.measure-bar:not([hidden])) .toasts {
     bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-  }
-  body:has(.play-strip:not([hidden])) .toasts {
-    bottom: calc(130px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -704,10 +705,12 @@ button.linkish {
     top: auto;
     bottom: 10px;
   }
-  /* 측정·재생 띠가 있으면 그 위로 */
-  .view:has(.measure-bar:not([hidden])) .notice-bar,
-  .view:has(.play-strip:not([hidden])) .notice-bar {
+  /* 측정 띠가 있으면 그 위로, 재생 띠(더 높다)면 그 위로 */
+  .view:has(.measure-bar:not([hidden])) .notice-bar {
     bottom: 76px;
+  }
+  .view:has(.play-strip:not([hidden])) .notice-bar {
+    bottom: 140px;
   }
 }
 
