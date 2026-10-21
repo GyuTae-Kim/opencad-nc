@@ -226,14 +226,18 @@ npm run preview    # 빌드 결과 보기
 
 ## 남은 일
 
-- 5축: 공구 끝점 제어 없는 동시 5축(기계 구조·피벗 길이가 필요), 공구 방향 표시, G68.2·Heidenhain PLANE·M128·회전축 감기(Heidenhain)
+- 5축: 공구 끝점 제어 없는 동시 5축(기계 구조·피벗 길이가 필요), 공구 방향 표시, M128·회전축 감기(Heidenhain).
+  기울인 작업 평면 가운데 Heidenhain PLANE·CYCL DEF 19·DIN/ISO G80과 Siemens CYCLE800은 아직 경고만(G68.2·G268은 읽음)
 - 반경 보정: Fanuc B형·C형 들어가기(교점 방식)·보정 중 평면 바꾸기·G41/G42 방향 바꿀 때의 교점, 선반 공구 끝 R 보정(G41/G42 노즈 R)
 - 선반: Fanuc G 코드 B·C 체계(G77~G79), LinuxCNC G70~G72(o-코드 윤곽), G71 II형(오목 윤곽), 나사 사이클의 모따기·절입 각
 - Heidenhain: 다음 블록 자료가 필요한 FK(PDX·RX·PAR, FSELECT), RND·CHF, 윤곽(SL) 사이클 20~25·270, 회전·배율·대칭 사이클 7.x 밖의 것,
   PATTERN DEF
+- Siemens: CT(접선 원호 — 직선으로 그림)·RND·CHF(모서리 그대로), 밀링·선반 사이클(POCKET·SLOT·CYCLE95 등) — 경고만
+- Okuma OSP: CALL O…·VC 변수·NLAP·RTS — 판별해 띠·경고만(G15 H 좌표계는 읽음)
+- Haas G150(범용 포켓)·G47(글자 새기기) 같은 매개변수 G 코드 — 그 블록의 좌표를 이동으로 그리지 않고 경고만
 - 여러 파일 작업: 폴더째 열기(브라우저가 폴더 안 파일을 주지 않는 환경이 많음 — 파일을 함께 골라야 함), 기계에 든 O9000번대 매크로의 내용
 - MPR: 좌표계 표 `[K`·KO(면 좌표계), BohrUniv 등 나머지 매크로(지금은 위치만 점), 호가 낀 모서리의 KR·KF
-- G16 극좌표, LinuxCNC 스플라인(G5) 곡선
+- LinuxCNC 스플라인(G5) 곡선
 
 ## 내력
 
