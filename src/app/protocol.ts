@@ -8,7 +8,7 @@
  * 이 파일은 화면 쪽에서도 불러오므로 해석기(무거운 코드)를 가져오지 않는다 — 워커 쪽 도움은 payload.ts에 있다.
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
-import type { NcDialect, NcNotice, NcStats, NcTool } from '../model';
+import type { NcDialect, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -80,6 +80,8 @@ export interface NcPayload {
   cutBounds?: { min: [number, number, number]; max: [number, number, number] };
   /** 띠로 알릴 해석 판단(선반 자동·소수점 없는 좌표·판별한 방언) */
   notices: NcNotice[];
+  /** 해석 경고(줄 번호와 따로 — 누르면 그 줄로, 코드 줄 앞 표시) */
+  warnItems: NcWarningItem[];
 }
 
 /** MPR 패널 자료(가공·변수는 scene.meta에 있다) */

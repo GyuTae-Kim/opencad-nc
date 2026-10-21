@@ -238,7 +238,18 @@ export interface NcProgram {
   rotaryAxes?: boolean;
   /** 화면이 띠로 알릴 해석 판단(있을 때만) */
   notices?: NcNotice[];
+  /** 해석 경고(사람이 읽는 글 — "N번 줄: …" 꼴) */
   warnings: string[];
+  /** 같은 경고를 줄 번호와 따로(화면이 누르면 그 줄로 가게) — warnings와 같은 차례 */
+  warningItems?: NcWarningItem[];
+}
+
+/** 경고 하나: 글(줄 번호 없이)·첫 줄(0부터, -1 = 줄 없음)·횟수·난 줄들(200까지) */
+export interface NcWarningItem {
+  text: string;
+  line: number;
+  count: number;
+  lines: number[];
 }
 
 /** 평면(XY) 윤곽 점열의 점 — MPR 윤곽·공구 경로 */
@@ -254,12 +265,21 @@ export interface PathPoint {
 
 /** 같은 경고를 묶어 첫 줄 번호와 횟수만 남긴다 */
 export class NcWarnings {
-  private map = new Map<string, { line: number; count: number }>();
+  private map = new Map<string, { line: number; count: number; lines: number[] }>();
   constructor(private max = 300) {}
   add(msg: string, line = -1): void {
     const w = this.map.get(msg);
-    if (w) w.count++;
-    else if (this.map.size < this.max) this.map.set(msg, { line, count: 1 });
+    if (w) {
+      w.count++;
+      // 같은 경고가 난 줄(줄 앞 표시·다시 누르면 다음 자리로) — 메시지마다 200줄까지
+      if (line >= 0 && w.lines.length < 200 && !w.lines.includes(line)) w.lines.push(line);
+    } else if (this.map.size < this.max) this.map.set(msg, { line, count: 1, lines: line >= 0 ? [line] : [] });
+  }
+  /** 경고마다 글·첫 줄(-1 = 줄 없음)·횟수·난 줄들 */
+  items(): NcWarningItem[] {
+    const out: NcWarningItem[] = [];
+    for (const [text, w] of this.map) out.push({ text, line: w.line, count: w.count, lines: w.lines.slice() });
+    return out;
   }
   list(): string[] {
     const out: string[] = [];

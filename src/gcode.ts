@@ -3144,6 +3144,7 @@ export function parseGcode(input: Uint8Array | ArrayBuffer | string | NcSource, 
     r.run();
     const p = r.finish(opts);
     p.warnings.unshift('Siemens 해석기를 불러오지 않아 ISO로 읽음');
+    p.warningItems?.unshift({ text: 'Siemens 해석기를 불러오지 않아 ISO로 읽음', line: -1, count: 1, lines: [] });
     return p;
   }
   const r = new Runner(src, opts, dialect, getHead);

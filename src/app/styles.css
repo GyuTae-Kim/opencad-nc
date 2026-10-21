@@ -477,6 +477,50 @@ kbd {
   }
 }
 
+/* 경고 목록: 누르면 그 줄로 */
+.warn-list .warn-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.warn-list .warn-item:hover,
+.warn-list .warn-item:focus-visible {
+  background: var(--accent-soft);
+}
+.warn-list .warn-item .ln {
+  flex: none;
+  color: var(--accent-text, var(--accent));
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted;
+}
+.warn-list .warn-item .msg {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+.warn-list .warn-item .cnt {
+  flex: none;
+  color: var(--text-faint);
+}
+/* 경고가 난 코드 줄: 줄 번호에 표시(마우스를 올리면 경고 글) */
+.vlist-row.warn .ln {
+  color: #e8a33d;
+  font-weight: 700;
+}
+.vlist-row.warn .ln::before {
+  content: '▲';
+  margin-right: 2px;
+  font-size: 0.75em;
+}
+
 /* 코드 찾기 칸 */
 .code-search {
   display: flex;

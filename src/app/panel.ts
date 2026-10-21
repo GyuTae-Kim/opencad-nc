@@ -354,9 +354,10 @@ export class NcPanel {
         if (!doc) return;
         const digits = String(Math.max(1, this.lineCount(doc))).length;
         const play = this.host.playbackInfo();
-        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}`;
+        const warn = this.warnAt(i);
+        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}${warn ? ' warn' : ''}`;
         el.textContent = '';
-        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch` }, String(i + 1)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
+        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch`, ...(warn ? { title: warn } : {}) }, String(i + 1)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
       },
       onClick: (i) => this.clickLine(i),
     });
@@ -736,11 +737,56 @@ export class NcPanel {
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];
+    const items = d.nc?.warnItems ?? [];
+    // NC: 경고마다 단추(줄 번호·글·횟수 따로 — 누르면 그 줄로, 다시 누르면 같은 경고가 난 다음 줄로). 그 밖(장면 경고·MPR)은 글
+    const lis: HTMLElement[] = items.slice(0, 300).map((it) => {
+      if (it.line < 0) return h('li', {}, it.text);
+      const b = h(
+        'button',
+        { class: 'warn-item', type: 'button', title: it.lines.length > 1 ? '누르면 그 줄로(다시 누르면 같은 경고가 난 다음 줄로)' : '누르면 그 줄로' },
+        h('span', { class: 'ln' }, `${it.line + 1}번 줄`),
+        h('span', { class: 'msg' }, it.text),
+        it.count > 1 ? h('span', { class: 'cnt' }, `모두 ${it.count}번`) : null,
+      );
+      b.addEventListener('click', () => this.gotoWarning(it));
+      return h('li', {}, b);
+    });
+    for (const w of warns.slice(items.length, 300)) lis.push(h('li', {}, w));
     this.body.append(
       warns.length
-        ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...warns.slice(0, 300).map((w) => h('li', {}, w))), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
+        ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
         : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
     );
+  }
+
+  /** 누른 경고가 다음에 갈 자리(경고 글 → 그 경고가 난 줄 차례) */
+  private warnNext = new Map<string, number>();
+
+  /** 경고의 줄로(다시 누르면 같은 경고가 난 다음 줄로) — 코드 탭을 연다 */
+  private gotoWarning(it: { text: string; line: number; lines: number[] }): void {
+    const d = this.doc;
+    if (!d) return;
+    const list = it.lines.length ? it.lines : [it.line];
+    const k = (this.warnNext.get(it.text) ?? 0) % list.length;
+    this.warnNext.set(it.text, k + 1);
+    d.panelTab = 'code';
+    this.render();
+    this.host.selectLine(list[k]!, undefined, true);
+  }
+
+  /** 줄 → 그 줄의 경고 글(코드 줄 앞 표시) */
+  private warnLines: Map<number, string> | null = null;
+  private warnLinesFor: object | null = null;
+  private warnAt(i: number): string | undefined {
+    const nc = this.doc?.nc;
+    if (!nc) return undefined;
+    if (this.warnLinesFor !== nc) {
+      this.warnLinesFor = nc;
+      const m = new Map<number, string>();
+      for (const it of nc.warnItems) for (const l of it.lines.length ? it.lines : it.line >= 0 ? [it.line] : []) m.set(l, m.has(l) ? `${m.get(l)}\n${it.text}` : it.text);
+      this.warnLines = m;
+    }
+    return this.warnLines?.get(i);
   }
 
   private ncInfo(d: NcDoc): void {

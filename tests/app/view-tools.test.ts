@@ -193,6 +193,28 @@ describe('블록 걷기·여기까지 그리기·코드 찾기', () => {
   });
 });
 
+describe('경고 → 줄', () => {
+  it('정보 탭 경고를 누르면 그 줄로(다시 누르면 같은 경고의 다음 줄), 경고 줄은 코드 줄 앞에 표시', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'w.nc', `G21 G90 G17\nT1 M6\nG0 X0 Y0 Z10\nG1 Z-1 F100\nG53 G0 Z0\nG0 X10\nG1 Z-1\nG53 G0 Z0\nM30`);
+    const api = window.opencadApp!;
+    api.setPanelTab('info');
+    const btn = [...root.querySelectorAll<HTMLButtonElement>('.warn-list .warn-item')].find((b) => b.textContent!.includes('G53 기계 좌표 쪽'))!;
+    expect(btn.querySelector('.ln')!.textContent).toBe('5번 줄');
+    expect(btn.querySelector('.cnt')!.textContent).toBe('모두 2번');
+    btn.click();
+    expect(api.state.panelTab).toBe('code');
+    expect(api.state.selLine).toBe(4);
+    api.setPanelTab('info');
+    [...root.querySelectorAll<HTMLButtonElement>('.warn-list .warn-item')].find((b) => b.textContent!.includes('G53 기계 좌표 쪽'))!.click();
+    expect(api.state.selLine).toBe(7);
+    await tick();
+    await tick();
+    const rows = [...root.querySelectorAll<HTMLElement>('.code-list .vlist-row.warn')].map((r) => r.querySelector('.ln')!.textContent);
+    expect(rows).toEqual(expect.arrayContaining(['5', '8']));
+  });
+});
+
 describe('해석 판단 띠', () => {
   it('선반처럼 보이면 선반으로 읽고 띠를 보이며, "밀링으로 읽기"는 선반을 끄고 다시 읽는다', async () => {
     const { app, root } = makeApp();

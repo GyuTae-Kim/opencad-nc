@@ -845,6 +845,7 @@ export class NcEmitter {
         rapidFeed: this.rapidFeed,
       },
       warnings: this.w.list(),
+      warningItems: this.w.items(),
     };
     const b = boxOf(all);
     if (b) prog.bounds = b;
