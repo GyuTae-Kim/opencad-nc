@@ -32,6 +32,7 @@ import {
   MOVE_RAPID,
   PLANE_AXES,
   arcPoints,
+  toolInfoFromComment,
   type NcDialect,
   type NcMachineOptions,
   type NcPlane,
@@ -281,6 +282,7 @@ function parseFast(b: Uint8Array, s: number, e: number, blk: Block, onComment: (
 /** 느린 길에서 쓰는 변수 저장소 연결 */
 interface SlowEnv {
   get(ref: GVarRef): number | undefined;
+  readonly fanucRounding?: boolean;
 }
 
 const O_KEYWORDS = ['ENDSUB', 'SUB', 'CALL', 'RETURN', 'ELSEIF', 'ELSE', 'ENDIF', 'IF', 'ENDWHILE', 'WHILE', 'DO', 'ENDREPEAT', 'REPEAT', 'BREAK', 'CONTINUE'];
@@ -563,6 +565,12 @@ function prescanSiemensUnits(src: NcSource): boolean | undefined {
     if (m) return m[1] === '0' || m[1] === '00';
   }
   return undefined;
+}
+
+/** 공구를 적은 주석인지(지름 또는 공구 종류 낱말): 프로그램 이름 주석과 가른다 */
+const TOOL_WORDS = /(?:END\s*MILL|ENDMILL|\bE\/?M\b|\bFLAT\b|\bBALL|\bBULL|DRILL|\bTAP\b|REAM|\bMILL\b|SPOT|CHAMF|CENTER|\bBOR(?:E|ING)\b|CUTTER|\bSLOT|INSERT|\bTOOL\b)/i;
+function looksLikeTool(text: string): boolean {
+  return TOOL_WORDS.test(text) || toolInfoFromComment(text, 'mm').diameter !== undefined;
 }
 
 /**
@@ -920,6 +928,11 @@ export class Runner extends NcEmitter {
         break;
       }
     }
+  }
+
+  /** 식의 FIX·FUP를 Fanuc 매크로 B처럼(소수 버림·올림 — 음수도 절댓값 기준). LinuxCNC 등은 floor·ceil */
+  get fanucRounding(): boolean {
+    return this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas';
   }
 
   // ── 변수 ──
@@ -1819,11 +1832,17 @@ export class Runner extends NcEmitter {
   protected onComments(blk: Block, line: number): void {
     const text = blk.comments.join(' ').trim();
     if (!text) return;
-    if (!this.started && !this.name && line < 5 && !/^\s*T\s*\d/i.test(text)) this.name = text.slice(0, 80);
+    // 프로그램 머리 주석(O 번호 줄의 주석, 시작 전 첫 주석이라 프로그램 이름이 된 것 — 공구처럼 보이지 않으면)은
+    // 바로 뒤 공구 교환의 공구 이름으로 쓰지 않는다("O1000 (ARC TEST)" 다음 줄 T1 M6)
+    let header = !!blk.has[LO];
+    if (!this.started && !this.name && line < 5 && !/^\s*T\s*\d/i.test(text)) {
+      this.name = text.slice(0, 80);
+      if (!looksLikeTool(text)) header = true;
+    }
     // 머리말의 공구 목록: (T1 D=6 ...) (TOOL 2 - ...)
     const m = /^\s*(?:T|TOOL)\s*#?\s*(\d+)\b/i.exec(text);
     if (m && !blk.has[LT]) this.addToolInfo(+m[1]!, text);
-    this.lastComment = { text, line };
+    this.lastComment = header ? null : { text, line };
   }
 
   /** 작업 좌표계 번호 → 이름(경고 글) */
