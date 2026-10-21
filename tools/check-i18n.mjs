@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
 import {languages,catalogs,metadataForLanguage} from '../site/i18n.mjs';
 const keys=Object.keys(catalogs.en).sort();
@@ -13,10 +13,18 @@ for(const{code}of languages){
  assert.equal(doc.querySelectorAll('link[rel=alternate][hreflang]').length,6);
  for(const item of languages)assert.equal(doc.querySelector(`link[hreflang="${item.code}"]`).href,metadataForLanguage(item.code).url);
  for(const script of doc.querySelectorAll('script[src]'))assert.equal(new URL(script.src).pathname.includes(`/${code}/assets/`),false,'nested language assets must resolve to application root');
+ // Home-screen install: each language page links its own manifest that starts on that page, covers the whole app and has existing icons.
+ const root=metadataForLanguage('ko').url,file=url=>{assert.ok(url.startsWith(root),url);return 'dist/'+url.slice(root.length);};
+ const manifestUrl=doc.querySelector('link[rel=manifest]').href,manifest=JSON.parse(readFileSync(file(manifestUrl),'utf8'));
+ assert.equal(new URL(manifest.start_url,manifestUrl).href,metadata.url,`${code}: manifest start_url`);assert.equal(new URL(manifest.scope,manifestUrl).href,root,`${code}: manifest scope`);
+ assert.equal(manifest.lang,code);assert.equal(doc.querySelector('meta[name="apple-mobile-web-app-title"]').content,manifest.short_name);
+ for(const icon of manifest.icons)assert.ok(existsSync(file(new URL(icon.src,manifestUrl).href)),`${code}: ${icon.src}`);
+ assert.ok(existsSync(file(doc.querySelector('link[rel=apple-touch-icon]').href)),`${code}: apple-touch-icon`);
+ if(code!=='ko')assert.doesNotMatch(`${manifest.name} ${manifest.short_name} ${manifest.description}`,/[가-힣]/,`${code}: untranslated manifest`);
  if(code!=='ko'){
   const main=doc.querySelector('main');main.querySelectorAll('[data-static-languages]').forEach(el=>el.remove());
   assert.doesNotMatch(main.textContent,/[가-힣]/,`${code}: untranslated static introduction`);
  }
  dom.window.close();
 }
-console.log(`i18n check passed: five static language pages, reciprocal alternatives, relative assets and ${keys.length} catalog messages.`);
+console.log(`i18n check passed: five static language pages, reciprocal alternatives, relative assets, home-screen manifests and ${keys.length} catalog messages.`);

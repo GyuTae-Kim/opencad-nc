@@ -58,6 +58,7 @@
   "G-code·Heidenhain 평문·woodWOP MPR 파일의 3D 공구 경로를 확인하는 무료 NC 뷰어입니다. 코드 줄과 경로 연결, 공구별 표시와 가공 순서 재생을 지원합니다. 설치·회원가입 없이 파일을 브라우저에서 처리합니다.": "免费的 NC 查看器，用于检查 G 代码·Heidenhain 纯文本·woodWOP MPR 文件的 3D 刀具路径。支持代码行和路径链接、刀具特定显示和加工序列回放。文件在浏览器中处理，无需安装或注册。",
   "G-code·Heidenhain 평문·woodWOP MPR 프로그램을 브라우저에서 열어 3D 공구 경로로 보는 무료 뷰어입니다. 파일은 서버로 보내지 않고 이 기기 안에서 읽습니다.": "这是一个免费的查看器，可在浏览器中打开 G 代码·Heidenhain 纯文本·woodWOP MPR 程序并将其视为 3D 刀具路径。文件在此设备内读取，而不是发送到服务器。",
   "G-code·Heidenhain 평문·woodWOP MPR 해석": "G代码·Heidenhain明文·woodWOP MPR分析",
+  "G-code·Heidenhain·woodWOP MPR 프로그램을 3D 공구 경로로 보는 무료 NC 뷰어": "以 3D 刀具路径查看 G-code、Heidenhain 和 woodWOP MPR 程序的免费数控查看器",
   "G10 L{0}은 무시함": "忽略G10 L{0}",
   "G10 {0} 반지름": "G10 {0} 半径",
   "G16 극좌표는 지원하지 않음(직교 좌표로 읽음)": "G16 不支持极坐标（读为笛卡尔坐标）",

@@ -1,8 +1,19 @@
-import { languages, languageUrl, metadataForLanguage } from '../site/i18n.mjs';
+import { readFileSync } from 'node:fs';
+import { languages, languageUrl, metadataForLanguage, translate } from '../site/i18n.mjs';
 import metadata from '../site/metadata.json' with { type: 'json' };
 import history from '../site/content-history.json' with { type: 'json' };
 export { metadata, history };
 const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+// Home-screen install: public/manifest.webmanifest is the Korean source. Other languages get a translated copy
+// at <language>/manifest.webmanifest whose start_url is that language page (scope stays the whole app).
+export const manifestPath = (language = 'ko') => (language === 'ko' ? '' : language + '/') + 'manifest.webmanifest';
+export function manifestFor(language = 'ko') {
+  const source = JSON.parse(readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'));
+  if (language === 'ko') return source;
+  return { ...source, name: translate(source.name, language), short_name: translate(source.short_name, language),
+    description: translate(source.description, language), lang: language, start_url: './', scope: '../',
+    icons: source.icons.map((icon) => ({ ...icon, src: '../' + icon.src })) };
+}
 export function renderMetadata(language = 'ko') {
   const metadata = metadataForLanguage(language);
   const image = metadata.image;
@@ -18,6 +29,8 @@ export function renderMetadata(language = 'ko') {
   for (const [name, content] of Object.entries(names)) tags.push(`<meta name="${name}" content="${escape(content)}">`);
   for (const [property, content] of Object.entries(properties)) tags.push(`<meta property="${property}" content="${escape(content)}">`);
   for (const item of [...languages, { code: 'ko', label: 'x-default' }]) tags.push(`<link rel="alternate" hreflang="${item.label === 'x-default' ? 'x-default' : item.code}" href="${escape(languageUrl(metadata.url,item.code))}">`);
+  // Relative to the application root (language pages carry <base href="../">).
+  tags.push(`<link rel="manifest" href="./${manifestPath(language)}">`, `<meta name="apple-mobile-web-app-title" content="${escape(manifestFor(language).short_name)}">`);
   const graph = { '@context': 'https://schema.org', '@graph': [
     { '@type': 'WebApplication', '@id': metadata.url + '#app', ...metadata.application, url: metadata.url,
       description: metadata.description, inLanguage: metadata.language, image: image.url, author: metadata.author, dateModified: history.lastmod },

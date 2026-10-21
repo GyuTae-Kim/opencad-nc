@@ -58,6 +58,11 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
    (60MB 넘는 파일, 예제, `?open=`으로 받은 파일은 두지 않음), 시작 화면의 **최근 문서**에서 이름·크기·연 시각을 보고 눌러 다시 엽니다.
    휴대폰 브라우저가 뒤로 간 탭을 버렸다가 다시 읽어도 파일 앱을 다시 거치지 않습니다. 줄마다 ✕(그 항목만 지우기)와 **모두 지우기**가 있고,
    서버로는 보내지 않습니다(비공개 창처럼 저장소를 못 쓰면 목록이 생기지 않습니다).
+7. 홈 화면에 추가: 웹 앱 매니페스트(`public/manifest.webmanifest` — 이름 "OpenCAD NC 뷰어", 짧은 이름 "NC 뷰어", `standalone`)와
+   192·512·maskable 512 아이콘, iOS용 180px `apple-touch-icon.png`로 휴대폰 홈 화면에서 주소 막대 없이 앱처럼 엽니다.
+   영어·일본어·중국어·독일어 페이지는 빌드 때 번역해 만든 `<언어>/manifest.webmanifest`(그 언어 페이지에서 시작)를 씁니다.
+   서비스 워커는 두지 않아 오프라인으로는 열리지 않습니다. 홈 화면 앱에서는 제목 막대를 상태 막대(노치) 아래로 내리고,
+   제목·상태 막대를 아래로 당겨도 페이지를 새로 읽지 않습니다(`overscroll-behavior-y: none` — 코드 목록·패널·시작 화면은 그대로 굴러갑니다).
 
 | 키 | 하는 일 |
 |---|---|
@@ -98,7 +103,8 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 
 | 경로 | 내용 |
 |---|---|
-| `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기) |
+| `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기, 홈 화면 앱 머리 태그) |
+| `public/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 다른 언어 매니페스트는 `tools/site-metadata.mjs`가 만든다 |
 | `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `recent.ts`(최근 문서, IndexedDB), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile` |
