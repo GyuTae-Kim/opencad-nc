@@ -9,7 +9,7 @@ import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { cutRangeText, docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
@@ -414,9 +414,11 @@ export class NcPanel {
         h('td', {}, label),
         h('td', { class: 'wrap', translate: 'no' }, t.name ?? ''),
         h('td', { class: 'num' }, t.diameter ? `Ø${fmtNum(t.diameter)}` : ''),
+        this.minZCell(t),
         h('td', { class: 'num' }, formatDuration(t.time)),
         h('td', { class: 'num' }, `${fmtNum(t.feedLength, 1)}${u}`),
       );
+      if (t.cutMin && t.cutMax) tr.title = `${tr.title} · ${cutRangeText(t.cutMin, t.cutMax, u)}`;
       const selLine = toolSelectLine(nc, t.number, t.firstLine);
       tr.addEventListener('click', (ev) => {
         if (ev.detail >= 2) {
@@ -435,9 +437,36 @@ export class NcPanel {
       tbody.append(tr);
     }
     this.body.append(
-      h('div', { class: 'table-wrap' }, h('table', { class: 'grid tools' }, h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))), tbody)),
-      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 단추로 켜고 끕니다.'),
+      h(
+        'div',
+        { class: 'table-wrap' },
+        h(
+          'table',
+          { class: 'grid tools' },
+          h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num', title: '이 공구의 절삭(이송·호·드릴) 가운데 가장 낮은 Z' }, 'Z 최저'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))),
+          tbody,
+        ),
+      ),
+      h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 단추로 켜고 끕니다. Z 최저를 누르면 가장 깊은 절삭 줄로 갑니다(줄에 마우스를 올리면 절삭 범위).'),
     );
+  }
+
+  /** 공구 표의 "Z 최저" 칸: 누르면 그 줄로 */
+  private minZCell(t: { cutMin?: number[]; minZLine?: number }): HTMLElement {
+    if (!t.cutMin) return h('td', { class: 'num faint' }, '');
+    const b = h('button', { class: 'linkish', type: 'button', title: '가장 깊은 절삭 줄로' }, fmtNum(t.cutMin[2]!));
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (t.minZLine !== undefined && t.minZLine >= 0) {
+        this.host.selectLine(t.minZLine);
+        const d = this.doc;
+        if (d) {
+          d.panelTab = 'code';
+          this.render();
+        }
+      }
+    });
+    return h('td', { class: 'num' }, b);
   }
 
   // ───────────────────────── MPR ─────────────────────────
@@ -516,13 +545,25 @@ export class NcPanel {
     const b = s.bounds;
     const rows: HTMLElement[] = [row('파일', d.name), row('형식', docLabel(d)), row('크기', formatBytes(d.size)), row('단위', u || '모름'), row('읽은 시간', formatMs(d.ms))];
     if (b) {
-      rows.push(row('범위 크기', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
+      // 장면 범위 = 급속·공작물 포함(기계 좌표 쪽 추정 이동은 뺌). 절삭만의 범위는 아래 "절삭 범위"
+      rows.push(row('범위 크기(급속 포함)', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
       rows.push(row('최소', fmtPt(b.min)), row('최대', fmtPt(b.max)));
     }
     if (c.segments) rows.push(row('선분', c.segments.toLocaleString('ko-KR')));
     if (c.triangles) rows.push(row('삼각형', c.triangles.toLocaleString('ko-KR')));
     this.body.append(group('문서', ...rows));
 
+    const cb = d.nc?.cutBounds;
+    if (cb)
+      this.body.append(
+        group(
+          '절삭 범위(이송·호·드릴)',
+          row('크기', `${fmtNum(cb.max[0] - cb.min[0])} × ${fmtNum(cb.max[1] - cb.min[1])} × ${fmtNum(cb.max[2] - cb.min[2])} ${u}`),
+          row('최소', fmtPt(cb.min)),
+          row('최대', fmtPt(cb.max)),
+          row('가장 깊은 Z', `${fmtNum(cb.min[2])} ${u}`),
+        ),
+      );
     if (d.nc) this.ncInfo(d);
     if (d.kind === 'mpr') {
       const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;

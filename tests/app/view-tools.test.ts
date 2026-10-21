@@ -97,6 +97,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const MILL = `G21 G17 G90 G54
+T1 M6
+S1000 M3
+G0 X0 Y0 Z10
+G43 H1 Z5
+G1 Z-2 F100
+X50
+G0 Z30
+T2 M6
+G0 X10 Y10
+G43 H2 Z5
+G1 Z-7 F80
+G0 Z30
+M30`;
+
+describe('공구별 절삭 범위(공구 탭·정보 탭)', () => {
+  it('공구 탭 "Z 최저"를 누르면 가장 깊은 절삭 줄로, 정보 탭에 절삭 범위', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.opencadApp!.setPanelTab('tools');
+    const cells = [...root.querySelectorAll<HTMLButtonElement>('table.tools button.linkish')];
+    expect(cells.map((b) => b.textContent)).toEqual(['-2', '-7']);
+    cells[1]!.click();
+    expect(window.opencadApp!.state.selLine).toBe(11);
+    expect(window.opencadApp!.state.panelTab).toBe("code");
+    window.opencadApp!.setPanelTab('info');
+    const info = root.querySelector('.panel')!.textContent!;
+    expect(info).toContain('절삭 범위(이송·호·드릴)');
+    expect(info).toContain('가장 깊은 Z');
+  });
+});
+
 describe('해석 판단 띠', () => {
   it('선반처럼 보이면 선반으로 읽고 띠를 보이며, "밀링으로 읽기"는 선반을 끄고 다시 읽는다', async () => {
     const { app, root } = makeApp();

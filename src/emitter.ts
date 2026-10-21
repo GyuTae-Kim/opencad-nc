@@ -722,6 +722,8 @@ export class NcEmitter {
     const { moves, arcs, holes } = this.mb.finish();
     const all = emptyBox();
     const cut = emptyBox();
+    // 공구별 절삭 범위와 가장 깊은 절삭 줄
+    const toolBox = new Map<number, { box: Float64Array; minZ: number; line: number }>();
     const pts = moves.points;
     const s = [0, 0, 0];
     const e = [0, 0, 0];
@@ -737,6 +739,17 @@ export class NcEmitter {
       e[1] = pts[k + 4]!;
       e[2] = pts[k + 5]!;
       const kind = moves.kind[i]!;
+      let tb: { box: Float64Array; minZ: number; line: number } | undefined;
+      if (kind !== MOVE_RAPID) {
+        const t = moves.tool[i]!;
+        tb = toolBox.get(t);
+        if (!tb) toolBox.set(t, (tb = { box: emptyBox(), minZ: Infinity, line: -1 }));
+        const z = Math.min(s[2], e[2]);
+        if (z < tb.minZ) {
+          tb.minZ = z;
+          tb.line = moves.line[i]!;
+        }
+      }
       if (kind === MOVE_ARC) {
         const ai = moves.arc[i]!;
         c[0] = arcs.center[ai * 3]!;
@@ -744,12 +757,15 @@ export class NcEmitter {
         c[2] = arcs.center[ai * 3 + 2]!;
         arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, all);
         arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, cut);
+        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, tb!.box);
       } else {
         extendBox(all, s[0], s[1], s[2]);
         extendBox(all, e[0], e[1], e[2]);
-        if (kind !== MOVE_RAPID) {
+        if (tb) {
           extendBox(cut, s[0], s[1], s[2]);
           extendBox(cut, e[0], e[1], e[2]);
+          extendBox(tb.box, s[0], s[1], s[2]);
+          extendBox(tb.box, e[0], e[1], e[2]);
         }
       }
     }
@@ -778,6 +794,12 @@ export class NcEmitter {
       const info = this.toolInfo.get(t.number);
       if (info?.diameter !== undefined) t.diameter = info.diameter;
       if (info?.name !== undefined) t.name = info.name;
+      const tb = toolBox.get(t.number);
+      if (tb && tb.box[0]! <= tb.box[3]!) {
+        t.cutMin = [tb.box[0]!, tb.box[1]!, tb.box[2]!];
+        t.cutMax = [tb.box[3]!, tb.box[4]!, tb.box[5]!];
+        t.minZLine = tb.line;
+      }
       tools.push(t);
     }
     // 주석·공구 정의에만 있고 쓰이지 않은 공구도 목록에(이동 0)

@@ -66,6 +66,8 @@ export interface NcPayload {
   lineMoves: { offsets: Uint32Array; moves: Uint32Array };
   tools: NcTool[];
   stats: NcStats;
+  /** 절삭(이송·호·드릴) 범위 — 급속·기계 좌표 쪽 추정 이동 빼고 */
+  cutBounds?: { min: [number, number, number]; max: [number, number, number] };
   /** 띠로 알릴 해석 판단(선반 자동·소수점 없는 좌표·판별한 방언) */
   notices: NcNotice[];
 }

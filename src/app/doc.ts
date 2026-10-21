@@ -84,6 +84,11 @@ export function replaceResult(d: NcDoc, res: ParseResult, opts: NcOpenOptions): 
   if (!panelTabs(d).some(([k]) => k === d.panelTab)) d.panelTab = panelTabs(d)[0]![0];
 }
 
+/** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */
+export function cutRangeText(min: readonly number[], max: readonly number[], unit: string): string {
+  return `X ${fmtNum(min[0])} ~ ${fmtNum(max[0])} · Y ${fmtNum(min[1])} ~ ${fmtNum(max[1])} · Z ${fmtNum(min[2])} ~ ${fmtNum(max[2])}${unit ? ` ${unit}` : ''}`;
+}
+
 /** 해석 판단 띠 하나: 글과 행동(다른 설정으로 다시 읽기, 또는 패널 탭 열기) */
 export interface NoticeView {
   key: string;

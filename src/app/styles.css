@@ -477,6 +477,18 @@ kbd {
   }
 }
 
+/* 표 안의 글처럼 보이는 단추(Z 최저 → 그 줄로) */
+button.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text, var(--accent));
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
 /* 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언): 3D 보기 위 가운데, 행동 단추와 닫기 */
 .notice-bar {
   position: absolute;

@@ -123,6 +123,11 @@ export interface NcTool {
   rapidLength: number;
   /** 예상 시간(초) */
   time: number;
+  /** 이 공구의 절삭(이송·호·드릴) 이동이 지난 범위(표시 좌표 — 급속·기계 좌표 쪽 추정 이동 빼고, 없으면 undefined) */
+  cutMin?: [number, number, number];
+  cutMax?: [number, number, number];
+  /** 가장 깊은(Z 최저) 절삭 이동의 줄(0부터) */
+  minZLine?: number;
 }
 
 export interface NcStats {
