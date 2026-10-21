@@ -2,7 +2,8 @@
 
 NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR·WangShi PGI·KDT XML)을 브라우저 안에서 읽어 3D 공구 경로로 보여 주는 뷰어 앱과, 그 해석기 라이브러리입니다.
 해석기는 DOM·WebGL에 기대지 않아 웹 워커에서 돌고, 결과 장면(`Scene3d`)은 [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d)로 그립니다.
-다른 NC 해석 라이브러리를 쓰지 않고 공개 자료만 보고 새로 작성했습니다.
+다른 NC 해석 라이브러리를 쓰지 않고 새로 작성했습니다. G-code·Heidenhain 평문·woodWOP MPR은 공개 자료를 보고 작성했습니다.
+WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 형식 설명과 실제 출력 파일을 보고 맞췄습니다. 그 리더의 코드는 옮기지 않았습니다.
 
 - 뷰어(배포 예정): https://gyutae-kim.github.io/opencad-nc/
 - 함께 쓰는 저장소: [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d)(3D 뷰어 코어) ·
