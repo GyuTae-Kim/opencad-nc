@@ -145,6 +145,54 @@ describe('현재 블록 상태', () => {
   });
 });
 
+describe('블록 걷기·여기까지 그리기·코드 찾기', () => {
+  it('→ 키·다음 단추는 한 이동씩(코드도 따라감), "여기까지"는 고른 줄의 마지막 이동까지', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    const first = api.state;
+    expect(first.playSec).not.toBeNull();
+    expect(first.selLine).toBe(4);
+    root.querySelector<HTMLButtonElement>('button[aria-label="다음 이동"]')!.click();
+    expect(api.state.selLine).toBe(5);
+    root.querySelector<HTMLButtonElement>('button[aria-label="이전 이동"]')!.click();
+    expect(api.state.selLine).toBe(4);
+    api.selectLine(11);
+    const toHere = root.querySelector<HTMLButtonElement>('button[aria-label="여기까지 그리기"]')!;
+    expect(toHere.disabled).toBe(false);
+    toHere.click();
+    // 12번째 줄(G1 Z-7)이 끝난 시각 = 마지막 이동 전
+    expect(api.state.playSec).toBeGreaterThan(0);
+    expect(fake.FakeViewer.last!.limit).toBe(app.doc!.nc!.lineMoves.moves[app.doc!.nc!.lineMoves.offsets[11]!]);
+    // 재생 속도에 ×1000
+    expect([...root.querySelectorAll('.play-row select option')].map((o) => o.textContent)).toEqual(['×1', '×10', '×100', '×1000']);
+  });
+
+  it('Ctrl+F는 코드 찾기 칸: 글·N 번호·":줄"로 가기, Enter 다음·Shift+Enter 이전', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
+    const input = root.querySelector<HTMLInputElement>('.code-search input')!;
+    expect(document.activeElement).toBe(input);
+    const enter = (shift = false): void => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: shift, bubbles: true }));
+    };
+    input.value = 'g43';
+    input.dispatchEvent(new Event('input'));
+    enter();
+    expect(window.opencadApp!.state.selLine).toBe(4);
+    expect(root.querySelector('.find-count')!.textContent).toBe('1/2');
+    enter();
+    expect(window.opencadApp!.state.selLine).toBe(10);
+    enter(true);
+    expect(window.opencadApp!.state.selLine).toBe(4);
+    input.value = ':13';
+    enter();
+    expect(window.opencadApp!.state.selLine).toBe(12);
+  });
+});
+
 describe('해석 판단 띠', () => {
   it('선반처럼 보이면 선반으로 읽고 띠를 보이며, "밀링으로 읽기"는 선반을 끄고 다시 읽는다', async () => {
     const { app, root } = makeApp();

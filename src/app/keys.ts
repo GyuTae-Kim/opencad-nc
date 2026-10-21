@@ -19,7 +19,13 @@ export type KeyAction =
    * Esc의 앱 쪽 처리. canvas: 캔버스가 받은 Esc(뷰어가 스스로 측정을 지우므로 앱은 측정 중이 아닐 때 고른 것만 지운다).
    * 캔버스 밖이면 측정 중일 때 handleKey로 측정을 먼저 지우고(점이 없으면 측정을 끈다), 아니면 고른 것을 지운다.
    */
-  | { type: 'escape'; canvas: boolean };
+  | { type: 'escape'; canvas: boolean }
+  /** ← → 한 이동씩(Shift면 10) */
+  | { type: 'step'; delta: number }
+  /** ↑ ↓ 고른 줄을 앞·뒤로(캔버스·코드 목록에 초점이 있을 때) */
+  | { type: 'line'; delta: number }
+  /** Ctrl/⌘+F 코드에서 찾기, Ctrl/⌘+G 다음 찾기 */
+  | { type: 'find'; next: boolean };
 
 export interface KeyContext {
   key: string;
@@ -36,17 +42,28 @@ export interface KeyContext {
   hasDoc: boolean;
   /** 재생할 수 있음(G-code·Heidenhain이고 이동이 있음) */
   canPlay: boolean;
+  /** Shift를 눌렀는지 */
+  shift?: boolean;
+  /** 초점이 코드 목록 안 */
+  inCode?: boolean;
+  /** 열린 문서에 코드가 있음(찾기) */
+  hasCode?: boolean;
 }
 
 export function keyAction(c: KeyContext): KeyAction | null {
   const mod = c.ctrl || c.meta;
   if (c.editable) return null;
   if (mod && !c.alt && (c.key === 'o' || c.key === 'O')) return { type: 'open' };
+  // 코드 찾기: 가상 목록이라 브라우저 찾기(Ctrl+F)로는 보이지 않는 줄을 못 찾는다 — 앱의 찾기 칸으로
+  if (mod && !c.alt && c.hasDoc && c.hasCode && (c.key === 'f' || c.key === 'F')) return { type: 'find', next: false };
+  if (mod && !c.alt && c.hasDoc && c.hasCode && (c.key === 'g' || c.key === 'G')) return { type: 'find', next: true };
   if (mod || c.alt) return null;
   if (!c.hasDoc) return null;
   if (c.key === 'F7') return { type: 'grid' };
   if (c.key === ' ' || c.key === 'Spacebar') return c.canPlay && !c.onButton ? { type: 'play' } : null;
   if (c.key === 'Escape') return { type: 'escape', canvas: c.onCanvas };
+  if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canPlay) return { type: 'step', delta: (c.key === 'ArrowRight' ? 1 : -1) * (c.shift ? 10 : 1) };
+  if ((c.key === 'ArrowDown' || c.key === 'ArrowUp') && (c.onCanvas || c.inCode)) return { type: 'line', delta: c.key === 'ArrowDown' ? 1 : -1 };
   return c.onCanvas ? null : { type: 'viewer' };
 }
 

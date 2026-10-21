@@ -19,12 +19,12 @@
 import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
-import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed } from '../view/playback';
+import { PLAY_SPEEDS, advance, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, noticeViews, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
+import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -112,6 +112,10 @@ export interface OpencadAppApi {
   setPanelTab(tab: string): void;
   selectLine(line: number): void;
   seek(sec: number | null): void;
+  /** 한 이동씩 앞·뒤로 */
+  stepMove(delta: number): void;
+  /** 고른 줄(또는 line)까지 그리기 */
+  drawToLine(line?: number): void;
   togglePlay(): void;
   /** 읽는 중이면 멈춘다(앞 문서는 그대로). 멈췄으면 true */
   cancel(): boolean;
@@ -1287,9 +1291,56 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc) return;
     const total = totalTime(d.nc.timeline);
     d.playSec = sec === null ? null : Math.max(0, Math.min(total, sec));
+    d.playMove = -1;
     this.applyPlayback(d);
     this.panel.onPlayback();
     this.renderToolbar();
+  }
+
+  /** 재생 자리를 이동 i가 끝난 곳으로(한 이동씩 걷기·여기까지 그리기) */
+  seekMove(i: number): void {
+    const d = this.doc;
+    if (!d?.nc || i < 0 || i >= d.nc.moves.count) return;
+    this.stopPlay();
+    d.playSec = moveEndTime(d.nc.timeline, i);
+    d.playMove = i;
+    this.applyPlayback(d);
+    this.panel.onPlayback();
+    this.renderToolbar();
+  }
+
+  /** 한 이동씩 앞·뒤로(delta, Shift면 10). 전체 경로를 보고 있으면 앞으로는 처음부터, 뒤로는 끝부터 */
+  stepMove(delta: number): void {
+    const d = this.doc;
+    if (!d?.nc) return;
+    const cur = playPosition(d);
+    const target = stepTarget(cur ? cur.move : -1, delta, d.nc.moves.count);
+    if (target < 0) return;
+    this.seekMove(target);
+    // 코드 보기도 그 줄로(고른 줄은 그대로 두지 않고 따라간다)
+    this.selectLine(d.nc.moves.line[target]!, [target], true);
+  }
+
+  /** 고른 줄까지 그리기: 그 줄의 첫 이동부터 이어진 마지막 이동이 끝난 자리로 */
+  drawToLine(line = this.doc?.selLine ?? -1): void {
+    const d = this.doc;
+    if (!d?.nc || line < 0) return;
+    const [lo, hi] = [d.nc.lineMoves.offsets[line]!, d.nc.lineMoves.offsets[line + 1]!];
+    if (hi <= lo) {
+      toast('이 줄은 이동을 만들지 않습니다.', 'info', 2500);
+      return;
+    }
+    this.seekMove(lastMoveOfLine(d.nc.moves.line, d.nc.lineMoves.moves[lo]!));
+  }
+
+  /** 고른 줄을 앞·뒤로(코드 보기 키 ↑↓) */
+  stepLine(delta: number): void {
+    const d = this.doc;
+    if (!d) return;
+    const n = d.nc ? d.nc.source.lineCount : (d.mpr?.lines.length ?? 0);
+    if (!n) return;
+    const next = Math.max(0, Math.min(n - 1, (d.selLine < 0 ? (delta > 0 ? -1 : n) : d.selLine) + delta));
+    this.selectLine(next, undefined, true);
   }
 
   togglePlay(): void {
@@ -1303,6 +1354,7 @@ export class NcViewerApp implements PanelHost {
     }
     const total = totalTime(d.nc.timeline);
     if (d.playSec === null || d.playSec >= total) d.playSec = 0;
+    d.playMove = -1;
     this.playing = true;
     this.lastT = performance.now();
     const tick = (t: number) => {
@@ -1344,7 +1396,7 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc) return null;
     const total = totalTime(d.nc.timeline);
     if (d.playSec === null) return { move: -1, frac: 0, line: -1, sec: total, total };
-    const { move, frac } = playbackAt(d.nc.timeline, d.playSec);
+    const { move, frac } = playPosition(d)!;
     return { move, frac, line: move >= 0 ? d.nc.moves.line[move]! : -1, sec: d.playSec, total };
   }
 
@@ -1356,7 +1408,7 @@ export class NcViewerApp implements PanelHost {
       v.setMarker(null);
       return;
     }
-    const { move, frac } = playbackAt(d.nc.timeline, d.playSec);
+    const { move, frac } = playPosition(d)!;
     if (move < 0) {
       v.setDrawLimitBySegmentId(null);
       v.setMarker(null);
@@ -1487,16 +1539,21 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
+    // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
+    const onSlider = !!t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range';
     const a = keyAction({
       key: ev.key,
       ctrl: ev.ctrlKey,
       meta: ev.metaKey,
       alt: ev.altKey,
-      editable: isEditableTarget(t as (HTMLElement & { type?: string }) | null),
+      editable: isEditableTarget(t as (HTMLElement & { type?: string }) | null) || (onSlider && ev.key.startsWith('Arrow')),
       onButton: !!t && (t.tagName === 'BUTTON' || t.getAttribute?.('role') === 'button' || t.tagName === 'A'),
       onCanvas: !!v && t === v.canvas,
       hasDoc: !!this.doc && !!v && !this.busy,
       canPlay: this.canPlay(),
+      shift: ev.shiftKey,
+      inCode: !!t?.closest?.('.code-list, .code-search'),
+      hasCode: !!this.doc && (!!this.doc.nc || !!this.doc.mpr),
     });
     if (!a) return;
     if (a.type === 'open') {
@@ -1529,7 +1586,22 @@ export class NcViewerApp implements PanelHost {
     ev.preventDefault();
     ev.stopPropagation();
     if (a.type === 'grid') this.toggleGrid();
+    else if (a.type === 'step') this.stepMove(a.delta);
+    else if (a.type === 'line') this.stepLine(a.delta);
+    else if (a.type === 'find') this.openFind(a.next);
     else this.togglePlay();
+  }
+
+  /** 코드에서 찾기: 패널 코드 탭을 열고 찾기 칸에 초점(next면 다음 찾기) */
+  openFind(next = false): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.panelTab !== 'code') {
+      d.panelTab = 'code';
+      this.panel.show(d);
+    }
+    this.togglePanel(true);
+    this.panel.focusFind(next);
   }
 
   // ───────────────────────── 자동 확인용 ─────────────────────────
@@ -1593,6 +1665,8 @@ export class NcViewerApp implements PanelHost {
       },
       selectLine: (line) => app.selectLine(line, undefined, true),
       seek: (sec) => app.seek(sec),
+      stepMove: (delta) => app.stepMove(delta),
+      drawToLine: (line) => app.drawToLine(line),
       togglePlay: () => app.togglePlay(),
       cancel: () => app.cancelLoad(),
       setSection: (axis, t, flip) => app.setSectionAxis(axis, t, flip),

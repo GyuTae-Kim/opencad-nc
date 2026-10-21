@@ -36,6 +36,12 @@ export const ICONS = {
   section: svg('<path d="M10 2.5l6.5 3.7v7.6L10 17.5l-6.5-3.7V6.2z"/><path d="M2 12.2l8-4.6 8 4.6-8 4.6z" fill="currentColor" fill-opacity="0.28"/>'),
   sliders: svg('<path d="M3 6h7.5M14.5 6H17M3 14h2.5M9.5 14H17"/><circle cx="12.5" cy="6" r="2"/><circle cx="7.5" cy="14" r="2"/>'),
   reset: svg('<path d="M3.2 10a6.8 6.8 0 1 0 2-4.8L3.2 7.2"/><path d="M3.2 3v4.2h4.2"/>'),
+  stepBack: svg('<path d="M14 4l-7 6 7 6z" fill="currentColor"/><path d="M5 4v12"/>'),
+  stepFwd: svg('<path d="M6 4l7 6-7 6z" fill="currentColor"/><path d="M15 4v12"/>'),
+  toHere: svg('<path d="M3 15c3-8 5-9 7-5"/><path d="M13 4v12M10.5 6.5L13 4l2.5 2.5"/>'),
+  search: svg('<circle cx="8.5" cy="8.5" r="5"/><path d="M12.2 12.2L17 17"/>'),
+  up: svg('<path d="M5.5 12l4.5-4.5 4.5 4.5"/>'),
+  down: svg('<path d="M5.5 8l4.5 4.5L14.5 8"/>'),
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -39,6 +39,10 @@ export interface PanelHost {
   togglePlay(): void;
   stopPlay(): void;
   setSpeed(s: PlaySpeed): void;
+  /** 한 이동씩 앞·뒤로 */
+  stepMove(delta: number): void;
+  /** 고른 줄까지 그리기 */
+  drawToLine(line?: number): void;
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
   selectMprOp(i: number, reveal?: boolean): void;
   setHighlight(ids: string[]): void;
@@ -91,7 +95,7 @@ export class NcPanel {
   private code: VirtualList | null = null;
   private codeFor: object | null = null;
   private lastPlayLine = -2;
-  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement } | null = null;
+  private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement; toHere: HTMLButtonElement } | null = null;
 
   constructor(
     private readonly host: PanelHost,
@@ -207,6 +211,7 @@ export class NcPanel {
       if (reveal && d.selLine >= 0) this.code?.reveal(d.selLine, true);
     } else if (d.panelTab === 'ops' || d.panelTab === 'tools') this.render();
     this.renderFoot();
+    if (this.playEls) this.playEls.toHere.disabled = d.selLine < 0;
   }
 
   onMeasure(): void {
@@ -235,6 +240,7 @@ export class NcPanel {
     p.state.hidden = !st;
     if (st) p.state.textContent = `${st.motion} · ${st.modal}\n${st.pos}`;
     p.speed.value = String(this.host.speed);
+    p.toHere.disabled = !this.doc || this.doc.selLine < 0;
     if (info.line !== this.lastPlayLine) {
       this.lastPlayLine = info.line;
       if (this.doc?.panelTab === 'code' && this.code) {
@@ -307,10 +313,19 @@ export class NcPanel {
     });
     const time = h('span', { class: 'mono-dim' });
     const line = h('span', { class: 'mono-dim' });
+    // 한 이동씩(← →, Shift면 10)·고른 줄까지 그리기
+    const iconBtn = (ic: 'stepBack' | 'stepFwd' | 'toHere', label: string, title: string, run: () => void): HTMLButtonElement => {
+      const b = h('button', { class: 'btn small icon-only', type: 'button', title, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', run);
+      return b;
+    };
+    const back = iconBtn('stepBack', '이전 이동', '이전 이동 (←, Shift+← 10개)', () => this.host.stepMove(-1));
+    const fwd = iconBtn('stepFwd', '다음 이동', '다음 이동 (→, Shift+→ 10개)', () => this.host.stepMove(1));
+    const toHere = iconBtn('toHere', '여기까지 그리기', '고른 줄까지 그리기', () => this.host.drawToLine());
     // 재생 중인 이동의 상태(끝점·이송·주축·공구·모달 G)
     const state = h('div', { class: 'play-state', 'aria-live': 'off' });
-    this.play.append(h('div', { class: 'play-row' }, first, btn, all, speed, h('span', { class: 'play-info' }, time, line)), range, state);
-    this.playEls = { btn, range, time, line, speed, state };
+    this.play.append(h('div', { class: 'play-row' }, first, back, btn, fwd, all, toHere, speed, h('span', { class: 'play-info' }, time, line)), range, state);
+    this.playEls = { btn, range, time, line, speed, state, toHere };
   }
 
   // ───────────────────────── 코드 보기 ─────────────────────────
@@ -339,7 +354,7 @@ export class NcPanel {
         if (!doc) return;
         const digits = String(Math.max(1, this.lineCount(doc))).length;
         const play = this.host.playbackInfo();
-        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}`;
+        el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}`;
         el.textContent = '';
         el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch` }, String(i + 1)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
       },
@@ -358,13 +373,152 @@ export class NcPanel {
       c.scrollTop = 0;
     }
     this.body.textContent = '';
-    this.body.append(c.el);
+    this.body.append(this.ensureFind(), c.el);
+    if (this.findFor !== src) {
+      // 새 문서: 찾은 줄은 다시 찾는다(찾는 글은 둔다)
+      this.findFor = src;
+      this.findHits = null;
+      this.findCount.textContent = '';
+    }
     requestAnimationFrame(() => {
       if (this.doc !== d) return;
       const row = this.focusRow();
       if (row >= 0) c.reveal(row);
       else c.refresh();
     });
+  }
+
+  // ───────────────────────── 코드 찾기 ─────────────────────────
+
+  private findBar: HTMLElement | null = null;
+  private findInput!: HTMLInputElement;
+  private findCount!: HTMLSpanElement;
+  private findFor: object | null = null;
+  /** 찾은 줄(오름차순). null = 아직 안 찾음 */
+  private findHits: Int32Array | null = null;
+  private findTimer = 0;
+
+  /** 코드 위 찾기 칸: 글(대소문자 무시)·N 번호·":줄 번호"(그 줄로 가기). Enter 다음, Shift+Enter 이전, Esc 닫기 */
+  private ensureFind(): HTMLElement {
+    if (this.findBar) return this.findBar;
+    const input = h('input', { type: 'search', class: 'input small', placeholder: '찾기 — T5 · G43 · N100 · :120(줄로 가기)', 'aria-label': '코드에서 찾기', spellcheck: 'false', autocomplete: 'off' });
+    const count = h('span', { class: 'mono-dim find-count', 'aria-live': 'polite' });
+    const mk = (ic: 'up' | 'down', label: string, dir: number): HTMLButtonElement => {
+      const b = h('button', { class: 'btn small icon-only', type: 'button', title: label, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', () => this.findGo(dir));
+      return b;
+    };
+    input.addEventListener('input', () => {
+      this.findHits = null;
+      clearTimeout(this.findTimer);
+      // 칠 때마다 다시 찾지 않고 잠깐 멈추면 센다(큰 파일)
+      this.findTimer = window.setTimeout(() => this.findScan(), 250);
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        this.findGo(ev.shiftKey ? -1 : 1);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        input.value = '';
+        this.findHits = null;
+        this.findCount.textContent = '';
+        this.code?.refresh();
+        this.code?.el.focus();
+      }
+    });
+    this.findInput = input;
+    this.findCount = count;
+    this.findBar = h('div', { class: 'code-search', role: 'search' }, h('span', { class: 'find-icon', 'aria-hidden': 'true', html: icon('search') }), input, count, mk('up', '이전 찾기 (Shift+Enter)', -1), mk('down', '다음 찾기 (Enter)', 1));
+    return this.findBar;
+  }
+
+  /** 찾기 칸에 초점(next면 다음으로) */
+  focusFind(next = false): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.panelTab !== 'code') {
+      d.panelTab = 'code';
+      this.render();
+    }
+    this.ensureFind();
+    this.findInput.focus();
+    this.findInput.select();
+    if (next && this.findInput.value) this.findGo(1);
+  }
+
+  private isHit(i: number): boolean {
+    const a = this.findHits;
+    if (!a || !a.length) return false;
+    let lo = 0;
+    let hi = a.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (a[mid]! === i) return true;
+      if (a[mid]! < i) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return false;
+  }
+
+  /** 지금 글로 찾은 줄을 센다(":줄"이면 없음) */
+  private findScan(): Int32Array {
+    const d = this.doc;
+    const q = this.findInput.value.trim();
+    const out: number[] = [];
+    if (d && q && !/^:\s*\d+$/.test(q)) {
+      const n = this.lineCount(d);
+      const nm = /^N0*(\d+)$/i.exec(q);
+      const re = nm ? new RegExp(`^\\s*(?:/\\d?\\s*)?N0*${nm[1]}(?!\\d)`, 'i') : null;
+      const needle = q.toUpperCase();
+      for (let i = 0; i < n && out.length < 200000; i++) {
+        const t = this.lineText(d, i);
+        if (re ? re.test(t) : t.toUpperCase().includes(needle)) out.push(i);
+      }
+    }
+    this.findHits = Int32Array.from(out);
+    this.findCount.textContent = q && !/^:/.test(q) ? (out.length ? `${out.length.toLocaleString('ko-KR')}개` : '없음') : '';
+    this.code?.refresh();
+    return this.findHits;
+  }
+
+  /** 다음(1)·이전(-1) 찾은 줄로. ":120"이면 120번 줄로 */
+  private findGo(dir: number): void {
+    const d = this.doc;
+    if (!d) return;
+    const q = this.findInput.value.trim();
+    const go = /^:\s*(\d+)$/.exec(q);
+    if (go) {
+      const line = Math.max(0, Math.min(this.lineCount(d) - 1, +go[1]! - 1));
+      this.selectFound(line);
+      return;
+    }
+    const hits = this.findHits ?? this.findScan();
+    if (!hits.length) return;
+    const cur = d.selLine;
+    let k = -1;
+    if (dir > 0) {
+      k = hits.findIndex((l) => l > cur);
+      if (k < 0) k = 0;
+    } else {
+      for (let j = hits.length - 1; j >= 0; j--)
+        if (hits[j]! < cur) {
+          k = j;
+          break;
+        }
+      if (k < 0) k = hits.length - 1;
+    }
+    this.findCount.textContent = `${(k + 1).toLocaleString('ko-KR')}/${hits.length.toLocaleString('ko-KR')}`;
+    this.selectFound(hits[k]!);
+  }
+
+  private selectFound(line: number): void {
+    const d = this.doc;
+    if (!d) return;
+    if (d.nc) this.host.selectLine(line, undefined, true);
+    else this.clickLine(line);
+    this.code?.reveal(line, true);
   }
 
   private clickLine(i: number): void {

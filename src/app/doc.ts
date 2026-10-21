@@ -21,7 +21,7 @@ import {
   PLANE_AXES,
 } from '../model';
 import { sourceLine } from '../text';
-import { idRange } from '../view/playback';
+import { idRange, moveEndTime, playbackAt } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint } from './measure';
 import type { MprPayload, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
@@ -55,6 +55,8 @@ export interface NcDoc {
   selKey: string | null;
   /** 재생 시각(초, null = 전체 경로) */
   playSec: number | null;
+  /** 한 이동씩 걸을 때 고른 이동(시간이 0인 이동도 하나씩 가도록 — 재생 시각과 맞을 때만 쓴다, 없으면 -1) */
+  playMove: number;
   panelTab: PanelTab;
 }
 
@@ -77,6 +79,7 @@ export function createDoc(name: string, size: number, res: ParseResult, ncOption
     selMoves: [],
     selKey: null,
     playSec: null,
+    playMove: -1,
     panelTab: res.kind === 'mpr' ? 'ops' : 'code',
   };
 }
@@ -97,7 +100,16 @@ export function replaceResult(d: NcDoc, res: ParseResult, opts: NcOpenOptions): 
   d.selMoves = [];
   d.selKey = null;
   d.playSec = null;
+  d.playMove = -1;
   if (!panelTabs(d).some(([k]) => k === d.panelTab)) d.panelTab = panelTabs(d)[0]![0];
+}
+
+/** 지금 재생 자리(이동·그 안의 비율). 한 이동씩 걸어 고른 이동이 재생 시각과 맞으면 그것(시간 0 이동도 하나씩). 전체 경로면 null */
+export function playPosition(d: Pick<NcDoc, 'nc' | 'playSec' | 'playMove'>): { move: number; frac: number } | null {
+  if (!d.nc || d.playSec === null) return null;
+  const tl = d.nc.timeline;
+  if (d.playMove >= 0 && d.playMove < d.nc.moves.count && Math.abs(moveEndTime(tl, d.playMove) - d.playSec) < 1e-9) return { move: d.playMove, frac: 1 };
+  return playbackAt(tl, d.playSec);
 }
 
 /** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */
