@@ -50,7 +50,7 @@ describe('Heidenhain DIN/ISO', () => {
     expect(detectNcFormat('a.i', 'N10 G00 X+1 *')).toBe('heidenhain');
     const p = parseNcFile('test.i', ISO);
     expect(p.kind).toBe('heidenhain');
-    if (p.kind !== 'mpr') expect(p.program.notices).toEqual([{ kind: 'dialect', dialect: 'heidenhain-iso' }]);
+    if ('program' in p) expect(p.program.notices).toEqual([{ kind: 'dialect', dialect: 'heidenhain-iso' }]);
   });
 
   it('공작물·공구·직선·원 중심 I·J(절대)·G02/G03·R·G91·드릴 사이클·LBL·D 함수·휴지', () => {

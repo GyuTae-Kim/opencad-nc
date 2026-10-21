@@ -3,13 +3,27 @@
  * 해석기를 가져오므로 화면 코드(app.ts·panel.ts)에서는 부르지 않는다(워커와 시험만).
  */
 import { combineNcFiles, detectNcFormat, jobFileLines, ncParsedToScene, parseNcFile, splitNcJob, type NcFileKind, type NcParseOptions } from '../index';
-import { NC_EXTENSIONS } from '../extensions';
+import { NC_EXTENSIONS, XML_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
+import { xmlRootName } from '../xml';
 import { BINARY_MESSAGE, looksBinary } from './format';
 import type { NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
+/** 형식마다 워커 진행 글 */
+const READING: Record<NcFileKind, string> = {
+  gcode: 'G-code 읽는 중',
+  heidenhain: 'Heidenhain 프로그램 읽는 중',
+  mpr: 'woodWOP MPR 읽는 중',
+  pgi: 'WangShi PGI 읽는 중',
+  xml: 'WangShi XML 읽는 중',
+};
+
 /** 확장자도 내용도 NC로 보이지 않을 때 */
-export const NOT_NC_MESSAGE = 'NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 평문(.h)·woodWOP MPR(.mpr) 파일을 여십시오.';
+export const NOT_NC_MESSAGE = 'NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 평문(.h)·woodWOP MPR(.mpr)·WangShi PGI(.pgi)·XML(.xml) 파일을 여십시오.';
+/** woodWOP MPRX(XML 형식)를 열었을 때 */
+export const MPRX_MESSAGE = 'woodWOP MPRX(XML 형식)는 읽지 못합니다. woodWOP에서 MPR(.mpr)로 저장해 여십시오.';
+/** WangShi가 아닌 XML을 열었을 때 */
+export const OTHER_XML_MESSAGE = 'WangShi PGI(<pgi>)·KDT XML(<KDTPanelFormat>)이 아닌 XML 파일입니다.';
 
 function extOf(name: string): string {
   const m = /\.([^./\\]+)$/.exec(name);
@@ -24,7 +38,14 @@ export function checkNcInput(name: string, bytes: Uint8Array): { ok: true; kind:
   if (!bytes.length) return { ok: false, message: '빈 파일입니다.' };
   if (looksBinary(bytes.subarray(0, 4096))) return { ok: false, message: BINARY_MESSAGE };
   const kind = detectNcFormat(name, bytes);
-  if (!kind && !NC_EXTENSIONS.includes(extOf(name))) return { ok: false, message: NOT_NC_MESSAGE };
+  if (!kind) {
+    // XML인데 PGI·KDT XML이 아니면 G-code로 읽지 않는다(.xml은 확장자만으로 정하지 않는다)
+    const ext = extOf(name);
+    const root = xmlRootName(new TextDecoder('latin1').decode(bytes.subarray(0, 4096)));
+    if (ext === 'mprx' || ext === 'mprxe' || (root && /mpr|woodwop/i.test(root))) return { ok: false, message: MPRX_MESSAGE };
+    if (root || XML_EXTENSIONS.includes(ext)) return { ok: false, message: OTHER_XML_MESSAGE };
+    if (!NC_EXTENSIONS.includes(ext)) return { ok: false, message: NOT_NC_MESSAGE };
+  }
   return { ok: true, kind };
 }
 
@@ -102,17 +123,17 @@ export function parseForView(
   } else if (parts) job = { main: base, files: parts.map((p) => p.name), starts: [], skipped: [] };
   const check = checkNcInput(base, bytes);
   if (!check.ok) throw new Error(check.message);
-  progress(0.15, check.kind === 'mpr' ? 'woodWOP MPR 읽는 중' : check.kind === 'heidenhain' ? 'Heidenhain 프로그램 읽는 중' : 'G-code 읽는 중');
+  progress(0.15, READING[check.kind ?? 'gcode']);
   const parsed = parseNcFile(base, bytes, parseOptions(check.kind, o));
   progress(0.7, '공구 경로 만드는 중');
   const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
-  if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
   else out.nc = ncPayload(parsed.program);
   if (job) {
     // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄
-    const marks = parsed.kind === 'mpr' ? null : jobFileLines(parsed.program.source);
+    const marks = 'part' in parsed ? null : jobFileLines(parsed.program.source);
     job.starts = [0, ...(marks ? [...marks.keys()] : [])].slice(0, job.files.length);
     out.job = job;
   }

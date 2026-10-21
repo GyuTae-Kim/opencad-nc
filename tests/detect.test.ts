@@ -11,7 +11,7 @@ const ends = (p: NcProgram): number[][] => {
 };
 const program = (name: string, text: string): NcProgram => {
   const r = parseNcFile(name, text);
-  if (r.kind === 'mpr') throw new Error('mpr');
+  if ('part' in r) throw new Error('panel');
   return r.program;
 };
 const unreadable = (p: NcProgram): string[] => p.warnings.filter((w) => w.includes('읽을 수 없는'));

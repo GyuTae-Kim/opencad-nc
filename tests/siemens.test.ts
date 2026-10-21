@@ -57,7 +57,7 @@ describe('Siemens Sinumerik', () => {
     expect(detectGcodeDialect('%\nO0004 (COMP)\n(T1 D=10. CR=0. - FLAT END MILL)\n(MCALL T="X")\nG0 X0\nM30\n%')).toBe('fanuc');
     expect(parseNcFile('part.mpf', BASIC).kind).toBe('gcode');
     const p = parseNcFile('part.mpf', BASIC);
-    if (p.kind !== 'mpr') expect(p.program.dialect).toBe('siemens');
+    if ('program' in p) expect(p.program.dialect).toBe('siemens');
   });
 
   it('주소 = 식, IC/AC, CR=, I=AC, MCALL CYCLE81, TRANS·ROT(절대 지령은 프레임을 바꾼다), SUPA', () => {

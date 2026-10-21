@@ -6,12 +6,14 @@
  *
  * 주 프로그램: 고르지 않으면 다른 파일이 부르지 않는 파일 가운데 부르기가 가장 많은 것(Siemens .MPF, M30·M2로 끝나는 파일 우선),
  * 없으면 첫 파일. 이은 글은 splitNcJob으로 다시 나눌 수 있다(주 프로그램 바꾸기·파일 더하기).
- * 형식이 다른 파일(MPR, G-code 작업의 Heidenhain 파일 등)은 잇지 않고 skipped로 돌려준다.
+ * 형식이 다른 파일(판재 형식 MPR·PGI·XML, G-code 작업의 Heidenhain 파일 등)은 잇지 않고 skipped로 돌려준다.
  */
+import { isPanelKind, type PanelFileKind } from './extensions';
 import { detectGcodeDialect } from './gcode';
 import { JOB_FILE_MARK } from './model';
 
-export type JobKind = 'gcode' | 'heidenhain' | 'mpr';
+/** 판재 형식(MPR·PGI·XML)은 잇지 않는다(파일 하나가 판 하나) */
+export type JobKind = 'gcode' | 'heidenhain' | PanelFileKind;
 
 export interface NcJobFile {
   name: string;
@@ -82,11 +84,11 @@ export function combineNcJob(files: NcJobFile[], kindOf: (name: string, bytes: U
   });
   let mi = main !== undefined ? info.findIndex((x) => x.f.name === main) : -1;
   if (mi < 0) {
-    // 다른 파일이 부르지 않는 파일 가운데 부르기가 가장 많은 것(MPR은 주 프로그램으로 고르지 않는다)
+    // 다른 파일이 부르지 않는 파일 가운데 부르기가 가장 많은 것(판재 형식 MPR·PGI·XML은 주 프로그램으로 고르지 않는다)
     let best = -1;
     let bestScore = -Infinity;
     info.forEach((x, i) => {
-      if (x.kind === 'mpr') return;
+      if (isPanelKind(x.kind)) return;
       const called = info.some((y, j) => j !== i && y.calls.some((c) => x.defs.has(c)));
       const own = x.calls.filter((c) => info.some((y, j) => j !== i && y.defs.has(c))).length;
       const e = ext(x.f.name);
@@ -114,7 +116,7 @@ export function combineNcJob(files: NcJobFile[], kindOf: (name: string, bytes: U
   push(m.f.bytes);
   info.forEach((x, i) => {
     if (i === mi) return;
-    if (x.kind !== m.kind || m.kind === 'mpr') {
+    if (x.kind !== m.kind || isPanelKind(m.kind)) {
       skipped.push(x.f.name);
       return;
     }

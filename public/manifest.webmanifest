@@ -1,7 +1,7 @@
 {
   "name": "OpenCAD NC 뷰어",
   "short_name": "NC 뷰어",
-  "description": "G-code·Heidenhain·woodWOP MPR 프로그램을 3D 공구 경로로 보는 무료 NC 뷰어",
+  "description": "G-code·Heidenhain·woodWOP MPR·WangShi PGI·XML 프로그램을 3D 공구 경로로 보는 무료 NC 뷰어",
   "lang": "ko",
   "dir": "ltr",
   "start_url": "./",

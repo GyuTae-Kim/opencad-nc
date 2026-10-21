@@ -31,7 +31,7 @@ const enc = new TextEncoder();
 function parse(name: string, text: string): ParseResult {
   const { parsed, scene } = loadNcFile(name, enc.encode(text));
   const out: ParseResult = { kind: parsed.kind, scene, ms: 12 };
-  if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
   else out.nc = ncPayload(parsed.program);
   return out;
 }

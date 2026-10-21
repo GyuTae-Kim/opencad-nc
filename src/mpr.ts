@@ -46,8 +46,13 @@ export interface MprHole {
   depth: number;
 }
 
+/** 공구가 들어가는 판 면(top = 윗면 Z=두께, bottom = 아랫면 Z=0, left·right = X=0·길이, front·back = Y=0·폭) */
+export type PanelFace = 'top' | 'bottom' | 'left' | 'right' | 'front' | 'back';
+
 interface OpBase {
+  /** MPR 매크로 번호, KDT XML TypeNo(PGI는 -1) */
   macroId: number;
+  /** MPR 매크로 이름, PGI 요소 이름, KDT XML TypeName */
   macro: string;
   /** 사람이 읽는 이름(MNM·KM 또는 매크로 이름) */
   label: string;
@@ -56,6 +61,8 @@ interface OpBase {
   endLine: number;
   enabled: boolean;
   tool?: number;
+  /** 들어가는 면(PGI·XML. MPR은 비워 둔다) */
+  face?: PanelFace;
   /** 원래 값(글) */
   params: Record<string, string>;
 }
@@ -80,6 +87,10 @@ export interface MprContourOp extends OpBase {
   feed?: number;
   /** 공구 경로(가공 깊이 반영) */
   path?: PathPoint[];
+  /** 가공 깊이(face가 있을 때 면에서 경로까지의 깊이 표시에 쓴다) */
+  depth?: number;
+  /** 공구 지름(PGI width·XML Width 등, 알면) */
+  diameter?: number;
 }
 
 export interface MprBoxOp extends OpBase {
@@ -87,8 +98,12 @@ export interface MprBoxOp extends OpBase {
   depth: number;
   width?: number;
   length?: number;
+  /** 원형 포켓 지름 */
+  diameter?: number;
   /** 방향 있는 상자: 모서리 origin과 세 변 u·v·w */
   box?: { origin: number[]; u: number[]; v: number[]; w: number[] };
+  /** 기둥: 면 위의 닫힌 다각형(xyz 이어 붙임, 첫 점을 되풀이하지 않음)을 dir(단위 벡터)로 depth만큼 민 것 */
+  prism?: { outline: number[]; dir: [number, number, number]; depth: number };
 }
 
 export interface MprOtherOp extends OpBase {
@@ -104,6 +119,8 @@ export interface MprWorkpiece {
   width: number;
   thickness: number;
   line: number;
+  /** 직사각형이 아닌 판의 외곽선(XY, 닫힌 점열 — 끝점이 첫 점과 같다). PGI·XML */
+  outline?: PathPoint[];
 }
 
 export interface MprVariable {
@@ -114,7 +131,13 @@ export interface MprVariable {
   line: number;
 }
 
+/**
+ * 판재 가공 프로그램 하나(MPR, WangShi PGI·KDT XML 공용 — wangs.ts도 이 꼴로 읽는다).
+ * 좌표는 판 왼쪽 앞 아래 모서리가 원점, X = 길이, Y = 폭, Z = 위(윗면 Z = 두께).
+ */
 export interface MprPart {
+  /** 원본 형식 */
+  format: 'mpr' | 'pgi' | 'xml';
   name: string;
   version?: string;
   units: 'mm' | 'inch';
@@ -630,6 +653,7 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
   if (!ended) w.add('파일 끝 표시(!)가 없음');
   const name = opts.name ?? (header.PARTID || header.ARTICLE || 'MPR');
   return {
+    format: 'mpr',
     name,
     version: header.VERSION,
     units,

@@ -14,7 +14,7 @@ const ends = (p: NcProgram): number[][] => {
 };
 const prog = (name: string, bytes: Uint8Array): NcProgram => {
   const r = parseNcFile(name, bytes);
-  if (r.kind === 'mpr') throw new Error('mpr');
+  if ('part' in r) throw new Error('panel');
   return r.program;
 };
 const joined = (files: NcJobFile[], main?: string): NcProgram => {

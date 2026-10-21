@@ -1,5 +1,5 @@
 /**
- * NC 해석 워커: G-code·Heidenhain·woodWOP MPR 파일을 화면 밖에서 해석해 Scene3d와 패널 자료로 돌려준다.
+ * NC 해석 워커: G-code·Heidenhain·woodWOP MPR·WangShi PGI·KDT XML 파일을 화면 밖에서 해석해 Scene3d와 패널 자료로 돌려준다.
  * 함께 연 파일(extra)이 있으면 주 프로그램과 이어 한 작업으로 읽는다(job.ts).
  * 결과의 형식 배열은 이전 가능한 버퍼로 넘긴다(protocol.ts collectTransfers). 해석 길은 payload.ts parseForView(시험과 같다).
  */
