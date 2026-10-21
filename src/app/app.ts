@@ -11,6 +11,8 @@
  *   나머지(투영·그리기 모드·격자·뷰 큐브·좌표축·PNG)는 "보기 설정" 메뉴로 모은다.
  * - 휴대폰·터치: 측정 중에는 3D 보기 아래 가운데 띠(measure.ts)에 안내·거리·dx·dy·dz와 다시 재기·끝내기 단추를 두고,
  *   길게 누르면 손가락 위 십자선으로 정밀 조준한다(aim.ts — 코어 포인터 처리를 그대로 쓴다).
+ * - 최근 문서: 파일 고르기·끌어다 놓기로 연 파일을 이 브라우저(IndexedDB, recent.ts)에 두고 시작 화면에서 바로 다시 연다
+ *   (휴대폰 브라우저가 뒤로 간 탭을 버렸다가 다시 읽어도 파일 앱을 다시 거치지 않게). 예제·주소로 연 파일은 두지 않는다.
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
@@ -21,9 +23,10 @@ import { PLAY_SPEEDS, advance, playbackAt, pointAlong, totalTime, type PlaySpeed
 import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
+import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
-import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, isNcFileName, looksBinary, parseStartParams } from './format';
+import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { measureHint, measureLines } from './measure';
@@ -127,6 +130,11 @@ interface ToolButton {
   needsDoc: boolean;
 }
 
+export interface NcViewerAppOptions {
+  /** 최근 문서 저장소(시험은 메모리 바탕을 끼운다). 없으면 IndexedDB */
+  recent?: RecentStore;
+}
+
 /**
  * 보이는 화면 크기(펼침 상자 자리 잡기용). 휴대폰은 화면 밖으로 넘친 상자가 window.innerWidth를 늘리므로
  * (레이아웃 뷰포트가 넓어진다) 넘침과 상관없는 문서 요소의 client 크기를 쓴다.
@@ -170,6 +178,9 @@ export class NcViewerApp implements PanelHost {
   private readonly coarse: MediaQueryList | null;
   /** 정밀 조준(터치 길게 누르기, 뷰어를 만들 때 붙인다) */
   private aim: TouchAim | null = null;
+  /** 최근 문서(이 브라우저의 IndexedDB) */
+  readonly recent: RecentStore;
+  private recentSeq = 0;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -180,6 +191,8 @@ export class NcViewerApp implements PanelHost {
   private readonly viewEl: HTMLDivElement;
   private readonly startEl: HTMLDivElement;
   private readonly startError: HTMLDivElement;
+  private readonly recentCard: HTMLElement;
+  private readonly recentList: HTMLUListElement;
   private readonly busyEl: HTMLDivElement;
   private readonly busyStage: HTMLDivElement;
   private readonly busyBar: HTMLDivElement;
@@ -204,9 +217,14 @@ export class NcViewerApp implements PanelHost {
   private readonly aimLayer: HTMLDivElement;
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
-  constructor(root: HTMLElement) {
-    root.addEventListener('languagechange', () => { if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize); });
+  constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
+    root.addEventListener('languagechange', () => {
+      if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize);
+      // 최근 문서의 시각 글을 화면 언어 형식으로
+      void this.renderRecent();
+    });
     this.root = root;
+    this.recent = opts.recent ?? new RecentStore();
     this.coarse = typeof window.matchMedia === 'function' ? window.matchMedia(COARSE_QUERY) : null;
     this.theme = resolveTheme(readThemePref(this.storage), this.systemDark());
     document.documentElement.dataset.theme = this.theme;
@@ -312,6 +330,8 @@ export class NcViewerApp implements PanelHost {
     this.workspace = h('main', { class: 'workspace' });
     this.viewEl = h('div', { class: 'view', hidden: true });
     this.startError = h('div', { class: 'start-error', role: 'alert', hidden: true });
+    this.recentList = h('ul', { class: 'recent-list' });
+    this.recentCard = this.buildRecent();
     this.startEl = this.buildStart();
     this.busyStage = h('div', { class: 'busy-stage' }, '여는 중…');
     this.busyBar = h('div', { class: 'bar' });
@@ -386,6 +406,7 @@ export class NcViewerApp implements PanelHost {
     this.renderStatus();
     this.exposeApi();
     this.ready = true;
+    void this.renderRecent();
     void this.startFromUrl();
   }
 
@@ -440,6 +461,7 @@ export class NcViewerApp implements PanelHost {
         h('p', { class: 'lead' }, 'G-code·Heidenhain 평문·woodWOP MPR 파일을 열면 공구 경로를 돌려 보고, 코드 줄과 이동을 함께 짚고, 가공 순서를 재생할 수 있습니다.'),
         zone,
         this.startError,
+        this.recentCard,
         h(
           'dl',
           { class: 'formats', 'aria-label': '지원 형식' },
@@ -452,6 +474,45 @@ export class NcViewerApp implements PanelHost {
         h('p', { class: 'keys coarse-only' }, '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준'),
       ),
     );
+  }
+
+  /** 시작 화면의 최근 문서 카드(목록은 renderRecent가 채운다. 비어 있으면 숨긴다) */
+  private buildRecent(): HTMLElement {
+    const clear = h('button', { class: 'tbtn outline recent-clear', type: 'button', title: '최근 문서 목록을 모두 지웁니다(원래 파일은 그대로)' }, '모두 지우기');
+    clear.addEventListener('click', () => void this.clearRecent());
+    return h(
+      'section',
+      { class: 'recent', 'aria-labelledby': 'recent-title', hidden: true },
+      h('div', { class: 'recent-head' }, h('h3', { id: 'recent-title' }, '최근 문서'), clear),
+      this.recentList,
+      h('p', { class: 'recent-note' }, '최근 문서는 이 기기의 이 브라우저에만 저장하며 서버로 보내지 않습니다.'),
+    );
+  }
+
+  /** 최근 문서 목록을 다시 그린다(새것이 먼저). 비었거나 저장소를 못 쓰면 카드를 숨긴다 */
+  async renderRecent(): Promise<void> {
+    const seq = ++this.recentSeq;
+    const list = await this.recent.list();
+    if (seq !== this.recentSeq) return;
+    const now = Date.now();
+    const lang = document.documentElement.lang || 'ko';
+    this.recentList.replaceChildren(...list.map((e) => this.recentRow(e, now, lang)));
+    this.recentCard.hidden = !list.length;
+  }
+
+  private recentRow(e: RecentEntry, now: number, lang: string): HTMLLIElement {
+    // 파일 이름·크기·시각은 문서 자료라 번역하지 않는다(translate="no")
+    const open = h(
+      'button',
+      { class: 'recent-open', type: 'button' },
+      h('span', { class: 'recent-name', translate: 'no' }, e.name),
+      h('span', { class: 'recent-meta', translate: 'no' }, `${formatBytes(e.size)} · ${formatRecentTime(e.time, now, lang)}`),
+    );
+    open.addEventListener('click', () => void this.openRecent(e));
+    const label = `최근 문서에서 ${e.name} 지우기`;
+    const del = h('button', { class: 'recent-del', type: 'button', title: label, 'aria-label': label, html: icon('close') });
+    del.addEventListener('click', () => void this.removeRecent(e.id));
+    return h('li', { class: 'recent-item' }, open, del);
   }
 
   /** 펼침 메뉴(표준 뷰·그리기 모드·보기 설정). entries에는 단추와 구분선(.menu-sep)을 섞어 넣는다 */
@@ -669,7 +730,48 @@ export class NcViewerApp implements PanelHost {
       attempt.error('read_error');
       return false;
     }
-    return this.openBuffer(f.name, buf, {}, attempt);
+    const ok = await this.openBuffer(f.name, buf, {}, attempt);
+    // 열린 파일만 최근 문서에 둔다(고른 파일 그대로 — 내용은 워커로 넘겨 비워졌다). 예제·주소로 연 파일은 두지 않는다
+    if (ok)
+      void this.recent.add(f.name, f).then((saved) => {
+        if (saved) void this.renderRecent();
+      });
+    return ok;
+  }
+
+  /** 최근 문서 다시 열기: 이 브라우저에 둔 내용을 읽어 연다. 열리면 맨 앞으로 */
+  async openRecent(e: RecentEntry): Promise<boolean> {
+    const data = await this.recent.read(e.id);
+    if (!data) {
+      this.showError(`${e.name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
+      await this.recent.remove(e.id);
+      await this.renderRecent();
+      return false;
+    }
+    const ok = await this.openBuffer(e.name, data, {}, beginOpen('local', e.name.split('.').pop() ?? 'other'));
+    if (ok) {
+      await this.recent.touch(e.id);
+      await this.renderRecent();
+    }
+    return ok;
+  }
+
+  /** 최근 문서 한 항목 지우기(원래 파일은 그대로). 초점은 다음 항목(없으면 열기 상자)으로 */
+  private async removeRecent(id: string): Promise<void> {
+    const rows = [...this.recentList.children];
+    const at = rows.findIndex((li) => li.contains(document.activeElement));
+    await this.recent.remove(id);
+    await this.renderRecent();
+    if (at < 0) return;
+    const next = this.recentList.children[Math.min(at, this.recentList.children.length - 1)];
+    (next?.querySelector<HTMLElement>('.recent-del') ?? this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus();
+  }
+
+  private async clearRecent(): Promise<void> {
+    await this.recent.clear();
+    await this.renderRecent();
+    this.startEl.querySelector<HTMLElement>('.dropzone')?.focus();
+    toast('최근 문서를 모두 지웠습니다.', 'info', 2500);
   }
 
   async openSample(): Promise<boolean> {

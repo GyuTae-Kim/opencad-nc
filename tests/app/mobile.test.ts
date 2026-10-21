@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * 휴대폰·터치 화면(app.ts): 좁은 화면 도구 막대, "보기 설정" 메뉴, 측정 띠, 손가락 기기의 파일 고르기·안내 글.
+ * 휴대폰·터치 화면(app.ts): 좁은 화면 도구 막대, "보기 설정" 메뉴, 측정 띠, 손가락 기기의 파일 고르기·안내 글, 시작 화면의 최근 문서.
  * 뷰어 코어(WebGL)와 해석 워커는 가짜로 바꾼다 — 코어 쪽은 앱이 부르는 것만 흉내 내고 나머지 부르기는 null을 돌려준다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -104,6 +104,9 @@ vi.mock('../../src/app/client', async () => {
 import { NcViewerApp } from '../../src/app/app';
 import { BINARY_MESSAGE } from '../../src/app/format';
 import { measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { RecentStore, recentId } from '../../src/app/recent';
+import { memoryBackend, type MemoryBackend } from './recent-memory';
+import { translate } from '../../site/i18n.mjs';
 
 /** 화면 폭·높이·누르개 흉내(matchMedia). 쉼표는 "또는", and는 "그리고"로 조건마다 흉내 낸 값을 본다 */
 function media(narrow: boolean, coarse: boolean, low: boolean): void {
@@ -116,12 +119,19 @@ function media(narrow: boolean, coarse: boolean, low: boolean): void {
   }));
 }
 
-function makeApp(narrow = false, coarse = false, low = false): { app: NcViewerApp; root: HTMLElement } {
+function makeApp(narrow = false, coarse = false, low = false, recent?: MemoryBackend): { app: NcViewerApp; root: HTMLElement } {
   media(narrow, coarse, low);
   document.body.innerHTML = '<div id="app"></div>';
   const root = document.getElementById('app')!;
-  return { app: new NcViewerApp(root), root };
+  return { app: new NcViewerApp(root, recent ? { recent: new RecentStore(recent) } : {}), root };
 }
+
+/** 고른 파일 흉내(글 내용) */
+function textFile(name: string, text: string): File {
+  const bytes = new TextEncoder().encode(text);
+  return { name, size: bytes.length, slice: () => ({ arrayBuffer: async () => bytes.slice().buffer }), arrayBuffer: async () => bytes.slice().buffer } as unknown as File;
+}
+const PROGRAM = 'G21 G90\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG1 X20 Y10\nM30\n';
 
 const label = (el: Element): string => el.getAttribute('aria-label') ?? '';
 const menuButton = (root: HTMLElement, name: string): HTMLButtonElement => [...root.querySelectorAll<HTMLButtonElement>('.toolbar .tbtn')].find((b) => label(b) === name)!;
@@ -299,5 +309,129 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
     const ok = { name: 'program.txt', size: text.length, slice: () => ({ arrayBuffer: async () => text.slice().buffer }), arrayBuffer: async () => text.slice().buffer } as unknown as File;
     expect(await app.openFile(ok)).toBe(true);
     expect(app.state().docName).toBe('program.txt');
+  });
+});
+
+describe('최근 문서(시작 화면)', () => {
+  const card = (root: HTMLElement): HTMLElement => root.querySelector<HTMLElement>('.start .recent')!;
+  const rows = (root: HTMLElement): HTMLLIElement[] => [...root.querySelectorAll<HTMLLIElement>('.recent-item')];
+  const names = (root: HTMLElement): string[] => rows(root).map((li) => li.querySelector('.recent-name')!.textContent ?? '');
+
+  it('비어 있으면 카드를 숨기고, 고른 파일이 열리면 이름·크기·시각을 보인다 — 예제·열리지 않은 파일은 두지 않는다', async () => {
+    const backend = memoryBackend();
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(card(root).hidden).toBe(true));
+    // 열기 상자 바로 아래, 지원 형식 앞
+    expect(card(root).previousElementSibling?.classList.contains('start-error')).toBe(true);
+    expect(card(root).nextElementSibling?.classList.contains('formats')).toBe(true);
+    expect(card(root).textContent).toContain('이 기기의 이 브라우저에만 저장하며 서버로 보내지 않습니다');
+
+    expect(await app.openSample()).toBe(true);
+    const bad = textFile('comment-only.nc', '(no moves)\n');
+    expect(await makeApp(true, true, false, backend).app.openFile(bad)).toBe(false);
+    expect(backend.entries.size).toBe(0);
+
+    const { app: app2, root: root2 } = makeApp(true, true, false, backend);
+    expect(await app2.openFile(textFile('part.nc', PROGRAM))).toBe(true);
+    await vi.waitFor(() => expect(backend.entries.size).toBe(1));
+    expect([...backend.entries.keys()]).toEqual([recentId('part.nc', PROGRAM.length)]);
+    await vi.waitFor(() => expect(names(root2)).toEqual(['part.nc']));
+    expect(card(root2).hidden).toBe(false);
+    const row = rows(root2)[0]!;
+    expect(row.querySelector('.recent-meta')!.textContent).toMatch(new RegExp(`^${PROGRAM.length} B · `));
+    // 파일 이름·크기·시각은 번역하지 않는다
+    expect(row.querySelector('.recent-name')!.getAttribute('translate')).toBe('no');
+    expect(row.querySelector('.recent-meta')!.getAttribute('translate')).toBe('no');
+  });
+
+  it('다시 읽은 페이지(탭이 버려졌다 돌아옴)에서 줄을 누르면 그 파일을 다시 열고 맨 앞으로 올린다', async () => {
+    const backend = memoryBackend();
+    const first = makeApp(true, true, false, backend);
+    expect(await first.app.openFile(textFile('a.nc', PROGRAM))).toBe(true);
+    expect(await first.app.openFile(textFile('b.nc', `${PROGRAM}\n`))).toBe(true);
+    await vi.waitFor(() => expect(backend.entries.size).toBe(2));
+    for (const [i, v] of [...backend.entries.values()].entries()) v.entry.time = 1000 + i;
+
+    // 새로 읽은 페이지: 문서 없이 시작 화면
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['b.nc', 'a.nc']));
+    expect(app.state().docName).toBeNull();
+    const before = fake.parses;
+    rows(root)[1]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    await vi.waitFor(() => expect(app.state().docName).toBe('a.nc'));
+    expect(fake.parses).toBe(before + 1);
+    expect(app.state().parsed).toBe(true);
+    await vi.waitFor(() => expect(names(root)).toEqual(['a.nc', 'b.nc']));
+  });
+
+  it('✕는 그 항목만, 모두 지우기는 전부 지우고 비면 카드를 숨긴다(손가락 기기 줄은 CSS로 44px 이상)', async () => {
+    const backend = memoryBackend();
+    const store = new RecentStore(backend);
+    await store.add('a.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 1);
+    await store.add('b.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 2);
+    await store.add('c.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 3);
+    const { root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['c.nc', 'b.nc', 'a.nc']));
+
+    const del = rows(root)[1]!.querySelector<HTMLButtonElement>('.recent-del')!;
+    expect(label(del)).toBe('최근 문서에서 b.nc 지우기');
+    expect(del.type).toBe('button');
+    del.focus();
+    del.click();
+    await vi.waitFor(() => expect(names(root)).toEqual(['c.nc', 'a.nc']));
+    // 초점은 다음 항목의 지우기 단추로
+    expect(document.activeElement).toBe(rows(root)[1]!.querySelector('.recent-del'));
+
+    const clear = [...root.querySelectorAll<HTMLButtonElement>('.recent button')].find((b) => b.textContent === '모두 지우기')!;
+    clear.click();
+    await vi.waitFor(() => expect(card(root).hidden).toBe(true));
+    expect(backend.entries.size).toBe(0);
+    expect(rows(root)).toHaveLength(0);
+  });
+
+  it('카드의 글·설명·알림은 네 언어 사전에 있고, 파일 이름은 번역하지 않고 그대로 넣는다', async () => {
+    const backend = memoryBackend();
+    const name = '부품 가공 1.nc';
+    await new RecentStore(backend).add(name, new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 1);
+    const { root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual([name]));
+    const texts = new Set<string>([`${name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`, '최근 문서를 모두 지웠습니다.']);
+    const walk = (el: Element): void => {
+      if (el.getAttribute('translate') === 'no') return;
+      for (const a of ['title', 'aria-label']) if (el.hasAttribute(a)) texts.add(el.getAttribute(a)!);
+      for (const n of el.childNodes) {
+        if (n.nodeType === Node.TEXT_NODE && n.textContent!.trim()) texts.add(n.textContent!.trim());
+        else if (n.nodeType === Node.ELEMENT_NODE) walk(n as Element);
+      }
+    };
+    walk(card(root));
+    expect(texts.size).toBeGreaterThanOrEqual(7);
+    for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
+      for (const t of texts) {
+        const out = translate(t, lang);
+        if (t.includes(name)) expect(out, `${lang}: ${t}`).toContain(name);
+        expect(out.replace(name, ''), `${lang}: ${t}`).not.toMatch(/[가-힣]/);
+      }
+    }
+  });
+
+  it('내용을 못 찾은 항목은 알리고 목록에서 지운다 · 저장소를 못 쓰면(비공개 창) 카드 없이 그냥 연다', async () => {
+    const backend = memoryBackend();
+    const store = new RecentStore(backend);
+    await store.add('gone.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer, 1);
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['gone.nc']));
+    backend.entries.get(recentId('gone.nc', PROGRAM.length))!.data = null as unknown as ArrayBuffer;
+    rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    await vi.waitFor(() => expect(card(root).hidden).toBe(true));
+    expect(app.state().docName).toBeNull();
+    expect(root.querySelector('.start-error')!.textContent).toContain('gone.nc: 이 브라우저에 저장된 내용을 찾지 못해');
+
+    const blocked = memoryBackend();
+    blocked.fail = true;
+    const b = makeApp(true, true, false, blocked);
+    expect(await b.app.openFile(textFile('part.nc', PROGRAM))).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(card(b.root).hidden).toBe(true);
   });
 });

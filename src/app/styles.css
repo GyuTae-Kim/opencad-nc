@@ -648,6 +648,99 @@ kbd {
   font-size: 12px;
 }
 
+/* 최근 문서(시작 화면, 열기 상자 바로 아래 — 휴대폰에서 굴리지 않고 보이게) */
+.recent {
+  margin-top: 14px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border-faint);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 4px 4px;
+}
+.recent-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.recent-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.recent-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  border-top: 1px solid var(--border-faint);
+}
+.recent-open {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.recent-open:hover,
+.recent-del:hover {
+  background: var(--bg-hover);
+}
+.recent-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-meta {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.recent-del {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.recent-note {
+  margin: 6px 0 0 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+@media (pointer: coarse) {
+  /* 손가락으로 누르기 쉽게: 줄·지우기 단추 48px, 모두 지우기 44px */
+  .recent-open {
+    min-height: 48px;
+  }
+  .recent-del {
+    width: 48px;
+  }
+  .tbtn.recent-clear {
+    height: 44px;
+  }
+}
+
 /* ───────────────────────── 덮개·알림 ───────────────────────── */
 .busy {
   position: absolute;

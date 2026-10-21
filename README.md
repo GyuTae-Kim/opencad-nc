@@ -54,6 +54,10 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
    (붙잡을 점·거리를 미리 보입니다) 떼면 그 자리를 누른 것으로 칩니다. 둘째 손가락이 닿으면 조준을 그만두고 두 손가락 이동·확대로 넘어갑니다.
    손가락 기기의 안내에는 키(Esc) 설명 대신 길게 누르기를 적고, 파일 고르기 상자는 확장자로 거르지 않습니다
    (iOS에서 .nc·.mpr 등이 흐리게 막히지 않게 — 모르는 확장자는 앞부분을 보고 이진 파일을 바로 막고, 글 파일은 내용으로 형식을 가립니다).
+6. 최근 문서: 파일 고르기·끌어다 놓기로 열린 파일은 이 브라우저의 IndexedDB(`opencad-nc`)에 새것부터 8개까지 두고
+   (60MB 넘는 파일, 예제, `?open=`으로 받은 파일은 두지 않음), 시작 화면의 **최근 문서**에서 이름·크기·연 시각을 보고 눌러 다시 엽니다.
+   휴대폰 브라우저가 뒤로 간 탭을 버렸다가 다시 읽어도 파일 앱을 다시 거치지 않습니다. 줄마다 ✕(그 항목만 지우기)와 **모두 지우기**가 있고,
+   서버로는 보내지 않습니다(비공개 창처럼 저장소를 못 쓰면 목록이 생기지 않습니다).
 
 | 키 | 하는 일 |
 |---|---|
@@ -95,7 +99,7 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | 경로 | 내용 |
 |---|---|
 | `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기) |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `styles.css` |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `recent.ts`(최근 문서, IndexedDB), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile` |
 | `src/extensions.ts` | 확장자 목록(`NC_EXTENSIONS` 등 — 화면 코드가 해석기 없이 가져다 쓴다) |
