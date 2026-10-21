@@ -479,6 +479,12 @@ export function looksSiemens(head: string): boolean {
   );
 }
 
+/** Okuma OSP 표지: CALL O…, VC 변수 대입, G15 H, NLAP, RTS(부프로그램 끝) */
+export function looksOkuma(head: string): boolean {
+  const code = head.replace(/\([^)\n]*\)/g, ' ');
+  return /\bCALL\s+O\w+/i.test(code) || /(?:^|\s)VC\d+\s*=/im.test(code) || /\bG15\s*H\d/i.test(code) || /\bNLAP\b/i.test(code) || /^\s*(?:N\d+\s+)?RTS\b/im.test(code) || /\bokuma\b/i.test(head);
+}
+
 /** 글 앞부분으로 방언을 판별한다 */
 export function detectGcodeDialect(head: string): NcDialect {
   if (/^\s*\d*\s*BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
@@ -756,6 +762,11 @@ export class Runner extends NcEmitter {
     super(src, opts.initialPosition);
     this.o = opts;
     this.dialect = dialect;
+    // Okuma OSP: CALL O…·VC 변수·NLAP·RTS 등은 읽지 않으므로 띠와 경고로 알린다(G15 H는 작업 좌표계로 읽음)
+    if ((dialect === 'fanuc' || dialect === 'iso') && src.lineCount > 0 && looksOkuma(head())) {
+      this.notices.push({ kind: 'dialect', dialect: 'okuma' });
+      this.w.add('Okuma OSP 프로그램으로 보임 — CALL·VC 변수·NLAP·RTS는 읽지 않아 경로가 모자랄 수 있음');
+    }
     const latheAuto = opts.lathe === 'auto' && detectLathe(head());
     if (latheAuto) this.notices.push({ kind: 'lathe-auto' });
     if (opts.lathe === true || latheAuto) {
@@ -1172,6 +1183,8 @@ export class Runner extends NcEmitter {
     let tapOneShot = false;
     /** 이 블록에 G43·G44·G43.4/5(공구 길이 보정)가 있음 */
     let tlcOn = false;
+    /** Haas 볼트 구멍 패턴(G70·G71·G72) */
+    let boltG = -1;
     for (let k = 0; k < blk.gCount; k++) {
       const g = blk.g[k]!;
       if (this.lathe) {
@@ -1358,8 +1371,21 @@ export class Runner extends NcEmitter {
           break;
         }
         case 150:
-          // G15 극좌표 끝(Okuma G15 H는 좌표계 고르기 — 이동에는 영향 없음)
-          if (!blk.has[7]) this.polar = false;
+          // G15 극좌표 끝. Okuma G15 Hn은 작업 좌표계 n 고르기
+          if (blk.has[7]) {
+            this.selectWcs(Math.max(0, Math.round(blk.val[7]!) - 1), line);
+            blk.has[7] = 0;
+          } else this.polar = false;
+          break;
+        case 700:
+        case 710:
+        case 720:
+          // Haas 밀링 볼트 구멍 패턴 G70(원)·G71(호)·G72(직선) — 선반 모드의 G70~G72는 latheCode가 먼저 받는다
+          if (this.dialect === 'haas') boltG = g;
+          else {
+            this.w.add(`지원하지 않는 G${g / 10}`, line);
+            if (unknownG < 0) unknownG = g;
+          }
           break;
         case 610:
         case 611:
@@ -1588,6 +1614,11 @@ export class Runner extends NcEmitter {
     this.polarAgain = null;
     if (this.polar && !this.lathe) this.polarBlock(blk);
 
+    // Haas 볼트 구멍 패턴: 지금 고정 사이클을 패턴 자리마다
+    if (boltG >= 0) {
+      this.boltPattern(boltG, blk, line);
+      return this.endBlock(blk, line);
+    }
     // 원형 포켓(G12·G13): 지금 자리를 중심으로
     if (pocket >= 0) {
       this.circPocket(blk, line, pocket === 130);
@@ -2176,6 +2207,51 @@ export class Runner extends NcEmitter {
         bottom[2] = w[2]!;
       }
       this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
+    }
+  }
+
+  /**
+   * Haas 볼트 구멍 패턴(지금 자리가 기준, 지금 고정 사이클을 자리마다):
+   * G70 I 반지름 J 시작 각 L 개수(원 둘레에 고르게), G71 I 반지름 J 시작 각 K 각 간격 L 개수(호),
+   * G72 I 간격 J 각 L 개수(지금 자리에서 그 방향으로 I씩 — 첫 구멍은 I만큼 떨어진 곳). 끝나면 마지막 구멍 자리에 있다
+   */
+  private boltPattern(g: number, blk: Block, line: number): void {
+    const name = `G${g / 10}`;
+    if (!this.cycle) {
+      this.w.add(`${name} 볼트 구멍 패턴 앞에 고정 사이클이 없음 — 그리지 않음`, line);
+      return;
+    }
+    const sc = this.scale;
+    const I = blk.has[LI] ? blk.val[LI]! * sc : 0;
+    const J = blk.has[LJ] ? blk.val[LJ]! : 0;
+    const K = blk.has[LK] ? blk.val[LK]! : 0;
+    const L = blk.has[LL] ? Math.max(0, Math.round(blk.val[LL]!)) : 0;
+    if (!L) {
+      this.w.add(`${name} 볼트 구멍 패턴에 구멍 수 L이 없음`, line);
+      return;
+    }
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    const c = this.progPos();
+    const cu = c[a0]!;
+    const cv = c[a1]!;
+    const pts: [number, number][] = [];
+    for (let k = 0; k < L; k++) {
+      if (g === 720) {
+        const t = (J * Math.PI) / 180;
+        pts.push([cu + (k + 1) * I * Math.cos(t), cv + (k + 1) * I * Math.sin(t)]);
+      } else {
+        const ang = ((J + k * (g === 700 ? 360 / L : K)) * Math.PI) / 180;
+        pts.push([cu + I * Math.cos(ang), cv + I * Math.sin(ang)]);
+      }
+    }
+    // 자리마다 절대 좌표 블록으로 고정 사이클을 부른다(R·Z·Q 등은 사이클의 모달 값)
+    const b = new Block();
+    for (const [u, v] of pts) {
+      b.reset();
+      b.set(AXIS_LETTER[a0]!, u / this.axScale[a0]!, true);
+      b.set(AXIS_LETTER[a1]!, v / this.axScale[a1]!, true);
+      b.axAbs = (1 << a0) | (1 << a1);
+      this.doCycle(b, line);
     }
   }
 

@@ -127,7 +127,7 @@ export interface NoticeView {
 const DIALECT_NOTICE: Record<string, string> = {
   siemens: 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).',
   'heidenhain-iso': 'Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).',
-  okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·G15 H 좌표계는 읽지 않아 경로가 모자랄 수 있습니다.',
+  okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·NLAP는 읽지 않아 경로가 모자랄 수 있습니다(G15 H 좌표계는 읽음).',
 };
 
 /** 문서의 해석 판단 → 띠(닫은 것은 뺀다) */
