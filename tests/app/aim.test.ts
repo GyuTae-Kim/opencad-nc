@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOUCH_DRAG_START_PX } from 'opencad-viewer3d';
-import { AIM_HOLD_MS, AIM_OFFSET_PX, AIM_SLOP_PX, TouchAim, aimPoint, touchPointerEvent } from '../../src/app/aim';
+import { AIM_HOLD_MS, AIM_OFFSET_PX, AIM_POINTER_TYPE, AIM_SLOP_PX, TouchAim, aimPoint, touchPointerEvent } from '../../src/app/aim';
 
 interface Seen {
   type: string;
@@ -72,6 +72,7 @@ describe('정밀 조준 자리·이벤트', () => {
     const e = touchPointerEvent('pointerup', 7, 12, 34) as PointerEvent;
     expect(e).toBeInstanceOf(MouseEvent);
     expect([e.type, e.pointerId, e.pointerType, e.clientX, e.clientY, e.bubbles]).toEqual(['pointerup', 7, 'touch', 12, 34, true]);
+    expect((touchPointerEvent('pointerdown', 7, 0, 0, 'pen') as PointerEvent).pointerType).toBe('pen');
     expect(touchPointerEvent('pointerleave', 7, 0, 0).bubbles).toBe(false);
   });
 });
@@ -90,6 +91,7 @@ describe('정밀 조준(터치 길게 누르기)', () => {
   };
   const reticle = (): HTMLElement => layer.querySelector<HTMLElement>('.aim-reticle')!;
   const since = (n: number): string[] => seen.slice(n).map((s) => `${s.type} ${s.id} ${s.x},${s.y}`);
+  const types = (n: number): string[] => seen.slice(n).map((s) => `${s.type}:${s.pointerType}`);
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -132,6 +134,8 @@ describe('정밀 조준(터치 길게 누르기)', () => {
     expect(reticle().style.transform).toBe(`translate(100px, ${200 - AIM_OFFSET_PX}px)`);
     // 코어는 이 손가락의 끌기를 잊고(취소), 십자선 자리 움직임으로 미리 보기를 그린다
     expect(since(n0)).toEqual([`pointercancel 1 100,200`, `pointermove 1 100,${200 - AIM_OFFSET_PX}`]);
+    // 손가락 끌기 취소는 터치로, 십자선 자리 미리 보기는 펜(코어가 좁은 허용 거리로 고르게)
+    expect(types(n0)).toEqual(['pointercancel:touch', 'pointermove:pen']);
     expect(core.pointers.size).toBe(0);
     expect(core.hover).toEqual({ x: 100, y: 200 - AIM_OFFSET_PX });
 
@@ -147,7 +151,9 @@ describe('정밀 조준(터치 길게 누르기)', () => {
     const n2 = seen.length;
     fire('pointerup', 160, 240);
     expect(since(n2)).toEqual([`pointerleave 1 160,${240 - AIM_OFFSET_PX}`, `pointerdown 1 160,${240 - AIM_OFFSET_PX}`, `pointerup 1 160,${240 - AIM_OFFSET_PX}`]);
-    expect(seen.slice(n2).every((s) => s.pointerType === 'touch')).toBe(true);
+    // 십자선 자리 누르기도 펜: 미리 보기와 같은 좁은 허용 거리로 그 자리를 고른다(보통 누르기는 터치의 넓은 허용 거리)
+    expect(AIM_POINTER_TYPE).toBe('pen');
+    expect(types(n2)).toEqual(['pointerleave:pen', 'pointerdown:pen', 'pointerup:pen']);
     expect(core.clicks).toEqual([{ x: 160, y: 240 - AIM_OFFSET_PX }]);
     expect(core.orbits).toBe(0);
     expect(core.pointers.size).toBe(0);
@@ -215,6 +221,8 @@ describe('정밀 조준(터치 길게 누르기)', () => {
     expect(aim.aiming).toBe(false);
     expect(reticle().hidden).toBe(true);
     expect(since(n)).toEqual([`pointerleave 1 120,${220 - AIM_OFFSET_PX}`, 'pointerdown 1 120,220', 'pointerdown 2 250,100']);
+    // 다시 알리는 첫 손가락은 터치(코어가 두 손가락 몸짓으로 다룬다)
+    expect(types(n)).toEqual(['pointerleave:pen', 'pointerdown:touch', 'pointerdown:touch']);
     expect(core.pointers.get(1)).toEqual({ x: 120, y: 220 });
     // 이제 첫 손가락 움직임도 코어에 간다(확대·이동)
     fire('pointermove', 125, 225);
