@@ -1136,12 +1136,11 @@ tr.off td:not(:first-child) {
   }
 }
 
-@media (max-width: 759.98px) {
-  .titlebar {
-    gap: 4px;
-    padding: 0 4px 0 10px;
-  }
-  .docname,
+/*
+ * 휴대폰: 보기·측정 단추만 한 줄(전체 보기·표준 뷰·보기 설정·단면·측정·재생·패널), 나머지는 "보기 설정" 메뉴.
+ * 휴대폰 가로(손가락 기기에 높이 500px 미만)는 폭이 760px을 넘어도 같은 막대를 써서 3D 보기 높이를 지킨다(app.ts PHONE_QUERY)
+ */
+@media (max-width: 759.98px), (pointer: coarse) and (max-height: 499.98px) {
   .tbtn .lbl {
     display: none;
   }
@@ -1154,12 +1153,24 @@ tr.off td:not(:first-child) {
   .tb-sep {
     margin: 0 2px;
   }
-  /* 휴대폰: 보기·측정 단추만 한 줄(전체 보기·표준 뷰·보기 설정·단면·측정·재생·패널), 나머지는 "보기 설정" 메뉴 */
   .toolbar .wide-only {
     display: none;
   }
   .toolbar .narrow-only {
     display: inline-flex;
+  }
+  /* 파일이 없을 때는 쓸 수 없는 보기 도구 막대를 접어 시작 화면에 자리를 준다 */
+  #app.no-doc .toolbar {
+    display: none;
+  }
+}
+@media (max-width: 759.98px) {
+  .titlebar {
+    gap: 4px;
+    padding: 0 4px 0 10px;
+  }
+  .docname {
+    display: none;
   }
   .workspace {
     flex-direction: column;
@@ -1209,10 +1220,6 @@ tr.off td:not(:first-child) {
   }
   .st-sel {
     max-width: 50%;
-  }
-  /* 파일이 없을 때는 쓸 수 없는 보기 도구 막대를 접어 시작 화면에 자리를 준다 */
-  #app.no-doc .toolbar {
-    display: none;
   }
 }
 

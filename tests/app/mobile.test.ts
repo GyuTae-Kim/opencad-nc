@@ -20,7 +20,8 @@ const fake = vi.hoisted(() => {
     axesVisible = true;
     viewCubeSize = 112;
     section = null;
-    constructor(host: HTMLElement) {
+    constructor(host: HTMLElement, opts?: { viewCubeSize?: number }) {
+      if (opts?.viewCubeSize) this.viewCubeSize = opts.viewCubeSize;
       const wrap = document.createElement('div');
       wrap.className = 'v3d';
       this.canvas = document.createElement('canvas');
@@ -104,18 +105,19 @@ import { NcViewerApp } from '../../src/app/app';
 import { BINARY_MESSAGE } from '../../src/app/format';
 import { measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
 
-/** 화면 폭·누르개 흉내(matchMedia) */
-function media(narrow: boolean, coarse: boolean): void {
+/** 화면 폭·높이·누르개 흉내(matchMedia). 쉼표는 "또는", and는 "그리고"로 조건마다 흉내 낸 값을 본다 */
+function media(narrow: boolean, coarse: boolean, low: boolean): void {
+  const one = (c: string): boolean => (c.includes('coarse') ? coarse : c.includes('max-width') ? narrow : c.includes('max-height') ? low : false);
   vi.stubGlobal('matchMedia', (q: string) => ({
     media: q,
-    matches: q.includes('coarse') ? coarse : q.includes('max-width') ? narrow : false,
+    matches: q.split(',').some((part) => part.split(' and ').every(one)),
     addEventListener: () => {},
     removeEventListener: () => {},
   }));
 }
 
-function makeApp(narrow = false, coarse = false): { app: NcViewerApp; root: HTMLElement } {
-  media(narrow, coarse);
+function makeApp(narrow = false, coarse = false, low = false): { app: NcViewerApp; root: HTMLElement } {
+  media(narrow, coarse, low);
   document.body.innerHTML = '<div id="app"></div>';
   const root = document.getElementById('app')!;
   return { app: new NcViewerApp(root), root };
@@ -192,6 +194,21 @@ describe('좁은 화면 도구 막대', () => {
     // 넓은 화면 그리기 모드 메뉴도 같은 상태
     const render = menuButton(root, '그리기').closest('.menu-wrap')!;
     expect(itemByText(render, '와이어프레임').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('휴대폰 가로(손가락 기기에 낮은 화면)는 폭이 넓어도 처음엔 패널을 닫고 뷰 큐브를 작게 — 태블릿·컴퓨터는 그대로', async () => {
+    const cases: Array<[string, boolean, boolean, boolean, boolean, number]> = [
+      ['휴대폰 가로', false, true, true, false, 76],
+      ['휴대폰 세로', true, true, false, false, 76],
+      ['태블릿', false, true, false, true, 112],
+      ['컴퓨터의 낮은 창', false, false, true, true, 112],
+    ];
+    for (const [name, narrow, coarse, low, panelOpen, cube] of cases) {
+      const { app } = makeApp(narrow, coarse, low);
+      expect(await app.openSample(), name).toBe(true);
+      expect(app.state().panelOpen, name).toBe(panelOpen);
+      expect(fake.FakeViewer.last!.viewCubeSize, name).toBe(cube);
+    }
   });
 });
 
