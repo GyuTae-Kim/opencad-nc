@@ -73,6 +73,17 @@ export function isNcFileName(name: string, exts: readonly string[] = NC_EXTENSIO
   return !!e && exts.includes(e);
 }
 
+/** 글이 아닌 파일일 때 */
+export const BINARY_MESSAGE = '글 파일이 아닌 이진 자료로 보입니다. NC 프로그램은 글(텍스트) 파일이어야 합니다.';
+
+/** 파일 앞부분(4KB 남짓)에 NUL 바이트가 여럿이면 글 파일이 아니다(그림·동영상·압축·CAD 이진 등) */
+export function looksBinary(head: Uint8Array): boolean {
+  const n = Math.min(head.length, 4096);
+  let zeros = 0;
+  for (let i = 0; i < n; i++) if (head[i] === 0) zeros++;
+  return zeros > Math.max(4, n / 100);
+}
+
 /** 열기 상자의 accept 값: 확장자마다 소문자·대문자 둘 다(".nc,.NC,…") */
 export function fileAccept(exts: readonly string[] = NC_EXTENSIONS): string {
   const out: string[] = [];

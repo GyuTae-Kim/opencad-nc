@@ -13,6 +13,7 @@ import { docLabel, mprOpAtLine, mprOps, mprVars, moveSummary, panelTabs, sceneCo
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
+import { panelMeasureHint } from './measure';
 import type { NcOpenOptions } from './protocol';
 
 /** 이보다 좁으면 패널을 아래 시트로 */
@@ -31,6 +32,8 @@ export interface PanelHost {
   readonly speed: PlaySpeed;
   readonly isPlaying: boolean;
   readonly measuring: boolean;
+  /** 손가락이 주인 기기인지(안내에서 키 설명을 빼고 길게 누르기를 알린다) */
+  readonly touch: boolean;
   playbackInfo(): { move: number; frac: number; line: number; sec: number; total: number } | null;
   seek(sec: number | null): void;
   togglePlay(): void;
@@ -634,7 +637,7 @@ export class NcPanel {
     if (d.measure) {
       const m = d.measure;
       lines.push(h('div', {}, h('b', {}, '거리 '), `${fmtNum(m.distance)} ${u}`, h('span', { class: 'dim' }, ` · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`)));
-    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다). Esc = 지우기'));
+    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch)));
     f.hidden = !lines.length;
     f.append(...lines);
   }

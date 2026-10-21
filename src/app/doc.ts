@@ -7,6 +7,7 @@ import { MOVE_KIND_NAMES, NC_DIALECT_NAMES } from '../model';
 import { sourceLine } from '../text';
 import { idRange } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
+import { statusMeasureHint } from './measure';
 import type { MprPayload, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
 export type PanelTab = 'code' | 'tools' | 'info' | 'ops' | 'vars';
@@ -295,16 +296,16 @@ export function moveSummary(nc: Pick<NcPayload, 'moves'>, i: number): string {
 
 /**
  * 상태 막대 오른쪽: 고른 것 한 줄 요약(측정이 있으면 측정 먼저).
- * measuring은 측정 모드가 켜져 있는지(결과가 없으면 안내 글).
+ * measuring은 측정 모드가 켜져 있는지(결과가 없으면 안내 글), touch는 손가락 기기인지(안내에서 Esc 설명을 뺀다).
  */
-export function selectionSummary(d: NcDoc | null, measuring = false): string {
+export function selectionSummary(d: NcDoc | null, measuring = false, touch = false): string {
   if (!d) return '';
   const u = unitLabel(d.scene.units);
   if (d.measure) {
     const m = d.measure;
     return `거리 ${fmtNum(m.distance)}${u ? ` ${u}` : ''} · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`;
   }
-  if (measuring) return '측정: 두 점을 누르십시오(Esc = 지우기)';
+  if (measuring) return statusMeasureHint(touch);
   const p = d.pick;
   if (d.nc && d.selLine >= 0) {
     const head = `줄 ${(d.selLine + 1).toLocaleString('ko-KR')}`;
