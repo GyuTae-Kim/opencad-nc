@@ -25,7 +25,7 @@ import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
+import { createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -1671,7 +1671,7 @@ export class NcViewerApp implements PanelHost {
     s.el.hidden = !on;
     if (!on || !d || !info) return;
     s.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
-    s.line.textContent = info.line >= 0 ? `줄 ${(info.line + 1).toLocaleString('ko-KR')}` : '';
+    s.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '';
     const st = d.nc && info.move >= 0 ? moveState(d.nc, info.move, unitLabel(d.scene.units)) : null;
     s.state.textContent = st ? `${st.motion} · ${st.modal}` : '';
     s.play.innerHTML = icon(this.playing ? 'pause' : 'play');

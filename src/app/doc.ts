@@ -121,6 +121,52 @@ export function playPosition(d: Pick<NcDoc, 'nc' | 'playSec' | 'playMove'>): { m
   return playbackAt(tl, d.playSec);
 }
 
+/**
+ * 여러 파일 작업: 이은 글의 줄(0부터) → 그 파일(차례·이름)과 파일 안 줄 번호(1부터 — 함께 연 파일의 표지 줄은 0).
+ * 파일 하나면 null. 경고·코드 줄 번호·상태를 원래 파일의 줄로 보이는 데 쓴다
+ */
+export function jobLineOf(job: NcJobInfo | null | undefined, line: number): { index: number; file: string; local: number } | null {
+  if (!job || job.files.length < 2 || !job.starts.length || line < 0) return null;
+  const st = job.starts;
+  let lo = 0;
+  let hi = Math.min(st.length, job.files.length) - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (st[mid]! <= line) lo = mid;
+    else hi = mid - 1;
+  }
+  return { index: lo, file: job.files[lo]!, local: lo === 0 ? line + 1 : line - st[lo]! };
+}
+
+/** 여러 파일 작업: 파일 index 안의 줄 번호(1부터) → 이은 글의 줄(0부터). 작업이 아니면 local - 1 */
+export function jobLineToGlobal(job: NcJobInfo | null | undefined, index: number, local: number): number {
+  if (!job || job.files.length < 2 || !job.starts.length) return local - 1;
+  const k = Math.max(0, Math.min(index, job.starts.length - 1));
+  const start = job.starts[k]!;
+  const next = k + 1 < job.starts.length ? job.starts[k + 1]! : Infinity;
+  const line = k === 0 ? local - 1 : start + local;
+  return Math.max(k === 0 ? 0 : start + 1, Math.min(line, next - 1));
+}
+
+/** 코드 줄 번호 칸의 글: 파일 하나면 줄 번호, 여러 파일 작업이면 그 파일 안 번호(표지 줄은 비움) */
+export function lineNumberText(d: Pick<NcDoc, 'job'>, line: number): string {
+  const j = jobLineOf(d.job, line);
+  if (!j) return String(line + 1);
+  return j.local > 0 ? String(j.local) : '';
+}
+
+/** "줄 N"(여러 파일 작업이면 "파일 · 줄 N" — 원래 파일의 줄) */
+export function lineLabel(d: Pick<NcDoc, 'job'>, line: number): string {
+  const j = jobLineOf(d.job, line);
+  return j ? `${j.file} · 줄 ${j.local.toLocaleString('ko-KR')}` : `줄 ${(line + 1).toLocaleString('ko-KR')}`;
+}
+
+/** "N번 줄"(여러 파일 작업이면 "파일 · N번 줄") */
+export function lineAtLabel(d: Pick<NcDoc, 'job'>, line: number): string {
+  const j = jobLineOf(d.job, line);
+  return j ? `${j.file} · ${j.local}번 줄` : `${line + 1}번 줄`;
+}
+
 /** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */
 export function cutRangeText(min: readonly number[], max: readonly number[], unit: string): string {
   return `X ${fmtNum(min[0])} ~ ${fmtNum(max[0])} · Y ${fmtNum(min[1])} ~ ${fmtNum(max[1])} · Z ${fmtNum(min[2])} ~ ${fmtNum(max[2])}${unit ? ` ${unit}` : ''}`;
@@ -468,7 +514,7 @@ export function selectionSummary(d: NcDoc | null, measuring = false, touch = fal
   if (measuring) return statusMeasureHint(touch);
   const p = d.pick;
   if (d.nc && d.selLine >= 0) {
-    const head = `줄 ${(d.selLine + 1).toLocaleString('ko-KR')}`;
+    const head = lineLabel(d, d.selLine);
     if (p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count) return `${head} · ${moveSummary(d.nc, p.index)} · ${fmtPt(p.point)}`;
     const n = d.selMoves.length;
     return n ? `${head} · 이동 ${fmtCount(n)}` : `${head} · 이동 없음`;

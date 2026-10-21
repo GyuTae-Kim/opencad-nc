@@ -53,6 +53,7 @@ vi.mock('../../src/app/client', async () => {
 });
 
 import { NcViewerApp } from '../../src/app/app';
+import { jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText } from '../../src/app/doc';
 import { RecentStore } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 
@@ -138,7 +139,7 @@ describe('여러 파일을 한 작업으로 열기', () => {
     const info = root.querySelector('.panel')!;
     expect(info.textContent).toContain('작업 파일 3개');
     const items = [...info.querySelectorAll<HTMLButtonElement>('.job-files .warn-item')];
-    expect(items.map((b) => b.textContent)).toEqual(['주 프로그램main.nc', '12번 줄O1001.nc', '20번 줄1002.nc']);
+    expect(items.map((b) => b.textContent)).toEqual(['주 프로그램main.nc', '함께 연 파일O1001.nc', '함께 연 파일1002.nc']);
     // 파일을 누르면 코드 탭에서 그 파일이 시작하는 줄(표지 줄)로
     items[1]!.click();
     expect(window.opencadApp!.state.panelTab).toBe('code');
@@ -147,6 +148,31 @@ describe('여러 파일을 한 작업으로 열기', () => {
     await until(() => recent.entries.size > 0);
     const saved = [...recent.entries.values()];
     expect(saved.map((e) => [e.entry.name, e.entry.files])).toEqual([['main.nc', 3]]);
+  });
+
+  it('경고·코드 줄 번호·상태는 원래 파일의 줄(파일 이름 + 줄), ":4"는 고른 줄이 있는 파일의 4번 줄로', async () => {
+    const SUB = `%\nO1001 (SUB A)\nG1 Z-1 F100\nG22 X1 Y1\nX10\nG0 Z5\nM99\n%\n`;
+    const { app, root } = makeApp();
+    await app.openFiles([textFile('main.nc', MAIN), textFile('O1001.nc', SUB), textFile('1002.nc', SUB_B)]);
+    window.opencadApp!.setPanelTab('info');
+    const w = [...root.querySelectorAll<HTMLButtonElement>('.warn-list .warn-item')].find((b) => b.textContent!.includes('G22'))!;
+    // 이은 글의 16번째 줄(표지 줄 12 + 4) = O1001.nc의 4번 줄
+    expect(w.querySelector('.ln')!.textContent).toBe('O1001.nc · 4번 줄');
+    w.click();
+    expect(window.opencadApp!.state.selLine).toBe(15);
+    expect(root.querySelector('.st-sel')!.textContent).toContain('O1001.nc · 줄 4');
+    // 코드 줄 번호 칸: 주 프로그램은 그대로, 함께 연 파일은 그 파일 안 번호(표지 줄은 비움)
+    const job = { main: 'main.nc', files: ['main.nc', 'O1001.nc', '1002.nc'], starts: [0, 11, 20], skipped: [] };
+    expect([5, 11, 12, 15, 20, 21].map((l) => lineNumberText({ job }, l))).toEqual(['6', '', '1', '4', '', '1']);
+    expect(lineNumberText({ job: null }, 15)).toBe('16');
+    expect(lineAtLabel({ job }, 21)).toBe('1002.nc · 1번 줄');
+    expect(lineLabel({ job }, 3)).toBe('main.nc · 줄 4');
+    expect(jobLineOf({ ...job, files: ['main.nc'] }, 3)).toBeNull();
+    // ":4"(줄로 가기): 고른 줄이 있는 파일의 4번 줄, 그 파일 범위 밖이면 그 파일 끝
+    expect(jobLineToGlobal(job, 1, 4)).toBe(15);
+    expect(jobLineToGlobal(job, 1, 99)).toBe(19);
+    expect(jobLineToGlobal(job, 0, 4)).toBe(3);
+    expect(jobLineToGlobal(null, 0, 4)).toBe(3);
   });
 
   it('정보 탭에서 주 프로그램을 바꾸면 다시 잇고(이름도 바뀜), 다시 읽기는 같은 작업을 유지한다', async () => {

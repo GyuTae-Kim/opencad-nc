@@ -9,7 +9,7 @@ import { NC_DIALECT_NAMES, type NcDialect } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { cutRangeText, docLabel, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
@@ -240,7 +240,7 @@ export class NcPanel {
     p.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
     p.range.setAttribute('aria-valuetext', `${formatDuration(info.sec)} / ${formatDuration(info.total)}`);
     p.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
-    p.line.textContent = info.line >= 0 ? `줄 ${(info.line + 1).toLocaleString('ko-KR')}` : '전체 경로';
+    p.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '전체 경로';
     const nc = this.doc?.nc;
     const st = nc && info.move >= 0 ? moveState(nc, info.move, unitLabel(this.doc!.scene.units)) : null;
     p.state.hidden = !st;
@@ -363,7 +363,7 @@ export class NcPanel {
         const warn = this.warnAt(i);
         el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}${warn ? ' warn' : ''}`;
         el.textContent = '';
-        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch`, ...(warn ? { title: warn } : {}) }, String(i + 1)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
+        el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch`, ...(warn ? { title: warn } : {}) }, lineNumberText(doc, i)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
       },
       onClick: (i) => this.clickLine(i),
     });
@@ -497,7 +497,10 @@ export class NcPanel {
     const q = this.findInput.value.trim();
     const go = /^:\s*(\d+)$/.exec(q);
     if (go) {
-      const line = Math.max(0, Math.min(this.lineCount(d) - 1, +go[1]! - 1));
+      // 여러 파일 작업이면 고른 줄이 있는 파일(없으면 주 프로그램)의 줄 번호
+      const j = jobLineOf(d.job, d.selLine >= 0 ? d.selLine : 0);
+      const want = j ? jobLineToGlobal(d.job, j.index, +go[1]!) : +go[1]! - 1;
+      const line = Math.max(0, Math.min(this.lineCount(d) - 1, want));
       this.selectFound(line);
       return;
     }
@@ -751,7 +754,7 @@ export class NcPanel {
       const b = h(
         'button',
         { class: 'warn-item', type: 'button', title: it.lines.length > 1 ? '누르면 그 줄로(다시 누르면 같은 경고가 난 다음 줄로)' : '누르면 그 줄로' },
-        h('span', { class: 'ln' }, `${it.line + 1}번 줄`),
+        h('span', { class: 'ln' }, lineAtLabel(d, it.line)),
         h('span', { class: 'msg' }, it.text),
         it.count > 1 ? h('span', { class: 'cnt' }, `모두 ${it.count}번`) : null,
       );
@@ -781,7 +784,7 @@ export class NcPanel {
       const b = h(
         'button',
         { class: 'warn-item', type: 'button', title: '누르면 코드 탭에서 이 파일이 시작하는 줄로', disabled: line < 0 },
-        h('span', { class: 'ln' }, k === 0 ? '주 프로그램' : `${line + 1}번 줄`),
+        h('span', { class: 'ln' }, k === 0 ? '주 프로그램' : '함께 연 파일'),
         h('span', { class: 'msg', translate: 'no' }, f),
       );
       b.addEventListener('click', () => {
@@ -868,7 +871,7 @@ export class NcPanel {
         for (const r of f.compRuns.slice(0, 20))
           opts.push(
             row(
-              `${r.line + 1}번 줄 ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
+              `${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
               r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음',
             ),
           );
@@ -982,7 +985,7 @@ export class NcPanel {
     const u = unitLabel(d.scene.units);
     const p = d.pick;
     if (d.selLine >= 0 && (d.nc || d.mpr)) {
-      lines.push(h('div', {}, h('b', {}, `줄 ${(d.selLine + 1).toLocaleString('ko-KR')}`), ` ${selectedLineText(d, 80)}`));
+      lines.push(h('div', {}, h('b', {}, lineLabel(d, d.selLine)), ` ${selectedLineText(d, 80)}`));
       if (d.nc) {
         const picked = p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count ? p.index : -1;
         const mi = picked >= 0 ? picked : (d.selMoves[0] ?? -1);
