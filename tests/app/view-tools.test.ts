@@ -193,6 +193,27 @@ describe('블록 걷기·여기까지 그리기·코드 찾기', () => {
   });
 });
 
+describe('재생 띠(패널을 닫았을 때)', () => {
+  it('패널이 닫혀 있고 재생 자리가 있으면 3D 보기 아래 띠: 시간·줄·상태, 이전·다음·끝내기', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    api.seek(1);
+    expect(strip.hidden).toBe(true);
+    api.togglePanel(false);
+    expect(strip.hidden).toBe(false);
+    expect(strip.querySelector('.ps-time')!.textContent).toMatch(/^0:01\.0 \/ /);
+    expect(strip.querySelector('.ps-state')!.textContent).toContain('T1');
+    strip.querySelector<HTMLButtonElement>('button[aria-label="다음 이동"]')!.click();
+    const line = api.state.selLine;
+    expect(strip.querySelector('.ps-line')!.textContent).toBe(`줄 ${line + 1}`);
+    strip.querySelector<HTMLButtonElement>('button[aria-label="재생 끝내기(전체 경로)"]')!.click();
+    expect(api.state.playSec).toBeNull();
+    expect(strip.hidden).toBe(true);
+  });
+});
+
 describe('경고 → 줄', () => {
   it('정보 탭 경고를 누르면 그 줄로(다시 누르면 같은 경고의 다음 줄), 경고 줄은 코드 줄 앞에 표시', async () => {
     const { app, root } = makeApp();

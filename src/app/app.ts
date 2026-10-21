@@ -19,12 +19,12 @@
 import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
-import { PLAY_SPEEDS, advance, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
+import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
+import { createDoc, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -220,6 +220,8 @@ export class NcViewerApp implements PanelHost {
   private readonly measureClear: HTMLButtonElement;
   private readonly aimLayer: HTMLDivElement;
   private readonly noticeBar: HTMLDivElement;
+  /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
+  private readonly playStrip: { el: HTMLDivElement; time: HTMLSpanElement; line: HTMLSpanElement; state: HTMLDivElement; play: HTMLButtonElement; range: HTMLInputElement; speed: HTMLSelectElement };
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
@@ -362,7 +364,8 @@ export class NcViewerApp implements PanelHost {
     this.aimLayer = h('div', { class: 'aim-layer', 'aria-hidden': 'true' });
     // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언)
     this.noticeBar = h('div', { class: 'notice-bar', role: 'status', 'aria-live': 'polite', hidden: true });
-    this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar);
+    this.playStrip = this.buildPlayStrip();
+    this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar, this.playStrip.el);
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
     this.workspace.append(this.busyEl);
@@ -1235,12 +1238,14 @@ export class NcViewerApp implements PanelHost {
     this.panel.onMeasure();
     this.renderToolbar();
     this.renderStatus();
+    this.refreshPlayStrip();
   }
 
   togglePanel(on = !this.panelOpen): void {
     this.panelOpen = on;
     this.panel.setOpen(on);
     this.renderToolbar();
+    this.refreshPlayStrip();
     // 좁은 화면에서는 시트가 3D 보기 높이를 바꾸므로 크기가 정해진 뒤 다시 맞춘다
     if (window.innerWidth < NARROW_WIDTH && this.viewer) requestAnimationFrame(() => requestAnimationFrame(() => this.viewer?.fit(false)));
   }
@@ -1293,7 +1298,7 @@ export class NcViewerApp implements PanelHost {
     d.playSec = sec === null ? null : Math.max(0, Math.min(total, sec));
     d.playMove = -1;
     this.applyPlayback(d);
-    this.panel.onPlayback();
+    this.notifyPlayback();
     this.renderToolbar();
   }
 
@@ -1305,7 +1310,7 @@ export class NcViewerApp implements PanelHost {
     d.playSec = moveEndTime(d.nc.timeline, i);
     d.playMove = i;
     this.applyPlayback(d);
-    this.panel.onPlayback();
+    this.notifyPlayback();
     this.renderToolbar();
   }
 
@@ -1348,7 +1353,7 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc || !d.nc.moves.count) return;
     if (this.playing) {
       this.stopPlay();
-      this.panel.onPlayback();
+      this.notifyPlayback();
       this.renderToolbar();
       return;
     }
@@ -1365,23 +1370,23 @@ export class NcViewerApp implements PanelHost {
       this.lastT = t;
       doc.playSec = r.sec;
       this.applyPlayback(doc);
-      this.panel.onPlayback();
+      this.notifyPlayback();
       if (r.done) {
         this.playing = false;
-        this.panel.onPlayback();
+        this.notifyPlayback();
         this.renderToolbar();
         return;
       }
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
-    this.panel.onPlayback();
+    this.notifyPlayback();
     this.renderToolbar();
   }
 
   setSpeed(s: PlaySpeed): void {
     if (PLAY_SPEEDS.includes(s)) this.speed = s;
-    this.panel.onPlayback();
+    this.notifyPlayback();
   }
 
   stopPlay(): void {
@@ -1468,6 +1473,72 @@ export class NcViewerApp implements PanelHost {
     this.stSel.textContent = selectionSummary(d, this.measuring, this.touch);
     this.stSel.title = this.stSel.textContent;
     this.refreshBar();
+  }
+
+  /** 재생 띠(패널이 닫혔을 때): 시간·줄·이동 상태, 처음·이전·재생/멈춤·다음·속도·전체 경로(끝), 시간 막대 */
+  private buildPlayStrip(): NcViewerApp['playStrip'] {
+    const btn = (ic: IconName, label: string, run: () => void): HTMLButtonElement => {
+      const b = h('button', { class: 'mb-btn icon', type: 'button', title: label, 'aria-label': label, html: icon(ic) });
+      b.addEventListener('click', run);
+      return b;
+    };
+    const time = h('span', { class: 'ps-time' });
+    const line = h('span', { class: 'ps-line' });
+    const state = h('div', { class: 'ps-state' });
+    const play = btn('play', '재생', () => this.togglePlay());
+    const speed = h('select', { class: 'select small', 'aria-label': '재생 속도', title: '재생 속도' });
+    for (const s of PLAY_SPEEDS) speed.append(h('option', { value: String(s) }, `×${s}`));
+    speed.addEventListener('change', () => this.setSpeed(Number(speed.value) as PlaySpeed));
+    const range = h('input', { type: 'range', min: 0, max: 1000, step: 1, value: 0, 'aria-label': '재생 위치' });
+    range.addEventListener('input', () => {
+      const info = this.playbackInfo();
+      if (info) this.seek((Number(range.value) / 1000) * info.total);
+    });
+    const el = h(
+      'div',
+      { class: 'play-strip', role: 'group', 'aria-label': '재생', hidden: true },
+      h('div', { class: 'ps-info' }, time, line, state),
+      h(
+        'div',
+        { class: 'ps-acts' },
+        btn('first', '처음으로', () => this.seek(0)),
+        btn('stepBack', '이전 이동', () => this.stepMove(-1)),
+        play,
+        btn('stepFwd', '다음 이동', () => this.stepMove(1)),
+        speed,
+        btn('close', '재생 끝내기(전체 경로)', () => {
+          this.stopPlay();
+          this.seek(null);
+        }),
+      ),
+      range,
+    );
+    return { el, time, line, state, play, range, speed };
+  }
+
+  /** 재생 막대(패널)와 재생 띠를 함께 맞춘다 */
+  private notifyPlayback(): void {
+    this.panel.onPlayback();
+    this.refreshPlayStrip();
+  }
+
+  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다 */
+  private refreshPlayStrip(): void {
+    const s = this.playStrip;
+    const d = this.doc;
+    const info = this.playbackInfo();
+    const on = !!d && !!info && !this.panelOpen && !this.busy && !this.measuring && (this.playing || d.playSec !== null);
+    s.el.hidden = !on;
+    if (!on || !d || !info) return;
+    s.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
+    s.line.textContent = info.line >= 0 ? `줄 ${(info.line + 1).toLocaleString('ko-KR')}` : '';
+    const st = d.nc && info.move >= 0 ? moveState(d.nc, info.move, unitLabel(d.scene.units)) : null;
+    s.state.textContent = st ? `${st.motion} · ${st.modal}` : '';
+    s.play.innerHTML = icon(this.playing ? 'pause' : 'play');
+    s.play.setAttribute('aria-label', this.playing ? '재생 멈춤' : '재생');
+    s.play.title = this.playing ? '재생 멈춤' : '재생';
+    s.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
+    s.speed.value = String(this.speed);
   }
 
   /** 해석 판단 띠: 선반 자동·소수점 없는 좌표·판별한 방언. 단추는 다른 설정으로 다시 읽거나 패널 탭을 연다, ✕는 이 문서에서 닫는다 */
