@@ -10,7 +10,15 @@ NC 프로그램(G-code·Heidenhain 평문·woodWOP MPR)을 브라우저 안에�
 
 ## 할 수 있는 것
 
-- G-code(ISO·Fanuc·Haas·LinuxCNC·GRBL·Mach3 방언 자동 판별): 직선·호·나선, 평면·단위·좌표계, 고정 사이클, 부프로그램, 변수와 IF/WHILE
+- G-code(ISO·Fanuc·Haas·Siemens·LinuxCNC·GRBL·Mach3 방언 자동 판별): 직선·호·나선, 평면·단위·좌표계, 고정 사이클, 부프로그램, 변수와 IF/WHILE
+  - Siemens Sinumerik(840D sl·828D 꼴, `src/siemens.ts` — %_N_…_MPF 머리·MCALL·CYCLE·T="…"·CR=·AC/IC·GOTOF·DEF·SUPA 등으로 판별):
+    `;` 주석, 주소 = 식(X=R1*2), 축별 AC(…)/IC(…), CR=·I=AC(…)·AR=·CIP(I1/J1/K1)·TURN=, 극좌표 G110~G112 + AP·RP,
+    공구 T="이름"·D·M6, R 매개변수·DEF 변수·PROC 매개변수와 식(SIN…ATAN2·POT·TRUNC·ROUND·MIN·MAX·DIV·MOD·비교·AND/OR/NOT),
+    IF … GOTOF/GOTOB/GOTO/GOTOC·IF/ELSE/ENDIF·WHILE·FOR·REPEAT/UNTIL·LOOP·REPEAT 표지 P=, 부프로그램 L123 P3·이름·이름(인수)·
+    CALL "이름"·MCALL 이름(같은 글의 %_N_이름_SPF·PROC나 함께 연 파일), RET·M17, 드릴 사이클 CYCLE81~89·840(MCALL 모달,
+    CYCLE83 FDEP·DAM·VARI)·HOLES1·HOLES2, 프레임 TRANS·ATRANS·ROT·AROT·SCALE·ASCALE·MIRROR·AMIRROR·G58·G59(절대 지령은 프레임을 바꿈),
+    G54~G57·G505~G599, SUPA·G53·G153·G74·G75(기계 좌표 쪽 이동 규칙), G70/G71/G700/G710, G4 F(초)·S(회전).
+    CT·RND·CHF·CYCLE800·POCKET·SLOT·선반 사이클·시스템 변수($…)·배열은 그리지 않고 경고
   - Haas(주석의 HAAS, G187·G103·G154·G110~G129·G150·M97·M130으로 판별): G73/G83의 I·J·K = 첫 절입·줄이는 양·최소 절입,
     반복은 L(K는 반복이 아님). Fanuc 계열도 쪼기 사이클에 I·J가 있거나 K가 정수가 아니면 Haas 꼴로 읽고 경고,
     다른 사이클의 정수 아닌 K 반복은 한 번으로 보고 경고(K.05를 반복 0번으로 읽어 구멍이 사라지지 않게)
@@ -128,6 +136,7 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile` |
 | `src/extensions.ts` | 확장자 목록(`NC_EXTENSIONS` 등 — 화면 코드가 해석기 없이 가져다 쓴다) |
 | `src/gcode.ts`, `src/expr.ts` | G-code 해석(좌표 변환·선반·회전축 포함)과 변수·식 |
+| `src/siemens.ts` | Siemens Sinumerik 블록·식·흐름·사이클·프레임(이동은 gcode.ts의 Runner를 그대로 씀, `parseGcode`에 방언으로 등록) |
 | `src/comp.ts` | 반경 보정 공구 중심 경로(옮긴 요소, 모서리 교점·호 잇기, 들어가기·나오기) |
 | `src/heidenhain.ts` | Heidenhain 평문 |
 | `src/mpr.ts` | woodWOP MPR |

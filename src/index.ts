@@ -4,6 +4,8 @@
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
 import { detectGcodeDialect, parseGcode, type GcodeOptions } from './gcode';
+// Siemens 해석기를 G-code 방언으로 등록한다(parseGcode가 dialect 'siemens'면 부른다)
+import './siemens';
 import { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 import type { NcProgram } from './model';
 import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
@@ -12,7 +14,8 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS } from './exten
 import { makeSource } from './text';
 
 export * from './model';
-export { parseGcode, detectGcodeDialect, detectLathe, type GcodeOptions } from './gcode';
+export { parseGcode, detectGcodeDialect, detectLathe, looksSiemens, type GcodeOptions } from './gcode';
+export { parseSiemens } from './siemens';
 export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions } from './mpr';

@@ -37,14 +37,21 @@ export const FLAG_COOLANT = 128; // M7/M8 켜짐
  */
 export const FLAG_MACHINE_EST = 256;
 
+/**
+ * 여러 파일을 한 작업으로 열 때(주 프로그램 + 부프로그램 파일) 이어 붙인 글에서 파일이 시작하는 줄의 표지.
+ * G-code는 "(OPENCAD-JOB-FILE 이름)", Siemens·Heidenhain은 "; OPENCAD-JOB-FILE 이름" 꼴 주석 줄이다
+ */
+export const JOB_FILE_MARK = 'OPENCAD-JOB-FILE';
+
 /** 평면: 0 XY(G17), 1 ZX(G18), 2 YZ(G19) */
 export type NcPlane = 0 | 1 | 2;
 
-export type NcDialect = 'iso' | 'fanuc' | 'haas' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
+export type NcDialect = 'iso' | 'fanuc' | 'haas' | 'siemens' | 'linuxcnc' | 'grbl' | 'mach3' | 'heidenhain';
 export const NC_DIALECT_NAMES: Record<NcDialect, string> = {
   iso: '일반 ISO',
   fanuc: 'Fanuc',
   haas: 'Haas',
+  siemens: 'Siemens Sinumerik',
   linuxcnc: 'LinuxCNC',
   grbl: 'GRBL',
   mach3: 'Mach3/Mach4',

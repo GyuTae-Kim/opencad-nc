@@ -394,7 +394,8 @@ export class NcPanel {
     for (const t of tools) {
       const g = toolGroup(d.scene, t.number);
       const visible = g ? !d.hiddenGroups.has(g) : true;
-      const label = t.number >= 0 && t.number < 100000 ? `T${t.number}` : '공구 없음';
+      // 이름만 있는 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 번호 칸을 비우고 이름 칸에 보인다
+      const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
       const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': `${label} ${visible ? '숨기기' : '보이기'}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
       eye.disabled = !g;
       eye.addEventListener('click', (ev) => {
