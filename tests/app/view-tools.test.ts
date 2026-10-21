@@ -58,6 +58,7 @@ vi.mock('../../src/app/client', async () => {
   return { ParseWorkerClient };
 });
 
+import { translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 
 function makeApp(): { app: NcViewerApp; root: HTMLElement } {
@@ -233,6 +234,31 @@ describe('경고 → 줄', () => {
     await tick();
     const rows = [...root.querySelectorAll<HTMLElement>('.code-list .vlist-row.warn')].map((r) => r.querySelector('.ln')!.textContent);
     expect(rows).toEqual(expect.arrayContaining(['5', '8']));
+  });
+
+  it('판재 파일(MPR) 경고도 줄 번호·글·횟수를 따로 보이고(조각마다 번역), 누르면 코드 탭의 그 줄로', async () => {
+    const { app, root } = makeApp();
+    const mpr = `[H\nVERSION="4.0 Alpha"\nINCH="0"\n[001\nA="Q*2"\nKM="a"\n<100 \\WerkStck\\\nLA="200"\nBR="100"\nDI="19"\n<139 \\Komponente\\\nXA="50"\nYA="20"\n<139 \\Komponente\\\nXA="60"\nYA="20"\n<140 \\Etwas\\\nIN="1"\n!\n`;
+    expect(await open(app, 'board.mpr', mpr)).toBe(true);
+    const api = window.opencadApp!;
+    api.setPanelTab('info');
+    const items = [...root.querySelectorAll<HTMLButtonElement>('.warn-list .warn-item')];
+    const macro = items.find((b) => b.textContent!.includes('Komponente'))!;
+    expect(macro.querySelector('.ln')!.textContent).toBe('11번 줄');
+    expect(macro.querySelector('.msg')!.textContent).toBe('지원하지 않는 매크로 <139 \\Komponente\\ — 목록과 위치(점)만 넣음');
+    expect(macro.querySelector('.cnt')!.textContent).toBe('모두 2번');
+    // 조각마다 다른 언어로: 줄 번호·경고 글·횟수에 한국어가 남지 않는다(변수 식 경고의 안쪽 까닭까지)
+    for (const b of items)
+      for (const part of b.querySelectorAll('.ln, .msg, .cnt'))
+        for (const lang of ['en', 'ja', 'zh-CN', 'de']) expect(translate(part.textContent!, lang), `${lang}: ${part.textContent}`).not.toMatch(/[가-힣]/);
+    expect(translate(macro.querySelector('.msg')!.textContent!, 'en')).toBe('Unsupported macro <139 \\Komponente\\ — listed with its position (point) only');
+    expect(items.some((b) => b.querySelector('.msg')!.textContent!.startsWith('변수 A 식 "Q*2"을 계산할 수 없음 — '))).toBe(true);
+    macro.click();
+    expect(api.state.panelTab).toBe('code');
+    expect(api.state.selLine).toBe(10);
+    await tick();
+    await tick();
+    expect([...root.querySelectorAll<HTMLElement>('.code-list .vlist-row.warn')].map((r) => r.querySelector('.ln')!.textContent)).toContain('11');
   });
 });
 

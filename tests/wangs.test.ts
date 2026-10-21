@@ -423,6 +423,11 @@ describe('판별·장면·화면', () => {
     expect(pgi.nc).toBeUndefined();
     expect(pgi.job).toBeUndefined();
     expect(stages).toContain('WangShi PGI 읽는 중');
+    // 경고는 G-code처럼 나뉜 항목(줄·글·횟수)으로도 넘긴다 — 패널이 조각마다 번역해 보인다
+    const items = pgi.mpr!.warnItems!;
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.length).toBe(pgi.scene.warnings!.length);
+    items.forEach((it, k) => expect(pgi.scene.warnings![k]).toBe(`${it.line >= 0 ? `${it.line + 1}번 줄: ` : ''}${it.text}${it.count > 1 ? ` (모두 ${it.count}번)` : ''}`));
     const xml = parseForView('board.xml', enc.encode(XML));
     expect(xml.kind).toBe('xml');
     expect(mprOps(xml.scene).length).toBeGreaterThan(0);

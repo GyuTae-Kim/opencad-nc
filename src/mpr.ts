@@ -17,7 +17,7 @@
  * 변수는 정의 차례대로 계산하고, 뒤에 정의된 변수를 쓰는 식은 다시 돌며 푼다. 모르는 매크로는 XA·YA가 있으면 위치만 남긴다.
  */
 import { ExprError, evalMprExpr } from './expr';
-import { NcWarnings, type PathPoint } from './model';
+import { NcWarnings, type NcWarningItem, type PathPoint } from './model';
 import { guessEncoding } from './text';
 
 export interface MprContourElement extends PathPoint {
@@ -150,6 +150,8 @@ export interface MprPart {
   lines: string[];
   stats: { holes: number; drillOps: number; contourOps: number; grooves: number; pockets: number; disabled: number; other: number };
   warnings: string[];
+  /** 경고마다 글·첫 줄·횟수·난 줄들(G-code의 warningItems와 같은 꼴 — 패널이 줄 번호·글·횟수를 따로 보여 조각마다 번역된다) */
+  warningItems?: NcWarningItem[];
 }
 
 export interface MprOptions {
@@ -665,6 +667,7 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     lines,
     stats,
     warnings: w.list(),
+    warningItems: w.items(),
   };
 }
 

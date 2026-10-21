@@ -773,7 +773,7 @@ function basePart(format: MprPart['format'], name: string, b: PanelBuilder, head
   const workpiece: MprWorkpiece = { length: b.L, width: b.W, thickness: b.T, line };
   const outline = b.outlinePath();
   if (outline) workpiece.outline = outline;
-  return { format, name, units, header, variables, workpiece, contours: [], operations: b.ops, lines, stats: b.stats, warnings: b.w.list() };
+  return { format, name, units, header, variables, workpiece, contours: [], operations: b.ops, lines, stats: b.stats, warnings: b.w.list(), warningItems: b.w.items() };
 }
 
 // ───────────────────────── PGI ─────────────────────────

@@ -753,8 +753,8 @@ export class NcPanel {
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];
-    const items = d.nc?.warnItems ?? [];
-    // NC: 경고마다 단추(줄 번호·글·횟수 따로 — 누르면 그 줄로, 다시 누르면 같은 경고가 난 다음 줄로). 그 밖(장면 경고·MPR)은 글
+    const items = d.nc?.warnItems ?? d.mpr?.warnItems ?? [];
+    // NC·판재 파일(MPR·PGI·XML): 경고마다 단추(줄 번호·글·횟수 따로 — 조각마다 번역되고, 누르면 그 줄로, 다시 누르면 같은 경고가 난 다음 줄로). 그 밖(장면 경고)은 글
     const lis: HTMLElement[] = items.slice(0, 300).map((it) => {
       if (it.line < 0) return h('li', {}, it.text);
       const b = h(
@@ -832,12 +832,12 @@ export class NcPanel {
   private warnLines: Map<number, string> | null = null;
   private warnLinesFor: object | null = null;
   private warnAt(i: number): string | undefined {
-    const nc = this.doc?.nc;
-    if (!nc) return undefined;
-    if (this.warnLinesFor !== nc) {
-      this.warnLinesFor = nc;
+    const src = this.doc?.nc ?? this.doc?.mpr;
+    if (!src?.warnItems) return undefined;
+    if (this.warnLinesFor !== src) {
+      this.warnLinesFor = src;
       const m = new Map<number, string>();
-      for (const it of nc.warnItems) for (const l of it.lines.length ? it.lines : it.line >= 0 ? [it.line] : []) m.set(l, m.has(l) ? `${m.get(l)}\n${it.text}` : it.text);
+      for (const it of src.warnItems) for (const l of it.lines.length ? it.lines : it.line >= 0 ? [it.line] : []) m.set(l, m.has(l) ? `${m.get(l)}\n${it.text}` : it.text);
       this.warnLines = m;
     }
     return this.warnLines?.get(i);

@@ -129,7 +129,7 @@ export function parseForView(
   const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
-  if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines, warnItems: parsed.part.warningItems ?? [] };
   else out.nc = ncPayload(parsed.program);
   if (job) {
     // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄

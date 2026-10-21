@@ -105,6 +105,8 @@ export interface NcPayload {
 export interface MprPayload {
   /** 원본 줄 */
   lines: string[];
+  /** 경고마다 글·첫 줄·횟수·난 줄들(NcPayload.warnItems와 같은 꼴) */
+  warnItems?: NcWarningItem[];
 }
 
 export type NcKind = 'gcode' | 'heidenhain' | PanelFileKind;
