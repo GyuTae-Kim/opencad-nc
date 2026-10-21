@@ -36,6 +36,7 @@ describe('language URLs and UI presentation', () => {
       }
     expect(translate('직선 이송', 'de')).toBe('Geradenvorschub');
     expect(translate('급속', 'de')).toBe('Eilgang');
+    expect(translate('홈 · 포켓', 'en')).toBe('Grooves · Pockets');
   });
   it('translates every piece of a " · "-joined sentence, even when a short pattern would swallow the rest', () => {
     const hangul = /[가-힣]/;
