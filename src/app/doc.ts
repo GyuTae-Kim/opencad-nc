@@ -524,7 +524,8 @@ export function selectionSummary(d: NcDoc | null, measuring = false, touch = fal
   }
   if (isPanelKind(d.kind) && d.selKey !== null) {
     const op = mprOps(d.scene)[Number(d.selKey)];
-    if (op) return `가공 ${op.index + 1} · ${op.label || op.kind}${op.enabled ? '' : ' (꺼짐)'}`;
+    // 조각마다 따로 번역되게 " · "로 잇는다(가공 이름이 앱이 지은 한국어여도 — 예: PGI "수직 드릴 Ø5 × 13" — 그 언어로)
+    if (op) return `가공 ${op.index + 1} · ${op.label || op.kind}${op.enabled ? '' : ' · 꺼짐'}`;
   }
   if (p) {
     const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);

@@ -4,7 +4,8 @@ import { earClip } from '../src/mesh';
 import { mprToScene } from '../src/scene';
 import { decodeXmlBytes, parseXml, xmlRootName } from '../src/xml';
 import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput, parseForView } from '../src/app/payload';
-import { createDoc, docLabel, mprOps, noticeViews, panelTabs, statusParts } from '../src/app/doc';
+import { createDoc, docLabel, mprOps, noticeViews, panelTabs, selectionSummary, statusParts } from '../src/app/doc';
+import { translate } from '../site/i18n.mjs';
 import type { ParseResult } from '../src/app/protocol';
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 + 0;
@@ -434,5 +435,21 @@ describe('판별·장면·화면', () => {
     const pd = createDoc('board.pgi', 1, pgi);
     expect(pd.panelTab).toBe('ops');
     expect(noticeViews(pd)).toEqual([]);
+  });
+
+  it('다른 언어: 가공을 고른 상태 막대 요약(앱이 지은 가공 이름·꺼짐까지)이 한국어 없이', () => {
+    for (const [name, text] of [['board.pgi', PGI], ['board.xml', XML]] as const) {
+      const d = createDoc(name, 1, parseForView(name, enc.encode(text)));
+      const ops = mprOps(d.scene);
+      expect(ops.some((o) => !o.enabled)).toBe(true);
+      const lines = ops.map((_, i) => {
+        d.selKey = String(i);
+        return selectionSummary(d);
+      });
+      lines.push(...statusParts(d).filter((p) => p.startsWith('가공 ')));
+      for (const lang of ['en', 'ja', 'zh-CN', 'de']) for (const t of lines) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(/[가-힣]/);
+    }
+    expect(translate('가공 1 · 수직 드릴 Ø5 × 13 (5개)', 'en')).toBe('Operation 1 · Vertical drill Ø5 × 13 (5 holes)');
+    expect(translate('반매립 손잡이 홈 (미지원)', 'de')).toBe('Griffmulde, halbversenkt (nicht unterstützt)');
   });
 });
