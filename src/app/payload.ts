@@ -2,11 +2,11 @@
  * 워커 쪽 도움(순수 함수): 들어온 바이트가 NC 프로그램으로 읽을 만한지 보고, 해석 결과를 화면에 보낼 자료로 줄인다.
  * 해석기를 가져오므로 화면 코드(app.ts·panel.ts)에서는 부르지 않는다(워커와 시험만).
  */
-import { detectNcFormat, type NcFileKind } from '../index';
+import { detectNcFormat, ncParsedToScene, parseNcFile, type NcFileKind, type NcParseOptions } from '../index';
 import { NC_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
 import { BINARY_MESSAGE, looksBinary } from './format';
-import type { NcPayload } from './protocol';
+import type { NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
 /** 확장자도 내용도 NC로 보이지 않을 때 */
 export const NOT_NC_MESSAGE = 'NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 평문(.h)·woodWOP MPR(.mpr) 파일을 여십시오.';
@@ -41,5 +41,43 @@ export function ncPayload(p: NcProgram): NcPayload {
     lineMoves: ncLineMoves(p),
     tools: p.tools,
     stats: p.stats,
+    notices: p.notices ?? [],
   };
+}
+
+/** 해석 옵션(화면 고르기) → 해석기 옵션 */
+export function parseOptions(kind: NcFileKind | null, o: NcOpenOptions): NcParseOptions {
+  return {
+    ...(kind ? { kind } : {}),
+    gcode: {
+      dialect: o.dialect ?? 'auto',
+      ...(o.units ? { units: o.units } : {}),
+      // 고르지 않았으면 글로 판별(선반처럼 보이면 선반 모드)
+      lathe: o.lathe === undefined ? 'auto' : o.lathe,
+      ...(o.rotary ? { rotary: true } : {}),
+      ...(o.integerUnits ? { integerUnits: true } : {}),
+    },
+  };
+}
+
+/**
+ * 파일 하나를 화면 자료로(워커가 부른다. 시험도 같은 길로): 확인 → 해석 → 장면 → 패널 자료.
+ * 읽을 수 없으면 Error(사람이 읽는 글)
+ */
+export function parseForView(name: string, bytes: Uint8Array, o: NcOpenOptions = {}, progress: (fraction: number, stage: string) => void = () => {}): ParseResult {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const base = name.replace(/^.*[\\/]/, '');
+  progress(0.05, '파일 확인 중');
+  const check = checkNcInput(base, bytes);
+  if (!check.ok) throw new Error(check.message);
+  progress(0.15, check.kind === 'mpr' ? 'woodWOP MPR 읽는 중' : check.kind === 'heidenhain' ? 'Heidenhain 프로그램 읽는 중' : 'G-code 읽는 중');
+  const parsed = parseNcFile(base, bytes, parseOptions(check.kind, o));
+  progress(0.7, '공구 경로 만드는 중');
+  const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
+  progress(0.95, '화면으로 보내는 중');
+  const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
+  if (parsed.kind === 'mpr') out.mpr = { lines: parsed.part.lines };
+  else out.nc = ncPayload(parsed.program);
+  out.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+  return out;
 }

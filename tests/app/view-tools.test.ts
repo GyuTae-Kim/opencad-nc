@@ -1,0 +1,122 @@
+// @vitest-environment jsdom
+/**
+ * 확인 도구(app.ts·panel.ts): 해석 판단 띠. 뷰어 코어(WebGL)는 가짜로, 해석은 워커와 같은 길(parseForView)로 바로 부른다.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const fake = vi.hoisted(() => {
+  class FakeViewer {
+    static last: FakeViewer | null = null;
+    readonly canvas: HTMLCanvasElement;
+    measureMode = false;
+    marker: number[] | null = null;
+    markerOpts: unknown = null;
+    limit: number | null = null;
+    constructor(host: HTMLElement) {
+      const wrap = document.createElement('div');
+      wrap.className = 'v3d';
+      this.canvas = document.createElement('canvas');
+      wrap.append(this.canvas);
+      host.append(wrap);
+      FakeViewer.last = this;
+      return new Proxy(this, { get: (t, p, r) => (p in t ? Reflect.get(t, p, r) : () => null) });
+    }
+    get measurePointCount(): number {
+      return 0;
+    }
+    getProjection(): string {
+      return 'perspective';
+    }
+    getRenderMode(): string {
+      return 'shadedEdges';
+    }
+    groups(): unknown[] {
+      return [];
+    }
+    setMarker(p: number[] | null, kind?: string, opts?: unknown): void {
+      this.marker = p;
+      this.markerOpts = p ? { kind, ...(opts as object) } : null;
+    }
+    setDrawLimitBySegmentId(id: number | null): null {
+      this.limit = id;
+      return null;
+    }
+  }
+  return { FakeViewer, opens: [] as unknown[] };
+});
+
+vi.mock('opencad-viewer3d', async (importOriginal) => ({ ...(await importOriginal<object>()), Viewer3d: fake.FakeViewer }));
+vi.mock('../../src/app/client', async () => {
+  const { parseForView } = await import('../../src/app/payload');
+  class ParseWorkerClient {
+    async open(name: string, data: ArrayBuffer, opts: unknown) {
+      fake.opens.push(opts);
+      return parseForView(name, new Uint8Array(data), (opts ?? {}) as object);
+    }
+    cancel(): void {}
+  }
+  return { ParseWorkerClient };
+});
+
+import { NcViewerApp } from '../../src/app/app';
+
+function makeApp(): { app: NcViewerApp; root: HTMLElement } {
+  vi.stubGlobal('matchMedia', (q: string) => ({ media: q, matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
+  document.body.innerHTML = '<div id="app"></div>';
+  const root = document.getElementById('app')!;
+  return { app: new NcViewerApp(root), root };
+}
+const open = (app: NcViewerApp, name: string, text: string): Promise<boolean> => app.openBuffer(name, new TextEncoder().encode(text).buffer as ArrayBuffer);
+const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+const LATHE = `%
+O0001
+G21 G18 G99
+G50 S3000
+T0101
+G96 S200 M3
+G0 X52. Z2.
+G1 X40. Z-20. F0.2
+G0 X52. Z2.
+M30
+%`;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      disconnect(): void {}
+    },
+  );
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
+  fake.opens.length = 0;
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('해석 판단 띠', () => {
+  it('선반처럼 보이면 선반으로 읽고 띠를 보이며, "밀링으로 읽기"는 선반을 끄고 다시 읽는다', async () => {
+    const { app, root } = makeApp();
+    expect(await open(app, 'od.nc', LATHE)).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    expect(bar.hidden).toBe(false);
+    expect(bar.textContent).toContain('선반 프로그램으로 보여');
+    const btn = [...bar.querySelectorAll('button')].find((b) => b.textContent === '밀링으로 읽기')!;
+    btn.click();
+    await tick();
+    await tick();
+    expect(fake.opens[fake.opens.length - 1]).toEqual({ lathe: false });
+    expect(bar.hidden).toBe(true);
+  });
+
+  it('✕는 이 문서에서 띠를 닫는다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!.click();
+    expect(bar.hidden).toBe(true);
+  });
+});

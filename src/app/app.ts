@@ -24,7 +24,7 @@ import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
-import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
+import { createDoc, lineMoveList, moveEndPoint, moveSegments, mprOps, noticeViews, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
 import { icon, type IconName } from './icons';
@@ -215,6 +215,7 @@ export class NcViewerApp implements PanelHost {
   private readonly measureText: HTMLDivElement;
   private readonly measureClear: HTMLButtonElement;
   private readonly aimLayer: HTMLDivElement;
+  private readonly noticeBar: HTMLDivElement;
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
@@ -355,7 +356,9 @@ export class NcViewerApp implements PanelHost {
     this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, h('div', { class: 'mb-acts' }, this.measureClear, measureClose));
     // 정밀 조준 십자선 층(캔버스 위, 누르기는 받지 않는다)
     this.aimLayer = h('div', { class: 'aim-layer', 'aria-hidden': 'true' });
-    this.viewEl.append(this.aimLayer, this.measureBar);
+    // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언)
+    this.noticeBar = h('div', { class: 'notice-bar', role: 'status', 'aria-live': 'polite', hidden: true });
+    this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar);
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
     this.workspace.append(this.busyEl);
@@ -860,7 +863,7 @@ export class NcViewerApp implements PanelHost {
     else if (d.mpr) copy = new TextEncoder().encode(`${d.mpr.lines.join('\n')}\n`).buffer as ArrayBuffer;
     else return;
     // 단위·선반·회전축을 바꾸면 모양이 달라지므로 카메라를 새로 맞춘다
-    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || !!opts.lathe !== !!d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary;
+    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || opts.lathe !== d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary || !!opts.integerUnits !== !!d.ncOptions.integerUnits;
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {
@@ -878,6 +881,7 @@ export class NcViewerApp implements PanelHost {
       this.panel.setOpen(this.panelOpen);
       this.renderToolbar();
       this.renderStatus();
+      this.renderNotices();
       toast(`${d.name}: 다시 읽었습니다.`, 'info', 2500);
     } catch (e) {
       if (seq === this.loadSeq) this.showError(`${d.name}: 다시 읽지 못했습니다 — ${errorText(e)}`);
@@ -1014,10 +1018,9 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
     this.renderStatus();
     const w = d.scene.warnings?.length ?? 0;
-    // 선반처럼 보이는 G-code를 밀링으로 읽었으면 선반 모드를 알려 준다
-    const latheHint = d.kind === 'gcode' && !d.ncOptions.lathe && !!d.scene.warnings?.some((x) => x.includes('선반 프로그램으로 보임'));
-    if (latheHint) toast('선반 프로그램으로 보입니다 — 패널 "정보" 탭의 "선반 모드"를 켜면 X를 지름으로 보고 선반 사이클을 그립니다.', 'info', 7000);
-    else if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
+    // 선반 자동·소수점 없는 좌표·판별한 방언은 3D 보기 위 띠로(행동 단추와 함께), 경고는 알림으로
+    this.renderNotices();
+    if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
     this.viewer?.canvas.focus({ preventScroll: true });
   }
 
@@ -1413,6 +1416,38 @@ export class NcViewerApp implements PanelHost {
     this.stSel.textContent = selectionSummary(d, this.measuring, this.touch);
     this.stSel.title = this.stSel.textContent;
     this.refreshBar();
+  }
+
+  /** 해석 판단 띠: 선반 자동·소수점 없는 좌표·판별한 방언. 단추는 다른 설정으로 다시 읽거나 패널 탭을 연다, ✕는 이 문서에서 닫는다 */
+  private renderNotices(): void {
+    const d = this.doc;
+    const bar = this.noticeBar;
+    bar.replaceChildren();
+    const list = d ? noticeViews(d) : [];
+    bar.hidden = !list.length;
+    for (const n of list) {
+      const row = h('div', { class: 'notice', 'data-notice': n.key }, h('span', { class: 'nt-text' }, n.text));
+      if (n.action) {
+        const act = n.action;
+        const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
+        b.addEventListener('click', () => {
+          if (act.opts) void this.reparse(act.opts);
+          else if (act.tab && d) {
+            d.panelTab = act.tab;
+            this.panel.show(d);
+            this.togglePanel(true);
+          }
+        });
+        row.append(b);
+      }
+      const x = h('button', { class: 'mb-btn icon', type: 'button', title: '이 안내 닫기', 'aria-label': '이 안내 닫기', html: icon('close') });
+      x.addEventListener('click', () => {
+        d?.dismissedNotices.add(n.key);
+        this.renderNotices();
+      });
+      row.append(x);
+      bar.append(row);
+    }
   }
 
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */

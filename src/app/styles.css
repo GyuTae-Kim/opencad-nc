@@ -477,6 +477,60 @@ kbd {
   }
 }
 
+/* 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언): 3D 보기 위 가운데, 행동 단추와 닫기 */
+.notice-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  max-width: calc(100% - 140px);
+  transform: translateX(-50%);
+}
+.notice-bar[hidden] {
+  display: none;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.notice .nt-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice .mb-btn {
+  height: 32px;
+}
+.notice .mb-btn.icon {
+  width: 32px;
+}
+@media (max-width: 759.98px) {
+  .notice-bar {
+    max-width: calc(100% - 16px);
+    top: auto;
+    bottom: 10px;
+  }
+  /* 측정·재생 띠가 있으면 그 위로 */
+  .view:has(.measure-bar:not([hidden])) .notice-bar,
+  .view:has(.play-strip:not([hidden])) .notice-bar {
+    bottom: 76px;
+  }
+}
+
 /* 상태 막대 */
 .statusbar {
   display: flex;

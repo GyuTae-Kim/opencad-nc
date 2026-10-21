@@ -8,7 +8,7 @@
  * 이 파일은 화면 쪽에서도 불러오므로 해석기(무거운 코드)를 가져오지 않는다 — 워커 쪽 도움은 payload.ts에 있다.
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
-import type { NcDialect, NcStats, NcTool } from '../model';
+import type { NcDialect, NcNotice, NcStats, NcTool } from '../model';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -19,8 +19,10 @@ export interface NcOpenOptions {
   units?: 'mm' | 'inch';
   /** 반경 보정 경로(공구 중심)를 따로 그릴지(G-code·Heidenhain) */
   comp?: boolean;
-  /** 선반 모드로 읽기(G-code) */
+  /** 선반 모드로 읽기(G-code). 없으면 글로 판별(선반처럼 보이면 선반 모드 — 화면이 띠로 알린다) */
   lathe?: boolean;
+  /** 소수점 없는 좌표 값을 최소 입력 단위로(G-code, Fanuc DPI = 0 꼴) */
+  integerUnits?: boolean;
   /** 회전축 A·B·C 감기(G-code) */
   rotary?: boolean;
   /** 꺼진 가공도 그리기(MPR) */
@@ -64,6 +66,8 @@ export interface NcPayload {
   lineMoves: { offsets: Uint32Array; moves: Uint32Array };
   tools: NcTool[];
   stats: NcStats;
+  /** 띠로 알릴 해석 판단(선반 자동·소수점 없는 좌표·판별한 방언) */
+  notices: NcNotice[];
 }
 
 /** MPR 패널 자료(가공·변수는 scene.meta에 있다) */

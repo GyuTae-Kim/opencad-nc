@@ -180,6 +180,16 @@ export interface NcRotaryOptions {
   stepDeg?: number;
 }
 
+/**
+ * 화면이 띠로 알릴 해석 판단(경고와 따로 — 사용자가 바로 바꿀 수 있는 것):
+ * 'lathe-auto' 선반 프로그램으로 보여 선반 모드로 읽음, 'integer-units' 소수점 없는 큰 좌표가 많음(최소 입력 단위일 수 있음),
+ * 'dialect' 글로 판별한 방언(dialect)으로 읽음
+ */
+export interface NcNotice {
+  kind: 'lathe-auto' | 'integer-units' | 'dialect';
+  dialect?: NcDialect | 'heidenhain-iso' | 'okuma';
+}
+
 /** 해석 결과 */
 export interface NcProgram {
   name: string;
@@ -206,6 +216,8 @@ export interface NcProgram {
   lathe?: boolean;
   /** 회전축(A·B·C) 낱말이 있었는지 */
   rotaryAxes?: boolean;
+  /** 화면이 띠로 알릴 해석 판단(있을 때만) */
+  notices?: NcNotice[];
   warnings: string[];
 }
 

@@ -25,6 +25,8 @@ export interface NcDoc {
   /** 해석 시간(ms) */
   ms: number;
   // ── 보기 상태 ──
+  /** 닫은 해석 판단 띠(종류 열쇠) — 다시 읽어도 그대로 둔다 */
+  dismissedNotices: Set<string>;
   hiddenGroups: Set<string>;
   /** 뷰어 강조(항목 id) */
   highlight: string[];
@@ -50,6 +52,7 @@ export function createDoc(name: string, size: number, res: ParseResult, ncOption
     mpr: res.mpr ?? null,
     ncOptions: { ...ncOptions },
     ms: res.ms,
+    dismissedNotices: new Set(),
     hiddenGroups: new Set(),
     highlight: [],
     pick: null,
@@ -79,6 +82,33 @@ export function replaceResult(d: NcDoc, res: ParseResult, opts: NcOpenOptions): 
   d.selKey = null;
   d.playSec = null;
   if (!panelTabs(d).some(([k]) => k === d.panelTab)) d.panelTab = panelTabs(d)[0]![0];
+}
+
+/** 해석 판단 띠 하나: 글과 행동(다른 설정으로 다시 읽기, 또는 패널 탭 열기) */
+export interface NoticeView {
+  key: string;
+  text: string;
+  action?: { label: string; opts?: NcOpenOptions; tab?: PanelTab };
+}
+
+const DIALECT_NOTICE: Record<string, string> = {
+  siemens: 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).',
+  'heidenhain-iso': 'Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).',
+  okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·G15 H 좌표계는 읽지 않아 경로가 모자랄 수 있습니다.',
+};
+
+/** 문서의 해석 판단 → 띠(닫은 것은 뺀다) */
+export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotices'>): NoticeView[] {
+  const out: NoticeView[] = [];
+  for (const n of d.nc?.notices ?? []) {
+    let v: NoticeView | null = null;
+    if (n.kind === 'lathe-auto') v = { key: 'lathe-auto', text: '선반 프로그램으로 보여 선반 모드(X 지름·선반 사이클·XZ 단면)로 읽었습니다.', action: { label: '밀링으로 읽기', opts: { ...d.ncOptions, lathe: false } } };
+    else if (n.kind === 'integer-units')
+      v = { key: 'integer-units', text: '소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.', action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
+    else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: DIALECT_NOTICE[n.dialect]!, action: { label: '방언 바꾸기', tab: 'info' } };
+    if (v && !d.dismissedNotices.has(v.key)) out.push(v);
+  }
+  return out;
 }
 
 /** 문서 종류별 패널 탭 */

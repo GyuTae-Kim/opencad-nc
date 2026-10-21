@@ -77,7 +77,15 @@ export interface GcodeOptions {
   latheDiameter?: boolean;
   /** 회전축 감기(기본 꺼짐 — A·B·C는 무시하고 경고). true면 A→X, B→Y, C→Z 축 둘레 */
   rotary?: boolean | NcRotaryOptions;
+  /**
+   * 소수점 없는 좌표 값을 최소 입력 단위로(Fanuc 매개변수 3401#0 DPI = 0 꼴, 기본 false): X·Y·Z·U·V·W·I·J·K·R·Q는
+   * mm 0.001·inch 0.0001, A·B·C는 0.001도. 끄면 소수점 없는 큰 좌표가 많을 때 notices에 'integer-units'를 단다
+   */
+  integerUnits?: boolean;
 }
+
+/** 소수점 없으면 최소 입력 단위로 읽는 낱말(X Y Z U V W I J K R Q A B C) */
+const INT_LETTERS = [23, 24, 25, 20, 21, 22, 8, 9, 10, 17, 16, 0, 1, 2];
 
 // ───────────────────────── 블록 ─────────────────────────
 
@@ -639,6 +647,33 @@ export class Runner extends NcEmitter {
   protected cqK = 0;
   /** 첫 절입에 더할 길이(Siemens CYCLE83은 첫 깊이를 기준면에서 잰다 — R 점까지의 안전 거리) */
   protected peckFirstExtra = 0;
+  // ── 소수점 없는 좌표(최소 입력 단위) ──
+  /** 0이 아닌 X·Y·Z 낱말 수와 그 가운데 소수점 없이 100 이상인 것 */
+  protected axisWords = 0;
+  protected intBig = 0;
+
+  /** integerUnits면 소수점 없는 좌표 값을 최소 입력 단위로 바꾸고, 아니면 안내용으로 센다 */
+  protected integerWords(blk: Block): void {
+    const opt = this.o.integerUnits;
+    for (const L of INT_LETTERS) {
+      if (!blk.has[L]) continue;
+      if (opt) {
+        if (!blk.dot[L]) {
+          blk.val[L] = blk.val[L]! / (L <= 2 ? 1000 : this.blockInch ? 10000 : 1000);
+          blk.dot[L] = 1;
+        }
+        continue;
+      }
+      if (L >= LX && L <= LZ) {
+        const v = blk.val[L]!;
+        if (v !== 0) {
+          this.axisWords++;
+          if (!blk.dot[L] && Math.abs(v) >= 100) this.intBig++;
+        }
+      }
+    }
+  }
+
   // ── 극좌표(G16) ──
   protected polar = false;
   /** 극 원점(평면 두 축, 프로그램 좌표)·반지름·각(도) */
@@ -777,7 +812,9 @@ export class Runner extends NcEmitter {
     super(src, opts.initialPosition);
     this.o = opts;
     this.dialect = dialect;
-    if (opts.lathe === true || (opts.lathe === 'auto' && detectLathe(head()))) {
+    const latheAuto = opts.lathe === 'auto' && detectLathe(head());
+    if (latheAuto) this.notices.push({ kind: 'lathe-auto' });
+    if (opts.lathe === true || latheAuto) {
       this.lathe = true;
       this.latheMode = true;
       this.fanucLathe = dialect !== 'linuxcnc' && dialect !== 'grbl';
@@ -1145,6 +1182,7 @@ export class Runner extends NcEmitter {
       return;
     }
     this.started = true;
+    this.integerWords(blk);
     if (blk.hasG(650)) {
       // G65 블록의 낱말은 모두 인수(이송·공구로 보지 않는다)
       this.endBlock(blk, line, true);
@@ -3034,6 +3072,11 @@ export class Runner extends NcEmitter {
 
   finish(opts: GcodeOptions): NcProgram {
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
+    // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
+    if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
+      this.w.add(`소수점 없는 큰 좌표가 많음(${this.intBig}개) — Fanuc 최소 입력 단위(0.001)로 쓴 프로그램이면 "소수점 없는 값 = 최소 단위"를 켜십시오`);
+      this.notices.push({ kind: 'integer-units' });
+    }
     return this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
   }
 }
@@ -3069,7 +3112,12 @@ export function parseGcode(input: Uint8Array | ArrayBuffer | string | NcSource, 
   let dialect = opts.dialect && opts.dialect !== 'auto' ? opts.dialect : detectGcodeDialect(getHead());
   if (dialect === 'heidenhain') dialect = 'iso';
   const special = DIALECT_PARSERS[dialect];
-  if (special) return special(src, opts, getHead);
+  if (special) {
+    const p = special(src, opts, getHead);
+    // 글로 판별해 따로 된 해석기(Siemens)로 읽었으면 알린다
+    if (!opts.dialect || opts.dialect === 'auto') (p.notices ??= []).unshift({ kind: 'dialect', dialect });
+    return p;
+  }
   if (dialect === 'siemens') {
     // Siemens 해석기(siemens.ts)를 불러오지 않은 채 부르면 ISO로 읽고 알린다
     const r = new Runner(src, opts, 'iso', getHead);

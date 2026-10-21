@@ -562,6 +562,7 @@ export class NcPanel {
           '해석 설정',
           h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '방언'), dialect),
           h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
+          this.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
           h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
         ),
       );
@@ -602,9 +603,10 @@ export class NcPanel {
   }
 
   /** 다시 읽는 켜고 끄기(선택 기능) */
-  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled', label: string, hint: string): HTMLElement {
+  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled' | 'integerUnits', label: string, hint: string): HTMLElement {
     const cb = h('input', { type: 'checkbox' });
-    cb.checked = !!d.ncOptions[key];
+    // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다
+    cb.checked = key === 'lathe' ? sceneFeatures(d.scene).lathe : !!d.ncOptions[key];
     cb.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, [key]: cb.checked }));
     return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label), h('span', { class: 'hint inline' }, '다시 읽음'));
   }

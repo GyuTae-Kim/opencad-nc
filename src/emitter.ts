@@ -30,6 +30,7 @@ import {
   toolInfoFromComment,
   type NcCompRun,
   type NcDialect,
+  type NcNotice,
   type NcPlane,
   type NcProgram,
   type NcRotaryOptions,
@@ -87,6 +88,8 @@ export class NcEmitter {
 
   /** 반경 보정 사건(보정 코드가 있을 때만 쌓인다) */
   protected compEvents: CompEvent[] = [];
+  /** 화면이 띠로 알릴 해석 판단 */
+  protected notices: NcNotice[] = [];
   /** 선반 모드로 읽음(build에서 NcProgram.lathe) */
   protected latheMode = false;
   /** 회전축 낱말을 보았음 */
@@ -659,6 +662,7 @@ export class NcEmitter {
     }
     if (this.latheMode) prog.lathe = true;
     if (this.sawRotary) prog.rotaryAxes = true;
+    if (this.notices.length) prog.notices = this.notices.slice();
     return prog;
   }
 }
