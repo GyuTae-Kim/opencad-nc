@@ -1,0 +1,32 @@
+{
+  "name": "OpenCAD NC Viewer",
+  "short_name": "NC Viewer",
+  "description": "Free NC viewer that shows G-code, Heidenhain, woodWOP MPR, WangShi PGI and XML programs as 3D toolpaths",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "../",
+  "display": "standalone",
+  "theme_color": "#232830",
+  "background_color": "#232830",
+  "icons": [
+    {
+      "src": "../icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

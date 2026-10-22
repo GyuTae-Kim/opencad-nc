@@ -1,0 +1,32 @@
+{
+  "name": "OpenCAD NCビューア",
+  "short_name": "NCビューア",
+  "description": "G-code・Heidenhain・woodWOP MPR・WangShi PGI・XML プログラムを 3D 工具経路で表示する無料 NC ビューアー",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "../",
+  "display": "standalone",
+  "theme_color": "#232830",
+  "background_color": "#232830",
+  "icons": [
+    {
+      "src": "../icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

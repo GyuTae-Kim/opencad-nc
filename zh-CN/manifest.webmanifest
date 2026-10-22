@@ -1,0 +1,32 @@
+{
+  "name": "OpenCAD NC 查看器",
+  "short_name": "数控查看器",
+  "description": "以 3D 刀具路径显示 G-code、Heidenhain、woodWOP MPR、WangShi PGI 和 XML 程序的免费 NC 查看器",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "../",
+  "display": "standalone",
+  "theme_color": "#232830",
+  "background_color": "#232830",
+  "icons": [
+    {
+      "src": "../icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "../icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

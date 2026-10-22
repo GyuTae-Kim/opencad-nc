@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <base href="../">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- localized-metadata:start --><title>OpenCAD free NC·G-code viewer | Heidenhain·MPR tool path</title>
+    <link rel="canonical" href="https://gyutae-kim.github.io/opencad-nc/en/">
+    <link rel="sitemap" type="application/xml" href="https://gyutae-kim.github.io/opencad-nc/sitemap.xml">
+    <meta name="description" content="A free NC viewer for checking 3D toolpaths of G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML files. Supports linking code lines to paths, per-tool display and machining sequence playback. Files are processed in the browser without installation or sign-up.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="author" content="Sean Kim">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="OpenCAD free NC·G-code viewer | Heidenhain·MPR tool path">
+    <meta name="twitter:description" content="A free NC viewer for checking 3D toolpaths of G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML files. Supports linking code lines to paths, per-tool display and machining sequence playback. Files are processed in the browser without installation or sign-up.">
+    <meta name="twitter:image" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta name="twitter:image:alt" content="OpenCAD's DWG·DXF, STEP, SketchUp, NC free viewer screen">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="OpenCAD NC Viewer">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="OpenCAD free NC·G-code viewer | Heidenhain·MPR tool path">
+    <meta property="og:description" content="A free NC viewer for checking 3D toolpaths of G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML files. Supports linking code lines to paths, per-tool display and machining sequence playback. Files are processed in the browser without installation or sign-up.">
+    <meta property="og:url" content="https://gyutae-kim.github.io/opencad-nc/en/">
+    <meta property="og:image" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta property="og:image:secure_url" content="https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="OpenCAD's DWG·DXF, STEP, SketchUp, NC free viewer screen">
+    <link rel="alternate" hreflang="ko" href="https://gyutae-kim.github.io/opencad-nc/">
+    <link rel="alternate" hreflang="en" href="https://gyutae-kim.github.io/opencad-nc/en/">
+    <link rel="alternate" hreflang="ja" href="https://gyutae-kim.github.io/opencad-nc/ja/">
+    <link rel="alternate" hreflang="zh-CN" href="https://gyutae-kim.github.io/opencad-nc/zh-CN/">
+    <link rel="alternate" hreflang="de" href="https://gyutae-kim.github.io/opencad-nc/de/">
+    <link rel="alternate" hreflang="x-default" href="https://gyutae-kim.github.io/opencad-nc/">
+    <link rel="manifest" href="./en/manifest.webmanifest">
+    <meta name="apple-mobile-web-app-title" content="NC Viewer">
+    <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebApplication","@id":"https://gyutae-kim.github.io/opencad-nc/en/#app","name":"OpenCAD NC Viewer","alternateName":"OpenCAD free NC·G-code viewer","applicationCategory":"DesignApplication","operatingSystem":"Web browser","browserRequirements":"JavaScript and WebGL2 supported browsers","isAccessibleForFree":true,"license":"https://github.com/GyuTae-Kim/opencad-nc/blob/main/LICENSE","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"},"featureList":["G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML parsing","Connect code lines and 3D toolpaths","Tool-specific display and machining sequence playback","Measure two points and save as PNG"],"sameAs":"https://github.com/GyuTae-Kim/opencad-nc","url":"https://gyutae-kim.github.io/opencad-nc/en/","description":"A free NC viewer for checking 3D toolpaths of G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML files. Supports linking code lines to paths, per-tool display and machining sequence playback. Files are processed in the browser without installation or sign-up.","inLanguage":"en","image":"https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg","author":{"@type":"Person","name":"Sean Kim","url":"https://gyutae-kim.github.io/en/"},"dateModified":"2026-10-21T20:43:02Z"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Sean Kim","item":"https://gyutae-kim.github.io/en/"},{"@type":"ListItem","position":2,"name":"OpenCAD","item":"https://gyutae-kim.github.io/en/opencad"},{"@type":"ListItem","position":3,"name":"OpenCAD NC Viewer","item":"https://gyutae-kim.github.io/opencad-nc/en/"}]}]}</script><!-- localized-metadata:end -->
+    <meta name="theme-color" content="#232830" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <!-- 홈 화면에 추가: 아이콘과 주소 막대 없는 화면. 웹 앱 매니페스트 링크는 위 site-metadata 자리에 언어별로 들어간다 -->
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // 첫 화면이 깜빡이지 않게 테마를 먼저 정한다(기억한 선택 → 없으면 시스템 설정). 저장소가 막혀도 넘어간다.
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem('opencad-nc.theme');
+        } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-CO0y4dPq.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Dp-FqGj4.css">
+  </head>
+  <body>
+    <div id="app">
+      <!-- 앱이 준비되면 이 안내를 앱 화면으로 바꾼다. -->
+      <main class="site-intro"><nav data-static-languages aria-label="Language"><a href="https://gyutae-kim.github.io/opencad-nc/" lang="ko" hreflang="ko">한국어</a> · <a href="https://gyutae-kim.github.io/opencad-nc/en/" lang="en" hreflang="en" aria-current="true">English</a> · <a href="https://gyutae-kim.github.io/opencad-nc/ja/" lang="ja" hreflang="ja">日本語</a> · <a href="https://gyutae-kim.github.io/opencad-nc/zh-CN/" lang="zh-CN" hreflang="zh-CN">简体中文</a> · <a href="https://gyutae-kim.github.io/opencad-nc/de/" lang="de" hreflang="de">Deutsch</a></nav>
+        <h1>OpenCAD NC Viewer</h1>
+        <p>A free viewer that opens G-code, Heidenhain plain-text, woodWOP MPR, WangShi PGI and XML programs in the browser and shows them as 3D toolpaths. Files are read on this device and never sent to a server.</p>
+        <noscript><p>This viewer requires JavaScript and WebGL2. Please enable JavaScript in your browser.</p></noscript>
+      <p><a href="https://gyutae-kim.github.io/en/opencad/projects/nc-viewer">OpenCAD NC Viewer usage/support range</a> · <a href="https://gyutae-kim.github.io/en/">Developer Portfolio</a></p>
+      </main>
+    </div>
+  </body>
+</html>
