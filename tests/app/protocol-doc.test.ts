@@ -23,7 +23,9 @@ import {
   toolGroup,
   toolItems,
   unitLabel,
+  warningLabel,
 } from '../../src/app/doc';
+import { translate } from '../../site/i18n.mjs';
 
 const enc = new TextEncoder();
 
@@ -243,10 +245,49 @@ describe('MPR 문서', () => {
     expect(mprOpAtLine(ops, drillLine + 2)).toBe(1);
     expect(mprOpAtLine(ops, 0)).toBe(-1);
     d.selKey = '2';
-    expect(selectionSummary(d)).toBe('가공 3 · BohrVert (꺼짐)');
+    expect(selectionSummary(d)).toBe('가공 3 · BohrVert · 꺼짐');
     d.selKey = '1';
     expect(selectionSummary(d)).toBe('가공 2 · Loch');
     d.selLine = drillLine;
     expect(selectedLineText(d)).toBe('<102 \\BohrVert\\');
+  });
+});
+
+describe('다른 언어로 옮긴 상태 막대·고른 것 요약·경고', () => {
+  const LANGS = ['en', 'ja', 'zh-CN', 'de'];
+  const hangul = /[가-힣]/;
+  it('상태 막대 개수·경고 단추와 고른 줄 요약("줄 N · 이동 N개")', () => {
+    const res = parse(NC_SAMPLE_NAME, ncSampleProgram());
+    const nc = res.nc!;
+    const d = createDoc(NC_SAMPLE_NAME, 1234, res);
+    const counts = statusParts(d).filter((p) => /^(이동|선분) /.test(p));
+    expect(counts.length).toBe(2);
+    d.selLine = 0;
+    d.selMoves = [];
+    const none = selectionSummary(d);
+    const line = nc.moves.line[nc.moves.count - 1]!;
+    d.selLine = line;
+    d.selMoves = lineMoveList(nc, line);
+    const some = selectionSummary(d);
+    expect(some).toMatch(/^줄 [\d,]+ · 이동 [\d,]+개$/);
+    const warn = warningLabel(createDoc('w.nc', 1, parse('w.nc', 'G1 X1 F100\nG1 X[1+\nG1 X2\n')));
+    expect(warn).toMatch(/^경고 \d+개$/);
+    for (const lang of LANGS) for (const t of [...counts, none, some, warn]) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(hangul);
+    expect(translate(none, 'en')).toBe('Line 1 · No move');
+    expect(translate(some, 'en')).toMatch(/^Line [\d,]+ · Moves [\d,]+$/);
+    expect(translate(`이동 ${nc.moves.count.toLocaleString('ko-KR')}개`, 'en')).toBe(`Moves ${nc.moves.count.toLocaleString('ko-KR')}`);
+  });
+  it('읽을 수 없는 블록: 안쪽 까닭까지 그 언어로', () => {
+    const res = parse('bad.nc', 'G1 X1 F100\nG1 X[1+\nG1 X[1+$]\n#2=FOO[1]\nG1 X2\n');
+    const texts = res.nc!.warnItems.map((w) => w.text).filter((t) => t.startsWith('읽을 수 없는 블록 — '));
+    expect(texts.length).toBe(3);
+    for (const lang of LANGS) for (const t of texts) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(hangul);
+    expect(translate("읽을 수 없는 블록 — 알 수 없는 글자 '('", 'en')).toBe("Unreadable block — Unknown character '('");
+    expect(translate('읽을 수 없는 블록 — 식이 끝났다', 'de')).toMatch(/^Nicht lesbarer Block — [^가-힣]+$/);
+  });
+  it('여러 파일 작업의 줄 요약("O1001.nc · 줄 4 · 이동 2개"): 파일 이름은 그대로, 나머지는 그 언어로', () => {
+    for (const t of ['O1001.nc · 줄 4 · 이동 2개', 'O1001.nc · 줄 1,204 · 이동 없음', 'O1001.nc · 4번 줄'])
+      for (const lang of LANGS) expect(translate(t, lang), `${lang}: ${t}`).toMatch(/^O1001\.nc · [^가-힣]+$/);
+    expect(translate('O1001.nc · 줄 4 · 이동 2개', 'en')).toBe('O1001.nc · Line 4 · Moves 2');
   });
 });

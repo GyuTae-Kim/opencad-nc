@@ -4,7 +4,8 @@ import { earClip } from '../src/mesh';
 import { mprToScene } from '../src/scene';
 import { decodeXmlBytes, parseXml, xmlRootName } from '../src/xml';
 import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput, parseForView } from '../src/app/payload';
-import { createDoc, docLabel, mprOps, noticeViews, panelTabs, statusParts } from '../src/app/doc';
+import { createDoc, docLabel, mprOps, noticeViews, panelTabs, selectionSummary, statusParts } from '../src/app/doc';
+import { translate } from '../site/i18n.mjs';
 import type { ParseResult } from '../src/app/protocol';
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 + 0;
@@ -422,6 +423,11 @@ describe('판별·장면·화면', () => {
     expect(pgi.nc).toBeUndefined();
     expect(pgi.job).toBeUndefined();
     expect(stages).toContain('WangShi PGI 읽는 중');
+    // 경고는 G-code처럼 나뉜 항목(줄·글·횟수)으로도 넘긴다 — 패널이 조각마다 번역해 보인다
+    const items = pgi.mpr!.warnItems!;
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.length).toBe(pgi.scene.warnings!.length);
+    items.forEach((it, k) => expect(pgi.scene.warnings![k]).toBe(`${it.line >= 0 ? `${it.line + 1}번 줄: ` : ''}${it.text}${it.count > 1 ? ` (모두 ${it.count}번)` : ''}`));
     const xml = parseForView('board.xml', enc.encode(XML));
     expect(xml.kind).toBe('xml');
     expect(mprOps(xml.scene).length).toBeGreaterThan(0);
@@ -434,5 +440,21 @@ describe('판별·장면·화면', () => {
     const pd = createDoc('board.pgi', 1, pgi);
     expect(pd.panelTab).toBe('ops');
     expect(noticeViews(pd)).toEqual([]);
+  });
+
+  it('다른 언어: 가공을 고른 상태 막대 요약(앱이 지은 가공 이름·꺼짐까지)이 한국어 없이', () => {
+    for (const [name, text] of [['board.pgi', PGI], ['board.xml', XML]] as const) {
+      const d = createDoc(name, 1, parseForView(name, enc.encode(text)));
+      const ops = mprOps(d.scene);
+      expect(ops.some((o) => !o.enabled)).toBe(true);
+      const lines = ops.map((_, i) => {
+        d.selKey = String(i);
+        return selectionSummary(d);
+      });
+      lines.push(...statusParts(d).filter((p) => p.startsWith('가공 ')));
+      for (const lang of ['en', 'ja', 'zh-CN', 'de']) for (const t of lines) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(/[가-힣]/);
+    }
+    expect(translate('가공 1 · 수직 드릴 Ø5 × 13 (5개)', 'en')).toBe('Operation 1 · Vertical drill Ø5 × 13 (5 holes)');
+    expect(translate('반매립 손잡이 홈 (미지원)', 'de')).toBe('Griffmulde, halbversenkt (nicht unterstützt)');
   });
 });
