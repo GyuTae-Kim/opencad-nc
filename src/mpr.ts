@@ -9,6 +9,7 @@
  *   `.X=` 처럼 점으로 시작하는 값은 woodWOP가 계산해 둔 값(외부 프로그램이 쓴 파일은 틀릴 수 있어 검산에만 쓴다)
  * - `<번호 \이름\` 가공 매크로: 100 WerkStck(LA·BR·DI), 101 Kommentar, 102 BohrVert, 103 BohrHoriz,
  *   105 Konturfraesen, 109 Nuten, 112 Tasche, 131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로),
+ *   181 FreiFormTasche(자유 형상 포켓 — EA가 가리키는 닫힌 윤곽 안을 깊이 |TI|로. TI가 음수면 아랫면에서 위로: 실제 파일로 추정),
  *   188 Easyedge(엣지 밴딩 — 공개 명세가 없어 실제 파일로 추정: 윤곽 구간 EA..EE의 판 옆면에 두께 DK의 띠) …
  *   값 "STANDARD"(F_·S_·TNO 등)는 기계·공구 자료의 기본값이라는 뜻이라 식으로 계산하지 않는다.
  *
@@ -106,6 +107,8 @@ export interface MprBoxOp extends OpBase {
   box?: { origin: number[]; u: number[]; v: number[]; w: number[] };
   /** 기둥: 면 위의 닫힌 다각형(xyz 이어 붙임, 첫 점을 되풀이하지 않음)을 dir(단위 벡터)로 depth만큼 민 것 */
   prism?: { outline: number[]; dir: [number, number, number]; depth: number };
+  /** 기둥 외곽으로 쓴 윤곽 번호(MPR FreiFormTasche) */
+  contour?: number;
 }
 
 /**
@@ -207,7 +210,7 @@ function keyValue(line: string): [string, string] | null {
   return [key, v];
 }
 
-const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece'> = {
+const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece' | 'freePocket'> = {
   werkstck: 'workpiece',
   kommentar: 'comment',
   bohrvert: 'drillV',
@@ -217,6 +220,8 @@ const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece'> = {
   konturfraesen: 'contour',
   nuten: 'groove',
   tasche: 'pocket',
+  // 자유 형상 포켓: 윤곽(EA)을 가리키는 포켓(Tasche와 값이 달라 따로 읽는다)
+  freiformtasche: 'freePocket',
   easyedge: 'edge',
 };
 
@@ -665,6 +670,11 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         if (enabled) stats.pockets++;
         break;
       }
+      case 'freePocket': {
+        operations.push(freePocketOp(base, p, contours, thick, num, w));
+        if (enabled) stats.pockets++;
+        break;
+      }
       case 'edge': {
         const op = edgeOp(base, p, contours, workpiece, num, w);
         operations.push(op);
@@ -912,6 +922,52 @@ function edgeOp(
   op.endElement = c.elements[i1]!.index;
   op.path = sectionPath(c, i0, i1);
   op.side = bandSide(op.path, c, wp);
+  return op;
+}
+
+/**
+ * 181 FreiFormTasche(자유 형상 포켓): EA가 가리키는 닫힌 윤곽 안을 깊이 |TI|만큼 판 면에서 판 안으로 판 기둥.
+ * 공개 명세가 없어 실제 파일로 정했다: 실제 파일의 TI는 모두 음수이고 아랫면 가공(UfluBohr)과 같은 면 묶음에 있어,
+ * TI가 음수면 아랫면(Z 0)에서 위로, 0보다 크면 윗면에서 아래로 본다(README "woodWOP MPR" 참고)
+ */
+function freePocketOp(
+  base: OpBase,
+  p: Record<string, string>,
+  contours: MprContour[],
+  thick: number,
+  num: (k: string, d?: number) => number | undefined,
+  w: NcWarnings,
+): MprBoxOp {
+  const ti = num('TI');
+  const op: MprBoxOp = { ...base, kind: 'pocket', depth: Math.abs(ti ?? 0) };
+  const ea = contourRef(p.EA);
+  if (!ea) {
+    w.add(`${base.macro}에 시작 요소(EA)가 없음`, base.line);
+    return op;
+  }
+  const c = contours.find((k) => k.id === ea[0]);
+  if (!c || c.elements.length < 2) {
+    w.add(`${base.macro}: 윤곽 ${ea[0]}이 없음`, base.line);
+    return op;
+  }
+  if (ti === undefined || ti === 0) {
+    w.add(`${base.macro}에 깊이(TI)가 없음 — 목록에만 넣음`, base.line);
+    return op;
+  }
+  if (!isClosed(c)) w.add(`${base.macro}: 윤곽 ${c.id}이 닫히지 않음 — 끝을 이어 포켓으로 그림`, base.line);
+  const fromBottom = ti < 0;
+  const depth = thick > 0 ? Math.min(Math.abs(ti), thick) : Math.abs(ti);
+  const z = fromBottom ? 0 : thick;
+  const path = sectionPath(c, 0, c.elements.length - 1);
+  op.prism = { outline: pathPolyline(path).flatMap(([x, y]) => [x, y, z]), dir: [0, 0, fromBottom ? 1 : -1], depth };
+  op.contour = c.id;
+  // 호로만 된 원(중심·반지름이 같음)이면 지름도
+  const arcs = path.slice(1);
+  const a0 = arcs[0]?.arc;
+  if (a0 && isClosed(c) && arcs.every((q) => q.arc && Math.hypot(q.arc.cx - a0.cx, q.arc.cy - a0.cy) < 1e-6)) {
+    const r = Math.hypot(path[0]!.x - a0.cx, path[0]!.y - a0.cy);
+    if (r > 0) op.diameter = 2 * r;
+  }
   return op;
 }
 

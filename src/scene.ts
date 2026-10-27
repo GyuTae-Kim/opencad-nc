@@ -6,7 +6,7 @@
  * 호는 각도 허용치(기본 5도)로 나눈다. 공작물이 있으면 반투명 상자(group "공작물").
  *
  * mprToScene(MPR·WangShi PGI·KDT XML 공용): 판 상자(반투명), 수직·수평 구멍은 원기둥, 윤곽 가공은 공구 경로 선, 홈은 얇은 상자,
- * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로), 엣지 밴딩은 판 옆면에 띠 두께만큼 바깥으로 띄운 테두리 선(윗변·아랫변·양 끝).
+ * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로·MPR 자유 형상 포켓 윤곽), 엣지 밴딩은 판 옆면에 띠 두께만큼 바깥으로 띄운 테두리 선(윗변·아랫변·양 끝).
  * meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
@@ -451,6 +451,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       }
       case 'groove':
       case 'pocket': {
+        if (op.contour !== undefined) usedContours.add(op.contour);
         if (op.prism) {
           const pr = op.prism;
           const acc = new MeshAccum();
