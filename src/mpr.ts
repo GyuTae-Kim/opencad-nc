@@ -8,10 +8,11 @@
  * - `]n` 윤곽 n: `$Em` 요소 머리 + 종류 줄(KP 점·KL 선·KA 호·KR 둥글리기·KF 모따기·KSL/KSA 나눔) + `X=…` 값.
  *   `.X=` 처럼 점으로 시작하는 값은 woodWOP가 계산해 둔 값(외부 프로그램이 쓴 파일은 틀릴 수 있어 검산에만 쓴다)
  * - `<번호 \이름\` 가공 매크로: 100 WerkStck(LA·BR·DI), 101 Kommentar, 102 BohrVert, 103 BohrHoriz,
- *   105 Konturfraesen, 109 Nuten, 112 Tasche …
+ *   105 Konturfraesen, 109 Nuten, 112 Tasche, 131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로) …
+ *   값 "STANDARD"(F_·S_·TNO 등)는 기계·공구 자료의 기본값이라는 뜻이라 식으로 계산하지 않는다.
  *
  * 좌표: 판 왼쪽 아래(앞) 모서리의 밑면이 원점, X = 길이(LA), Y = 폭(BR), Z = 두께 방향 위(윗면 Z = DI).
- * 구멍·홈 깊이(TI)는 윗면에서 잰다. 호 KA: DS=0 시계, DS=1 반시계, R 반지름(.I/.J = 계산된 중심).
+ * 구멍·홈 깊이(TI)는 윗면에서 잰다(UfluBohr는 아랫면에서). 호 KA: DS=0 시계, DS=1 반시계, R 반지름(.I/.J = 계산된 중심).
  * 조건 `??`가 0이거나 EN=0인 가공은 꺼진 것으로 둔다.
  * 윤곽 KR(둥글리기 R)·KF(모따기)는 앞뒤가 직선인 모서리에서 호·직선으로 깎는다(호가 낀 모서리는 그대로, 경고).
  * 변수는 정의 차례대로 계산하고, 뒤에 정의된 변수를 쓰는 식은 다시 돌며 푼다. 모르는 매크로는 XA·YA가 있으면 위치만 남긴다.
@@ -191,6 +192,8 @@ const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece'> = {
   werkstck: 'workpiece',
   kommentar: 'comment',
   bohrvert: 'drillV',
+  // 아래쪽(언더플로어) 드릴 장치로 아랫면에서 위로 뚫는 수직 구멍 — 위치는 BohrVert처럼 위에서 본 (XA, YA)
+  uflubohr: 'drillV',
   bohrhoriz: 'drillH',
   konturfraesen: 'contour',
   nuten: 'groove',
@@ -497,6 +500,8 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     const num = (key: string, dflt?: number): number | undefined => {
       const v = p[key];
       if (v === undefined || v === '') return dflt;
+      // "STANDARD"는 woodWOP의 기본값 표시(이송 F_·회전 S_·공구 TNO 등 — 기계·공구 자료의 값을 씀): 식이 아니므로 기본값으로
+      if (/^\s*standard\s*$/i.test(v)) return dflt;
       return evalExpr(v, m.line, `${m.name} ${key}`) ?? dflt;
     };
     let enabled = true;
@@ -523,11 +528,13 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         const holes: MprHole[] = [];
         const depth = thick > 0 ? Math.min(ti, thick) : ti;
         const shift = mi === 1 ? -((an - 1) * ab) / 2 : 0;
+        // UfluBohr는 아랫면(Z 0)에서 위로, BohrVert는 윗면에서 아래로
+        const fromBottom = m.name.toLowerCase() === 'uflubohr';
         for (let k = 0; k < an; k++) {
           const d = shift + k * ab;
-          holes.push({ start: [x0 + d * Math.cos(wi), y0 + d * Math.sin(wi), thick], dir: [0, 0, -1], depth });
+          holes.push({ start: [x0 + d * Math.cos(wi), y0 + d * Math.sin(wi), fromBottom ? 0 : thick], dir: [0, 0, fromBottom ? 1 : -1], depth });
         }
-        if (!(du > 0)) w.add('BohrVert 지름(DU)이 0', m.line);
+        if (!(du > 0)) w.add(fromBottom ? 'UfluBohr 지름(DU)이 0' : 'BohrVert 지름(DU)이 0', m.line);
         operations.push({ ...base, kind: 'drillV', holes, diameter: du, depth: ti, through: thick > 0 && ti >= thick - 1e-9, mode: p.BM });
         if (enabled) {
           stats.drillOps++;

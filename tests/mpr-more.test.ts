@@ -114,4 +114,95 @@ DS=1
     expect(Array.from(pts.positions)).toEqual([50, 20, 19]);
     expect(Array.from(pts.pointIds!)).toEqual([0]);
   });
+
+  it('값 "STANDARD"(이송·공구 기본값)는 식으로 계산하지 않고 경고 없이 기본값으로 읽는다', () => {
+    const p = parseMpr(`${head}${board}]1
+$E0
+KP
+X=0
+Y=0
+Z=19
+
+$E1
+KL
+X=200
+Y=0
+
+<105 \\Konturfraesen\\
+EA="1:0"
+EE="1:1"
+TI="5"
+F_="STANDARD"
+TNO="STANDARD"
+S_="standard"
+
+<102 \\BohrVert\\
+XA="50"
+YA="50"
+TI="10"
+DU="8"
+TNO=" STANDARD "
+!
+`);
+    expect(p.warnings.filter((w) => w.includes('계산할 수 없음'))).toEqual([]);
+    const c = p.operations.find((o) => o.kind === 'contour')!;
+    expect(c.tool).toBeUndefined();
+    expect('feed' in c ? c.feed : undefined).toBeUndefined();
+    // 수나 식은 그대로 계산
+    const q = parseMpr(`${head}${board}<102 \\BohrVert\\\nXA="50"\nYA="50"\nTI="10"\nDU="8"\nTNO="3+2"\n!\n`);
+    expect(q.operations[0]!.tool).toBe(5);
+    // 모르는 이름은 여전히 경고
+    const bad = parseMpr(`${head}${board}<102 \\BohrVert\\\nXA="50"\nYA="50"\nTI="10"\nDU="8"\nTNO="STANDARDX"\n!\n`);
+    expect(bad.warnings.some((w) => w.includes('계산할 수 없음'))).toBe(true);
+  });
+
+  it('131 UfluBohr(아래쪽 드릴 장치): 위에서 본 (XA, YA)에서 아랫면(Z 0) 위로 TI만큼 수직 구멍', () => {
+    const p = parseMpr(`${head}${board}<131 \\UfluBohr\\
+XA="40"
+YA="30"
+TI="12"
+DU="5"
+AB="10"
+WI="0"
+F_="STANDARD"
+
+<131 \\UfluBohr\\
+XA="60"
+YA="30"
+TI="25"
+DU="5"
+AN="3"
+AB="32"
+WI="90"
+!
+`);
+    expect(p.warnings).toEqual([]);
+    const [a, b] = p.operations as import('../src/mpr').MprDrillOp[];
+    expect(a!.kind).toBe('drillV');
+    expect(a!.macro).toBe('UfluBohr');
+    expect(a!.holes).toEqual([{ start: [40, 30, 0], dir: [0, 0, 1], depth: 12 }]);
+    expect(a!.diameter).toBe(5);
+    expect(a!.through).toBe(false);
+    // 여러 구멍(AN·AB·WI)과 두께보다 깊은 TI(관통 — 두께까지)
+    expect(b!.holes.map((h) => h.start.map(r3))).toEqual([
+      [60, 30, 0],
+      [60, 62, 0],
+      [60, 94, 0],
+    ]);
+    expect(b!.holes[0]!.depth).toBe(19);
+    expect(b!.through).toBe(true);
+    expect(p.stats).toMatchObject({ drillOps: 2, holes: 4, other: 0 });
+    // 장면: 수직 구멍 묶음의 원기둥이 Z 0~12(아랫면 쪽)에 있고 위치 점(지원하지 않는 가공)은 없다
+    const s = mprToScene(p);
+    const m = s.meshes.find((x) => x.id === 'mpr-op-0')!;
+    let zMin = Infinity;
+    let zMax = -Infinity;
+    for (let i = 2; i < m.positions.length; i += 3) {
+      zMin = Math.min(zMin, m.positions[i]!);
+      zMax = Math.max(zMax, m.positions[i]!);
+    }
+    expect([r3(zMin), r3(zMax)]).toEqual([0, 12]);
+    expect(m.group).toBe('수직 구멍');
+    expect((s.points ?? []).some((q) => q.id === 'mpr-other-pos')).toBe(false);
+  });
 });
