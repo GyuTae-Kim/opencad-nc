@@ -1605,6 +1605,8 @@ export class NcViewerApp implements PanelHost {
   /**
    * 두 점 측정 붙잡기(코어 setMeasureSnap): G-code·Heidenhain 문서를 재는 동안 원호 중심을 늘 후보로 두고, 고른 이동에는
    * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만.
+   * 추론 붙잡기(코어 0.9.0)도 켠다: 공구 경로 두 선분의 교차점, 첫 점에서 내린 수직 발, 첫 점에서 X·Y·Z 축 방향.
+   * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다.
    * 판재 가공(MPR·PGI·XML)과 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
    */
   private syncMeasureSnap(): void {
@@ -1623,7 +1625,7 @@ export class NcViewerApp implements PanelHost {
     const n = arcCenterCount(c, pos && pos.move >= 0 ? pos.move : null);
     if (this.snapKey?.nc === nc && this.snapKey.n === n) return;
     this.snapKey = { nc, n };
-    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc) });
+    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc), inference: true });
   }
 
   private applyPlayback(d: NcDoc): void {

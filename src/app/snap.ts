@@ -7,6 +7,7 @@
  * - 이동 가운데 점(pointsFor): 고른 선분의 이동 번호(segmentIds)로 그 G0·G1·드릴 이동의 가운데, 원호는 현이 아니라 호 위의 가운데 점
  *   (장면이 호를 나눌 때와 같은 식 — 각·반지름·직선 축을 반씩). 장면은 호를 짧은 선분 여럿으로 그리므로 코어의 선분 가운데 점
  *   (midpoints)은 그 조각의 가운데일 뿐이라 쓰지 않는다.
+ * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 결과 글의 축은 dx·dy·dz로 가린다(measureAxis).
  */
 import type { Pick3d, SnapKind, SnapPoint } from 'opencad-viewer3d/types';
 import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
@@ -28,7 +29,8 @@ const PATH_SET = /^nc-(?:cut|drill)-|^nc-(?:rapid|machine)$/;
 
 /**
  * 모든 원호 이동의 중심 → 붙잡기 점(kind 'center', id = 그 호의 선분 묶음). 같은 묶음 안 같은 자리 중심(여러 바퀴 나선·나눈 원 등)은
- * 처음 것 하나로. limit을 넘으면 거기까지(마우스 이동마다 코어가 모두 훑으므로 아주 큰 프로그램에서 묶는다 — 고른 호의 중심은 pointsFor가 준다)
+ * 처음 것 하나로. limit을 넘으면 거기까지(코어 0.9.0은 512개 이상이면 점 범위 나무로 커서 둘레만 보므로 마우스 이동은 빠르지만,
+ * 점 목록·나무의 메모리를 아주 큰 프로그램에서 묶는다 — 고른 호의 중심은 pointsFor가 준다)
  */
 export function arcCenters(nc: SnapMoves, limit = 200_000): ArcCenters {
   const m = nc.moves;
@@ -122,8 +124,8 @@ export function moveSnapPoints(pick: Pick3d, nc: SnapMoves): SnapPoint[] | null 
   return out.length ? out : null;
 }
 
-/** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점' */
-export function snapLabel(kind: SnapKind | null | undefined): string {
+/** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼 */
+export function snapLabel(kind: SnapKind | null | undefined, axis?: 'x' | 'y' | 'z' | null): string {
   switch (kind) {
     case 'vertex':
       return '꼭짓점';
@@ -135,14 +137,31 @@ export function snapLabel(kind: SnapKind | null | undefined): string {
       return '중심';
     case 'point':
       return '붙잡은 점';
+    case 'intersection':
+      return '교차점';
+    case 'perpendicular':
+      return '수직 발';
+    case 'axis':
+      return axis === 'x' ? 'X축 방향' : axis === 'y' ? 'Y축 방향' : axis === 'z' ? 'Z축 방향' : '축 방향';
     default:
       return '붙잡지 않은 점';
   }
 }
 
+/** 축 방향으로 붙잡은 둘째 점의 축: 첫 점에서 한 축으로만 움직였으면 그 축(코어 결과에는 축이 없어 dx·dy·dz로 가린다) */
+export function measureAxis(m: { dx: number; dy: number; dz: number }): 'x' | 'y' | 'z' | null {
+  const d = [Math.abs(m.dx), Math.abs(m.dy), Math.abs(m.dz)];
+  const k = d.indexOf(Math.max(...d));
+  if (!(d[k]! > 0)) return null;
+  // 나머지 두 축이 큰 축의 1e-6 안이면 그 축 방향
+  return d.every((v, i) => i === k || v <= d[k]! * 1e-6) ? (['x', 'y', 'z'] as const)[k]! : null;
+}
+
 /** 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null) */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null }): [string, string] | null {
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; dx?: number; dy?: number; dz?: number }): [string, string] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
-  return [snapLabel(m.snapA), snapLabel(m.snapB)];
+  // 축 방향은 둘째 점만(첫 점에서 축을 따라 간 점)
+  const axis = m.snapB === 'axis' && m.dx !== undefined ? measureAxis({ dx: m.dx, dy: m.dy ?? 0, dz: m.dz ?? 0 }) : null;
+  return [snapLabel(m.snapA), snapLabel(m.snapB, axis)];
 }
