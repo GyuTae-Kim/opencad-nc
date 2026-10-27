@@ -5,7 +5,9 @@
  * - 3D 뷰어 코어는 장면 일부만 바꾸는 길이 없어(v0.10.0까지), 문서 장면 + 소재 그물로 새 장면을 만들어 카메라를 지킨 채 다시 올린다.
  *   다시 올리는 데 걸린 시간의 네 배(0.08~1초)마다 한 번만 올리고, 측정 점을 찍었거나 정밀 조준 중이면 기다린다.
  * - 패널 "깎기" 탭: 켜고 끄기, 공구 경로 함께 보이기, 계산 상태, 급속이 소재를 지난 줄, 소재 상자, 해상도·색, 공구 표.
- * - 3축(공구 방향 Z) 높이 지도 근사다. 선반·회전축·기울인 평면·판재 형식은 그리지 않고 까닭을 보인다(src/sim/setup.ts).
+ * - 3축(공구 방향 Z) 높이 지도 근사다. 선반·회전축·기울인 평면은 그리지 않고 까닭을 보인다(src/sim/setup.ts).
+ * - 판재 파일(MPR·PGI·XML)은 해석 워커가 만든 재료(MprPayload.sim)로 판 윗면 가공만 깎는다(src/sim/panel.ts). 재생 막대가 없어 늘 끝까지,
+ *   시뮬레이션하지 않은 가공(옆면·아랫면·엣지 밴딩 등)은 까닭별 목록으로 보인다. 판 그물(mpr-board)은 소재가 보이면 뺀다.
  */
 import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
 import { lineAtLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
@@ -14,7 +16,8 @@ import { fmtNum } from './format';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
 import { STOCK_RGB, fanIndices, gridIndices, type PlainArrays, type SimColorMode, type TileArrays } from '../sim/mesh';
-import type { SimEvent, SimPosition } from '../sim/engine';
+import type { SimEvent, SimMoves, SimPosition } from '../sim/engine';
+import { PANEL_SKIP_TEXT, panelSimMoves, panelStock, type PanelSimMoves, type PanelSimSkip, type PanelSimSource, type PanelSimTool, type PanelSkipCode } from '../sim/panel';
 import type { SimRequest, SimResponse, SimStats, SimUpdate } from '../sim/protocol';
 import {
   SIM_BLOCK_TEXT,
@@ -23,6 +26,8 @@ import {
   defaultStock,
   hasCutMoves,
   longCellsFor,
+  panelBlocker,
+  panelToolRows,
   rapidEventRows,
   simBlocker,
   simToolRows,
@@ -45,6 +50,8 @@ export interface SimHost {
   /** 측정 점을 찍었거나 정밀 조준 중이면 true(장면을 바꾸지 않는다) */
   holdScene(): boolean;
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
+  /** 판재 가공 고르기(시뮬레이션하지 않은 가공 목록에서) */
+  selectMprOp(i: number, reveal?: boolean): void;
   /** 패널을 다시 그린다(깎기 탭을 보고 있으면) */
   refreshPanel(): void;
   /** 도구 막대 단추 상태를 맞춘다 */
@@ -68,6 +75,8 @@ export interface SimState {
   /** 급속이 소재를 지난 이동 수 */
   rapidEvents: number;
   stats: SimStats | null;
+  /** 판재 파일: 시뮬레이션하는 가공 수와 하지 않는 가공(까닭별 수). G-code·Heidenhain이면 null */
+  panel: { items: number; skipped: Partial<Record<PanelSkipCode, number>>; disabled: number } | null;
 }
 
 const PREF_KEY = 'opencad-nc.sim';
@@ -101,6 +110,22 @@ function writeJson(key: string, v: unknown): void {
   }
 }
 
+/** 판재 공구 이름: 구멍은 지름, 경로는 공구 번호(MPR TNO)나 공구 폭 */
+export function panelToolLabel(t: PanelSimTool | undefined): string {
+  if (!t) return '—';
+  const d = t.diameter !== undefined ? fmtNum(t.diameter) : '';
+  if (t.type === 'drill') return `구멍 Ø${d}`;
+  if (t.tno !== undefined) return d ? `T${t.tno} Ø${d}` : `T${t.tno}`;
+  return d ? `경로 Ø${d}` : '경로(지름 모름)';
+}
+
+/** 시뮬레이션하지 않은 가공 → 까닭별 수 */
+function skipCounts(list: readonly PanelSimSkip[]): Partial<Record<PanelSkipCode, number>> {
+  const out: Partial<Record<PanelSkipCode, number>> = {};
+  for (const s of list) out[s.code] = (out[s.code] ?? 0) + 1;
+  return out;
+}
+
 function isPhone(): boolean {
   try {
     return window.matchMedia('(max-width: 759.98px), (pointer: coarse) and (max-height: 499.98px)').matches;
@@ -109,9 +134,12 @@ function isPhone(): boolean {
   }
 }
 
-/** 문서 장면 + 소재 그물(공구 경로를 빼면 선분·점 묶음 없이). 소재가 있으면 공작물 상자 그물(nc-stock)은 뺀다 */
+/**
+ * 문서 장면 + 소재 그물(공구 경로를 빼면 선분·점 묶음 없이 — 판재면 가공 그물(구멍 기둥·홈·포켓 상자 mpr-op-*)도 뺀다).
+ * 소재가 있으면 공작물 상자 그물(nc-stock)·판 그물(mpr-board)은 뺀다
+ */
 export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, box: SimBox | null): Scene3d {
-  const meshes = [...base.meshes.filter((m) => m.id !== 'nc-stock'), ...sim];
+  const meshes = [...base.meshes.filter((m) => m.id !== 'nc-stock' && m.id !== 'mpr-board' && (paths || !m.id.startsWith('mpr-op-'))), ...sim];
   let bounds = base.bounds;
   if (box) {
     const b = bounds ?? { min: [...box.min] as [number, number, number], max: [...box.max] as [number, number, number] };
@@ -133,6 +161,9 @@ export class SimView {
   private auto: SimBox | null = null;
   private userStock: SimBox | null = null;
   private area = 0;
+  /** 판재 파일: 재료와 지금 공구로 만든 이동(공구·소재를 바꾸면 다시 만든다) */
+  private panel: PanelSimSource | null = null;
+  private panelMoves: PanelSimMoves | null = null;
   // ── 계산 ──
   private worker: Worker | null = null;
   private gen = 0;
@@ -186,6 +217,8 @@ export class SimView {
     this.stop(false);
     this.key = null;
     this.userStock = null;
+    this.panel = null;
+    this.panelMoves = null;
     if (d && this.on) {
       this.prepare(d);
       this.start();
@@ -204,7 +237,8 @@ export class SimView {
 
   /** 뷰어에 올릴 장면(꺼져 있거나 아직이면 문서 장면 그대로) */
   sceneFor(d: NcDoc): Scene3d {
-    if (!this.on || !d.nc || this.key !== d.nc || !this.ready()) {
+    const key = d.nc ?? d.mpr;
+    if (!this.on || !key || this.key !== key || !this.ready()) {
       this.shown = false;
       return d.scene;
     }
@@ -231,6 +265,7 @@ export class SimView {
       shown: this.shown,
       rapidEvents: u?.events.length ?? 0,
       stats: u ? { ...u.stats } : null,
+      panel: this.panel ? { items: this.panel.items.length, skipped: skipCounts(this.panel.skipped), disabled: this.panel.disabled } : null,
     };
   }
 
@@ -252,8 +287,9 @@ export class SimView {
     }
     if (o.stock !== undefined) {
       this.userStock = o.stock;
-      // 계산량 어림은 소재 윗면에 따라 달라진다
+      // 계산량 어림은 소재 윗면에 따라, 판재 이동의 안전 높이·판 밖 영역은 소재 상자에 따라 달라진다
       this.area = 0;
+      this.panelMoves = null;
       restart = true;
     }
     writeJson(PREF_KEY, this.prefs);
@@ -267,12 +303,13 @@ export class SimView {
   private prepare(d: NcDoc): void {
     const nc = d.nc;
     if (!nc) {
-      this.key = null;
-      this.block = { code: 'panel', line: -1 };
+      this.preparePanel(d);
       return;
     }
     if (this.key === nc) return;
     this.key = nc;
+    this.panel = null;
+    this.panelMoves = null;
     const f = sceneFeatures(d.scene);
     const m = nc.moves;
     let block = this.blocks.get(nc);
@@ -284,13 +321,57 @@ export class SimView {
     this.area = 0;
   }
 
+  /** 판재 파일: 재료 확인, 공구 표, 소재 기본값(판 크기) */
+  private preparePanel(d: NcDoc): void {
+    const mpr = d.mpr;
+    if (!mpr) {
+      this.key = null;
+      this.panel = null;
+      this.panelMoves = null;
+      this.block = { code: 'panel', line: -1 };
+      return;
+    }
+    if (this.key === mpr) return;
+    this.key = mpr;
+    const src = mpr.sim ?? null;
+    this.panel = src;
+    this.panelMoves = null;
+    this.block = panelBlocker(src);
+    this.rows = src ? panelToolRows(src, this.userTools) : [];
+    this.auto = src ? panelStock(src, (t) => (this.rows[t]?.tool.diameter ?? 0) / 2) : null;
+    this.area = 0;
+  }
+
   private stockBox(): SimBox | null {
     return this.userStock ?? this.auto;
   }
 
   /** 공구 번호의 값(표에 없으면 기본 평 엔드밀) */
   private toolOf(n: number): SimTool {
-    return this.rows.find((r) => r.number === n)?.tool ?? { kind: 'flat', diameter: this.host.doc?.nc?.units === 'inch' ? 0.25 : 6, corner: 0, angle: 118 };
+    const units = this.host.doc?.nc?.units ?? this.panel?.units;
+    return this.rows.find((r) => r.number === n)?.tool ?? { kind: 'flat', diameter: units === 'inch' ? 0.25 : 6, corner: 0, angle: 118 };
+  }
+
+  /** 판재 이동(공구 반지름·소재 상자로 만든다 — 바뀌면 다시) */
+  private panelMovesFor(box: SimBox): PanelSimMoves | null {
+    if (!this.panel) return null;
+    if (!this.panelMoves) this.panelMoves = panelSimMoves(this.panel, (t) => this.toolOf(t).diameter / 2, box);
+    return this.panelMoves;
+  }
+
+  /** 엔진에 줄 이동(G-code·Heidenhain은 해석 자료 그대로, 판재는 만든 이동) */
+  private simMoves(d: NcDoc, box: SimBox): SimMoves | null {
+    const nc = d.nc;
+    if (nc) {
+      const m = nc.moves;
+      return { count: m.count, kind: m.kind, points: m.points, tool: m.tool, flags: m.flags, arc: m.arc, arcCenter: nc.arcs.center, arcPlane: nc.arcs.plane, arcSweep: nc.arcs.sweep };
+    }
+    return this.panelMovesFor(box);
+  }
+
+  /** 이동 수(재생 막대 끝) */
+  private moveCount(d: NcDoc): number {
+    return d.nc?.moves.count ?? this.panelMoves?.count ?? 0;
   }
 
   /** 지금 설정으로 긴 변 칸 수 */
@@ -298,11 +379,13 @@ export class SimView {
     const phone = isPhone();
     const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
     const base = longCellsFor(this.prefs.res, phone, mem);
-    if (this.prefs.res !== 'auto' || !d.nc) return base;
+    if (this.prefs.res !== 'auto') return base;
     if (!this.area) {
-      const m = d.nc.moves;
-      const radius = new Map(this.rows.map((r) => [r.number, r.tool.diameter / 2]));
-      this.area = sweepArea(m, (i) => radius.get(m.tool[i]!) ?? 3, box.max[2]);
+      if (d.nc) {
+        const m = d.nc.moves;
+        const radius = new Map(this.rows.map((r) => [r.number, r.tool.diameter / 2]));
+        this.area = sweepArea(m, (i) => radius.get(m.tool[i]!) ?? 3, box.max[2]);
+      } else this.area = this.panelMovesFor(box)?.area ?? 0;
     }
     return autoLongCells(base, Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1]), this.area, phone);
   }
@@ -311,7 +394,7 @@ export class SimView {
     const d = this.host.doc;
     this.stop(false);
     this.error = null;
-    if (!d?.nc || this.block) return;
+    if (!d || (!d.nc && !this.panel) || this.block) return;
     const box = this.stockBox();
     if (!box || !(box.max[0] > box.min[0] && box.max[1] > box.min[1] && box.max[2] > box.min[2])) {
       this.error = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
@@ -339,20 +422,20 @@ export class SimView {
       };
       this.worker = w;
     }
-    const nc = d.nc;
-    const m = nc.moves;
+    const moves = this.simMoves(d, box);
+    if (!moves) return;
     const used = new Set(this.rows.map((r) => r.number));
     const target = this.targetOf(d);
     this.sent = target;
     this.post({
       type: 'init',
       gen: this.gen,
-      moves: { count: m.count, kind: m.kind, points: m.points, tool: m.tool, flags: m.flags, arc: m.arc, arcCenter: nc.arcs.center, arcPlane: nc.arcs.plane, arcSweep: nc.arcs.sweep },
+      moves,
       grid: spec,
       tools: [...used].map((n) => ({ number: n, tool: this.toolOf(n) })),
       defaultTool: this.toolOf(-1),
       mode: this.prefs.color,
-      rapidTol: nc.units === 'inch' ? 0.0005 : 0.01,
+      rapidTol: (d.nc?.units ?? this.panel?.units) === 'inch' ? 0.0005 : 0.01,
       checkpointBytes: isPhone() ? 24 * 1048576 : 96 * 1048576,
       target,
     });
@@ -390,9 +473,10 @@ export class SimView {
     }
   }
 
+  /** 재생 자리(판재는 재생 막대가 없어 늘 끝) */
   private targetOf(d: NcDoc): SimPosition {
-    const count = d.nc?.moves.count ?? 0;
-    const p = d.playSec === null ? null : playPosition(d);
+    const count = this.moveCount(d);
+    const p = d.playSec === null || !d.nc ? null : playPosition(d);
     return p && p.move >= 0 ? { move: p.move, frac: p.frac } : { move: count, frac: 0 };
   }
 
@@ -412,13 +496,14 @@ export class SimView {
     return a;
   }
 
-  private mesh(id: string, a: { positions: Float32Array; colors: Float32Array }, indices: Uint32Array): Mesh3d {
+  private mesh(id: string, a: { positions: Float32Array; colors: Float32Array; normals?: Float32Array }, indices: Uint32Array): Mesh3d {
     return {
       id,
       name: SIM_GROUP,
       group: SIM_GROUP,
       positions: a.positions,
       colors: a.colors,
+      ...(a.normals ? { normals: a.normals } : {}),
       indices,
       color: [STOCK_RGB[0], STOCK_RGB[1], STOCK_RGB[2], 1],
       origin: this.origin,
@@ -512,7 +597,7 @@ export class SimView {
     if (this.error) return this.error;
     if (this.block) return '시뮬레이션하지 않음';
     const u = this.last;
-    const count = this.host.doc?.nc?.moves.count ?? 0;
+    const count = this.host.doc ? this.moveCount(this.host.doc) : 0;
     const p = this.progress();
     if (p !== null) return `계산하는 중… ${p}%`;
     if (!u) return '계산하는 중… 0%';
@@ -529,7 +614,9 @@ export class SimView {
   // ───────────────────────── 패널 "깎기" 탭 ─────────────────────────
 
   renderTab(body: HTMLElement, d: NcDoc): void {
-    if (d.nc && this.key !== d.nc) this.prepare(d);
+    const key = d.nc ?? d.mpr;
+    if (key && this.key !== key) this.prepare(d);
+    const panel = !d.nc ? this.panel : null;
     const u = unitLabel(d.scene.units);
     const row = (k: string, ...v: (Node | string)[]): HTMLElement => h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, k), h('span', { class: 'v sim-v' }, ...v));
     const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
@@ -541,8 +628,12 @@ export class SimView {
     };
     this.statusEl = h('p', { class: 'hint sim-status', 'aria-live': 'polite' }, this.statusText());
     const head: (Node | null)[] = [
-      check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).'),
-      check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on })),
+      panel
+        ? check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '판 윗면 가공으로 판을 깎은 모양을 그립니다.')
+        : check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).'),
+      panel
+        ? check('가공 그림도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on }), '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.')
+        : check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on })),
       this.statusEl,
     ];
     if (this.block) {
@@ -554,13 +645,22 @@ export class SimView {
         p.append(' ', go, b.token ? h('span', { class: 'dim', translate: 'no' }, ` ${b.token}`) : '');
       }
       head.push(p);
-    } else head.push(h('p', { class: 'hint' }, '3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.'));
+    } else if (panel)
+      head.push(
+        h(
+          'p',
+          { class: 'hint' },
+          '판 윗면에서 위→아래로 하는 가공(수직 구멍·홈·포켓·자유 형상 포켓·윤곽)을 3축 높이 지도로 깎은 근사 결과입니다. 구멍은 구멍 지름의 평 끝 공구로, 홈·포켓은 파일이 정한 모양 그대로(공구 모서리 R 없이), 윤곽은 공구 보정(왼쪽·오른쪽)을 넣어 깎습니다. 칸보다 작은 모양은 보지 않습니다.',
+        ),
+      );
+    else head.push(h('p', { class: 'hint' }, '3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.'));
     body.append(group('소재 깎기 시뮬레이션', ...head));
-    if (!d.nc || this.block) return;
+    if (panel) this.renderSkipped(body, panel);
+    if (this.block || (!d.nc && !panel)) return;
 
     // 급속이 소재를 지난 줄
     const ev: SimEvent[] = this.last?.events ?? [];
-    if (this.on && ev.length) {
+    if (this.on && ev.length && d.nc) {
       const { rows, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
       const list = h('ul', { class: 'warn-list' });
       for (const r of rows) {
@@ -600,7 +700,17 @@ export class SimView {
         h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, label), h('span', { class: 'sim-pair' }, num(box.min[axis]!, `${label} — 최소`, (n) => edit(axis, 'min', n)), num(box.max[axis]!, `${label} — 최대`, (n) => edit(axis, 'max', n))));
       const reset = h('button', { class: 'btn small', type: 'button', disabled: !this.userStock }, '자동으로');
       reset.addEventListener('click', () => this.setOptions({ stock: null }));
-      const from = this.userStock ? '직접 정함' : d.nc.stock ? '프로그램의 공작물(BLK FORM)' : '절삭 범위에서 추정';
+      const from = this.userStock
+        ? '직접 정함'
+        : panel
+          ? panel.board
+            ? d.kind === 'mpr'
+              ? '판 크기(LA·BR·DI)'
+              : '판 정보(길이·폭·두께)'
+            : '가공 범위에서 추정'
+          : d.nc?.stock
+            ? '프로그램의 공작물(BLK FORM)'
+            : '절삭 범위에서 추정';
       body.append(
         group(
           '소재',
@@ -608,7 +718,9 @@ export class SimView {
           axisRow('Y 범위', 1),
           axisRow('Z 범위(바닥 ~ 윗면)', 2),
           row('정한 곳', from),
-          h('p', { class: 'hint' }, '자동은 절삭 범위(공구 중심)에 공구 반지름과 여유를 더하고, Z0 아래를 깎으면 Z0을 윗면으로 봅니다. 바꾸면 처음부터 다시 계산합니다.'),
+          panel
+            ? h('p', { class: 'hint' }, '자동은 판 크기(원점 = 판 왼쪽 앞 아래 모서리)입니다. 직사각형이 아닌 판은 외곽선 밖을 바닥 색으로 그립니다. 바꾸면 처음부터 다시 계산합니다.')
+            : h('p', { class: 'hint' }, '자동은 절삭 범위(공구 중심)에 공구 반지름과 여유를 더하고, Z0 아래를 깎으면 Z0을 윗면으로 봅니다. 바꾸면 처음부터 다시 계산합니다.'),
           reset,
         ),
       );
@@ -638,24 +750,25 @@ export class SimView {
     // 공구 표
     const tbody = h('tbody');
     for (const r of this.rows) {
-      const kind = h('select', { class: 'select small', 'aria-label': `T${r.number} 종류` });
+      const name = panel ? panelToolLabel(panel.tools[r.number]) : r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음';
+      const kind = h('select', { class: 'select small', 'aria-label': `${name} 종류` });
       for (const k of SIM_TOOL_KINDS) kind.append(h('option', { value: k }, KIND_LABEL[k]));
       kind.value = r.tool.kind;
-      kind.addEventListener('change', () => this.setTool(r.number, { kind: kind.value as SimToolKind }));
-      const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': `T${r.number} 지름` });
+      kind.addEventListener('change', () => this.setTool(r, { kind: kind.value as SimToolKind }));
+      const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': `${name} 지름` });
       dia.value = String(r.tool.diameter);
       dia.addEventListener('change', () => {
         const n = Number(dia.value);
-        if (n > 0) this.setTool(r.number, { diameter: n });
+        if (n > 0) this.setTool(r, { diameter: n });
       });
       let extra: HTMLElement | string = '';
       if (r.tool.kind === 'bull' || r.tool.kind === 'drill') {
         const isBull = r.tool.kind === 'bull';
-        const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': isBull ? `T${r.number} 모서리 R` : `T${r.number} 끝 각(도)` });
+        const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': isBull ? `${name} 모서리 R` : `${name} 끝 각(도)` });
         el.value = String(isBull ? r.tool.corner : r.tool.angle);
         el.addEventListener('change', () => {
           const n = Number(el.value);
-          if (n > 0) this.setTool(r.number, isBull ? { corner: n } : { angle: n });
+          if (n > 0) this.setTool(r, isBull ? { corner: n } : { angle: n });
         });
         extra = el;
       }
@@ -665,7 +778,7 @@ export class SimView {
         h(
           'tr',
           {},
-          h('td', {}, r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음'),
+          h('td', {}, name),
           h('td', {}, kind),
           h('td', { class: 'sim-num' }, dia),
           h('td', { class: 'sim-num' }, extra),
@@ -682,16 +795,45 @@ export class SimView {
     body.append(
       group(
         '공구',
-        h('div', { class: 'table-wrap' }, h('table', { class: 'grid sim-tools' }, h('thead', {}, h('tr', {}, h('th', {}, '번호'), h('th', {}, '종류'), h('th', {}, `지름(${u || '단위'})`), h('th', {}, '모서리 R · 끝 각'), h('th', {}, '출처'))), tbody)),
-        h('p', { class: 'hint' }, '파일(공구 주석·공구 정의)에서 알 수 없는 값은 기본값(평 엔드밀 Ø6 mm · 0.25 inch)입니다. 바꾼 값은 공구 번호별로 이 브라우저에 기억하고 파일 값보다 먼저 씁니다.'),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'grid sim-tools' }, h('thead', {}, h('tr', {}, h('th', {}, panel ? '공구' : '번호'), h('th', {}, '종류'), h('th', {}, `지름(${u || '단위'})`), h('th', {}, '모서리 R · 끝 각'), h('th', {}, '출처'))), tbody)),
+        panel
+          ? h(
+              'p',
+              { class: 'hint' },
+              '구멍은 파일의 구멍 지름, 경로는 파일의 공구 폭(PGI·XML)을 씁니다. 공구 번호만 있는 MPR 윤곽처럼 지름을 모르면 기본값(평 엔드밀 Ø6 mm · 0.25 inch)이니 지름을 넣으십시오. 홈·포켓은 공구 없이 파일의 모양 그대로 깎습니다. 바꾼 값은 이 브라우저에 기억합니다.',
+            )
+          : h('p', { class: 'hint' }, '파일(공구 주석·공구 정의)에서 알 수 없는 값은 기본값(평 엔드밀 Ø6 mm · 0.25 inch)입니다. 바꾼 값은 공구 번호별로 이 브라우저에 기억하고 파일 값보다 먼저 씁니다.'),
         forget,
       ),
     );
   }
 
-  /** 공구 하나를 바꾼다(기억) */
-  private setTool(n: number, patch: Partial<SimTool>): void {
-    const k = String(n);
+  /** 판재: 시뮬레이션하지 않은 가공(까닭별 수와 가공 — 누르면 그 가공을 고른다), 꺼진 가공 수 */
+  private renderSkipped(body: HTMLElement, src: PanelSimSource): void {
+    if (!src.skipped.length && !src.disabled) return;
+    const sec = h('section', { class: 'prop-group' }, h('h3', {}, `시뮬레이션하지 않은 가공 ${src.skipped.length.toLocaleString('ko-KR')}개`));
+    const byCode = new Map<PanelSkipCode, PanelSimSkip[]>();
+    for (const s of src.skipped) byCode.set(s.code, [...(byCode.get(s.code) ?? []), s]);
+    for (const code of Object.keys(PANEL_SKIP_TEXT) as PanelSkipCode[]) {
+      const list = byCode.get(code);
+      if (!list) continue;
+      sec.append(h('p', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${list.length.toLocaleString('ko-KR')}개`)));
+      const ul = h('ul', { class: 'warn-list' });
+      for (const s of list.slice(0, 50)) {
+        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 가공을 고릅니다' }, h('span', { class: 'ln' }, `가공 ${s.op + 1}`), h('span', { class: 'msg' }, s.label));
+        b.addEventListener('click', () => this.host.selectMprOp(s.op, true));
+        ul.append(h('li', {}, b));
+      }
+      sec.append(ul);
+      if (list.length > 50) sec.append(h('p', { class: 'hint' }, `그 밖 ${(list.length - 50).toLocaleString('ko-KR')}개는 가공 탭에서 보십시오.`));
+    }
+    if (src.disabled) sec.append(h('p', { class: 'hint' }, `꺼진 가공 ${src.disabled.toLocaleString('ko-KR')}개는 깎지 않습니다.`));
+    body.append(sec);
+  }
+
+  /** 공구 하나를 바꾼다(기억 — 판재 공구는 'panel:' 열쇠로) */
+  private setTool(r: SimToolRow, patch: Partial<SimTool>): void {
+    const k = r.key ?? String(r.number);
     this.userTools = { ...this.userTools, [k]: { ...(this.userTools[k] ?? {}), ...patch } };
     writeJson(TOOLS_KEY, this.userTools);
     this.retool();

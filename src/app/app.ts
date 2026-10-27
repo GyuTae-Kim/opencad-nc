@@ -1531,6 +1531,7 @@ export class NcViewerApp implements PanelHost {
         },
         holdScene: () => (this.viewer?.measurePointCount ?? 0) > 0 || !!this.aim?.aiming,
         selectLine: (l, m, r) => this.selectLine(l, m, r),
+        selectMprOp: (i, r) => this.selectMprOp(i, r),
         refreshPanel: () => {
           if (this.doc?.panelTab === 'sim') this.panel.refresh();
         },
@@ -1775,9 +1776,9 @@ export class NcViewerApp implements PanelHost {
     more.grid.setAttribute('aria-checked', String(v?.gridVisible ?? true));
     more.cube.setAttribute('aria-checked', String(v?.viewCubeVisible ?? true));
     more.axes.setAttribute('aria-checked', String(v?.axesVisible ?? true));
-    // 깎기: G-code·Heidenhain 문서에만
+    // 깎기: G-code·Heidenhain과 판재(MPR·PGI·XML) 문서에
     const simOn = !!this.sim?.on;
-    for (const el of [more.sim, ...this.simWide]) el.hidden = !this.doc?.nc;
+    for (const el of [more.sim, ...this.simWide]) el.hidden = !this.doc?.nc && !this.doc?.mpr;
     for (const el of [more.sim, this.simWide[1]]) el.setAttribute('aria-checked', String(simOn));
     const canPlay = this.canPlay();
     this.playBtn.hidden = !canPlay;

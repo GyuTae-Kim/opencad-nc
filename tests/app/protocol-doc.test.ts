@@ -230,7 +230,7 @@ describe('MPR 문서', () => {
     expect(d.kind).toBe('mpr');
     expect(d.nc).toBeNull();
     expect(d.panelTab).toBe('ops');
-    expect(panelTabs(d).map(([k]) => k)).toEqual(['ops', 'vars', 'code', 'info']);
+    expect(panelTabs(d).map(([k]) => k)).toEqual(['ops', 'vars', 'code', 'info', 'sim']);
     expect(docLabel(d)).toBe('woodWOP MPR 4.0 Alpha');
     const ops = mprOps(d.scene);
     expect(ops.map((o) => o.kind)).toEqual(['comment', 'drillV', 'drillV']);
