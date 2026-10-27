@@ -1929,6 +1929,7 @@ export class Runner extends NcEmitter {
       if (this.css) this.cssSpeed((Math.abs(this.pos[0]!) + Math.abs(x)) / 2);
       if (this.motion >= 900) this.latheBox(this.motion, x, z, blk, line);
       else if (this.motion === 20 || this.motion === 30) this.arc(blk, line, x, y, z);
+      else if (this.tangentArc && this.motion === 10 && !machine) this.emitTangentArc(this.plane, x, y, z, line, 'CT');
       else this.emit(this.motion === 0 ? MOVE_RAPID : MOVE_FEED, x, y, z, line, machine ? FLAG_MACHINE : 0);
       this.known |= (blk.has[LX] || (uw && blk.has[LU]) ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] || (uw && blk.has[LW]) ? 4 : 0);
     } else if ((motionG === 20 || motionG === 30) && (blk.has[LI] || blk.has[LJ] || blk.has[LK])) {
@@ -2071,6 +2072,9 @@ export class Runner extends NcEmitter {
     this.wcsKnown.add(idx);
     this.updateOff();
   }
+
+  /** 이 블록의 이송 직선을 앞 요소에 접하는 원호로(Siemens CT — 방언이 블록마다 켠다) */
+  protected tangentArc = false;
 
   protected cancelCycle(): void {
     this.cycle = 0;

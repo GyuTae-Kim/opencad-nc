@@ -24,6 +24,7 @@ import {
   MOVE_RAPID,
   MoveBuilder,
   NcWarnings,
+  PLANE_AXES,
   arcExtend,
   arcLength,
   arcPoints,
@@ -54,6 +55,23 @@ interface CompEvent {
 }
 
 const AXIS_INDEX: Record<string, number> = { x: 0, y: 1, z: 2 };
+
+/**
+ * 모서리 다듬기 꼴: round = 둥글리기(값 = 반지름), chamferLeg = 모따기(값 = 모서리에서 각 요소를 따라 자르는 길이 —
+ * Heidenhain CHF·Siemens CHR), chamferHyp = 모따기(값 = 모따기 선 자체의 길이 — Siemens CHF)
+ */
+export type CornerKind = 'round' | 'chamferLeg' | 'chamferHyp';
+
+/** 마지막으로 넣은 이동(출력 좌표) — 모서리 다듬기·접선 원호가 쓴다 */
+interface LastSeg {
+  i: number;
+  kind: number;
+  s: [number, number, number];
+  e: [number, number, number];
+  arc: number;
+  /** 이 이동의 움직임 시간(공구 교환 시간 빼고) */
+  t: number;
+}
 import type { NcSource } from './text';
 
 export class NcEmitter {
@@ -341,6 +359,7 @@ export class NcEmitter {
   /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다 */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
+    if (this.corner) this.applyCorner(kind, x, y, z, extraFlags, arcIdx);
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     // 도그레그 급속(여러 축이 함께 움직이는 급속, 위치를 알 때만)
     if (this.dogleg && !this.inDogleg && kind === MOVE_RAPID && arcIdx < 0 && this.known === 7 && this.machHigh === 0 && this.machPending === 0 && !(extraFlags & FLAG_MACHINE)) {
@@ -358,6 +377,9 @@ export class NcEmitter {
     // 안전 높이(추정)에 있던 축이 다른 값으로 가면 그 축은 안전 높이를 떠난다
     if (this.machHigh !== 0) this.leaveMachHigh(x, y, z);
     if (this.machPending !== 0) this.machHigh |= this.machPending;
+    const sx = p[0]!;
+    const sy = p[1]!;
+    const sz = p[2]!;
     p[0] = x;
     p[1] = y;
     p[2] = z;
@@ -406,8 +428,194 @@ export class NcEmitter {
     acc.time += t;
     this.mb.time[i] = t + this.pendingTime;
     this.pendingTime = 0;
+    // 마지막 이동(모서리 다듬기·접선 원호용) — 이동마다 새 객체를 만들지 않는다(100만 줄도 빠르게)
+    const ls = this.lastSeg ?? (this.lastSeg = { i, kind, s: [0, 0, 0], e: [0, 0, 0], arc: arcIdx, t });
+    ls.i = i;
+    ls.kind = kind;
+    ls.s[0] = sx;
+    ls.s[1] = sy;
+    ls.s[2] = sz;
+    ls.e[0] = x;
+    ls.e[1] = y;
+    ls.e[2] = z;
+    ls.arc = arcIdx;
+    ls.t = t;
     if (this.limits) this.checkLimits(x, y, z, line, extraFlags);
     return true;
+  }
+
+  // ───────────── 모서리 다듬기(Heidenhain RND·CHF, Siemens RND·RNDM·CHF·CHR)와 접선 원호(Siemens CT) ─────────────
+
+  /** 마지막으로 넣은 이동(출력 좌표) */
+  protected lastSeg: LastSeg | null = null;
+  /** 예약한 모서리 다듬기: 앞 이동(i)의 끝 모서리를 다음 직선 이송과 잇는다 */
+  private corner: { kind: CornerKind; size: number; line: number; plane: number; i: number; feed?: number; label: string } | null = null;
+
+  /**
+   * 바로 앞 이동(직선 이송)의 끝 모서리를 다음 직선 이송과 둥글리기·모따기로 잇게 예약한다. 다음 이동을 넣을 때 앞 이동 끝을
+   * 접점까지 줄이고 둥근 호(또는 모따기 직선)를 넣은 뒤 다음 이동을 접점에서 시작한다(프로그램 위치는 모서리 그대로 —
+   * 증분 좌표의 기준이 바뀌지 않는다). size는 프로그램 단위(좌표 변환의 배율을 곱한다), 0이면 모서리 그대로.
+   * 원호와 만나는 모서리·작업 평면 밖으로 움직이는 모서리·앞뒤 요소보다 큰 값은 경고하고 모서리 그대로 둔다.
+   */
+  protected requestCorner(kind: CornerKind, size: number, line: number, plane: number, label: string, feed?: number): void {
+    this.corner = null;
+    if (!(size > 0)) return;
+    const seg = this.lastSeg;
+    if (!seg || seg.i !== this.mb.count - 1) {
+      this.w.add(`${label}: 앞에 이동이 없어 그리지 않음`, line);
+      return;
+    }
+    if (seg.kind !== MOVE_FEED || seg.arc >= 0) {
+      this.w.add(`${label}: ${seg.kind === MOVE_ARC ? '원호와 만나는 모서리' : '급속·구멍 이동 뒤 모서리'}는 그대로 그림`, line);
+      return;
+    }
+    const scale = this.outXf ? affinePlane(this.outXf, plane).scale : 1;
+    this.corner = { kind, size: size * scale, line, plane, i: seg.i, label, ...(feed !== undefined && feed > 0 ? { feed } : {}) };
+  }
+
+  /** 예약한 모서리를 다음 이동(출력 좌표)과 함께 그린다 — emit의 앞머리에서 부른다 */
+  private applyCorner(kind: number, x: number, y: number, z: number, extraFlags: number, arcIdx: number): void {
+    const c = this.corner!;
+    this.corner = null;
+    const seg = this.lastSeg;
+    if (!seg || seg.i !== c.i || seg.i !== this.mb.count - 1 || this.mb.tool[seg.i] !== this.tool) return;
+    if (kind !== MOVE_FEED || arcIdx >= 0 || extraFlags & (FLAG_MACHINE | FLAG_CYCLE)) {
+      this.w.add(`${c.label}: ${kind === MOVE_ARC ? '원호와 만나는 모서리' : '뒤 요소가 직선 이송이 아닌 모서리'}는 그대로 그림`, c.line);
+      return;
+    }
+    if (this.rotAxis !== null && !this.rotOff && this.rotActive()) {
+      this.w.add(`${c.label}: 회전축을 감는 동안의 모서리는 그대로 그림`, c.line);
+      return;
+    }
+    const [a0, a1, a2] = PLANE_AXES[c.plane] ?? PLANE_AXES[0]!;
+    const S = seg.s;
+    const P = seg.e;
+    const E = [x, y, z];
+    const tol = 1e-7 * Math.max(1, Math.abs(P[a2]!));
+    if (Math.abs(P[a2]! - S[a2]!) > tol || Math.abs(E[a2]! - P[a2]!) > tol) {
+      this.w.add(`${c.label}: 작업 평면 밖으로 움직이는 모서리는 그대로 그림`, c.line);
+      return;
+    }
+    const l1 = Math.hypot(P[a0]! - S[a0]!, P[a1]! - S[a1]!);
+    const l2 = Math.hypot(E[a0]! - P[a0]!, E[a1]! - P[a1]!);
+    if (l1 < 1e-9 || l2 < 1e-9) return;
+    const u1 = [(P[a0]! - S[a0]!) / l1, (P[a1]! - S[a1]!) / l1];
+    const u2 = [(E[a0]! - P[a0]!) / l2, (E[a1]! - P[a1]!) / l2];
+    const cr = u1[0]! * u2[1]! - u1[1]! * u2[0]!;
+    const th = Math.atan2(Math.abs(cr), u1[0]! * u2[0]! + u1[1]! * u2[1]!);
+    // 곧게 이어지면 다듬을 모서리가 없다
+    if (th < 1e-6) return;
+    if (Math.PI - th < 1e-6) {
+      this.w.add(`${c.label}: 되돌아가는 모서리는 그대로 그림`, c.line);
+      return;
+    }
+    const d = c.kind === 'round' ? c.size * Math.tan(th / 2) : c.kind === 'chamferLeg' ? c.size : c.size / (2 * Math.cos(th / 2));
+    if (d > l1 * (1 + 1e-9) + 1e-9 || d > l2 * (1 + 1e-9) + 1e-9) {
+      this.w.add(`${c.label}: 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, c.line);
+      return;
+    }
+    const t1 = [P[0]!, P[1]!, P[2]!];
+    const t2 = [P[0]!, P[1]!, P[2]!];
+    t1[a0] = P[a0]! - u1[0]! * d;
+    t1[a1] = P[a1]! - u1[1]! * d;
+    t2[a0] = P[a0]! + u2[0]! * d;
+    t2[a1] = P[a1]! + u2[1]! * d;
+    this.trimLast(t1);
+    const feed0 = this.feed;
+    if (c.feed !== undefined) this.feed = c.feed;
+    if (c.kind === 'round') {
+      // 중심: 접점에서 도는 쪽(왼쪽으로 돌면 왼쪽 법선)으로 반지름만큼
+      const sg = cr > 0 ? 1 : -1;
+      const ctr = [t1[0]!, t1[1]!, t1[2]!];
+      ctr[a0] = t1[a0]! - u1[1]! * c.size * sg;
+      ctr[a1] = t1[a1]! + u1[0]! * c.size * sg;
+      this.emitArc(c.plane, ctr, sg * th, t2[0]!, t2[1]!, t2[2]!, c.line);
+    } else this.emit(MOVE_FEED, t2[0]!, t2[1]!, t2[2]!, c.line);
+    this.feed = feed0;
+  }
+
+  /** 마지막 이동(직선)의 끝을 n(출력 좌표)으로 줄인다: 길이·시간도 줄인 만큼 덜고 지금 자리를 n으로 */
+  private trimLast(n: readonly number[]): void {
+    const seg = this.lastSeg!;
+    const i = seg.i;
+    const oldLen = Math.hypot(seg.e[0] - seg.s[0], seg.e[1] - seg.s[1], seg.e[2] - seg.s[2]);
+    const newLen = Math.hypot(n[0]! - seg.s[0], n[1]! - seg.s[1], n[2]! - seg.s[2]);
+    const k = (i + 1) * 3;
+    this.mb.points[k] = n[0]!;
+    this.mb.points[k + 1] = n[1]!;
+    this.mb.points[k + 2] = n[2]!;
+    const dl = oldLen - newLen;
+    const nt = this.feedMode === 93 || oldLen <= 0 ? seg.t : (seg.t * newLen) / oldLen;
+    const dt = seg.t - nt;
+    const acc = this.toolAcc();
+    this.feedLen -= dl;
+    this.feedTime -= dt;
+    acc.feedLength -= dl;
+    acc.time -= dt;
+    this.mb.time[i] = this.mb.time[i]! - dt;
+    seg.e[0] = n[0]!;
+    seg.e[1] = n[1]!;
+    seg.e[2] = n[2]!;
+    seg.t = nt;
+    this.pos[0] = n[0]!;
+    this.pos[1] = n[1]!;
+    this.pos[2] = n[2]!;
+  }
+
+  /** 마지막 이동 끝의 접선(작업 평면 plane의 두 축, 출력 좌표 — 단위 벡터). 모르면 null */
+  protected lastTangent(plane: number): [number, number] | null {
+    const seg = this.lastSeg;
+    if (!seg || seg.i !== this.mb.count - 1) return null;
+    const [a0, a1] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
+    if (seg.arc >= 0) {
+      if (this.mb.arcPlane[seg.arc] !== plane) return null;
+      const du = seg.e[a0]! - this.mb.arcCenter[seg.arc * 3 + a0]!;
+      const dv = seg.e[a1]! - this.mb.arcCenter[seg.arc * 3 + a1]!;
+      const l = Math.hypot(du, dv);
+      if (l < 1e-12) return null;
+      return this.mb.arcSweep[seg.arc]! > 0 ? [-dv / l, du / l] : [dv / l, -du / l];
+    }
+    const du = seg.e[a0]! - seg.s[a0]!;
+    const dv = seg.e[a1]! - seg.s[a1]!;
+    const l = Math.hypot(du, dv);
+    return l < 1e-12 ? null : [du / l, dv / l];
+  }
+
+  /**
+   * 접선 원호(Siemens CT): 지금 자리에서 앞 요소에 접하며 (x, y, z)(출력 좌표)로 가는 원호. 앞 요소가 없거나 끝점이 접선 위면 직선.
+   * 공구 축 쪽 움직임은 나선처럼 함께 간다
+   */
+  protected emitTangentArc(plane: number, x: number, y: number, z: number, line: number, label: string): void {
+    const [a0, a1, a2] = PLANE_AXES[plane] ?? PLANE_AXES[0]!;
+    const t = this.lastTangent(plane);
+    const S = this.pos;
+    const e = [x, y, z];
+    if (!t) {
+      this.w.add(`${label} 앞에 방향을 정할 요소가 없음 — 직선으로 그림`, line);
+      this.emit(MOVE_FEED, x, y, z, line);
+      return;
+    }
+    // 중심 = 시작 + n·k (n = 접선의 왼쪽 법선), |중심 - 끝| = |k|
+    const wu = S[a0]! - e[a0]!;
+    const wv = S[a1]! - e[a1]!;
+    const dot = -t[1] * wu + t[0] * wv;
+    if (Math.abs(dot) < 1e-12 * Math.max(1, Math.hypot(wu, wv))) {
+      this.emit(MOVE_FEED, x, y, z, line);
+      return;
+    }
+    const k = -(wu * wu + wv * wv) / (2 * dot);
+    const cu = S[a0]! - t[1] * k;
+    const cv = S[a1]! + t[0] * k;
+    const ccw = k > 0;
+    const TAU = Math.PI * 2;
+    let sweep = Math.atan2(e[a1]! - cv, e[a0]! - cu) - Math.atan2(S[a1]! - cv, S[a0]! - cu);
+    if (ccw) while (sweep <= 0) sweep += TAU;
+    else while (sweep >= 0) sweep -= TAU;
+    const c = [0, 0, 0];
+    c[a0] = cu;
+    c[a1] = cv;
+    c[a2] = S[a2]!;
+    this.emitArc(plane, c, sweep, x, y, z, line);
   }
 
   private leaveMachHigh(x: number, y: number, z: number): void {
