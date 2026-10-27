@@ -69,6 +69,13 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     for (const child of Array.from(node.childNodes)) update(child);
   }
   function mountSelector(): void {
+    // The shared widget preserves native language names with translate="no".
+    // Its own accessible name still follows the selected UI language.
+    const label = translate('언어 선택', language);
+    const trigger = control.element.querySelector('button');
+    const menu = document.getElementById(trigger?.getAttribute('aria-controls') ?? '');
+    for (const el of [trigger, menu]) if (el && el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
+    if (trigger && trigger.title !== label) trigger.title = label;
     const host = root.querySelector('.titlebar, .topbar, header');
     if (host) { control.element.classList.remove('language-control-floating'); if (control.element.parentNode !== host) host.append(control.element); }
     if (!control.element.isConnected) { control.element.classList.add('language-control-floating'); root.append(control.element); }
@@ -84,8 +91,8 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     const fields: [string,string][] = [
       ['meta[name="description"]',data.description],['meta[name="author"]',data.author.name],['meta[property="og:locale"]',data.locale],
       ['meta[property="og:title"]',data.title],['meta[property="og:description"]',data.description],['meta[property="og:url"]',data.url],
-      ['meta[property="og:site_name"]',data.siteName],['meta[property="og:image:alt"]',data.image.alt],
-      ['meta[name="twitter:title"]',data.title],['meta[name="twitter:description"]',data.description],['meta[name="twitter:image:alt"]',data.image.alt],
+      ['meta[property="og:site_name"]',data.siteName],['meta[property="og:image"]',data.image.url],['meta[property="og:image:secure_url"]',data.image.url],['meta[property="og:image:alt"]',data.image.alt],
+      ['meta[name="twitter:title"]',data.title],['meta[name="twitter:description"]',data.description],['meta[name="twitter:image"]',data.image.url],['meta[name="twitter:image:alt"]',data.image.alt],
     ];
     for (const [query,content] of fields) document.querySelector(query)?.setAttribute('content',content);
     document.querySelector('link[rel="canonical"]')?.setAttribute('href',data.url);
@@ -93,7 +100,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     if (graph?.textContent) {
       const existing = JSON.parse(graph.textContent);
       for (const item of existing['@graph'] ?? []) {
-        if (item['@type'] === 'WebApplication') Object.assign(item,{...data.application,'@id':data.url+'#app',url:data.url,description:data.description,inLanguage:language,author:data.author});
+        if (item['@type'] === 'WebApplication') Object.assign(item,{...data.application,'@id':data.url+'#app',url:data.url,description:data.description,inLanguage:language,image:data.image.url,author:data.author});
         if (item['@type'] === 'BreadcrumbList') item.itemListElement=data.breadcrumbs;
       }
       graph.textContent=JSON.stringify(existing).replace(/</g,'\\u003c');
@@ -111,6 +118,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     control.setLanguage(language);
     history.replaceState(history.state,'',url.pathname+url.search+url.hash);
     metadata(); canvasLabels(); update(presentationRoot);
+    mountSelector();
     root.dispatchEvent(new CustomEvent('languagechange',{detail:language}));
   }
   const observer = new MutationObserver(records => {

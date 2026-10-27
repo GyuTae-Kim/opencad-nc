@@ -898,5 +898,7 @@
   "회전축": "Drehachse",
   "회전축 감기": "Drehachsenwicklung",
   "회전축(A·B·C)은 무시함": "Drehachse (A·B·C) ignoriert",
-  "회전축(Z)": "Drehachse (Z)"
+  "회전축(Z)": "Drehachse (Z)",
+  "언어 선택": "Sprache wählen",
+  "https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg": "https://gyutae-kim.github.io/assets/i18n/de/og/opencad.jpg"
 }

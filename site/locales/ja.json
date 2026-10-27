@@ -898,5 +898,7 @@
   "회전축": "回転軸",
   "회전축 감기": "回転軸の巻き",
   "회전축(A·B·C)은 무시함": "回転軸(A・B・C)は無視する",
-  "회전축(Z)": "回転軸(Z)"
+  "회전축(Z)": "回転軸(Z)",
+  "언어 선택": "言語を選択",
+  "https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg": "https://gyutae-kim.github.io/assets/i18n/ja/og/opencad.jpg"
 }

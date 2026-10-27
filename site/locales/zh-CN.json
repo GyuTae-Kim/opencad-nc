@@ -898,5 +898,7 @@
   "회전축": "旋转轴",
   "회전축 감기": "旋转轴缠绕",
   "회전축(A·B·C)은 무시함": "忽略旋转轴 (A·B·C)",
-  "회전축(Z)": "旋转轴 (Z)"
+  "회전축(Z)": "旋转轴 (Z)",
+  "언어 선택": "选择语言",
+  "https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg": "https://gyutae-kim.github.io/assets/i18n/zh-CN/og/opencad.jpg"
 }

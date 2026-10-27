@@ -898,5 +898,7 @@
   "회전축": "Rotary Axis",
   "회전축 감기": "Rotary Axis Wrap",
   "회전축(A·B·C)은 무시함": "Ignore Rotary Axes (A, B, C)",
-  "회전축(Z)": "Rotary Axis (Z)"
+  "회전축(Z)": "Rotary Axis (Z)",
+  "언어 선택": "Choose language",
+  "https://gyutae-kim.github.io/opencad-nc/og-opencad.jpg": "https://gyutae-kim.github.io/assets/i18n/en/og/opencad.jpg"
 }
