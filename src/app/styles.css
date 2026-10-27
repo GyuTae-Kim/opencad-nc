@@ -1365,6 +1365,9 @@ table.grid .wrap {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+table.grid .nb {
+  white-space: nowrap;
+}
 table.grid .num {
   text-align: right;
   font-variant-numeric: tabular-nums;

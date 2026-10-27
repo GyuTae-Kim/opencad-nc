@@ -665,16 +665,16 @@ export class NcPanel {
         o.thickness !== undefined ? `두께 ${fmtNum(o.thickness)}` : '',
         o.holeCount ? `${o.holeCount}개` : '',
         o.tool !== undefined ? `T${o.tool}` : '',
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      ].filter(Boolean);
+      // 값 조각("깊이 13")은 한 덩어리로 두고 " · "에서만 줄을 바꾼다(긴 가공 이름 옆에서 글자 하나 폭으로 접히지 않게)
+      const detailCell = h('td', { class: 'wrap' }, ...detail.flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nb' }, t)]));
       const tr = h(
         'tr',
         { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, title: typeof o.line === 'number' ? `줄 ${o.line + 1}` : '' },
         h('td', { class: 'num faint' }, String(o.index + 1)),
         h('td', { class: 'wrap' }, o.label || MPR_KIND[o.kind] || o.kind),
         h('td', {}, MPR_KIND[o.kind] ?? o.kind),
-        h('td', { class: 'wrap' }, detail),
+        detailCell,
         h('td', {}, o.enabled ? h('span', { class: 'chip' }, '켜짐') : h('span', { class: 'chip warn' }, '꺼짐')),
       );
       tr.addEventListener('click', () => this.host.selectMprOp(o.index));
