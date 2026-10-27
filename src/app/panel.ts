@@ -1036,7 +1036,7 @@ export class NcPanel {
       // 붙잡은 종류(이름마다 따로 번역되게 조각으로)
       const sp = snapPair(m);
       if (sp) lines.push(h('div', { class: 'dim' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1])));
-    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch, !!d.nc)));
+    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch, !!d.nc || !!d.mpr?.snap)));
     f.hidden = !lines.length;
     f.append(...lines);
   }

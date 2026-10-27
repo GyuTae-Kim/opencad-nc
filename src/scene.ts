@@ -11,7 +11,7 @@
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
-import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
+import { compPathSegments, ncCompPath, type CompPathOptions, type NcCompPath } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
 import { pathPolyline, type MprEdgeOp, type MprPart, type MprWorkpiece, type PanelFace } from './mpr';
 
@@ -33,6 +33,8 @@ export interface NcSceneOptions {
    * segmentIds = 이동 번호)와 meta.compRuns가 생긴다. 객체로 주면 반지름 선택(comp.ts CompPathOptions)
    */
   compPath?: boolean | CompPathOptions;
+  /** compPath를 계산했으면 그 조각(직선·호 — 뷰어 앱의 측정 붙잡기가 보정 경로 요소의 가운데 점·호 중심을 찾는다) */
+  onCompPath?: (c: NcCompPath) => void;
 }
 
 const RAPID_COLOR: Rgba = [0.55, 0.55, 0.6, 1];
@@ -291,6 +293,7 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     const cp = ncCompPath(p, typeof opts.compPath === 'object' ? opts.compPath : {});
     compMeta = cp.runs.map((r) => ({ first: r.first, end: r.end, side: r.side, radius: r.used, source: r.source, line: r.line, computed: r.computed }));
     for (const w of cp.warnings) extraWarnings.push(`보정 경로: ${w}`);
+    opts.onCompPath?.(cp);
     if (cp.count) {
       const seg = compPathSegments(cp, maxAngle);
       const q = seg.positions;
@@ -371,6 +374,87 @@ export interface MprSceneOptions {
   disabled?: boolean;
   /** 가공에 쓰이지 않은 윤곽도 얇은 선으로 그릴지(기본 true) */
   contours?: boolean;
+  /** 주면 장면과 같은 묶음 id로 측정 붙잡기 표를 만들어 넘긴다(뷰어 앱 — 원호 중심·윤곽 요소 가운데 점) */
+  onSnapTable?: (t: PanelSnapTable) => void;
+}
+
+/**
+ * 판재 가공의 측정 붙잡기 표(mprToScene이 그린 것과 같은 묶음 id). 장면은 호를 짧은 선분으로 나누므로, 고른 선분이 속한
+ * 윤곽 요소(직선·호)의 진짜 가운데 점과 호 중심을 찾을 수 있게 요소를 그대로 둔다.
+ */
+export interface PanelSnapTable {
+  /** 늘 후보인 중심 xyz(윤곽·판 외곽선의 원호 중심, 원형 포켓 중심)와 점마다 그 묶음 id(같은 묶음 안 같은 자리는 하나) */
+  centers: Float64Array;
+  centerIds: string[];
+  /**
+   * `${선분 묶음 id}#${segmentIds 값}` → 그 윤곽의 요소들(9개씩: 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각 — 직선은 중심각 0).
+   * 윤곽 가공(mpr-op-번호, segmentIds = 가공 번호)과 가공 없는 윤곽(mpr-contours, segmentIds = 윤곽 번호)
+   */
+  paths: Map<string, Float64Array>;
+}
+
+/** 붙잡기 표 모으기(mprToScene 안에서 장면과 같은 조건으로 부른다) */
+class SnapTableBuilder {
+  private readonly centers: number[] = [];
+  private readonly centerIds: string[] = [];
+  private readonly seen = new Set<string>();
+  readonly paths = new Map<string, Float64Array>();
+
+  center(id: string, x: number, y: number, z: number): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    const key = `${id}|${Math.round(x * 1e6)}|${Math.round(y * 1e6)}|${Math.round(z * 1e6)}`;
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
+    this.centers.push(x, y, z);
+    this.centerIds.push(id);
+  }
+
+  /** 경로의 호 중심(호 높이 — 나선이면 시작·끝 가운데) */
+  arcCenters(id: string, path: readonly PathPoint[], z?: number): void {
+    for (let i = 1; i < path.length; i++) {
+      const b = path[i]!;
+      if (b.arc) this.center(id, b.arc.cx, b.arc.cy, z ?? (path[i - 1]!.z + b.z) / 2);
+    }
+  }
+
+  /** 고른 선분 → 윤곽 요소, 그리고 그 호 중심 */
+  path(id: string, segId: number, path: readonly PathPoint[]): void {
+    const out: number[] = [];
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1]!;
+      const b = path[i]!;
+      out.push(a.x, a.y, a.z, b.x, b.y, b.z, b.arc?.cx ?? 0, b.arc?.cy ?? 0, b.arc?.sweep ?? 0);
+    }
+    if (!out.length) return;
+    const key = `${id}#${segId}`;
+    const prev = this.paths.get(key);
+    this.paths.set(key, prev ? Float64Array.from([...prev, ...out]) : Float64Array.from(out));
+    this.arcCenters(id, path);
+  }
+
+  /** 원형 포켓(지름을 아는 기둥): 외곽선 꼭짓점의 가운데가 모두 반지름 안팎 1%면 그 자리(들어가는 면 위) */
+  circlePocket(id: string, outline: readonly number[], diameter: number): void {
+    const n = Math.floor(outline.length / 3);
+    if (n < 6 || !(diameter > 0)) return;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    for (let i = 0; i < n; i++) {
+      x += outline[i * 3]!;
+      y += outline[i * 3 + 1]!;
+      z += outline[i * 3 + 2]!;
+    }
+    x /= n;
+    y /= n;
+    z /= n;
+    const r = diameter / 2;
+    for (let i = 0; i < n; i++) if (Math.abs(Math.hypot(outline[i * 3]! - x, outline[i * 3 + 1]! - y, outline[i * 3 + 2]! - z) - r) > r * 0.01) return;
+    this.center(id, x, y, z);
+  }
+
+  table(): PanelSnapTable {
+    return { centers: Float64Array.from(this.centers), centerIds: this.centerIds.slice(), paths: this.paths };
+  }
 }
 
 const BOARD_COLOR: Rgba = [0.86, 0.74, 0.55, 0.35];
@@ -391,9 +475,11 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   const points: PointSet3d[] = [];
   const box = emptyBox();
   const wp = part.workpiece;
+  const snap = opts.onSnapTable ? new SnapTableBuilder() : null;
   if (wp) {
     const acc = new MeshAccum();
     if (wp.outline && wp.outline.length > 2) {
+      snap?.arcCenters('mpr-board', wp.outline, wp.thickness);
       // 직사각형이 아닌 판(PGI·XML 외곽선): 윗면 외곽선을 두께만큼 아래로 민 기둥
       const seg: number[] = [];
       tessellatePath(wp.outline.map((q) => ({ ...q, z: wp.thickness })), maxAngle, seg);
@@ -457,6 +543,12 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
           const acc = new MeshAccum();
           acc.prism(pr.outline, pr.dir, pr.depth);
           if (acc.isEmpty()) return;
+          if (snap) {
+            // MPR 자유 형상 포켓은 윤곽의 호 중심(포켓 면 높이), 지름을 아는 원형 포켓(PGI·XML)은 외곽선 가운데
+            const c = op.contour !== undefined ? part.contours.find((k) => k.id === op.contour) : undefined;
+            if (c) snap.arcCenters(`mpr-op-${oi}`, c.elements, pr.outline[2]);
+            else if (op.kind === 'pocket' && op.diameter) snap.circlePocket(`mpr-op-${oi}`, pr.outline, op.diameter);
+          }
           meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
           for (let i = 0; i + 2 < pr.outline.length; i += 3)
             for (const k of [0, pr.depth])
@@ -514,6 +606,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         }
         const ids = new Uint32Array(seg.length / 6).fill(oi);
         lines.push({ id: `mpr-op-${oi}`, name: op.label, positions: new Float32Array(seg), color: toolColor(op.tool), group, segmentIds: ids, width: 2 });
+        snap?.path(`mpr-op-${oi}`, oi, path);
         return;
       }
       case 'edge': {
@@ -544,6 +637,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       const before = seg.length;
       tessellatePath(c.elements, maxAngle, seg);
       for (let i = before; i < seg.length; i += 6) ids.push(c.id);
+      snap?.path('mpr-contours', c.id, c.elements);
       for (let i = before; i < seg.length; i += 3) extendBox(box, seg[i]!, seg[i + 1]!, seg[i + 2]!);
     }
     if (seg.length) lines.push({ id: 'mpr-contours', name: '윤곽(가공 없음)', positions: new Float32Array(seg), color: CONTOUR_COLOR, dashed: true, group: '윤곽', segmentIds: new Uint32Array(ids) });
@@ -588,6 +682,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   };
   const bb = boxOf(box);
   if (bb) scene.bounds = bb;
+  if (snap) opts.onSnapTable!(snap.table());
   return scene;
 }
 

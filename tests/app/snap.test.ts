@@ -52,15 +52,11 @@ const fake = vi.hoisted(() => {
 
 vi.mock('opencad-viewer3d', async (importOriginal) => ({ ...(await importOriginal<object>()), Viewer3d: fake.FakeViewer }));
 vi.mock('../../src/app/client', async () => {
-  const { loadNcFile } = await import('../../src/index');
-  const { ncPayload } = await import('../../src/app/payload');
+  const { parseForView } = await import('../../src/app/payload');
   class ParseWorkerClient {
-    async open(name: string, data: ArrayBuffer) {
-      const { parsed, scene } = loadNcFile(name, new Uint8Array(data));
-      const out: Record<string, unknown> = { kind: parsed.kind, scene, ms: 1 };
-      if ('part' in parsed) out.mpr = { lines: parsed.part.lines };
-      else out.nc = ncPayload(parsed.program);
-      return out;
+    // 워커와 같은 길(판재 붙잡기 표·보정 조각까지)
+    async open(name: string, data: ArrayBuffer, opts = {}) {
+      return parseForView(name, new Uint8Array(data), opts);
     }
     cancel(): void {}
   }
@@ -341,12 +337,27 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     }
   });
 
-  it('판재 가공(MPR)은 붙잡기를 켜지 않는다(코어 기본 — 꼭짓점·끝점)', async () => {
+  it('판재 가공(MPR): 워커가 보낸 붙잡기 표로 원호 중심과 고른 윤곽 요소의 가운데 점, 추론 붙잡기', async () => {
     const { app, root } = makeApp();
-    const mpr = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n!\n';
+    const mpr = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n]1\n$E0\nKP\nX=10\nY=10\nZ=19\n\n$E1\nKA\nX=30\nY=10\nDS=1\nI=20\nJ=10\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n!\n';
     expect(await app.openBuffer('panel.mpr', new TextEncoder().encode(mpr).buffer as ArrayBuffer)).toBe(true);
+    const v = fake.FakeViewer.last!;
+    expect(v.snaps).toEqual([]);
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
-    expect(fake.FakeViewer.last!.snaps.filter((s) => s !== null)).toEqual([]);
+    const s = v.snaps.at(-1) as Snap & { inference?: unknown };
+    expect(s!.inference).toBe(true);
+    // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
+    expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
+    expect(s!.pointsFor({ ...linePick('mpr-contours', 1), point: [20, 0.2, 19] })!.map((p) => [p.kind, ...p.point.map((x) => Math.round(x * 1000) / 1000 + 0)])).toEqual([
+      ['midpoint', 20, 0, 19],
+      ['center', 20, 10, 19],
+    ]);
+    // 같은 문서로 다시 맞춰도 코어에 또 주지 않고, 측정을 끄면 끈다
+    const n = v.snaps.length;
+    app.togglePanel(true);
+    expect(v.snaps.length).toBe(n);
+    measureBtn(root).click();
+    expect(v.snaps.at(-1)).toBeNull();
   });
 });
