@@ -829,7 +829,7 @@
   "판": "Platte",
   "판 {0}×{1}×{2}": "Platte {0}×{1}×{2}",
   "판 크기({0}) 값이 없거나 0보다 크지 않습니다.": "Die Plattengröße ({0}) fehlt oder ist nicht größer als 0.",
-  "판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 변수": "Platte, Vertikal-/Horizontalbohren, Konturbearbeitung, Nuten, Taschen, Variablen",
+  "판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 엣지 밴딩, 변수": "Platte, Vertikal-/Horizontalbohren, Konturbearbeitung, Nuten, Taschen, Kantenanleimung, Variablen",
   "판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수": "Platte und Kontur, Bohrungen auf allen sechs Seiten, Topfbandbohrungen, Sägenuten, Rechteck- und Rundtaschen, Bahnen (Bulge-Bögen), Variablen",
   "패널": "Bedienfeld",
   "패널 닫기": "Panel schließen",

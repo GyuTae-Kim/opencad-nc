@@ -829,7 +829,7 @@
   "판": "Panel",
   "판 {0}×{1}×{2}": "Panel {0}×{1}×{2}",
   "판 크기({0}) 값이 없거나 0보다 크지 않습니다.": "The panel size ({0}) is missing or not greater than 0.",
-  "판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 변수": "Panel, vertical/horizontal drilling, contour machining, grooves, pockets, variables.",
+  "판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 엣지 밴딩, 변수": "Panel, vertical/horizontal drilling, contour machining, grooves, pockets, edge banding, variables.",
   "판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수": "Panel and outline, holes on all six faces, door cups, saw grooves, rectangular and round pockets, paths (bulge arcs), variables",
   "패널": "Panel",
   "패널 닫기": "Close panel",
