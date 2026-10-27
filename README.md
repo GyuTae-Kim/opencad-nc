@@ -183,7 +183,7 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
    빌드가 `manifest.webmanifest`와, 번역해 만든 `<언어>/manifest.webmanifest`(그 언어 페이지에서 시작)를 씁니다.
    홈 화면 앱에서는 제목 막대를 상태 막대(노치) 아래로 내리고,
    제목·상태 막대를 아래로 당겨도 페이지를 새로 읽지 않습니다(`overscroll-behavior-y: none` — 코드 목록·패널·시작 화면은 그대로 굴러갑니다).
-8. **오프라인**: 빌드가 만든 서비스 워커(`dist/sw.js` — `tools/sw-plugin.mjs`)가 앱 껍데기(언어 페이지·앱 정보·아이콘)와 빌드 결과(해석 워커·번역 사전 포함)를
+8. **오프라인**: 빌드가 만든 서비스 워커(`dist/sw.js` — 본문 `tools/sw-source.mjs`, 목록·판 이름은 공용 사이트 도구)가 앱 껍데기(언어 페이지·앱 정보·아이콘)와 빌드 결과(해석 워커·번역 사전 포함)를
    미리 담아, 신호 없는 현장에서도 한 번 열어 본 기기라면 앱이 열리고 최근 문서를 엽니다. HTML은 네트워크 먼저(배포가 바로 보이게, 안 되면 담아 둔 것),
    미리 담은 파일과 빌드 결과(`assets/`)는 담아 둔 것 먼저이고, 그 밖(`?open=`으로 받는 NC 파일 등)과 앱 범위 밖 주소는 서비스 워커가 손대지 않습니다
    (바뀐 파일이 옛것으로 열리거나 큰 파일이 쌓이지 않게). 새 판이 설치되면 "새 버전이 있습니다 · 새로 고침" 알림을 띄우고,
@@ -240,9 +240,10 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | 경로 | 내용 |
 |---|---|
 | `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기, 홈 화면 앱 머리 태그) |
-| `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site-metadata.mjs`·`tools/site-plugin.mjs`가 만든다 |
-| `tools/sw-plugin.mjs` | 빌드 끝에 오프라인 서비스 워커(`dist/sw.js` — 미리 담기·공유 받기)를 만드는 Vite 플러그인 |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `pwa.ts`(서비스 워커 등록·새 판 알림·`launchQueue`), `measure.ts`·`snap.ts`(측정 안내 글, 원호 중심·이동 가운데 점 붙잡기), `styles.css` |
+| `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site.mjs` 설정으로 공용 사이트 도구가 만든다 |
+| `tools/site.mjs`, `tools/sw-source.mjs` | 이 앱의 사이트 설정(앱 정보 원본·파일 연결·서비스 워커 판 이름 짓기 — `vite.config.ts`와 시험이 같이 씀)과 오프라인 서비스 워커 본문(미리 담은 것 쓰기·공유 받기). 언어 페이지·검색 정보·사이트맵·`dist/sw.js`는 [공용 사이트 도구](https://github.com/GyuTae-Kim/opencad-site-kit)의 Vite 플러그인이 이 설정으로 만든다 |
+| `site/i18n-core.mjs`, `site/i18n.mjs`, `site/locales/` | 공용 번역기에 이 앱의 사이트 정보(`site/metadata.json`)를 넘기고 사전을 넣는다 |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `measure.ts`·`snap.ts`(측정 안내 글, 원호 중심·이동 가운데 점 붙잡기), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile`, `combineNcFiles` |
 | `src/job.ts` | 여러 파일을 한 작업으로 잇기·나누기(표지 줄, 주 프로그램 고르기) |
@@ -258,7 +259,7 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts`), 가상 목록(`vlist.ts`, `vlist.css`) |
 | `tests/`, `tests/app/` | 해석기 시험, 앱 순수 로직 시험(글·키·테마·이전 목록·문서 모델) |
 | `scripts/sweep/` | 실제 파일 훑기(`npm run sweep`)와 두 결과 비교(`npm run sweep:compare`) |
-| `.github/workflows/mobile-validation.yml`, `tools/performance-summary.mjs`, `tools/serve-performance.mjs`, `tools/mobile-browser*`, `tools/check-browser-result.mjs`, `tools/mobile-part.nc` | 끌어오기 요청마다 휴대폰 첫 열기 성능(Lighthouse)과 터치 사용 흐름(playwright-cli) 확인 |
+| `.github/workflows/mobile-validation.yml`, `tools/mobile-browser*`, `tools/check-browser-result.mjs`, `tools/mobile-part.nc` | 끌어오기 요청마다 휴대폰 첫 열기 성능(Lighthouse)과 터치 사용 흐름(playwright-cli) 확인 |
 
 ## 개발
 
@@ -275,6 +276,21 @@ npm run preview    # 빌드 결과 보기
 `npm install "opencad-viewer3d@github:GyuTae-Kim/opencad-viewer3d#<태그>"`로 받아 `package.json`·`package-lock.json`을 함께 바꿉니다(그냥 `npm install`은 옛 커밋을 남김).
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
 
+**공용 사이트 도구**: 다섯 언어 페이지·검색 정보·사이트맵·내용 수정일·언어별 앱 정보·서비스 워커 빌드, 공용 번역기, 언어 메뉴, 서비스 워커 등록·새 판 알림,
+방문 통계, 휴대폰 성능 비교는 다른 OpenCAD 앱과 함께 쓰는 [opencad-site-kit](https://github.com/GyuTae-Kim/opencad-site-kit)
+(`github:GyuTae-Kim/opencad-site-kit#v0.1.1`, 잠금 커밋 `b492548`, 빌드 때만 써서 `devDependencies`)에 있습니다.
+이 앱에만 있는 값은 `tools/site.mjs`(앱 정보 원본 `site/manifest.webmanifest`와 파일 연결, 검색 정보 자리의 앱 정보 링크, 서비스 워커 판 이름 짓기)와
+`tools/sw-source.mjs`(서비스 워커 본문)에 둡니다. `check:seo`·`check:i18n`·`test:seo`·`update:content-dates`는 도구의 `opencad-site` 명령입니다.
+도구 판을 올릴 때는 빌드 결과를 견줍니다.
+
+```bash
+npx vite build && cp -R dist .runtime/dist-before                                        # 올리기 전
+npm install -D "opencad-site-kit@github:GyuTae-Kim/opencad-site-kit#<태그>"               # package.json·잠금 파일을 함께
+npx vite build && npx opencad-site compare-dist .runtime/dist-before dist                 # 바뀐 파일과 처음 다른 곳
+```
+
+도구의 판 설명에 적힌 것 밖의 차이가 없으면, 스크립트가 바뀐 경우 내용 수정일을 갱신하고(아래 "검색·공유 메타데이터와 콘텐츠 수정일") 빌드·시험을 돌립니다.
+
 **실제 파일 훑기**: 각자 가진 NC 파일 폴더를 앱 워커와 같은 해석 길로 읽어 예외·경고·빈 경로·시간을 모읍니다(파일을 바꾸거나 저장소에 넣지 않습니다).
 
 ```bash
@@ -289,8 +305,9 @@ C 머리 파일(.h)은 뺍니다. `<out>/records.jsonl`에 파일마다 분류(o
 `sweep:compare`는 같은 내용 해시끼리 분류·지표가 바뀐 파일과 새 예외를 보이고, `--fail-on-change`면 바뀐 것이 있을 때 1로 끝납니다.
 
 **휴대폰 검사**: 끌어오기 요청마다 `mobile-validation.yml`이 같은 실행기에서 기준(main)과 후보를 빌드해 Lighthouse로 휴대폰 첫 열기를 세 번씩 재고
-(`tools/performance-summary.mjs`가 중앙값 표를 작업 요약에), playwright-cli로 390px 터치 화면에서 파일 고르기 → 도구 막대 → 원호 중심·가운데 점 측정 →
-패널 → 최근 문서 → `?sample` → 영어 페이지를 확인합니다(`tools/mobile-browser-check.js`). 성능 도구 둘은 다른 OpenCAD 앱과 바이트까지 같게 둡니다.
+(압축해서 주는 미리 보기 서버와 중앙값 표는 공용 도구의 `opencad-site serve-performance`·`performance-summary` — 기준 빌드 뒤 이 커밋으로 돌아와
+`npm ci`를 다시 해 명령을 찾는다), playwright-cli로 390px 터치 화면에서 파일 고르기 → 도구 막대 → 원호 중심·가운데 점 측정 →
+패널 → 최근 문서 → `?sample` → 영어 페이지를 확인합니다(`tools/mobile-browser-check.js`).
 
 ## 배포
 
@@ -332,7 +349,7 @@ MIT
 
 ## 검색·공유 메타데이터와 콘텐츠 수정일
 
-`site/metadata.json`을 공통 원본으로 삼아 Vite 플러그인이 제목·설명·canonical·Open Graph·Twitter Card·JSON-LD를 초기 HTML에 넣습니다. 같은 원본으로 앱의 공개 주소를 담은 `sitemap.xml`도 생성합니다. 공유 이미지는 각 앱의 `public/og-opencad.jpg`이며 앱 파일과 함께 배포합니다. `robots.txt`는 같은 호스트 루트(`https://gyutae-kim.github.io/robots.txt`)의 설정이 적용됩니다.
+`site/metadata.json`을 공통 원본으로 삼아 공용 사이트 도구의 Vite 플러그인이 제목·설명·canonical·Open Graph·Twitter Card·JSON-LD를 초기 HTML에 넣습니다. 같은 원본으로 앱의 공개 주소를 담은 `sitemap.xml`도 생성합니다. 공유 이미지는 각 앱의 `public/og-opencad.jpg`이며 앱 파일과 함께 배포합니다. `robots.txt`는 같은 호스트 루트(`https://gyutae-kim.github.io/robots.txt`)의 설정이 적용됩니다.
 
 `site/content-history.json`에는 실제 콘텐츠 수정 시각과 지문을 저장합니다. 초기 HTML 본문·메타데이터·공유 이미지와 빌드된 앱/워커 JavaScript·CSS를 비교하므로 앱 기능이 바뀌면 날짜 갱신이 필요합니다. 수정일 자체와 소스 맵은 비교에서 제외합니다.
 

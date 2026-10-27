@@ -4,8 +4,8 @@ import { installLocalization } from './i18n';
  */
 import '../view/vlist.css';
 import './styles.css';
-import { initAnalytics } from './analytics';
-import { GA4_MEASUREMENT_ID } from './analytics-config';
+import { initAnalytics } from 'opencad-site-kit/analytics';
+import { GA4_MEASUREMENT_ID } from 'opencad-site-kit/analytics/config';
 import { NcViewerApp } from './app';
 
 const root = document.getElementById('app');

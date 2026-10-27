@@ -35,15 +35,17 @@ jobs:
           npm run build
           mv dist .runtime/performance/baseline
           git checkout --detach "$GITHUB_SHA"
+          # 기준 커밋의 node_modules를 이 커밋의 것으로 되돌린다(성능 명령은 공용 사이트 도구 opencad-site-kit에 있다)
+          npm ci
       - name: Install Korean glyphs for representative browser rendering
         run: sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk
       - name: Compare cold mobile loads
         timeout-minutes: 8
         run: |
           npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli
-          node tools/serve-performance.mjs .runtime/performance/baseline 4320 > "$RUNNER_TEMP/mobile-baseline.log" 2>&1 &
+          node_modules/.bin/opencad-site serve-performance .runtime/performance/baseline 4320 > "$RUNNER_TEMP/mobile-baseline.log" 2>&1 &
           baseline_pid=$!
-          node tools/serve-performance.mjs .runtime/performance/candidate 4321 > "$RUNNER_TEMP/mobile-candidate.log" 2>&1 &
+          node_modules/.bin/opencad-site serve-performance .runtime/performance/candidate 4321 > "$RUNNER_TEMP/mobile-candidate.log" 2>&1 &
           candidate_pid=$!
           trap 'kill "$baseline_pid" "$candidate_pid" 2>/dev/null || true' EXIT
           for attempt in {1..30}; do
@@ -57,7 +59,7 @@ jobs:
               "$RUNNER_TEMP/mobile-audit/node_modules/.bin/lighthouse" "http://127.0.0.1:$port/" --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader" --only-categories=performance,accessibility,best-practices,seo --output=json --output=html --output-path=".runtime/performance/$variant-$round" --quiet
             done
           done
-          node tools/performance-summary.mjs .runtime/performance >> "$GITHUB_STEP_SUMMARY"
+          node_modules/.bin/opencad-site performance-summary .runtime/performance >> "$GITHUB_STEP_SUMMARY"
           cli="$RUNNER_TEMP/mobile-audit/node_modules/.bin/playwright-cli"
           session="mobile-$GITHUB_RUN_ID"
           trap '"$cli" -s="$session" close || true; kill "$baseline_pid" "$candidate_pid" 2>/dev/null || true' EXIT

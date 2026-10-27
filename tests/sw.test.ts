@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { NC_EXTENSIONS } from '../src/extensions';
 import { RECENT_DB, RECENT_MAX, RECENT_MAX_SIZE, RECENT_STORE } from '../src/app/recent';
-import { fileHandling, manifestFor } from '../tools/site-metadata.mjs';
-import { contentVersion, precacheable, precacheUrls, serviceWorkerSource } from '../tools/sw-plugin.mjs';
+import { defaultPrecacheable as precacheable, fingerprint, serviceWorkerValues } from 'opencad-site-kit/pwa/sw-plugin';
+import { fileHandling, offline, site } from '../tools/site.mjs';
+import { serviceWorkerSource } from '../tools/sw-source.mjs';
+
+/** 미리 담을 주소(공용 도구 — 이 앱은 기본 규칙) */
+const precacheUrls = (files: string[]) => serviceWorkerValues(files, () => '').precache;
+/** 판 이름: 미리 담는 파일 이름·내용의 지문(tools/site.mjs의 방식) */
+const contentVersion = (files: { name: string; content: string }[]) =>
+  fingerprint(files.map((f) => ({ file: f.name, url: f.name })), (name) => files.find((f) => f.name === name)!.content, offline.version);
 
 type Range = { lo: string; hi: string };
 const inRange = (k: unknown, r: Range): boolean => typeof k === 'string' && k >= r.lo && k <= r.hi;
@@ -230,13 +237,16 @@ describe('앱 정보(manifest)의 파일 연결', () => {
   });
 
   it('언어 앱 정보도 같은 파일 연결을 두고, 동작 주소는 그 언어 페이지 기준', () => {
-    const ko = manifestFor('ko', NC_EXTENSIONS) as Record<string, unknown>;
-    const en = manifestFor('en', NC_EXTENSIONS) as Record<string, unknown> & { share_target: { action: string }; file_handlers: { action: string }[] };
+    const ko = site.webManifest('ko') as Record<string, unknown>;
+    const en = site.webManifest('en') as unknown as Record<string, unknown> & { share_target: { action: string }; file_handlers: { action: string }[] };
     expect(ko.share_target).toEqual(en.share_target);
     expect(new URL(en.share_target.action, 'https://x.test/app/en/manifest.webmanifest').href).toBe('https://x.test/app/en/share-target');
     expect(new URL(en.file_handlers[0]!.action, 'https://x.test/app/en/manifest.webmanifest').href).toBe('https://x.test/app/en/');
     expect(new URL(en.scope as string, 'https://x.test/app/en/manifest.webmanifest').href).toBe('https://x.test/app/');
-    // 확장자 목록 없이 부르면(메타데이터의 짧은 이름 등) 파일 연결 없이
-    expect('share_target' in manifestFor('en')).toBe(false);
+    expect(ko).toMatchObject(fileHandling(NC_EXTENSIONS));
+    // 언어 페이지의 머리 정보는 그 언어 앱 정보를 가리키고, 홈 화면 이름은 그 짧은 이름
+    const head = site.renderMetadata('en');
+    expect(head).toContain('<link rel="manifest" href="./en/manifest.webmanifest">');
+    expect(head).toContain(`<meta name="apple-mobile-web-app-title" content="${en.short_name as string}">`);
   });
 });

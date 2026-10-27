@@ -12,7 +12,7 @@
  *   다음 일은 새 연결로 한다. 끊긴 연결 오류(UnknownError·InvalidStateError)는 새 연결로 한 번 더 해 본다.
  * - 읽기는 "없음"(지워졌다)과 "못 읽음"(잠깐의 실패)을 가른다 — 못 읽은 항목은 지우지 않는다.
  * - 저장 방식은 RecentBackend로 바꿔 끼운다(시험은 tests/app/recent-memory.ts의 메모리 바탕).
- * - 공유 받기(서비스 워커 — tools/sw-plugin.mjs)는 파일 하나를 이 꼴 그대로 넣고 `?recent=<id>`로 보낸다. 여러 파일·큰 파일은
+ * - 공유 받기(서비스 워커 — tools/sw-source.mjs)는 파일 하나를 이 꼴 그대로 넣고 `?recent=<id>`로 보낸다. 여러 파일·큰 파일은
  *   같은 저장소의 한 번 쓸 자리(`share:<열쇠>` = { time, files: [{ name, data }] })에 두고 `?share=<열쇠>`로 보낸다 — takeShare가 읽고 지운다.
  *
  * 2dcad-viewer의 src/app/recent.ts(같은 한도)를 따라 다시 짰다.

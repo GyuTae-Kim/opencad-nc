@@ -22,7 +22,7 @@ import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
 import { ParseWorkerClient } from './client';
-import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from './analytics';
+import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
@@ -34,7 +34,7 @@ import { measureHint, measureLines } from './measure';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { arcCenterCount, arcCenters, moveSnapPoints, snapPair, type ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
-import { consumeLaunchQueue, registerServiceWorker } from './pwa';
+import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
 
 export const APP_TITLE = 'OpenCAD NC 뷰어';
@@ -1043,9 +1043,12 @@ export class NcViewerApp implements PanelHost {
   }
 
   private async startFromUrl(): Promise<void> {
-    // 홈 화면 앱: 오프라인 서비스 워커와 새 판 알림, 데스크톱 "연결 프로그램"으로 연 파일(여럿이면 한 작업으로)
-    void registerServiceWorker((apply) => toast('새 버전이 있습니다.', 'info', 60_000, { label: '새로 고침', run: apply }));
-    consumeLaunchQueue((files) => void (files.length > 1 ? this.openFiles(files) : this.openFile(files[0]!)));
+    // 홈 화면 앱(공용 도구): 오프라인 서비스 워커와 새 판 알림(배포 빌드만 — 앱으로 돌아오면 새 판 확인),
+    // 데스크톱 "연결 프로그램"으로 연 파일(여럿이면 한 작업으로). 언어 페이지는 <base href="../">라 document.baseURI가 앱 뿌리다
+    if (!import.meta.env.DEV && canUseServiceWorker(location, navigator))
+      void registerServiceWorker(navigator.serviceWorker as unknown as SwContainer, new URL('sw.js', document.baseURI),
+        (apply) => toast('새 버전이 있습니다.', 'info', 60_000, { label: '새로 고침', run: apply }), undefined, { onVisible: whenVisible });
+    consumeLaunchFiles((files) => void (files.length > 1 ? this.openFiles(files) : this.openFile(files[0]!)));
     // 공유 받기(?recent=·?share=·?share-error=)는 한 번만: 주소에서 지운다(다시 읽어도 또 열지 않게)
     const once = parseOnceParams(location.search);
     if (once.recent || once.share || once.shareError) {

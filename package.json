@@ -20,10 +20,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:seo": "node tools/check-seo.mjs",
-    "test:seo": "node --test tools/seo.test.mjs",
-    "update:content-dates": "vite build && node tools/update-content-dates.mjs",
-    "check:i18n": "node tools/check-i18n.mjs",
+    "check:seo": "opencad-site check-seo",
+    "test:seo": "opencad-site test-seo",
+    "update:content-dates": "vite build && opencad-site update-content-dates",
+    "check:i18n": "opencad-site check-i18n",
     "test:i18n": "vitest run tests/i18n.test.ts",
     "sweep": "vite-node scripts/sweep/sweep.ts --",
     "sweep:compare": "vite-node scripts/sweep/compare.ts --"
@@ -34,6 +34,7 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "jsdom": "22.1.0",
+    "opencad-site-kit": "github:GyuTae-Kim/opencad-site-kit#v0.1.1",
     "typescript": "^7.0.2",
     "vite": "^7.3.7",
     "vitest": "^3.2.7"
