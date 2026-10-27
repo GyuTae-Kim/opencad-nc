@@ -1,3 +1,4 @@
+import { metadataForLanguage } from '../site/i18n.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
@@ -152,4 +153,26 @@ describe('language URLs and UI presentation', () => {
       expect(cancelLoad).toHaveBeenCalledOnce();
     } finally { window.removeEventListener('keydown',captured,true);dispose();dispose=undefined;dom.window.close(); }
   });
+  it('switches actual sharing image URLs and native control names while preserving source data', async () => {
+    const korean = metadataForLanguage('ko');
+    const dom = new JSDOM(`<!doctype html><html><head><title>OpenCAD</title><meta property="og:image"><meta property="og:image:secure_url"><meta name="twitter:image"><script type="application/ld+json">{"@graph":[{"@type":"WebApplication"}]}</script></head><body><div id="app"><header class="titlebar"><button>열기</button></header><span class="docname">열기.skp</span></div></body></html>`, {url:languageUrl(korean.url,'en')+'?sample#view'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const root = document.getElementById('app')!;
+    dispose=await installLocalization(root);
+    const labels = {en:'Choose language', de:'Sprache wählen', ko:'언어 선택'};
+    for (const code of ['en','de','ko'] as const) {
+      if (code!=='en') {
+        (document.querySelector(`.language-list [data-language="${code}"]`) as HTMLButtonElement).click();
+        for (let i=0;i<4;i++) await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      const image = code==='ko' ? korean.image.url : `https://gyutae-kim.github.io/assets/i18n/${code}/og/opencad.jpg`;
+      for (const selector of ['meta[property="og:image"]','meta[property="og:image:secure_url"]','meta[name="twitter:image"]']) expect(document.querySelector(selector)!.getAttribute('content')).toBe(image);
+      expect(JSON.parse(document.querySelector('script[type="application/ld+json"]')!.textContent!)['@graph'][0].image).toBe(image);
+      expect(root.querySelector('.language-trigger')!.getAttribute('aria-label')).toBe(labels[code]);
+      expect(root.querySelector('.docname')!.textContent).toBe('열기.skp');
+
+    }
+    dispose();dispose=undefined;dom.window.close();
+  });
+
 });
