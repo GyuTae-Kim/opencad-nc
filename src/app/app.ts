@@ -1105,7 +1105,8 @@ export class NcViewerApp implements PanelHost {
     this.root.classList.toggle('is-busy', this.busy);
     this.refreshBar();
     if (!this.busy) return;
-    this.busyStage.textContent = `${stage}…`;
+    // 줄임표는 따로 둔다(단계 글만 번역 사전에서 찾게)
+    this.busyStage.replaceChildren(document.createTextNode(this.stage), document.createTextNode('…'));
     this.busyBar.style.width = `${Math.round(Math.max(0.02, Math.min(1, fraction)) * 100)}%`;
     this.busyName.textContent = name;
   }
