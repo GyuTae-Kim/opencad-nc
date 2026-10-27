@@ -1,14 +1,15 @@
-import { siteLocalization } from './tools/localization-plugin.mjs';
+import { siteLocalization } from 'opencad-site-kit/i18n/localization-plugin';
+import { siteMetadata } from 'opencad-site-kit/seo/site-plugin';
+import { serviceWorker } from 'opencad-site-kit/pwa/sw-plugin';
 import { defineConfig } from 'vitest/config';
-import { siteMetadata } from './tools/site-plugin.mjs';
-import { serviceWorker } from './tools/sw-plugin.mjs';
+import { offline, site } from './tools/site.mjs';
 
 // 앱(루트 index.html → src/app)과 시험을 함께 설정한다.
 // GitHub Pages 프로젝트 사이트(https://gyutae-kim.github.io/opencad-nc/)에서도 돌게 상대 경로로 낸다.
-// 빌드 끝에 오프라인용 서비스 워커(dist/sw.js — tools/sw-plugin.mjs)를 만든다.
+// 언어 페이지·검색 정보·앱 정보와 빌드 끝의 오프라인 서비스 워커(dist/sw.js)는 공용 도구(opencad-site-kit)가 tools/site.mjs 설정으로 만든다.
 export default defineConfig({
   base: './',
-  plugins: [siteLocalization(), siteMetadata(), serviceWorker()],
+  plugins: [siteLocalization(site), siteMetadata(site), serviceWorker(offline)],
   build: {
     target: 'es2022',
     sourcemap: true,
