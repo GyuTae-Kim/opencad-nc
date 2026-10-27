@@ -3,7 +3,7 @@
  *
  * - 한 번에 문서 하나. 새 파일을 열면 바꾼다(열기에 실패하면 앞 문서를 그대로 둔다).
  * - 해석은 웹 워커(src/worker/parse.worker.ts)에서 하고, 진행률·단계 글을 작업 영역 위 덮개로 보인다.
- * - 뷰어(Viewer3d)는 첫 문서를 열 때 만든다(WebGL2가 없으면 그때 알기 쉬운 오류 글).
+ * - 뷰어(Viewer3d)는 첫 문서를 열 때 만든다(WebGL2가 없으면 그때 알기 쉬운 오류 글). 코어 입구는 그때 나눠 받는다(core.ts — 첫 화면 JS를 줄인다).
  * - 키: 캔버스에 초점이 있으면 뷰어가 F·1~7·Esc를 직접 받고, 다른 곳이면 창 캡처 단계에서 같은 키를 뷰어로 보낸다
  *   (입력 칸 제외). F7 = 격자, Space = 재생/멈춤, Ctrl/⌘+O = 열기.
  * - 자동 확인용으로 window.opencadApp(상태·열기 함수)을 둔다.
@@ -16,11 +16,13 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
+import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
+import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
+import { loadViewerCore } from './core';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -973,6 +975,8 @@ export class NcViewerApp implements PanelHost {
     const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
     this.closeMenu();
     this.setBusy('여는 중', 0.02, name);
+    // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
+    if (!this.viewer) void loadViewerCore().catch(() => undefined);
     try {
       const res = await this.client.open(
         name,
@@ -989,7 +993,8 @@ export class NcViewerApp implements PanelHost {
         const why = res.scene.warnings?.[0];
         throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
       }
-      this.ensureViewer();
+      await this.ensureViewer();
+      if (seq !== this.loadSeq) return false;
       // 여러 파일 작업이면 이름 = 주 프로그램, 크기 = 이은 글
       this.setDoc(createDoc(res.job?.main ?? name, res.job && res.nc ? res.nc.source.bytes.length : size, res, opts));
       attempt.success();
@@ -1172,12 +1177,23 @@ export class NcViewerApp implements PanelHost {
 
   // ───────────────────────── 문서·뷰어 ─────────────────────────
 
-  private ensureViewer(): Viewer3d {
-    if (this.viewer) return this.viewer;
+  /**
+   * 뷰어를 만든다(첫 문서 — 코어 입구를 받을 때까지 기다린다). 이미 있으면 그대로.
+   * 뷰어는 this.viewer로 쓴다(약속의 값으로 돌려주지 않는다 — 시험의 가짜 뷰어처럼 then이 있는 것도 그대로 두게)
+   */
+  private async ensureViewer(): Promise<void> {
+    if (this.viewer) return;
+    let core: Awaited<ReturnType<typeof loadViewerCore>>;
+    try {
+      core = await loadViewerCore();
+    } catch (e) {
+      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
+    }
+    if (this.viewer) return;
     this.viewEl.hidden = false;
     let v: Viewer3d;
     try {
-      v = new Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
+      v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
@@ -1197,7 +1213,6 @@ export class NcViewerApp implements PanelHost {
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
     });
-    return v;
   }
 
   private setDoc(d: NcDoc): void {

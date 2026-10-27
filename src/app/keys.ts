@@ -7,7 +7,13 @@
  * - 앱 키: F7 = 격자, Space = 재생/멈춤(단추에 초점이 있으면 그 단추를 누르게 둔다), Ctrl/⌘+O = 열기,
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  */
-import { VIEW_KEYS, type ViewName } from 'opencad-viewer3d';
+import type { ViewName } from 'opencad-viewer3d';
+
+/**
+ * 숫자 키 → 표준 뷰(코어 VIEW_KEYS와 같은 표 — 시험이 견준다). 코어 입구(opencad-viewer3d)는 문서를 열 때 나눠 받으므로(core.ts)
+ * 첫 화면에서 쓰는 메뉴 글은 이 표로 만든다
+ */
+export const VIEW_KEYS: Readonly<Record<string, ViewName>> = { '1': 'front', '2': 'back', '3': 'left', '4': 'right', '5': 'top', '6': 'bottom', '7': 'seIso' };
 
 export type KeyAction =
   | { type: 'open' }
@@ -67,7 +73,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   return c.onCanvas ? null : { type: 'viewer' };
 }
 
-/** 표준 뷰 → 숫자 키(메뉴 글용, 코어 VIEW_KEYS를 뒤집은 것). 키가 없는 뷰는 undefined */
+/** 표준 뷰 → 숫자 키(메뉴 글용, VIEW_KEYS를 뒤집은 것). 키가 없는 뷰는 undefined */
 export function viewKeyOf(view: ViewName): string | undefined {
   for (const [k, v] of Object.entries(VIEW_KEYS)) if (v === view) return k;
   return undefined;

@@ -18,7 +18,8 @@
  * opencad-step 커밋 5465e63의 src/app/aim.ts를 옮겼다(NC는 면 고르기가 없어 측정에만 쓴다).
  */
 
-import { TOUCH_DRAG_START_PX } from 'opencad-viewer3d';
+// 코어의 작은 모듈만 바로 가져온다(코어 입구는 문서를 열 때 — core.ts)
+import { TOUCH_DRAG_START_PX } from 'opencad-viewer3d/pointer';
 
 /** 십자선 자리 미리 보기·누르기의 포인터 종류: 코어가 마우스·펜의 좁은 허용 거리로 고르게 */
 export const AIM_POINTER_TYPE = 'pen';
