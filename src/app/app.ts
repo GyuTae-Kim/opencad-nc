@@ -27,12 +27,13 @@ import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
-import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseStartParams } from './format';
+import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { measureHint, measureLines } from './measure';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
+import { consumeLaunchQueue, registerServiceWorker } from './pwa';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
 
 export const APP_TITLE = 'OpenCAD NC 뷰어';
@@ -1037,11 +1038,44 @@ export class NcViewerApp implements PanelHost {
   }
 
   private async startFromUrl(): Promise<void> {
+    // 홈 화면 앱: 오프라인 서비스 워커와 새 판 알림, 데스크톱 "연결 프로그램"으로 연 파일(여럿이면 한 작업으로)
+    void registerServiceWorker((apply) => toast('새 버전이 있습니다.', 'info', 60_000, { label: '새로 고침', run: apply }));
+    consumeLaunchQueue((files) => void (files.length > 1 ? this.openFiles(files) : this.openFile(files[0]!)));
+    // 공유 받기(?recent=·?share=·?share-error=)는 한 번만: 주소에서 지운다(다시 읽어도 또 열지 않게)
+    const once = parseOnceParams(location.search);
+    if (once.recent || once.share || once.shareError) {
+      try {
+        history.replaceState(history.state, '', withoutOnceParams(location.href));
+      } catch {
+        /* 주소를 못 바꾸는 환경 */
+      }
+    }
+    if (once.shareError) toast(shareErrorText(once.shareError), 'error', 8000);
+    if (once.recent) return void (await this.openRecentId(once.recent));
+    if (once.share) return void (await this.openShared(once.share));
     const req = parseStartParams(location.search, location.href);
     if (!req) return;
     if (req.kind === 'error') this.showError(req.message);
     else if (req.kind === 'sample') await this.openSample();
     else await this.openUrl(req.url, req.name);
+  }
+
+  /** 최근 문서 하나를 열쇠로 연다(공유 받은 파일 하나 — 서비스 워커가 넣었다) */
+  async openRecentId(id: string): Promise<boolean> {
+    const e = (await this.recent.list()).find((x) => x.id === id);
+    if (e) return this.openRecent(e);
+    this.showError('공유한 파일을 이 브라우저에서 찾지 못했습니다. 열기로 직접 여십시오.');
+    return false;
+  }
+
+  /** 공유 받은 여러 파일(한 작업으로)·큰 파일을 연다 — 한 번 쓸 자리는 읽으면 지우고, 연 것은 파일을 고른 것처럼 최근 문서에 둔다 */
+  async openShared(key: string): Promise<boolean> {
+    const r = await this.recent.takeShare(key);
+    if (r.kind !== 'ok') {
+      this.showError(r.kind === 'missing' ? '공유한 파일을 이 브라우저에서 찾지 못했습니다. 열기로 직접 여십시오.' : '공유한 파일을 읽지 못했습니다. 열기로 직접 여십시오.');
+      return false;
+    }
+    return r.files.length > 1 ? this.openFiles(r.files) : this.openFile(r.files[0]!);
   }
 
   /** 읽기(받기·해석)를 멈춘다: 워커를 끝내고 앞 문서는 그대로 둔다 */

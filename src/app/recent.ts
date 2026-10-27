@@ -12,6 +12,8 @@
  *   다음 일은 새 연결로 한다. 끊긴 연결 오류(UnknownError·InvalidStateError)는 새 연결로 한 번 더 해 본다.
  * - 읽기는 "없음"(지워졌다)과 "못 읽음"(잠깐의 실패)을 가른다 — 못 읽은 항목은 지우지 않는다.
  * - 저장 방식은 RecentBackend로 바꿔 끼운다(시험은 tests/app/recent-memory.ts의 메모리 바탕).
+ * - 공유 받기(서비스 워커 — tools/sw-plugin.mjs)는 파일 하나를 이 꼴 그대로 넣고 `?recent=<id>`로 보낸다. 여러 파일·큰 파일은
+ *   같은 저장소의 한 번 쓸 자리(`share:<열쇠>` = { time, files: [{ name, data }] })에 두고 `?share=<열쇠>`로 보낸다 — takeShare가 읽고 지운다.
  *
  * 2dcad-viewer의 src/app/recent.ts(같은 한도)를 따라 다시 짰다.
  */
@@ -45,7 +47,18 @@ export interface RecentBackend {
   touch(id: string, time: number): Promise<void>;
   remove(ids: readonly string[]): Promise<void>;
   clear(): Promise<void>;
+  /** 공유 받은 한 번 쓸 자리(share:<key>)를 읽고, 그 자리와 남은 다른 자리(앞서 열지 못한 것)를 모두 지운다. 없으면 null */
+  takeShare(key: string): Promise<SharedFile[] | null>;
 }
+
+/** 공유 받은 파일 하나(한 번 쓸 자리) */
+export interface SharedFile {
+  name: string;
+  data: RecentData;
+}
+
+/** 공유 받은 파일 읽기 결과: ok = 파일들(File), missing = 자리가 없음(이미 열었거나 지워짐), error = 저장소를 못 읽음 */
+export type ShareRead = { kind: 'ok'; files: File[] } | { kind: 'missing' } | { kind: 'error' };
 
 export const RECENT_DB = 'opencad-nc';
 export const RECENT_STORE = 'recent';
@@ -160,6 +173,18 @@ export class RecentStore {
     }
   }
 
+  /** 공유 받은 파일들(한 번 쓸 자리 — 읽으면 지운다). 이름 없는 파일은 shared-N.nc */
+  async takeShare(key: string): Promise<ShareRead> {
+    if (!this.backend) return { kind: 'error' };
+    try {
+      const got = await this.backend.takeShare(key);
+      if (!got?.length) return { kind: 'missing' };
+      return { kind: 'ok', files: got.map((f, i) => new File([f.data], (f.name || `shared-${i + 1}.nc`).replace(/^.*[\\/]/, ''))) };
+    } catch {
+      return { kind: 'error' };
+    }
+  }
+
   /** 모두 지우기. 지웠으면 true */
   async clear(): Promise<boolean> {
     if (!this.backend) return false;
@@ -176,6 +201,7 @@ export class RecentStore {
 
 const META = 'meta:';
 const DATA = 'data:';
+const SHARE = 'share:';
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -282,6 +308,15 @@ export function indexedDbBackend(dbName = RECENT_DB): RecentBackend | null {
     },
     async clear() {
       await run('readwrite', (s) => s.clear());
+    },
+    async takeShare(key) {
+      const v = (await run('readonly', (s) => s.get(SHARE + key))) as { files?: SharedFile[] } | undefined;
+      // 읽었으면(없어도) 한 번 쓸 자리를 모두 지운다 — 앞서 열지 못하고 남은 자리도 함께
+      await run('readwrite', (s) => {
+        s.delete(IDBKeyRange.bound(SHARE, `${SHARE}\uffff`));
+        return null;
+      });
+      return v?.files ?? null;
     },
   };
 }

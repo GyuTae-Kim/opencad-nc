@@ -23,13 +23,21 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<s
 
 let toastHost: HTMLElement | null = null;
 
-/** 잠깐 보이는 알림(오류는 role=alert) */
-export function toast(message: string, kind: 'info' | 'error' = 'info', ms = 4000): void {
+/** 잠깐 보이는 알림(오류는 role=alert). action을 주면 단추 하나(누르면 실행하고 닫는다) */
+export function toast(message: string, kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
   if (!toastHost) {
     toastHost = h('div', { class: 'toasts', 'aria-live': 'polite' });
     document.body.append(toastHost);
   }
   const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, message);
+  if (action) {
+    const act = h('button', { class: 'toast-act', type: 'button' }, action.label);
+    act.addEventListener('click', () => {
+      el.remove();
+      action.run();
+    });
+    el.append(act);
+  }
   const close = h('button', { class: 'toast-x', type: 'button', 'aria-label': '알림 닫기', title: '닫기' }, '×');
   close.addEventListener('click', () => el.remove());
   el.append(close);

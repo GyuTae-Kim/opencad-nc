@@ -4,15 +4,32 @@ import metadata from '../site/metadata.json' with { type: 'json' };
 import history from '../site/content-history.json' with { type: 'json' };
 export { metadata, history };
 const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-// Home-screen install: public/manifest.webmanifest is the Korean source. Other languages get a translated copy
-// at <language>/manifest.webmanifest whose start_url is that language page (scope stays the whole app).
+// Home-screen install: site/manifest.webmanifest is the Korean source (the build writes manifest.webmanifest). Other languages
+// get a translated copy at <language>/manifest.webmanifest whose start_url is that language page (scope stays the whole app).
 export const manifestPath = (language = 'ko') => (language === 'ko' ? '' : language + '/') + 'manifest.webmanifest';
-export function manifestFor(language = 'ko') {
-  const source = JSON.parse(readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'));
-  if (language === 'ko') return source;
+/**
+ * Offline app file handling for the extensions the viewer opens (dotless, as in src/extensions.ts NC_EXTENSIONS):
+ * Android share target (POST ./share-target, handled by the service worker), desktop "Open with" (file_handlers →
+ * launchQueue, all chosen files in one window so a main program and its subprograms open as one job) and launch_handler.
+ * Actions are relative to the manifest, so a language manifest shares into and opens files on its own language page.
+ */
+export function fileHandling(extensions) {
+  const exts = [...new Set(extensions.map((e) => '.' + String(e).toLowerCase()))];
+  const xml = exts.filter((e) => e === '.xml');
+  return {
+    share_target: { action: './share-target', method: 'POST', enctype: 'multipart/form-data',
+      params: { files: [{ name: 'file', accept: [...exts, 'text/plain', 'text/x-gcode', 'application/xml', 'text/xml', 'application/octet-stream'] }] } },
+    file_handlers: [{ action: './', accept: { 'text/plain': exts.filter((e) => e !== '.xml'), ...(xml.length ? { 'application/xml': xml } : {}) }, launch_type: 'single-client' }],
+    launch_handler: { client_mode: ['focus-existing', 'auto'] },
+  };
+}
+export function manifestFor(language = 'ko', extensions = null) {
+  const source = JSON.parse(readFileSync(new URL('../site/manifest.webmanifest', import.meta.url), 'utf8'));
+  const files = extensions ? fileHandling(extensions) : {};
+  if (language === 'ko') return { ...source, ...files };
   return { ...source, name: translate(source.name, language), short_name: translate(source.short_name, language),
     description: translate(source.description, language), lang: language, start_url: './', scope: '../',
-    icons: source.icons.map((icon) => ({ ...icon, src: '../' + icon.src })) };
+    icons: source.icons.map((icon) => ({ ...icon, src: '../' + icon.src })), ...files };
 }
 export function renderMetadata(language = 'ko') {
   const metadata = metadataForLanguage(language);

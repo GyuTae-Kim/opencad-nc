@@ -158,18 +158,30 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
    둘째 손가락이 닿으면 조준을 그만두고 두 손가락 이동·확대로 넘어갑니다.
    손가락 기기의 안내에는 키(Esc) 설명 대신 길게 누르기를 적고, 파일 고르기 상자는 확장자로 거르지 않습니다
    (iOS에서 .nc·.mpr 등이 흐리게 막히지 않게 — 모르는 확장자는 앞부분을 보고 이진 파일을 바로 막고, 글 파일은 내용으로 형식을 가립니다).
-6. 최근 문서: 파일 고르기·끌어다 놓기로 열린 파일은 이 브라우저의 IndexedDB(`opencad-nc`)에 새것부터 8개까지 두고
+6. 최근 문서: 파일 고르기·끌어다 놓기(홈 화면 앱의 공유 받기·연결 프로그램 포함)로 열린 파일은 이 브라우저의 IndexedDB(`opencad-nc`)에 새것부터 8개까지 두고
    (60MB 넘는 파일, 예제, `?open=`으로 받은 파일은 두지 않음), 시작 화면의 **최근 문서**에서 이름·크기·연 시각을 보고 눌러 다시 엽니다.
    휴대폰 브라우저가 뒤로 간 탭을 버렸다가 다시 읽어도 파일 앱을 다시 거치지 않습니다. 여러 파일 작업은 이은 글 하나를 주 프로그램 이름으로 두고
    ("파일 N개 작업"), 다시 열면 같은 작업으로 읽습니다. 줄마다 ✕(그 항목만 지우기)와 **모두 지우기**가 있고,
    서버로는 보내지 않습니다(비공개 창처럼 저장소를 못 쓰면 목록이 생기지 않습니다). 읽는 동안 덮개(취소 가능)를 보이고,
    저장된 내용이 없으면 그 항목을 지우되 잠깐 못 읽었으면(연결 끊김 등) 항목을 두고 다시 눌러 보라고 알립니다.
    iOS에서 홈 화면에 추가한 앱은 Safari와 저장 공간이 따로라, Safari에서 연 최근 문서는 홈 화면 앱에 보이지 않습니다(반대도 같음).
-7. 홈 화면에 추가: 웹 앱 매니페스트(`public/manifest.webmanifest` — 이름 "OpenCAD NC 뷰어", 짧은 이름 "NC 뷰어", `standalone`)와
+7. 홈 화면에 추가: 웹 앱 매니페스트(원본 `site/manifest.webmanifest` — 이름 "OpenCAD NC 뷰어", 짧은 이름 "NC 뷰어", `standalone`)와
    192·512·maskable 512 아이콘, iOS용 180px `apple-touch-icon.png`로 휴대폰 홈 화면에서 주소 막대 없이 앱처럼 엽니다.
-   영어·일본어·중국어·독일어 페이지는 빌드 때 번역해 만든 `<언어>/manifest.webmanifest`(그 언어 페이지에서 시작)를 씁니다.
-   서비스 워커는 두지 않아 오프라인으로는 열리지 않습니다. 홈 화면 앱에서는 제목 막대를 상태 막대(노치) 아래로 내리고,
+   빌드가 `manifest.webmanifest`와, 번역해 만든 `<언어>/manifest.webmanifest`(그 언어 페이지에서 시작)를 씁니다.
+   홈 화면 앱에서는 제목 막대를 상태 막대(노치) 아래로 내리고,
    제목·상태 막대를 아래로 당겨도 페이지를 새로 읽지 않습니다(`overscroll-behavior-y: none` — 코드 목록·패널·시작 화면은 그대로 굴러갑니다).
+8. **오프라인**: 빌드가 만든 서비스 워커(`dist/sw.js` — `tools/sw-plugin.mjs`)가 앱 껍데기(언어 페이지·앱 정보·아이콘)와 빌드 결과(해석 워커·번역 사전 포함)를
+   미리 담아, 신호 없는 현장에서도 한 번 열어 본 기기라면 앱이 열리고 최근 문서를 엽니다. HTML은 네트워크 먼저(배포가 바로 보이게, 안 되면 담아 둔 것),
+   미리 담은 파일과 빌드 결과(`assets/`)는 담아 둔 것 먼저이고, 그 밖(`?open=`으로 받는 NC 파일 등)과 앱 범위 밖 주소는 서비스 워커가 손대지 않습니다
+   (바뀐 파일이 옛것으로 열리거나 큰 파일이 쌓이지 않게). 새 판이 설치되면 "새 버전이 있습니다 · 새로 고침" 알림을 띄우고,
+   누르면 새 판으로 바꿔 한 번 다시 읽습니다(판 이름은 담는 파일들의 내용 지문).
+   **공유 받기(Android)**: 앱 정보의 `share_target`(POST `…/share-target`)으로 메일·메신저·파일 앱의 "공유 → NC 뷰어"를 받습니다.
+   파일 하나(60MB 이하)는 서비스 워커가 최근 문서(IndexedDB)에 넣고 그 언어 페이지의 `?recent=<id>`로 엽니다.
+   여러 파일(주 프로그램과 부프로그램)이나 60MB 넘는 파일은 같은 저장소의 한 번 쓸 자리에 두고 `?share=<열쇠>`로 열어,
+   앱이 읽자마자 지우고 여러 파일은 한 작업으로 이어 읽습니다(이은 작업은 파일을 고른 것처럼 최근 문서에 남음). 받지 못하면 까닭을 알립니다.
+   **데스크톱 파일 열기**: `file_handlers`(뷰어가 여는 확장자 전부 — `NC_EXTENSIONS`에서 빌드 때 만듦)와 `launchQueue`로 설치한 앱을
+   파일 탐색기의 "연결 프로그램"으로 쓸 수 있고, 여러 파일을 함께 고르면 창 하나에서 한 작업으로 엽니다(`launch_type: single-client`,
+   이미 열린 창이 있으면 그 창으로). 앱 정보에는 `id`를 두지 않습니다(언어 페이지마다 start_url이 id). 개발 서버는 서비스 워커를 등록하지 않습니다.
 
 | 키 | 하는 일 |
 |---|---|
@@ -184,6 +196,7 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
 | Ctrl/⌘+O | 파일 열기 |
 
 주소 인자: `?sample`(예제 바로 열기), `?open=<같은 출처 주소>`(그 파일을 받아 열기 — 자동 확인용, 다른 사이트 주소는 열지 않음).
+공유 받기가 붙이는 `?recent=<id>`·`?share=<열쇠>`·`?share-error=<까닭>`은 한 번만 쓰고 주소에서 지웁니다.
 테마는 시스템 설정을 따르고, 제목 막대 단추로 고른 테마는 이 브라우저에 기억합니다.
 자동 확인용으로 `window.opencadApp`(상태 `state`, `open`·`openSample`·`openUrl`·`reparse`·`cancel`·`setSection` 등)을 둡니다.
 
@@ -214,8 +227,9 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | 경로 | 내용 |
 |---|---|
 | `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기, 홈 화면 앱 머리 태그) |
-| `public/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 다른 언어 매니페스트는 `tools/site-metadata.mjs`가 만든다 |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서, IndexedDB), `styles.css` |
+| `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site-metadata.mjs`·`tools/site-plugin.mjs`가 만든다 |
+| `tools/sw-plugin.mjs` | 빌드 끝에 오프라인 서비스 워커(`dist/sw.js` — 미리 담기·공유 받기)를 만드는 Vite 플러그인 |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `pwa.ts`(서비스 워커 등록·새 판 알림·`launchQueue`), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile`, `combineNcFiles` |
 | `src/job.ts` | 여러 파일을 한 작업으로 잇기·나누기(표지 줄, 주 프로그램 고르기) |
