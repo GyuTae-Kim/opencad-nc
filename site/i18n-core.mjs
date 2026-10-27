@@ -53,6 +53,12 @@ export function translate(value, language = 'ko') {
     if (pieces.length > 1) result = pieces.map(piece => /[가-힣]/.test(piece) ? translate(piece,language) : piece).join('');
   }
   if (joined !== null && (result === value || hangulCount(joined) <= hangulCount(result))) result = joined;
+  // Several messages on separate lines (a warning tooltip listing two warnings): the key above is normalized, so a pattern
+  // capture may have run across the line break unseen. Translate line by line when that leaves less Korean.
+  if (/\S\s*\n\s*\S/.test(value) && hangulCount(result)) {
+    const lines = value.split(/(\n)/).map(piece => /[가-힣]/.test(piece) ? translate(piece,language) : piece).join('');
+    if (hangulCount(lines) < hangulCount(result)) result = lines;
+  }
   if (cache.size > 4000) cache.clear();
   cache.set(cacheKey, result);
   return result;

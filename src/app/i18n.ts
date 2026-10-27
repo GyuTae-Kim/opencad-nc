@@ -11,7 +11,11 @@ const loaders: Record<string, () => Promise<{default: Record<string,string>}>> =
 async function loadLanguage(language: string): Promise<void> { if (loaders[language]) registerCatalog(language,(await loaders[language]()).default); }
 
 type RecordValue = { source: string; rendered: string };
-const SKIP = '[data-static-languages], [translate="no"], [data-i18n-skip], script, style, [contenteditable]:not([contenteditable="false"]), textarea, input, code, pre, canvas, svg, .anno-layer, .pmi-layer, .docname, .doc-name, .code-list, .cmd-input, .file-name, .tree .name, .tree-name, .boot-recent-list button, .plist .name, .def-cell, .scene-tabs, .scene-cap, .group-item:not(.opt) .name';
+// NC group names (rapid, tool groups, panel operation kinds) are app words; data names such as Siemens named tools carry translate="no".
+const SKIP = '[data-static-languages], [translate="no"], [data-i18n-skip], script, style, [contenteditable]:not([contenteditable="false"]), textarea, input, code, pre, canvas, svg, .anno-layer, .pmi-layer, .docname, .doc-name, .code-list, .cmd-input, .file-name, .tree .name, .tree-name, .boot-recent-list button, .plist .name, .def-cell, .scene-tabs, .scene-cap';
+/** Skipped elements whose own attributes (title, aria-label) are still UI words: inputs, and the program code list and its warning line-number tooltips */
+const ATTR_SELF = 'input, textarea, canvas, [contenteditable], .code-list';
+const ATTR_INSIDE = '.code-list .ln';
 export async function installLocalization(root: HTMLElement): Promise<() => void> {
   let language = currentLanguage(location.href);
   await loadLanguage(language);
@@ -33,7 +37,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     return { source, rendered: rendered === source ? source : (source.match(/^\s*/)?.[0] ?? '') + rendered + (source.match(/\s*$/)?.[0] ?? '') };
   }
   function element(el: Element): void {
-    if ((el.matches(SKIP) && !el.matches('input, textarea, canvas, [contenteditable]')) || el.closest('[translate="no"], [data-i18n-skip]')) return;
+    if ((el.matches(SKIP) && !el.matches(ATTR_SELF)) || el.closest('[translate="no"], [data-i18n-skip]')) return;
     const records = attributes.get(el) ?? new Map<string, RecordValue>(); attributes.set(el, records);
     for (const name of ['title','aria-label','aria-description','placeholder','alt']) {
       if (!el.hasAttribute(name)) continue;
@@ -54,8 +58,13 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       if (node.nodeValue !== record.rendered) node.nodeValue = record.rendered;
       return;
     }
-    if (!(node instanceof Element) || node.parentElement?.closest(SKIP)) return;
-    if (node.matches(SKIP)) { if (node.matches('input, textarea, canvas, [contenteditable]')) element(node); return; }
+    if (!(node instanceof Element)) return;
+    if (node.parentElement?.closest(SKIP) || node.matches(SKIP)) {
+      // Data text stays as it is; only the UI attributes of the skipped element and its code-list line numbers are translated.
+      if (node.matches(ATTR_SELF) || node.matches(ATTR_INSIDE)) element(node);
+      if (node.closest('.code-list')) node.querySelectorAll(ATTR_INSIDE).forEach(element);
+      return;
+    }
     element(node);
     for (const child of Array.from(node.childNodes)) update(child);
   }

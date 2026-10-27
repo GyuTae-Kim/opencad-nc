@@ -567,7 +567,9 @@ export class NcPanel {
       const visible = g ? !d.hiddenGroups.has(g) : true;
       // 이름만 있는 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 번호 칸을 비우고 이름 칸에 보인다
       const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
-      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': `${label} ${visible ? '숨기기' : '보이기'}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
+      // 단추 이름: 이름만 있는 공구는 그 이름(파일 자료 — 번역 틀에 그대로 들어감)
+      const who = t.number >= 100000 ? (t.name ?? label) : label;
+      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': `${who} ${visible ? '숨기기' : '보이기'}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
       eye.disabled = !g;
       eye.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -685,10 +687,10 @@ export class NcPanel {
         h(
           'tr',
           {},
-          h('td', { class: 'mono' }, v.name),
+          h('td', { class: 'mono', translate: 'no' }, v.name),
           h('td', { class: 'num mono' }, v.value !== undefined ? fmtNum(v.value) : '—'),
-          h('td', { class: 'mono dim wrap' }, v.expr !== String(v.value) ? v.expr : ''),
-          h('td', { class: 'dim wrap' }, v.comment ?? ''),
+          h('td', { class: 'mono dim wrap', translate: 'no' }, v.expr !== String(v.value) ? v.expr : ''),
+          h('td', { class: 'dim wrap', translate: 'no' }, v.comment ?? ''),
         ),
       );
     this.body.append(h('div', { class: 'table-wrap' }, h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, '이름'), h('th', { class: 'num' }, '값'), h('th', {}, '식'), h('th', {}, '설명'))), tbody)));
@@ -700,11 +702,13 @@ export class NcPanel {
     const groups = this.host.groups();
     if (!groups.length) return group('묶음', h('p', { class: 'hint' }, '묶음이 없습니다.'));
     const list = h('div', { class: 'groups' });
+    // 묶음 이름은 앱 낱말(급속 이송·구멍·공구 없음 등 — 다른 언어로 옮긴다). 이름 붙은 공구(Siemens T="…")의 묶음은 파일 자료라 그대로 둔다
+    const toolNames = new Set((d.nc?.tools ?? []).map((t) => t.name).filter((n): n is string => !!n));
     for (const g of groups) {
       const cb = h('input', { type: 'checkbox' });
       cb.checked = !d.hiddenGroups.has(g.name);
       cb.addEventListener('change', () => this.host.setGroupVisible(g.name, cb.checked));
-      list.append(h('label', { class: 'group-item' }, cb, h('span', { class: 'name' }, g.name), h('span', { class: 'chip' }, String(g.count))));
+      list.append(h('label', { class: 'group-item' }, cb, h('span', { class: 'name', translate: toolNames.has(g.name) ? 'no' : null }, g.name), h('span', { class: 'chip' }, String(g.count))));
     }
     return group('묶음(켜고 끄기)', list);
   }

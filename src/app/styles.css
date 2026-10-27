@@ -1125,6 +1125,22 @@ button.linkish {
 .toast.error {
   border-left: 4px solid var(--danger);
 }
+.toast-act {
+  margin-left: 10px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast-act:hover,
+.toast-act:focus-visible {
+  background: var(--accent-strong);
+  color: #fff;
+}
 .toast-x {
   position: absolute;
   top: 3px;

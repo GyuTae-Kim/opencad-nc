@@ -11,12 +11,13 @@
  * PROC·%_N_이름_SPF 머리나 함께 연 파일), RET·M17, 드릴 사이클 CYCLE81~89·CYCLE840(모달 MCALL 포함)과 HOLES1·HOLES2 점 패턴,
  * 프레임 TRANS·ATRANS·ROT·AROT(RPL·X·Y·Z)·SCALE·ASCALE·MIRROR·AMIRROR·G58·G59, 작업 좌표계 G54~G57·G505~G599,
  * 기계 좌표 쪽 이동 SUPA·G53·G153·G74·G75(위치를 모르면 안전 높이 규칙), 단위 G70/G71/G700/G710, G4 F(초)·S(회전).
- * 그리지 않는 것(경고): CT(접선 원호 — 직선), RND·CHF(모서리 그대로), CYCLE800(기울인 평면), 밀링·선반 사이클(POCKET·SLOT·CYCLE95 등),
+ * CT(접선 원호, 모달)는 앞 요소에 접하는 원호로, RND·RNDM·CHF·CHR은 앞뒤가 직선인 모서리를 다듬는다(원호와 만나면 그대로, 경고).
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 밀링·선반 사이클(POCKET·SLOT·CYCLE95 등),
  * 시스템 변수($…), 배열·문자열 변수.
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
-import { JOB_FILE_MARK, PLANE_AXES, type NcProgram } from './model';
+import { JOB_FILE_MARK, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
 import { sourceLine, type NcSource } from './text';
 
 const DEG = Math.PI / 180;
@@ -151,6 +152,10 @@ class SiemensRunner extends Runner {
   private modalCall: ModalCall = null;
   private sMotion = 0;
   private sCip = false;
+  /** CT(접선 원호) — G 그룹 1처럼 모달(G0~G3·CIP가 끔) */
+  private sCt = false;
+  /** RNDM(모달 둥글리기 반지름, 0 = 끔) */
+  private sRndm = 0;
   private pole = [0, 0];
   private ap = 0;
   private rp = 0;
@@ -1008,6 +1013,7 @@ class SiemensRunner extends Runner {
       if (gi === 0 || gi === 10 || gi === 20 || gi === 30) {
         this.sMotion = gi;
         this.sCip = false;
+        this.sCt = false;
         pass.push(g);
       } else if (gi === 40) dwell = true;
       else if (gi === 700 || gi === 7000) pass.push(20);
@@ -1130,13 +1136,15 @@ class SiemensRunner extends Runner {
     let radiusR: number | undefined;
     if (idents.includes('CIP')) {
       this.sCip = true;
+      this.sCt = false;
       this.sMotion = 25;
     } else if (idents.includes('CT')) {
-      this.warnOnce('CT', 'CT(접선 원호)는 끝점까지 직선으로 그림', line);
+      // 앞 요소에 접하는 원호(끝점만 줌) — Runner에는 이송 직선으로 넘기고 그리는 자리에서 원호로 바꾼다(tangentArc)
+      this.sCt = true;
       this.sMotion = 10;
       this.sCip = false;
-      motionOut = 10;
     }
+    if (this.sCt) motionOut = 10;
     const isArc = this.sMotion === 20 || this.sMotion === 30;
     if (this.sCip && moveAxes) {
       const mid = cur.slice();
@@ -1240,7 +1248,8 @@ class SiemensRunner extends Runner {
     }
     const t = word('T');
     if (t) b.set(LET('T'), t.str !== undefined ? this.toolNumber(t.str) : (t.value ?? 0), true);
-    if (word('RND') || word('RNDM') || word('CHF') || word('CHR')) this.warnOnce('RND', 'RND·CHF(모서리 둥글리기·모따기)는 모서리 그대로 그림', line);
+    const wRndm = word('RNDM');
+    if (wRndm?.value !== undefined) this.sRndm = Math.max(0, wRndm.value);
     if (idents.includes('SUPA')) b.set(6, 53, true);
     for (const id of idents) {
       if (id === 'CIP' || id === 'CT' || id === 'SUPA' || IGNORE_WORDS.has(id)) continue;
@@ -1249,8 +1258,21 @@ class SiemensRunner extends Runner {
       this.warnOnce(id, `Siemens 낱말 '${id}'은(는) 무시함`, line);
     }
     if (endProg) b.set(12, 30, true);
+    this.tangentArc = this.sCt && moveAxes !== 0;
     if (b.words > 0 || b.comments.length) this.exec(b, line);
+    this.tangentArc = false;
     if (this.ended) return;
+    // 이 블록 끝 모서리 다듬기(다음 이송 직선과): RND = 둥글리기 반지름, CHF = 모따기 선 길이, CHR = 모서리에서 자르는 길이, RNDM = 모달 둥글리기
+    if (moveAxes !== 0) {
+      const wRnd = word('RND');
+      const wChf = word('CHF');
+      const wChr = word('CHR');
+      if (wRnd?.value !== undefined) this.requestCorner('round', wRnd.value * this.scale, line, this.plane, 'RND');
+      else if (wChf?.value !== undefined) this.requestCorner('chamferHyp', wChf.value * this.scale, line, this.plane, 'CHF');
+      else if (wChr?.value !== undefined) this.requestCorner('chamferLeg', wChr.value * this.scale, line, this.plane, 'CHR');
+      else if (this.sRndm > 0 && this.sMotion === 10 && !this.sCt && this.lastSeg?.i === this.mb.count - 1 && this.lastSeg.kind === MOVE_FEED && this.lastSeg.arc < 0)
+        this.requestCorner('round', this.sRndm * this.scale, line, this.plane, 'RNDM');
+    }
 
     // ── 움직인 뒤: 사이클·패턴·부프로그램 ──
     const moved = moveAxes !== 0;

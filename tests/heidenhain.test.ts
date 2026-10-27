@@ -135,7 +135,7 @@ describe('Heidenhain 평문', () => {
       [30, -3],
     ]);
   });
-  it('INCH 단위·모르는 블록 경고·RND 근사', () => {
+  it('INCH 단위·모르는 블록 경고·RND(직선 사이 모서리는 둥근 호로)', () => {
     const q = parseHeidenhain(`0 BEGIN PGM X INCH
 1 L X+1 Y+0 R0 FMAX
 2 L X+2 F10
@@ -144,8 +144,14 @@ describe('Heidenhain 평문', () => {
 5 PLANE SPATIAL SPA+0 SPB+45 SPC+0
 6 END PGM X INCH`);
     expect(q.units).toBe('inch');
-    expect(q.moves.count).toBe(2);
-    expect(q.warnings.some((w) => w.includes('RND'))).toBe(true);
+    // 예전에는 모서리 그대로(이동 2개 + RND 경고). 이제 L X+2 끝을 0.1 줄이고 반지름 0.1 호를 넣는다
+    expect(ends(q)).toEqual([
+      [1.9, 0, 0],
+      [2, 0.1, 0],
+      [2, 1, 0],
+    ]);
+    expect(q.moves.kind[1]).toBe(MOVE_ARC);
+    expect(q.warnings.some((w) => w.includes('RND'))).toBe(false);
     expect(q.warnings.some((w) => w.includes('PLANE'))).toBe(true);
   });
 

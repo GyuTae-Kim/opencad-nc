@@ -1424,10 +1424,13 @@ export class Runner extends NcEmitter {
           break;
         case 50:
         case 51:
+          // 좌표가 있으면 LinuxCNC 스플라인(G5 3차 — I·J·P·Q, G5.1 2차 — I·J, 모달 이동 꼴), 없으면 Fanuc 고속·AI 모드 켜기(무시)
+          if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) motionG = g;
+          break;
         case 52:
-          // 좌표가 있으면 LinuxCNC 스플라인(끝점까지 직선으로), 없으면 Fanuc 고속·AI 모드 켜기(무시)
+          // G5.2 NURBS(L·P 조정점 목록)는 끝점까지 직선으로
           if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) {
-            this.w.add(`G${(g / 10).toFixed(g % 10 ? 1 : 0)} 스플라인은 끝점까지 직선으로 그림`, line);
+            this.w.add('G5.2 스플라인은 끝점까지 직선으로 그림', line);
             motionG = 10;
           }
           break;
@@ -1926,9 +1929,13 @@ export class Runner extends NcEmitter {
       const x = t[0]!;
       const y = t[1]!;
       const z = t[2]!;
+      // G5가 I·J 없이 앞 스플라인을 이어 쓰는 것은 G5끼리만(다른 이동이 끼면 끊긴다)
+      if (this.motion !== 50) this.splinePQ = null;
       if (this.css) this.cssSpeed((Math.abs(this.pos[0]!) + Math.abs(x)) / 2);
       if (this.motion >= 900) this.latheBox(this.motion, x, z, blk, line);
       else if (this.motion === 20 || this.motion === 30) this.arc(blk, line, x, y, z);
+      else if ((this.motion === 50 || this.motion === 51) && !machine) this.spline(blk, line, x, y, z);
+      else if (this.tangentArc && this.motion === 10 && !machine) this.emitTangentArc(this.plane, x, y, z, line, 'CT');
       else this.emit(this.motion === 0 ? MOVE_RAPID : MOVE_FEED, x, y, z, line, machine ? FLAG_MACHINE : 0);
       this.known |= (blk.has[LX] || (uw && blk.has[LU]) ? 1 : 0) | (blk.has[LY] ? 2 : 0) | (blk.has[LZ] || (uw && blk.has[LW]) ? 4 : 0);
     } else if ((motionG === 20 || motionG === 30) && (blk.has[LI] || blk.has[LJ] || blk.has[LK])) {
@@ -2070,6 +2077,79 @@ export class Runner extends NcEmitter {
     this.wcsOff.set(idx, cur);
     this.wcsKnown.add(idx);
     this.updateOff();
+  }
+
+  /** 이 블록의 이송 직선을 앞 요소에 접하는 원호로(Siemens CT — 방언이 블록마다 켠다) */
+  protected tangentArc = false;
+  /** 앞 G5의 끝 쪽 조정점 오프셋 P·Q(프로그램 좌표) — 다음 G5가 I·J 없이 이어 쓴다 */
+  protected splinePQ: [number, number] | null = null;
+
+  /**
+   * LinuxCNC 스플라인(G17 평면 X·Y만): G5 = 3차 베지어(I·J = 시작점에서 첫 조정점까지, P·Q = 끝점에서 둘째 조정점까지 — 증분,
+   * 이어지는 G5가 I·J를 빼면 앞 G5의 -P·-Q로 접선을 잇는다), G5.1 = 2차(I·J = 시작점에서 조정점까지).
+   * 휘는 정도에 맞춰 이송 직선 조각으로 나눈다(조각과 곡선의 차이 0.005 mm 안팎). 규칙에 어긋나면 끝점까지 직선으로 그리고 알린다
+   */
+  protected spline(blk: Block, line: number, x: number, y: number, z: number): void {
+    const name = this.motion === 50 ? 'G5' : 'G5.1';
+    const straight = (why: string): void => {
+      this.w.add(`${name}: ${why} — 끝점까지 직선으로 그림`, line);
+      this.splinePQ = null;
+      this.emit(MOVE_FEED, x, y, z, line);
+    };
+    if (this.plane !== 0) return straight('스플라인은 G17(XY) 평면에서만 읽음');
+    if (blk.has[LZ]) return straight('스플라인 블록에 Z가 있음');
+    const s = Array.from(this.progPos());
+    const e = this.xf ? Array.from(this.ppT) : [x - this.off[0]!, y - this.off[1]!, z - this.off[2]!];
+    const kx = this.axScale[0]!;
+    const ky = this.axScale[1]!;
+    const hasI = blk.has[LI];
+    const hasJ = blk.has[LJ];
+    const ctrl: number[][] = [];
+    if (this.motion === 51) {
+      const i = hasI ? blk.val[LI]! * kx : 0;
+      const j = hasJ ? blk.val[LJ]! * ky : 0;
+      if (i === 0 && j === 0) return straight('조정점 I·J가 없음');
+      ctrl.push([s[0]! + i, s[1]! + j]);
+      this.splinePQ = null;
+    } else {
+      if (!blk.has[LP] || !blk.has[LQ]) return straight('끝 쪽 조정점 P·Q가 없음');
+      if (hasI !== hasJ) return straight('I·J 가운데 하나만 있음');
+      let i: number;
+      let j: number;
+      if (hasI) {
+        i = blk.val[LI]! * kx;
+        j = blk.val[LJ]! * ky;
+      } else if (this.splinePQ) {
+        i = -this.splinePQ[0];
+        j = -this.splinePQ[1];
+      } else return straight('이어 쓸 앞 G5가 없는데 I·J가 없음');
+      const pq: [number, number] = [blk.val[LP]! * kx, blk.val[LQ]! * ky];
+      ctrl.push([s[0]! + i, s[1]! + j], [e[0]! + pq[0], e[1]! + pq[1]]);
+      this.splinePQ = pq;
+    }
+    // 조각 수: 2차 미분 크기 M으로 줄 차이 ≤ M/(8n²)
+    const pts = [[s[0]!, s[1]!], ...ctrl, [e[0]!, e[1]!]];
+    const deg = pts.length - 1;
+    let m = 0;
+    for (let k = 0; k + 2 < pts.length; k++) m = Math.max(m, Math.hypot(pts[k]![0]! - 2 * pts[k + 1]![0]! + pts[k + 2]![0]!, pts[k]![1]! - 2 * pts[k + 1]![1]! + pts[k + 2]![1]!));
+    const tol = this.displayInch ? 0.0002 : 0.005;
+    const n = Math.max(2, Math.min(2000, Math.ceil(Math.sqrt((deg * (deg - 1) * m) / (8 * tol)))));
+    const q = [0, 0, s[2]!];
+    const out = [0, 0, 0];
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      const u = 1 - t;
+      if (deg === 2) {
+        q[0] = u * u * pts[0]![0]! + 2 * u * t * pts[1]![0]! + t * t * pts[2]![0]!;
+        q[1] = u * u * pts[0]![1]! + 2 * u * t * pts[1]![1]! + t * t * pts[2]![1]!;
+      } else {
+        q[0] = u * u * u * pts[0]![0]! + 3 * u * u * t * pts[1]![0]! + 3 * u * t * t * pts[2]![0]! + t * t * t * pts[3]![0]!;
+        q[1] = u * u * u * pts[0]![1]! + 3 * u * u * t * pts[1]![1]! + 3 * u * t * t * pts[2]![1]! + t * t * t * pts[3]![1]!;
+      }
+      this.toDisplay(q, out);
+      this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, line);
+    }
+    this.emit(MOVE_FEED, x, y, z, line);
   }
 
   protected cancelCycle(): void {

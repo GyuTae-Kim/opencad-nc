@@ -1,5 +1,9 @@
 import { languages } from '../site/i18n.mjs';
+import { NC_EXTENSIONS } from '../src/extensions.ts';
 import { manifestFor, manifestPath, metadata, renderMetadata, sitemapXml } from './site-metadata.mjs';
+
+/** App manifest of a language page, with file handling for every extension the viewer opens */
+const appManifest = (language) => JSON.stringify(manifestFor(language, NC_EXTENSIONS), null, 2) + '\n';
 
 // The same generator supplies development HTML, deployment HTML and sitemap XML.
 export function siteMetadata() {
@@ -13,10 +17,10 @@ export function siteMetadata() {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = (req.url ?? '').split('?')[0];
-        const language = path.match(/\/(en|ja|zh-CN|de)\/manifest\.webmanifest$/)?.[1];
-        if (language) {
+        const manifest = path.match(/^\/(?:(en|ja|zh-CN|de)\/)?manifest\.webmanifest$/);
+        if (manifest) {
           res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
-          return res.end(JSON.stringify(manifestFor(language), null, 2));
+          return res.end(appManifest(manifest[1] ?? 'ko'));
         }
         if (path !== '/sitemap.xml' && path !== sitemapPath) return next();
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
@@ -26,9 +30,7 @@ export function siteMetadata() {
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml() });
       this.emitFile({ type: 'asset', fileName: '.nojekyll', source: '' });
-      for (const { code } of languages.filter((item) => item.code !== 'ko')) {
-        this.emitFile({ type: 'asset', fileName: manifestPath(code), source: JSON.stringify(manifestFor(code), null, 2) + '\n' });
-      }
+      for (const { code } of languages) this.emitFile({ type: 'asset', fileName: manifestPath(code), source: appManifest(code) });
     },
   };
 }

@@ -52,6 +52,19 @@ describe('language URLs and UI presentation', () => {
     expect(translate('줄 3 · 급속 · 공구 모서리 · 0, 0, 5', 'en')).toBe('Line 3 · Rapid · 공구 모서리 · 0, 0, 5');
     expect(translate('줄 3 · 급속 · CUTTER_A · 0, 0, 5', 'en')).toBe('Line 3 · Rapid · CUTTER_A · 0, 0, 5');
   });
+  it('translates each line of a multi-line warning tooltip, even when one pattern would swallow both lines', () => {
+    // 코드 목록의 경고 줄 번호 칸 title: 한 줄에 경고 둘("T{0}: …"가 두 줄을 다 잡아 앞 줄이 한국어로 남던 것)
+    const tip = 'T2: 공구 교환 뒤 공구 길이 보정(G43 H) 없이 절삭\nT2: 주축이 멈춘 채(M5·S0) 절삭 이동';
+    for (const {code} of languages.filter(item => item.code !== 'ko')) {
+      expect(translate(tip, code), code).not.toMatch(/[가-힣]/);
+      expect(translate('지원하지 않는 G150\nG150 블록의 좌표는 이동으로 그리지 않음', code), code).not.toMatch(/[가-힣]/);
+    }
+    expect(translate(tip, 'en')).toBe('T2: cutting after the tool change without tool length offset (G43 H)\nT2: cutting move with the spindle stopped (M5 · S0)');
+    // 묶음 이름·형식 조각·공구 숨기기 단추
+    for (const {code} of languages.filter(item => item.code !== 'ko'))
+      for (const text of ['급속 이송', '기계 원점 쪽 이동(추정)', '공구 없음', '보정 경로', '꺼진 가공', '기타 가공(위치)', 'Fanuc · 선반 · mm', 'T1 숨기기', 'T1 보이기', '화면으로 보내는 중'])
+        expect(translate(text, code), `${code}: ${text}`).not.toMatch(/[가-힣]/);
+  });
   it('names the detected dialect in the "자동 (…)" option in every language', () => {
     // 정보 탭 방언 고르기의 첫 항목: 방언 이름이 한국어인 것(일반 ISO·Heidenhain 평문)도 그 언어로
     for (const {code} of languages.filter(item => item.code !== 'ko'))
@@ -95,6 +108,29 @@ describe('language URLs and UI presentation', () => {
     expect(root.querySelector('canvas')).toBe(canvas);button.click();expect(clicked).toHaveBeenCalledOnce();
     expect(root.querySelector('[translate="no"]:not(.language-control):not(.language-list)')!.textContent).toBe('열기');
     dispose();dispose=undefined;dom.window.close();
+  });
+  it('translates code-list tooltips and NC group names but leaves program text and named-tool groups alone', async () => {
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header>'
+      + '<div class="vlist code-list" aria-label="프로그램 코드"><div class="vlist-row warn"><span class="ln" title="T1: 주축이 멈춘 채(M5·S0) 절삭 이동">12</span><span class="tx">(급속 이송)</span></div></div>'
+      + '<label class="group-item"><span class="name">급속 이송</span></label><label class="group-item"><span class="name" translate="no">공구 없음</span></label>'
+      + '</div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/en/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const root = document.getElementById('app')!;
+    dispose = await installLocalization(root);
+    const list = root.querySelector('.code-list')!;
+    expect(list.getAttribute('aria-label')).toBe(translate('프로그램 코드','en'));
+    expect(root.querySelector('.ln')!.getAttribute('title')).toBe(translate('T1: 주축이 멈춘 채(M5·S0) 절삭 이동','en'));
+    expect(root.querySelector('.tx')!.textContent).toBe('(급속 이송)');
+    const names = [...root.querySelectorAll('.group-item .name')].map(n => n.textContent);
+    expect(names).toEqual([translate('급속 이송','en'), '공구 없음']);
+    // 가상 목록이 새 줄을 그리면(스크롤) 그 줄의 경고 title도 옮긴다
+    const row = document.createElement('div'); row.className = 'vlist-row warn';
+    row.innerHTML = '<span class="ln" title="지원하지 않는 G150">40</span><span class="tx">G150 X5</span>';
+    list.append(row);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(row.querySelector('.ln')!.getAttribute('title')).toBe(translate('지원하지 않는 G150','en'));
+    expect(row.querySelector('.tx')!.textContent).toBe('G150 X5');
+    dispose(); dispose = undefined; dom.window.close();
   });
   it('dismisses the language menu with Escape without cancelling a file import', async () => {
     const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/'});

@@ -132,3 +132,46 @@ export function parseStartParams(search: string, pageHref: string): StartRequest
   if (q.has('sample')) return { kind: 'sample' };
   return null;
 }
+
+/** 공유 받기·홈 화면 앱이 붙인 한 번 쓸 시작 인자 */
+export interface OnceParams {
+  /** ?recent=<id> — 최근 문서 하나 바로 열기(공유 받은 파일 하나) */
+  recent: string | null;
+  /** ?share=<열쇠> — 공유 받은 여러 파일(한 작업으로)·큰 파일 열기 */
+  share: string | null;
+  /** ?share-error=<까닭> — 공유 받기 실패(no-file·too-big·store) */
+  shareError: string | null;
+}
+
+/** 한 번 쓸 시작 인자 읽기(빈 값은 없는 것으로) */
+export function parseOnceParams(search: string): OnceParams {
+  const q = new URLSearchParams(search);
+  const get = (k: string): string | null => q.get(k)?.trim() || null;
+  return { recent: get('recent'), share: get('share'), shareError: get('share-error') };
+}
+
+/** 한 번 쓸 시작 인자(?recent·?share·?share-error)를 뺀 주소 — 다시 읽어도 또 열지 않게 */
+export function withoutOnceParams(href: string): string {
+  const u = new URL(href);
+  // 다른 인자(?sample 등)는 쓴 그대로 둔다(URLSearchParams로 다시 쓰면 ?sample이 ?sample=로 바뀐다)
+  const keep = u.search
+    .slice(1)
+    .split('&')
+    .filter((part) => {
+      if (!part) return false;
+      let k = part.split('=')[0]!;
+      try {
+        k = decodeURIComponent(k.replace(/\+/g, ' '));
+      } catch {
+        /* 그대로 */
+      }
+      return k !== 'recent' && k !== 'share' && k !== 'share-error';
+    });
+  u.search = keep.length ? '?' + keep.join('&') : '';
+  return u.href;
+}
+
+/** 공유 받기 실패 알림 글 */
+export function shareErrorText(reason: string): string {
+  return reason === 'too-big' ? '공유한 파일이 너무 커서 받지 못했습니다. 열기로 직접 여십시오.' : '공유한 파일을 받지 못했습니다. 열기로 직접 여십시오.';
+}
