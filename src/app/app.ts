@@ -34,7 +34,7 @@ import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { measureHint, measureLines } from './measure';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
-import { arcCenterCount, arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
+import { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -216,8 +216,8 @@ export class NcViewerApp implements PanelHost {
   private aim: TouchAim | null = null;
   /** 원호 중심 붙잡기 점(해석 결과마다 한 번 — 측정을 처음 켤 때 만든다) */
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
-  /** 지금 코어에 준 측정 붙잡기(해석 결과·중심 수가 같으면 다시 주지 않는다 — 재생 중에는 프레임마다 맞춘다) */
-  private snapKey: { src: object; n: number } | null = null;
+  /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
+  private snapKey: { src: object; limit: number | null } | null = null;
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -1692,7 +1692,7 @@ export class NcViewerApp implements PanelHost {
 
   /**
    * 두 점 측정 붙잡기(코어 setMeasureSnap): G-code·Heidenhain 문서를 재는 동안 원호 중심을 늘 후보로 두고, 고른 이동에는
-   * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만.
+   * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만(코어 0.10.0 붙잡기 한도 — 목록은 그대로).
    * 추론 붙잡기(코어 0.9.0)도 켠다: 공구 경로 두 선분의 교차점, 첫 점에서 내린 수직 발, 첫 점에서 X·Y·Z 축 방향.
    * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다. 반경 보정 경로는 보정 조각의 가운데 점·호 중심.
    * 판재 가공(MPR·PGI·XML)은 워커가 보낸 붙잡기 표로 윤곽·판 외곽선의 원호 중심, 원형 포켓 중심, 고른 윤곽 요소의 가운데 점과 추론 붙잡기.
@@ -1711,7 +1711,7 @@ export class NcViewerApp implements PanelHost {
     }
     if (panel) {
       if (this.snapKey?.src === panel) return;
-      this.snapKey = { src: panel, n: -1 };
+      this.snapKey = { src: panel, limit: null };
       v.setMeasureSnap({ points: panelCenters(panel), pointsFor: (p) => panelSnapPoints(p, panel), inference: true });
       return;
     }
@@ -1719,10 +1719,13 @@ export class NcViewerApp implements PanelHost {
     let c = this.snapCenters.get(nc);
     if (!c) this.snapCenters.set(nc, (c = arcCenters(nc)));
     const pos = d.playSec === null ? null : playPosition(d);
-    const n = arcCenterCount(c, pos && pos.move >= 0 ? pos.move : null);
-    if (this.snapKey?.src === nc && this.snapKey.n === n) return;
-    this.snapKey = { src: nc, n };
-    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc), inference: true });
+    // 재생 중에는 그린 이동까지의 중심(차례 = 처음 그린 이동 번호 < 한도). 점 목록·색인은 문서마다 한 번만 주고 한도만 바꾼다(코어 0.10.0)
+    const limit = pos && pos.move >= 0 ? pos.move + 1 : null;
+    if (this.snapKey?.src === nc) {
+      if (this.snapKey.limit === limit) return;
+      v.setMeasureSnapLimit(limit);
+    } else v.setMeasureSnap({ points: c.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: true, limit });
+    this.snapKey = { src: nc, limit };
   }
 
   private applyPlayback(d: NcDoc): void {

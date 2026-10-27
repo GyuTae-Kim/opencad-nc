@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_KEY, otherTheme, readThemePref, resolveTheme, writeThemePref, type ThemeStorage } from '../../src/app/theme';
 import { VIEW_KEYS } from 'opencad-viewer3d';
-import { VIEW_KEYS as APP_VIEW_KEYS, isEditableTarget, keyAction, viewKeyOf, type KeyContext } from '../../src/app/keys';
+import { isEditableTarget, keyAction, viewKeyOf, type KeyContext } from '../../src/app/keys';
 
 function memory(): ThemeStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -65,8 +65,7 @@ describe('키 고르기', () => {
     expect(k(' ', { onCanvas: true })).toEqual({ type: 'play' });
   });
 
-  it('표준 뷰 메뉴의 키 글은 코어 VIEW_KEYS를 따른다(첫 화면용 앱 표가 코어 표와 같다)', () => {
-    expect(APP_VIEW_KEYS).toEqual(VIEW_KEYS);
+  it('표준 뷰 메뉴의 키 글은 코어 VIEW_KEYS를 따른다(코어 0.10.0 camera 모듈의 표)', () => {
     for (const [key, view] of Object.entries(VIEW_KEYS)) expect(viewKeyOf(view)).toBe(key);
     expect(viewKeyOf('top')).toBe('5');
     expect(viewKeyOf('nwIso')).toBeUndefined();
