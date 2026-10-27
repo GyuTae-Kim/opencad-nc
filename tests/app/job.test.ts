@@ -96,7 +96,9 @@ function makeApp(recent?: MemoryBackend): { app: NcViewerApp; root: HTMLElement 
 }
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 const until = async (ok: () => boolean): Promise<void> => {
-  for (let i = 0; i < 50 && !ok(); i++) await tick();
+  // 첫 열기는 코어 모듈을 처음 받느라 오래 걸릴 수 있다(기계가 바쁘면 틱 50번으로 모자람) — 시간으로 5초까지
+  const end = Date.now() + 5000;
+  for (let i = 0; (i < 50 || Date.now() < end) && !ok(); i++) await tick();
 };
 const notices = (root: HTMLElement): string[] => [...root.querySelectorAll('.notice-bar .notice')].map((n) => n.getAttribute('data-notice') ?? '');
 
