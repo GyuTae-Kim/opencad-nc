@@ -1,4 +1,4 @@
-import { createLanguageMenu } from './language-menu';
+import { createLanguageMenu } from 'opencad-site-kit/i18n/language-menu';
 import { VIEW_LABELS } from 'opencad-viewer3d';
 import { CUBE_FACES } from 'opencad-viewer3d/viewcube';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */

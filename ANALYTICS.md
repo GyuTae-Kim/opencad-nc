@@ -7,7 +7,7 @@
 [개인 속성 관리](https://analytics.google.com/analytics/web/?authuser=0#/a412270261p559257929/admin)
 
 홈페이지와 DWG/DXF·NC·STEP·SKP 웹앱은 GA4 속성 하나와 웹 데이터 스트림 하나를 공유한다.
-측정 ID는 공개 설정인 `src/app/analytics-config.ts`에 둔다. 공통 코어 라이브러리에는 태그를 넣지 않는다.
+측정 ID와 수집 코드는 OpenCAD 앱이 함께 쓰는 사이트 도구(`opencad-site-kit`의 `analytics/config.ts`·`analytics/analytics.ts`)에 둔다. 3D 뷰어 코어 라이브러리에는 태그를 넣지 않는다.
 GitHub 저장소 방문은 웹앱 통계와 별개이며 저장소의 Insights → Traffic에서 확인한다.
 
 ## 수집 범위

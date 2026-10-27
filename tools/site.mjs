@@ -2,17 +2,10 @@
 // src/extensions.ts를 가져오므로 Vite·vitest에서만 읽는다(opencad-site 명령은 이 파일을 읽지 않는다).
 import metadata from '../site/metadata.json' with { type: 'json' };
 import history from '../site/content-history.json' with { type: 'json' };
-import en from '../site/locales/en.json' with { type: 'json' };
-import ja from '../site/locales/ja.json' with { type: 'json' };
-import zh from '../site/locales/zh-CN.json' with { type: 'json' };
-import de from '../site/locales/de.json' with { type: 'json' };
+import '../site/i18n.mjs';
 import { NC_EXTENSIONS } from '../src/extensions.ts';
-import { registerCatalog } from 'opencad-site-kit/i18n/core';
 import { defineSite } from 'opencad-site-kit/seo/site-metadata';
 import { serviceWorkerSource } from './sw-source.mjs';
-
-// 빌드 도구가 쓰는 공용 번역기에 사전을 넣는다
-for (const [language, content] of Object.entries({ en, ja, 'zh-CN': zh, de })) registerCatalog(language, content);
 
 /**
  * Offline app file handling for the extensions the viewer opens (dotless, as in src/extensions.ts NC_EXTENSIONS):

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /**
- * 홈 화면 앱(pwa.ts)과 공유 받기 시작 인자(format.ts·app.ts): 서비스 워커 등록·새 판 알림, 데스크톱 파일 열기(launchQueue — 여러 파일),
+ * 홈 화면 앱(공용 도구 opencad-site-kit/pwa/client를 이 앱이 부르는 꼴)과 공유 받기 시작 인자(format.ts·app.ts): 서비스 워커 등록·새 판 알림,
+ * 데스크톱 파일 열기(launchQueue — 여러 파일),
  * ?recent=·?share=·?share-error=로 공유 받은 파일 열기. 뷰어 코어(WebGL)는 가짜로, 해석은 워커와 같은 길(parseForView)로 바로 부른다.
  */
 import { Blob as NodeBlob, File as NodeFile } from 'node:buffer';
@@ -55,7 +56,7 @@ vi.mock('../../src/app/client', async () => {
 
 import { NcViewerApp } from '../../src/app/app';
 import { parseOnceParams, shareErrorText, withoutOnceParams } from '../../src/app/format';
-import { consumeLaunchQueue, registerServiceWorker, type SwContainer, type SwRegistration, type SwWorker } from '../../src/app/pwa';
+import { consumeLaunchFiles, registerServiceWorker, type SwContainer, type SwRegistration, type SwWorker } from 'opencad-site-kit/pwa/client';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 
@@ -137,7 +138,7 @@ describe('서비스 워커 등록과 새 판 알림', () => {
   it('앱 뿌리의 sw.js를 등록하고, 처음 설치는 알리지 않는다', async () => {
     const f = fakeSw({ controller: false });
     const offers: unknown[] = [];
-    const reg = await registerServiceWorker((a) => offers.push(a), { sw: f.sw, base: 'https://x.test/app/en/../', reload: () => {} });
+    const reg = await registerServiceWorker(f.sw, new URL('sw.js', 'https://x.test/app/en/../'), (a) => offers.push(a), () => {});
     expect(reg).toBe(f.reg);
     expect(f.registered()).toEqual({ url: 'https://x.test/app/sw.js', scope: 'https://x.test/app/' });
     f.reg.installing.state = 'installed';
@@ -151,7 +152,7 @@ describe('서비스 워커 등록과 새 판 알림', () => {
     let apply: (() => void) | null = null;
     let reloads = 0;
     let visible: (() => void) | null = null;
-    await registerServiceWorker((a) => (apply = a), { sw: f.sw, base: 'https://x.test/app/', reload: () => reloads++, onVisible: (fn) => (visible = fn) });
+    await registerServiceWorker(f.sw, new URL('sw.js', 'https://x.test/app/'), (a) => (apply = a), () => reloads++, { onVisible: (fn) => (visible = fn) });
     expect(apply).toBeTypeOf('function');
     // 적용 전의 넘겨받기(다른 탭이 바꿈)는 다시 읽지 않는다
     f.sw.fire('controllerchange');
@@ -165,13 +166,11 @@ describe('서비스 워커 등록과 새 판 알림', () => {
   });
 
   it('등록하지 못하거나 서비스 워커가 없으면 조용히 null', async () => {
-    expect(await registerServiceWorker(() => {}, { sw: fakeSw({ controller: false, fail: true }).sw, base: 'https://x.test/', reload: () => {} })).toBeNull();
-    expect(await registerServiceWorker(() => {}, { base: 'https://x.test/', reload: () => {} })).toBeNull();
+    expect(await registerServiceWorker(fakeSw({ controller: false, fail: true }).sw, 'https://x.test/sw.js', () => {}, () => {})).toBeNull();
+    expect(await registerServiceWorker(undefined, 'https://x.test/sw.js', () => {}, () => {})).toBeNull();
     // 등록을 막은 자동화 브라우저: 결과 없이 끝나도 오류 없이 null
     const blocked = { controller: null, register: async () => undefined as unknown as SwRegistration, addEventListener: () => {} } satisfies SwContainer;
-    expect(await registerServiceWorker(() => {}, { sw: blocked, base: 'https://x.test/', reload: () => {} })).toBeNull();
-    // 시험(개발) 환경의 기본값은 등록하지 않는다
-    expect(await registerServiceWorker(() => {})).toBeNull();
+    expect(await registerServiceWorker(blocked, 'https://x.test/sw.js', () => {}, () => {})).toBeNull();
   });
 });
 
@@ -180,7 +179,7 @@ describe('데스크톱 파일 열기(launchQueue)', () => {
     let consumer: ((p: { files?: { getFile(): Promise<File> }[] }) => void) | null = null;
     const got: string[][] = [];
     const host = { launchQueue: { setConsumer: (cb: typeof consumer) => (consumer = cb) } };
-    expect(consumeLaunchQueue((files) => got.push(files.map((f) => f.name)), host as never)).toBe(true);
+    expect(consumeLaunchFiles((files) => got.push(files.map((f) => f.name)), undefined, host as never)).toBe(true);
     const handle = (name: string, ok = true) => ({ getFile: () => (ok ? Promise.resolve(new File(['G0'], name)) : Promise.reject(new Error('gone'))) });
     consumer!({ files: [handle('main.nc'), handle('lost.nc', false), handle('O1001.nc')] });
     consumer!({ files: [] });
@@ -188,7 +187,7 @@ describe('데스크톱 파일 열기(launchQueue)', () => {
     await until(() => got.length > 0);
     await tick();
     expect(got).toEqual([['main.nc', 'O1001.nc']]);
-    expect(consumeLaunchQueue(() => {}, {})).toBe(false);
+    expect(consumeLaunchFiles(() => {}, undefined, {})).toBe(false);
   });
 });
 
