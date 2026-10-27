@@ -44,6 +44,8 @@ describe('측정 안내(휴대폰·터치)', () => {
       measureHint(0, true, true),
       panelMeasureHint(),
       panelMeasureHint(true),
+      panelMeasureHint(false, true),
+      panelMeasureHint(true, true),
       statusMeasureHint(),
       statusMeasureHint(true),
       '보기 설정',

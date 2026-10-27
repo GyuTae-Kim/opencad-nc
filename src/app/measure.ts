@@ -13,8 +13,15 @@ export function measureHint(points: number, hasResult: boolean, touch = false): 
   return touch ? '측정: 잴 시작점을 누르십시오 · 길게 누르면 정밀 조준' : '측정: 잴 시작점을 누르십시오';
 }
 
-/** 패널 아래 띠의 측정 안내(아직 결과가 없을 때) */
-export function panelMeasureHint(touch = false): string {
+/**
+ * 패널 아래 띠의 측정 안내(아직 결과가 없을 때). paths면(G-code·Heidenhain 공구 경로) 원호 중심·이동 가운데 점에도 붙는다고 알린다
+ * (app.ts syncMeasureSnap — 판재 가공은 꼭짓점·끝점만)
+ */
+export function panelMeasureHint(touch = false, paths = false): string {
+  if (paths)
+    return touch
+      ? '측정: 두 점을 누르십시오(끝점·원호 중심·이동 가운데 점 가까우면 그 점에 붙습니다) · 길게 누르면 정밀 조준'
+      : '측정: 두 점을 누르십시오(끝점·원호 중심·이동 가운데 점 가까우면 그 점에 붙습니다). Esc = 지우기';
   return touch ? '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다) · 길게 누르면 정밀 조준' : '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다). Esc = 지우기';
 }
 

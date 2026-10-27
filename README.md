@@ -130,6 +130,10 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
    누르기·측정 점은 선분에서 14화소(코어 `touchPickTolerance` 기본값) 안이면 고르며 끝점에서 14화소 안이면 끝점에 붙잡습니다(마우스는 6·10화소 그대로).
    보기 도구 막대에 전체 보기, 표준 뷰, 원근/평행, 그리기 모드(음영·음영+모서리·와이어프레임·X-ray), 격자, 뷰 큐브, 좌표축,
    **단면**(끔·X·Y·Z 축 고르기, 위치 슬라이더, 뒤집기 — 새 문서를 열면 꺼짐), 두 점 측정, PNG 저장, 패널 열고 닫기가 있습니다.
+   G-code·Heidenhain의 두 점 측정은 끝점 말고도 G2/G3 원호의 **중심**(구멍 가운데처럼 빈 자리라도 커서가 오면)과 이동의 **가운데 점**에 붙습니다.
+   원호의 가운데 점은 현의 가운데가 아니라 호 위의 점이고(나선은 높이도 반), 중심은 해석기가 읽은 값 그대로입니다.
+   마우스를 올리면 표식 모양으로 종류를 보이고(끝점 네모·가운데 점 세모·중심 ⊕), 결과에는 "중심 → 가운데 점"처럼 두 점의 종류를 적습니다.
+   숨긴 공구, 단면에 잘린 쪽, 재생 중 아직 그리지 않은 이동의 중심에는 붙지 않습니다. 판재 파일(MPR·PGI·XML)은 꼭짓점·끝점에만 붙습니다.
    읽는 동안 덮개의 **취소**(또는 Esc)로 멈추면 열려 있던 문서를 그대로 둡니다.
    해석이 스스로 정한 것(선반 프로그램으로 읽음 · 소수점 없는 큰 좌표가 많음 · 판별한 방언 Siemens·Haas 등)은 3D 보기 위(좁은 화면은 아래) 띠로 알리고,
    띠의 단추로 바로 바꿔 다시 읽거나(밀링으로 읽기·최소 단위로 읽기) 정보 탭을 엽니다. ✕로 그 문서에서 닫습니다.
@@ -153,13 +157,13 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
      지나간 경로만 진하게 그리고 공구 위치를 표시합니다(모양은 공구 이름 — 볼·드릴·엔드밀, 설정에 따라 실제 지름 크기). 한 이동씩 걸으면 시간이 0인 이동도 하나씩 가고 코드 보기가 따라갑니다.
    - 코드 위 찾기 칸(Ctrl/⌘+F): 글(대소문자 무시)·N 번호(N100은 N1000과 구별)·":120"(120번 줄로 가기), Enter 다음·Shift+Enter 이전,
      찾은 줄은 줄 앞에 표시. 가상 목록이라 브라우저 찾기 대신 이 칸을 씁니다.
-4. 아래 상태 막대에 형식·단위·파일 크기·이동/선분 수·읽은 시간, 해석 경고 수(누르면 정보 탭)와 고른 것(줄·이동·측정 거리)이 보입니다.
+4. 아래 상태 막대에 형식·단위·파일 크기·이동/선분 수·읽은 시간, 해석 경고 수(누르면 정보 탭)와 고른 것(줄·이동·측정 거리와 붙잡은 점의 종류)이 보입니다.
 5. 휴대폰·터치: 폭 760px 미만이거나 휴대폰 가로 화면(손가락 기기에 높이 500px 미만)에서는 도구 막대를 한 줄(전체 보기·표준 뷰·보기 설정·단면·측정·재생·패널)로 줄이고,
    뷰 큐브를 작게, 패널은 처음엔 닫아 둡니다.
    원근/평행·그리기 모드·격자·뷰 큐브·좌표축·PNG 저장은 "보기 설정" 메뉴로 모읍니다.
    패널(시트)을 닫은 채 재생하거나 재생 자리가 있으면 3D 보기 아래에 재생 띠: 시간·줄·이동 상태(이송·주축·공구·모달 G),
    처음·이전 이동·재생/멈춤·다음 이동·속도·✕(재생 끝내기 — 전체 경로)와 시간 막대(측정 중에는 숨김, 넓은 화면도 패널을 닫으면 같음).
-   좁은 화면이나 손가락 기기에서 측정을 켜면 3D 보기 아래 가운데 띠에 다음에 누를 곳, 거리와 dx·dy·dz를 크게 보이고,
+   좁은 화면이나 손가락 기기에서 측정을 켜면 3D 보기 아래 가운데 띠에 다음에 누를 곳, 거리와 dx·dy·dz, 붙잡은 점의 종류를 크게 보이고,
    "다시 재기"(찍은 점과 결과 지우기)와 ✕(측정 끝내기) 단추를 둡니다(Esc 대신, 시트 패널을 열지 않아도 됩니다).
    측정 중 한 손가락을 거의 움직이지 않고(10화소 안) 길게(0.35초) 누르면 손가락 위 64px에 십자선이 떠 정밀 조준합니다 — 끌면 십자선이 따라가고
    (붙잡을 점·거리를 미리 보입니다) 떼면 그 자리를 누른 것으로 칩니다. 십자선 자리는 보통 터치 누르기(14화소)가 아니라
@@ -238,7 +242,7 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `index.html`, `public/favicon.svg` | 뷰어 앱 진입(제목·설명·테마 먼저 정하기, 홈 화면 앱 머리 태그) |
 | `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site-metadata.mjs`·`tools/site-plugin.mjs`가 만든다 |
 | `tools/sw-plugin.mjs` | 빌드 끝에 오프라인 서비스 워커(`dist/sw.js` — 미리 담기·공유 받기)를 만드는 Vite 플러그인 |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `pwa.ts`(서비스 워커 등록·새 판 알림·`launchQueue`), `styles.css` |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `pwa.ts`(서비스 워커 등록·새 판 알림·`launchQueue`), `measure.ts`·`snap.ts`(측정 안내 글, 원호 중심·이동 가운데 점 붙잡기), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile`, `combineNcFiles` |
 | `src/job.ts` | 여러 파일을 한 작업으로 잇기·나누기(표지 줄, 주 프로그램 고르기) |
@@ -253,6 +257,8 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `src/scene.ts`, `src/mesh.ts` | 공구 경로·공작물 → `Scene3d` |
 | `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts`), 가상 목록(`vlist.ts`, `vlist.css`) |
 | `tests/`, `tests/app/` | 해석기 시험, 앱 순수 로직 시험(글·키·테마·이전 목록·문서 모델) |
+| `scripts/sweep/` | 실제 파일 훑기(`npm run sweep`)와 두 결과 비교(`npm run sweep:compare`) |
+| `.github/workflows/mobile-validation.yml`, `tools/performance-summary.mjs`, `tools/serve-performance.mjs`, `tools/mobile-browser*`, `tools/check-browser-result.mjs`, `tools/mobile-part.nc` | 끌어오기 요청마다 휴대폰 첫 열기 성능(Lighthouse)과 터치 사용 흐름(playwright-cli) 확인 |
 
 ## 개발
 
@@ -265,14 +271,31 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.6.0`(잠금 커밋 `d6e9ed3`)으로 받습니다. 코어를 올리면
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.8.0`(잠금 커밋 `be61718`)으로 받습니다. 코어를 올리면
 `npm install "opencad-viewer3d@github:GyuTae-Kim/opencad-viewer3d#<태그>"`로 받아 `package.json`·`package-lock.json`을 함께 바꿉니다(그냥 `npm install`은 옛 커밋을 남김).
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
+
+**실제 파일 훑기**: 각자 가진 NC 파일 폴더를 앱 워커와 같은 해석 길로 읽어 예외·경고·빈 경로·시간을 모읍니다(파일을 바꾸거나 저장소에 넣지 않습니다).
+
+```bash
+npm run sweep -- --dirs "<폴더1>:<폴더2>" --out .runtime/sweep/before   # 또는 OPENCAD_SWEEP_DIRS="<폴더1>:<폴더2>"
+#   --jobs 4(자식 프로세스 넷으로 나눠 해석) --limit 100(앞의 100개만) --force(같은 --out 덮어쓰기)
+npm run sweep:compare -- .runtime/sweep/before .runtime/sweep/after --fail-on-change
+```
+
+폴더를 주지 않으면 쓰는 법만 찍고 끝납니다(CI에서는 돌지 않습니다). 앱이 여는 확장자만 고르고, 내용(sha256)이 같은 파일은 한 번만 읽으며
+C 머리 파일(.h)은 뺍니다. `<out>/records.jsonl`에 파일마다 분류(ok·warn·empty·error)·형식·방언·지표(선분·이동·가공 수, 장면 서명 등)·경고 코드를,
+`summary.json`에 분류·형식별 개수, 예외·경고 코드별 개수, 해석 시간 백분위, 품질 지표를 씁니다. 경로는 이 로컬 결과에만 남기고 보고·저장소에는 옮기지 않습니다.
+`sweep:compare`는 같은 내용 해시끼리 분류·지표가 바뀐 파일과 새 예외를 보이고, `--fail-on-change`면 바뀐 것이 있을 때 1로 끝납니다.
+
+**휴대폰 검사**: 끌어오기 요청마다 `mobile-validation.yml`이 같은 실행기에서 기준(main)과 후보를 빌드해 Lighthouse로 휴대폰 첫 열기를 세 번씩 재고
+(`tools/performance-summary.mjs`가 중앙값 표를 작업 요약에), playwright-cli로 390px 터치 화면에서 파일 고르기 → 도구 막대 → 원호 중심·가운데 점 측정 →
+패널 → 최근 문서 → `?sample` → 영어 페이지를 확인합니다(`tools/mobile-browser-check.js`). 성능 도구 둘은 다른 OpenCAD 앱과 바이트까지 같게 둡니다.
 
 ## 배포
 
 `main`에 올리면 `.github/workflows/deploy.yml`이 형식 검사 → 시험 → 빌드 뒤 `dist/`를 `gh-pages` 가지에 게시합니다
-(GitHub Pages: https://gyutae-kim.github.io/opencad-nc/). 끌어오기 요청은 `ci.yml`이 같은 확인을 합니다.
+(GitHub Pages: https://gyutae-kim.github.io/opencad-nc/). 끌어오기 요청은 `ci.yml`이 같은 확인을 하고, `mobile-validation.yml`이 휴대폰 첫 열기와 터치 흐름을 봅니다.
 
 ## 남은 일
 
@@ -292,6 +315,8 @@ npm run preview    # 빌드 결과 보기
 - MPR: 좌표계 표 `[K`·KO(면 좌표계), BohrUniv·Easyedge(엣지 밴딩)·FreiFormTasche(자유 형상 포켓) 등 나머지 매크로(지금은 목록과 위치 점만),
   호가 낀 모서리의 KR·KF
 - LinuxCNC G5.2/G5.3 NURBS(지금은 끝점까지 직선)
+- 측정 붙잡기: 판재 파일(MPR·PGI·XML)의 윤곽 원호 중심·가운데 점, 보정 경로(공구 중심)의 가운데 점, 교차점·수직 발 같은 추론 붙잡기
+- 첫 화면 크기: 3D 뷰어 코어 0.8.0으로 첫 JS가 gzip 약 24 KiB 늘었습니다(쓰지 않는 걷기·그림자 등도 함께 받음). 뷰어를 문서를 열 때 나눠 받으면 줄일 수 있습니다
 
 ## 내력
 

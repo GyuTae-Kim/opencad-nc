@@ -62,12 +62,14 @@ export async function registerServiceWorker(onUpdate: (apply: () => void) => voi
     env.reload();
   });
   const url = new URL('sw.js', env.base);
-  let reg: SwRegistration;
+  let reg: SwRegistration | undefined;
   try {
     reg = await sw.register(url, { scope: new URL('./', url).href });
   } catch {
     return null;
   }
+  // 등록을 막은 자동화 브라우저(Playwright serviceWorkers: 'block')는 등록 결과 없이 끝난다 — 오프라인 없이 그대로
+  if (!reg) return null;
   const offer = (w: SwWorker | null): void => {
     // 처음 설치(맡은 워커가 없음)는 알리지 않는다 — 다음 방문부터 오프라인으로 열린다
     if (!w || !sw.controller) return;

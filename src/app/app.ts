@@ -32,6 +32,7 @@ import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { measureHint, measureLines } from './measure';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
+import { arcCenterCount, arcCenters, moveSnapPoints, snapPair, type ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { consumeLaunchQueue, registerServiceWorker } from './pwa';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -197,6 +198,10 @@ export class NcViewerApp implements PanelHost {
   private readonly coarse: MediaQueryList | null;
   /** 정밀 조준(터치 길게 누르기, 뷰어를 만들 때 붙인다) */
   private aim: TouchAim | null = null;
+  /** 원호 중심 붙잡기 점(해석 결과마다 한 번 — 측정을 처음 켤 때 만든다) */
+  private readonly snapCenters = new WeakMap<object, ArcCenters>();
+  /** 지금 코어에 준 측정 붙잡기(해석 결과·중심 수가 같으면 다시 주지 않는다 — 재생 중에는 프레임마다 맞춘다) */
+  private snapKey: { nc: object; n: number } | null = null;
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -1409,6 +1414,7 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     if (on !== v.measureMode) this.aim?.cancel();
     v.setMeasureMode(on);
+    this.syncMeasureSnap();
     if (!on && this.doc) this.doc.measure = null;
     this.panel.onMeasure();
     this.renderToolbar();
@@ -1580,9 +1586,34 @@ export class NcViewerApp implements PanelHost {
     return { move, frac, line: move >= 0 ? d.nc.moves.line[move]! : -1, sec: d.playSec, total };
   }
 
+  /**
+   * 두 점 측정 붙잡기(코어 setMeasureSnap): G-code·Heidenhain 문서를 재는 동안 원호 중심을 늘 후보로 두고, 고른 이동에는
+   * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만.
+   * 판재 가공(MPR·PGI·XML)과 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
+   */
+  private syncMeasureSnap(): void {
+    const v = this.viewer;
+    if (!v) return;
+    const d = this.doc;
+    const nc = d?.nc;
+    if (!d || !nc || !v.measureMode) {
+      if (this.snapKey) v.setMeasureSnap(null);
+      this.snapKey = null;
+      return;
+    }
+    let c = this.snapCenters.get(nc);
+    if (!c) this.snapCenters.set(nc, (c = arcCenters(nc)));
+    const pos = d.playSec === null ? null : playPosition(d);
+    const n = arcCenterCount(c, pos && pos.move >= 0 ? pos.move : null);
+    if (this.snapKey?.nc === nc && this.snapKey.n === n) return;
+    this.snapKey = { nc, n };
+    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc) });
+  }
+
   private applyPlayback(d: NcDoc): void {
     const v = this.viewer;
     if (!v) return;
+    this.syncMeasureSnap();
     if (!d.nc || d.playSec === null) {
       v.setDrawLimitBySegmentId(null);
       v.setMarker(null);
@@ -1646,8 +1677,11 @@ export class NcViewerApp implements PanelHost {
     const wl = warningLabel(d);
     this.stWarn.hidden = !wl;
     this.stWarn.textContent = wl;
-    this.stSel.textContent = selectionSummary(d, this.measuring, this.touch);
-    this.stSel.title = this.stSel.textContent;
+    const sel = selectionSummary(d, this.measuring, this.touch);
+    // 측정 결과의 붙잡은 종류(예: 중심 → 끝점)는 이름마다 따로 번역되게 조각으로 붙인다
+    const sp = d.measure ? snapPair(d.measure) : null;
+    this.stSel.replaceChildren(sel, ...(sp ? [' · ', h('span', {}, sp[0]), ' → ', h('span', {}, sp[1])] : []));
+    this.stSel.title = sel;
     this.refreshBar();
   }
 
@@ -1777,6 +1811,9 @@ export class NcViewerApp implements PanelHost {
     if (d.measure) {
       const m = measureLines(d.measure, unitLabel(d.scene.units));
       t.append(h('b', { class: 'mb-value' }, m.value), h('span', { class: 'mb-sub' }, m.axes));
+      // 붙잡은 종류(끝점·가운데 점·중심 — 이름마다 따로 번역되게 조각으로)
+      const sp = snapPair(d.measure);
+      if (sp) t.append(h('span', { class: 'mb-sub mb-snap' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1])));
     } else t.append(h('span', { class: 'mb-hint' }, measureHint(v.measurePointCount, false, this.touch)));
     this.measureClear.disabled = !d.measure && !v.measurePointCount;
   }

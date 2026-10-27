@@ -25,6 +25,7 @@
   },
   "include": [
     "src",
+    "scripts",
     "tests",
     "vite.config.ts"
   ]

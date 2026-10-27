@@ -15,6 +15,7 @@ import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint } from './measure';
+import { snapPair } from './snap';
 import type { NcJobInfo, NcOpenOptions } from './protocol';
 import { defaultSettings, type NcSettings } from './settings';
 
@@ -1018,7 +1019,10 @@ export class NcPanel {
     if (d.measure) {
       const m = d.measure;
       lines.push(h('div', {}, h('b', {}, '거리 '), `${fmtNum(m.distance)} ${u}`, h('span', { class: 'dim' }, ` · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`)));
-    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch)));
+      // 붙잡은 종류(이름마다 따로 번역되게 조각으로)
+      const sp = snapPair(m);
+      if (sp) lines.push(h('div', { class: 'dim' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1])));
+    } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch, !!d.nc)));
     f.hidden = !lines.length;
     f.append(...lines);
   }

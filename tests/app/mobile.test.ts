@@ -274,7 +274,8 @@ describe('측정 띠(휴대폰·터치)', () => {
     await app.openSample();
     menuButton(root, '측정').click();
     expect(root.querySelector('.measure-bar .mb-text')!.textContent).toBe(measureHint(0, false, true));
-    expect(root.querySelector('.panel-foot')!.textContent).toContain(panelMeasureHint(true));
+    // 예제는 G-code라 원호 중심·이동 가운데 점 붙잡기도 알린다
+    expect(root.querySelector('.panel-foot')!.textContent).toContain(panelMeasureHint(true, true));
     expect(root.querySelector('.st-sel')!.textContent).toBe(statusMeasureHint(true));
     expect(root.textContent).not.toMatch(/Esc = 지우기|Esc 취소/);
     // 십자선 층은 3D 보기 위에
