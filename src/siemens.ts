@@ -17,7 +17,7 @@
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
-import { JOB_FILE_MARK, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
+import { JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
 import { sourceLine, type NcSource } from './text';
 
 const DEG = Math.PI / 180;
@@ -1262,7 +1262,8 @@ class SiemensRunner extends Runner {
     if (b.words > 0 || b.comments.length) this.exec(b, line);
     this.tangentArc = false;
     if (this.ended) return;
-    // 이 블록 끝 모서리 다듬기(다음 이송 직선과): RND = 둥글리기 반지름, CHF = 모따기 선 길이, CHR = 모서리에서 자르는 길이, RNDM = 모달 둥글리기
+    // 이 블록 끝 모서리 다듬기(다음 직선·원호 이송과, 어느 조합이든): RND = 둥글리기 반지름, CHF = 모따기 선 길이,
+    // CHR = 모서리에서 자르는 길이(원호 위는 현 길이), RNDM = 모달 둥글리기(직선·원호·CIP·CT 블록 모두)
     if (moveAxes !== 0) {
       const wRnd = word('RND');
       const wChf = word('CHF');
@@ -1270,7 +1271,12 @@ class SiemensRunner extends Runner {
       if (wRnd?.value !== undefined) this.requestCorner('round', wRnd.value * this.scale, line, this.plane, 'RND');
       else if (wChf?.value !== undefined) this.requestCorner('chamferHyp', wChf.value * this.scale, line, this.plane, 'CHF');
       else if (wChr?.value !== undefined) this.requestCorner('chamferLeg', wChr.value * this.scale, line, this.plane, 'CHR');
-      else if (this.sRndm > 0 && this.sMotion === 10 && !this.sCt && this.lastSeg?.i === this.mb.count - 1 && this.lastSeg.kind === MOVE_FEED && this.lastSeg.arc < 0)
+      else if (
+        this.sRndm > 0 &&
+        (this.sMotion === 10 || this.sMotion === 20 || this.sMotion === 30 || this.sMotion === 25) &&
+        this.lastSeg?.i === this.mb.count - 1 &&
+        (this.lastSeg.kind === MOVE_FEED || this.lastSeg.kind === MOVE_ARC)
+      )
         this.requestCorner('round', this.sRndm * this.scale, line, this.plane, 'RNDM');
     }
 

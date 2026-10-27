@@ -510,7 +510,7 @@ export class NcViewerApp implements PanelHost {
           { class: 'formats', 'aria-label': '지원 형식' },
           fmt('G-code', GCODE_EXTENSIONS, 'ISO·Fanuc·LinuxCNC·GRBL·Mach3 방언 자동 판별, 원호·나선, 고정 사이클, 부프로그램, 변수, 좌표 회전·배율·거울, 반경 보정 경로·선반·회전축(선택)'),
           fmt('Heidenhain 평문', HEIDENHAIN_EXTENSIONS, 'BLK FORM 공작물, TOOL CALL, L·C·CR·CT·FK, 드릴·포켓 사이클, Q 변수'),
-          fmt('woodWOP MPR', MPR_EXTENSIONS, '판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 변수'),
+          fmt('woodWOP MPR', MPR_EXTENSIONS, '판, 수직·수평 드릴, 윤곽 가공, 홈, 포켓, 엣지 밴딩, 변수'),
           fmt('WangShi PGI · XML', [...PGI_EXTENSIONS, ...XML_EXTENSIONS], '판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수'),
         ),
         h('p', { class: 'privacy', html: `${icon('lock')}<span><b>파일은 이 브라우저 밖으로 나가지 않습니다.</b> 서버로 올리지 않고 이 기기 안에서 읽습니다.</span>` }),

@@ -7,7 +7,7 @@
  * 밀링 사이클 208(보어 밀링 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256(사각 보스)·257(원 보스)·232(정면 밀링),
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
  * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프.
- * 근사: RND·CHF는 앞뒤가 직선인 모서리만 다듬고(원호와 만나면 모서리 그대로, 경고), APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
+ * 근사: RND는 작업 평면 안의 직선·원호 모서리를 접하는 호로, CHF는 두 직선 사이 모서리만 다듬고(원호와 만나면 모서리 그대로, 경고), APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
  * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF(경고).
  */
@@ -522,7 +522,8 @@ class HRunner extends NcEmitter {
 
   /**
    * RND R…(모서리 둥글리기, R = 반지름)·CHF …(모따기, 값 = 모서리에서 앞뒤 요소를 따라 자르는 길이), 둘 다 F = 그 부분의 이송(선택).
-   * 앞뒤가 작업 평면 안의 직선인 모서리를 그린다(emitter의 requestCorner — 앞 직선 끝을 줄이고 호·직선을 넣음)
+   * emitter의 requestCorner로 앞 요소 끝을 줄이고 호·직선을 넣는다. RND는 작업 평면 안의 직선·원호 어느 조합이든(앞뒤 요소에 접하는 호),
+   * CHF는 Heidenhain 설명서대로 두 직선 사이 모서리에만(원호와 만나면 모서리 그대로, 경고)
    */
   private cornerBlock(t0: 'RND' | 'CHF', T: string[], line: number): void {
     let size: number | undefined;
@@ -537,7 +538,7 @@ class HRunner extends NcEmitter {
       this.w.add(t0 === 'RND' ? 'RND에 반지름 R이 없어 모서리 그대로 그림' : 'CHF에 길이가 없어 모서리 그대로 그림', line);
       return;
     }
-    this.requestCorner(t0 === 'RND' ? 'round' : 'chamferLeg', Math.abs(size), line, this.plane, t0, feed);
+    this.requestCorner(t0 === 'RND' ? 'round' : 'chamferLeg', Math.abs(size), line, this.plane, t0, feed, t0 === 'CHF');
   }
 
   private blkForm(T: string[], line: number): void {

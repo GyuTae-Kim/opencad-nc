@@ -74,6 +74,65 @@ interface LastSeg {
 }
 import type { NcSource } from './text';
 
+/** 모서리 다듬기의 요소 하나(작업 평면 두 축): 직선(시작 f → 끝 t, 방향 u) 또는 원호(중심 c, 반지름 r, 방향 dir 1 = 반시계, 중심각 sweep) */
+interface CornerElem {
+  arc: boolean;
+  fx: number;
+  fy: number;
+  tx: number;
+  ty: number;
+  len: number;
+  ux: number;
+  uy: number;
+  cx: number;
+  cy: number;
+  r: number;
+  dir: 1 | -1;
+  sweep: number;
+}
+
+/** 두 요소(직선은 무한 직선, 원호는 온 원)의 교점 */
+function cornerIntersections(a: CornerElem, b: CornerElem): [number, number][] {
+  if (!a.arc && !b.arc) {
+    const den = a.ux * b.uy - a.uy * b.ux;
+    if (Math.abs(den) < 1e-12) return [];
+    const t = ((b.fx - a.fx) * b.uy - (b.fy - a.fy) * b.ux) / den;
+    return [[a.fx + a.ux * t, a.fy + a.uy * t]];
+  }
+  if (a.arc && b.arc) {
+    const dx = b.cx - a.cx;
+    const dy = b.cy - a.cy;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-12) return [];
+    const k = (a.r * a.r - b.r * b.r + d * d) / (2 * d);
+    let h2 = a.r * a.r - k * k;
+    if (h2 < 0) {
+      if (h2 < -1e-9 * Math.max(1, a.r * a.r)) return [];
+      h2 = 0;
+    }
+    const h = Math.sqrt(h2);
+    const mx = a.cx + (dx * k) / d;
+    const my = a.cy + (dy * k) / d;
+    return [
+      [mx - (dy * h) / d, my + (dx * h) / d],
+      [mx + (dy * h) / d, my - (dx * h) / d],
+    ];
+  }
+  const ln = a.arc ? b : a;
+  const ci = a.arc ? a : b;
+  // ln.f + ln.u·t 가 원 위: t² + 2t(u·w) + |w|² - r² = 0 (w = f - c)
+  const wx = ln.fx - ci.cx;
+  const wy = ln.fy - ci.cy;
+  const bq = ln.ux * wx + ln.uy * wy;
+  let disc = bq * bq - (wx * wx + wy * wy - ci.r * ci.r);
+  if (disc < 0) {
+    if (disc < -1e-9 * Math.max(1, ci.r * ci.r)) return [];
+    disc = 0;
+  }
+  const sq = Math.sqrt(disc);
+  return [-bq - sq, -bq + sq].map((t) => [ln.fx + ln.ux * t, ln.fy + ln.uy * t] as [number, number]);
+}
+
 export class NcEmitter {
   protected src: NcSource;
   protected w = new NcWarnings();
@@ -359,7 +418,11 @@ export class NcEmitter {
   /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다 */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
-    if (this.corner) this.applyCorner(kind, x, y, z, extraFlags, arcIdx);
+    if (this.corner) {
+      // 뒤 요소가 원호면 다듬은 만큼 줄어든 길이가 돌아온다
+      const l = this.applyCorner(kind, x, y, z, extraFlags, arcIdx);
+      if (l >= 0) arcLen = l;
+    }
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     // 도그레그 급속(여러 축이 함께 움직이는 급속, 위치를 알 때만)
     if (this.dogleg && !this.inDogleg && kind === MOVE_RAPID && arcIdx < 0 && this.known === 7 && this.machHigh === 0 && this.machPending === 0 && !(extraFlags & FLAG_MACHINE)) {
@@ -448,16 +511,17 @@ export class NcEmitter {
 
   /** 마지막으로 넣은 이동(출력 좌표) */
   protected lastSeg: LastSeg | null = null;
-  /** 예약한 모서리 다듬기: 앞 이동(i)의 끝 모서리를 다음 직선 이송과 잇는다 */
-  private corner: { kind: CornerKind; size: number; line: number; plane: number; i: number; feed?: number; label: string } | null = null;
+  /** 예약한 모서리 다듬기: 앞 이동(i)의 끝 모서리를 다음 직선·원호 이송과 잇는다 */
+  private corner: { kind: CornerKind; size: number; line: number; plane: number; i: number; feed?: number; label: string; linesOnly: boolean } | null = null;
 
   /**
-   * 바로 앞 이동(직선 이송)의 끝 모서리를 다음 직선 이송과 둥글리기·모따기로 잇게 예약한다. 다음 이동을 넣을 때 앞 이동 끝을
+   * 바로 앞 이동(직선·원호 이송)의 끝 모서리를 다음 직선·원호 이송과 둥글리기·모따기로 잇게 예약한다. 다음 이동을 넣을 때 앞 이동 끝을
    * 접점까지 줄이고 둥근 호(또는 모따기 직선)를 넣은 뒤 다음 이동을 접점에서 시작한다(프로그램 위치는 모서리 그대로 —
-   * 증분 좌표의 기준이 바뀌지 않는다). size는 프로그램 단위(좌표 변환의 배율을 곱한다), 0이면 모서리 그대로.
-   * 원호와 만나는 모서리·작업 평면 밖으로 움직이는 모서리·앞뒤 요소보다 큰 값은 경고하고 모서리 그대로 둔다.
+   * 증분 좌표의 기준이 바뀌지 않는다. 원호의 중심도 그대로). size는 프로그램 단위(좌표 변환의 배율을 곱한다), 0이면 모서리 그대로.
+   * linesOnly(Heidenhain CHF·DIN/ISO G24 — 두 직선 사이에만 쓰는 모따기)면 원호와 만나는 모서리는 그대로 둔다.
+   * 작업 평면 밖으로 움직이는 모서리(나선 포함)·앞뒤 요소보다 큰 값은 경고하고 모서리 그대로 둔다.
    */
-  protected requestCorner(kind: CornerKind, size: number, line: number, plane: number, label: string, feed?: number): void {
+  protected requestCorner(kind: CornerKind, size: number, line: number, plane: number, label: string, feed?: number, linesOnly = false): void {
     this.corner = null;
     if (!(size > 0)) return;
     const seg = this.lastSeg;
@@ -465,54 +529,74 @@ export class NcEmitter {
       this.w.add(`${label}: 앞에 이동이 없어 그리지 않음`, line);
       return;
     }
-    if (seg.kind !== MOVE_FEED || seg.arc >= 0) {
-      this.w.add(`${label}: ${seg.kind === MOVE_ARC ? '원호와 만나는 모서리' : '급속·구멍 이동 뒤 모서리'}는 그대로 그림`, line);
+    const prevArc = seg.kind === MOVE_ARC && seg.arc >= 0;
+    if (!prevArc && (seg.kind !== MOVE_FEED || seg.arc >= 0)) {
+      this.w.add(`${label}: 급속·구멍 이동 뒤 모서리는 그대로 그림`, line);
+      return;
+    }
+    if (prevArc && linesOnly) {
+      this.w.add(`${label}: 두 직선 사이에만 쓰는 모따기라 원호와 만나는 모서리는 그대로 그림`, line);
       return;
     }
     const scale = this.outXf ? affinePlane(this.outXf, plane).scale : 1;
-    this.corner = { kind, size: size * scale, line, plane, i: seg.i, label, ...(feed !== undefined && feed > 0 ? { feed } : {}) };
+    this.corner = { kind, size: size * scale, line, plane, i: seg.i, label, linesOnly, ...(feed !== undefined && feed > 0 ? { feed } : {}) };
   }
 
-  /** 예약한 모서리를 다음 이동(출력 좌표)과 함께 그린다 — emit의 앞머리에서 부른다 */
-  private applyCorner(kind: number, x: number, y: number, z: number, extraFlags: number, arcIdx: number): void {
+  /**
+   * 예약한 모서리를 다음 이동(출력 좌표)과 함께 그린다 — emit의 앞머리에서 부른다. 다음 이동이 원호라 시작점을 접점으로 옮겼으면
+   * 그 원호의 새 길이를, 아니면 -1을 돌려준다
+   */
+  private applyCorner(kind: number, x: number, y: number, z: number, extraFlags: number, arcIdx: number): number {
     const c = this.corner!;
     this.corner = null;
     const seg = this.lastSeg;
-    if (!seg || seg.i !== c.i || seg.i !== this.mb.count - 1 || this.mb.tool[seg.i] !== this.tool) return;
-    if (kind !== MOVE_FEED || arcIdx >= 0 || extraFlags & (FLAG_MACHINE | FLAG_CYCLE)) {
-      this.w.add(`${c.label}: ${kind === MOVE_ARC ? '원호와 만나는 모서리' : '뒤 요소가 직선 이송이 아닌 모서리'}는 그대로 그림`, c.line);
-      return;
+    if (!seg || seg.i !== c.i || seg.i !== this.mb.count - 1 || this.mb.tool[seg.i] !== this.tool) return -1;
+    const nextArc = kind === MOVE_ARC && arcIdx >= 0;
+    if (extraFlags & (FLAG_MACHINE | FLAG_CYCLE) || (!nextArc && (kind !== MOVE_FEED || arcIdx >= 0))) {
+      this.w.add(`${c.label}: 뒤 요소가 직선·원호 이송이 아닌 모서리는 그대로 그림`, c.line);
+      return -1;
+    }
+    if (nextArc && c.linesOnly) {
+      this.w.add(`${c.label}: 두 직선 사이에만 쓰는 모따기라 원호와 만나는 모서리는 그대로 그림`, c.line);
+      return -1;
     }
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) {
       this.w.add(`${c.label}: 회전축을 감는 동안의 모서리는 그대로 그림`, c.line);
-      return;
+      return -1;
     }
     const [a0, a1, a2] = PLANE_AXES[c.plane] ?? PLANE_AXES[0]!;
     const S = seg.s;
     const P = seg.e;
     const E = [x, y, z];
     const tol = 1e-7 * Math.max(1, Math.abs(P[a2]!));
-    if (Math.abs(P[a2]! - S[a2]!) > tol || Math.abs(E[a2]! - P[a2]!) > tol) {
+    const prevArc = seg.arc >= 0;
+    if (
+      Math.abs(P[a2]! - S[a2]!) > tol ||
+      Math.abs(E[a2]! - P[a2]!) > tol ||
+      (prevArc && this.mb.arcPlane[seg.arc] !== c.plane) ||
+      (nextArc && this.mb.arcPlane[arcIdx] !== c.plane)
+    ) {
       this.w.add(`${c.label}: 작업 평면 밖으로 움직이는 모서리는 그대로 그림`, c.line);
-      return;
+      return -1;
     }
+    if (prevArc || nextArc) return this.arcCorner(c, seg, E, arcIdx, a0, a1);
     const l1 = Math.hypot(P[a0]! - S[a0]!, P[a1]! - S[a1]!);
     const l2 = Math.hypot(E[a0]! - P[a0]!, E[a1]! - P[a1]!);
-    if (l1 < 1e-9 || l2 < 1e-9) return;
+    if (l1 < 1e-9 || l2 < 1e-9) return -1;
     const u1 = [(P[a0]! - S[a0]!) / l1, (P[a1]! - S[a1]!) / l1];
     const u2 = [(E[a0]! - P[a0]!) / l2, (E[a1]! - P[a1]!) / l2];
     const cr = u1[0]! * u2[1]! - u1[1]! * u2[0]!;
     const th = Math.atan2(Math.abs(cr), u1[0]! * u2[0]! + u1[1]! * u2[1]!);
     // 곧게 이어지면 다듬을 모서리가 없다
-    if (th < 1e-6) return;
+    if (th < 1e-6) return -1;
     if (Math.PI - th < 1e-6) {
       this.w.add(`${c.label}: 되돌아가는 모서리는 그대로 그림`, c.line);
-      return;
+      return -1;
     }
     const d = c.kind === 'round' ? c.size * Math.tan(th / 2) : c.kind === 'chamferLeg' ? c.size : c.size / (2 * Math.cos(th / 2));
     if (d > l1 * (1 + 1e-9) + 1e-9 || d > l2 * (1 + 1e-9) + 1e-9) {
       this.w.add(`${c.label}: 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, c.line);
-      return;
+      return -1;
     }
     const t1 = [P[0]!, P[1]!, P[2]!];
     const t2 = [P[0]!, P[1]!, P[2]!];
@@ -532,14 +616,195 @@ export class NcEmitter {
       this.emitArc(c.plane, ctr, sg * th, t2[0]!, t2[1]!, t2[2]!, c.line);
     } else this.emit(MOVE_FEED, t2[0]!, t2[1]!, t2[2]!, c.line);
     this.feed = feed0;
+    return -1;
   }
 
-  /** 마지막 이동(직선)의 끝을 n(출력 좌표)으로 줄인다: 길이·시간도 줄인 만큼 덜고 지금 자리를 n으로 */
-  private trimLast(n: readonly number[]): void {
+  /**
+   * 원호가 낀 모서리(직선-원호·원호-직선·원호-원호, 작업 평면 안). Heidenhain RND·Siemens RND/RNDM은 두 요소에 접하는 원호,
+   * Siemens CHR은 모서리에서 두 요소 위로 같은 거리(현 길이)인 두 점을 잇는 직선, CHF는 그 직선의 길이가 값이 되게 거리를 맞춘다.
+   * 둥글리기 중심 = 두 요소를 도는 쪽으로 반지름만큼 옮긴 선·원의 교점 가운데 모서리에 가까운 것. 원호의 중심은 그대로 두고
+   * 앞 원호는 끝을, 뒤 원호는 시작을 접점으로 옮긴다
+   */
+  private arcCorner(c: NonNullable<NcEmitter["corner"]>, seg: LastSeg, E: readonly number[], arcIdx: number, a0: number, a1: number): number {
+    const mb = this.mb;
+    const P = seg.e;
+    const px = P[a0]!;
+    const py = P[a1]!;
+    const elem = (from: readonly number[], to: readonly number[], ai: number): CornerElem | null => {
+      const fx = from[a0]!;
+      const fy = from[a1]!;
+      const tx = to[a0]!;
+      const ty = to[a1]!;
+      if (ai < 0) {
+        const l = Math.hypot(tx - fx, ty - fy);
+        return l < 1e-9 ? null : { arc: false, fx, fy, tx, ty, len: l, ux: (tx - fx) / l, uy: (ty - fy) / l, cx: 0, cy: 0, r: 0, dir: 1, sweep: 0 };
+      }
+      const cx = mb.arcCenter[ai * 3 + a0]!;
+      const cy = mb.arcCenter[ai * 3 + a1]!;
+      const sweep = mb.arcSweep[ai]!;
+      const r = Math.hypot(fx - cx, fy - cy);
+      return r < 1e-9 || Math.abs(sweep) < 1e-12 ? null : { arc: true, fx, fy, tx, ty, len: r * Math.abs(sweep), ux: 0, uy: 0, cx, cy, r, dir: sweep > 0 ? 1 : -1, sweep };
+    };
+    const A = elem(seg.s, P, seg.arc);
+    const B = elem(P, E, arcIdx);
+    if (!A || !B) return -1;
+    /** 모서리 P에서의 진행 방향 */
+    const tangent = (e: CornerElem): [number, number] => {
+      if (!e.arc) return [e.ux, e.uy];
+      const l = Math.hypot(px - e.cx, py - e.cy);
+      return [(-(py - e.cy) / l) * e.dir, ((px - e.cx) / l) * e.dir];
+    };
+    const tA = tangent(A);
+    const tB = tangent(B);
+    const cr = tA[0] * tB[1] - tA[1] * tB[0];
+    const th = Math.atan2(Math.abs(cr), tA[0] * tB[0] + tA[1] * tB[1]);
+    if (th < 1e-6) return -1;
+    if (Math.PI - th < 1e-6) {
+      this.w.add(`${c.label}: 되돌아가는 모서리는 그대로 그림`, c.line);
+      return -1;
+    }
+    const TAU = Math.PI * 2;
+    /** 원호 e의 시작에서 점(qx, qy)까지 진행 방향으로 돈 각(0 ~ 2π) */
+    const along = (e: CornerElem, qx: number, qy: number): number => {
+      let a = (Math.atan2(qy - e.cy, qx - e.cx) - Math.atan2(e.fy - e.cy, e.fx - e.cx)) * e.dir;
+      while (a < -1e-12) a += TAU;
+      while (a >= TAU - 1e-12) a -= TAU;
+      return Math.max(0, a);
+    };
+    /** 점이 요소 위(시작 ~ 끝 사이)인지와, 원호면 시작에서 그 점까지의 각 */
+    const onElem = (e: CornerElem, qx: number, qy: number): { ok: boolean; ang: number } => {
+      const eps = 1e-9 * Math.max(1, e.len);
+      if (!e.arc) {
+        const t = (qx - e.fx) * e.ux + (qy - e.fy) * e.uy;
+        return { ok: t >= -eps && t <= e.len + eps, ang: 0 };
+      }
+      const full = Math.abs(e.sweep);
+      let ang = along(e, qx, qy);
+      // 끝점(P)과 겹친 0도는 끝까지 돈 것
+      if (ang < 1e-9 && full > TAU - 1e-9) ang = full;
+      return { ok: ang <= full + 1e-9, ang };
+    };
+    let T1: [number, number];
+    let T2: [number, number];
+    let F: [number, number] | null = null;
+    let sg = 1;
+    if (c.kind === 'round') {
+      const R = c.size;
+      sg = cr > 0 ? 1 : -1;
+      // 도는 쪽(sg: 왼쪽 1)으로 R만큼 옮긴 요소: 직선은 평행선, 원호는 반지름 r - sg·dir·R
+      const shifted = (e: CornerElem): CornerElem | null => {
+        if (!e.arc) return { ...e, fx: e.fx - e.uy * R * sg, fy: e.fy + e.ux * R * sg };
+        const r = e.r - sg * e.dir * R;
+        return r > 1e-9 ? { ...e, r } : null;
+      };
+      const oA = shifted(A);
+      const oB = shifted(B);
+      const cands = oA && oB ? cornerIntersections(oA, oB) : [];
+      let best = Infinity;
+      for (const q of cands) {
+        const d = Math.hypot(q[0] - px, q[1] - py);
+        if (d < best) {
+          best = d;
+          F = q;
+        }
+      }
+      if (!F) {
+        this.w.add(`${c.label}: 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, c.line);
+        return -1;
+      }
+      const foot = (e: CornerElem, q: [number, number]): [number, number] => {
+        if (!e.arc) {
+          const t = (q[0] - e.fx) * e.ux + (q[1] - e.fy) * e.uy;
+          return [e.fx + e.ux * t, e.fy + e.uy * t];
+        }
+        const l = Math.hypot(q[0] - e.cx, q[1] - e.cy);
+        return [e.cx + ((q[0] - e.cx) / l) * e.r, e.cy + ((q[1] - e.cy) / l) * e.r];
+      };
+      T1 = foot(A, F);
+      T2 = foot(B, F);
+    } else {
+      // 모서리에서 요소를 따라 현 길이 d인 점(앞 요소는 거꾸로)
+      const at = (e: CornerElem, d: number, back: boolean): [number, number] | null => {
+        if (!e.arc) {
+          if (d > e.len * (1 + 1e-9) + 1e-9) return null;
+          const k = back ? -d : d;
+          return [px + e.ux * k, py + e.uy * k];
+        }
+        if (d > 2 * e.r) return null;
+        const a = 2 * Math.asin(Math.min(1, d / (2 * e.r)));
+        if (a > Math.abs(e.sweep) + 1e-9) return null;
+        const t = Math.atan2(py - e.cy, px - e.cx) + (back ? -1 : 1) * e.dir * a;
+        return [e.cx + e.r * Math.cos(t), e.cy + e.r * Math.sin(t)];
+      };
+      let d = c.kind === 'chamferLeg' ? c.size : c.size / (2 * Math.cos(th / 2));
+      let p1 = at(A, d, true);
+      let p2 = at(B, d, false);
+      // CHF: 두 점 사이가 값과 같아지게 거리를 맞춘다(직선끼리면 처음 값이 답)
+      for (let k = 0; c.kind === 'chamferHyp' && p1 && p2 && k < 50; k++) {
+        const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+        if (Math.abs(len - c.size) <= 1e-12 * Math.max(1, c.size) || len < 1e-12) break;
+        d *= c.size / len;
+        p1 = at(A, d, true);
+        p2 = at(B, d, false);
+      }
+      if (!p1 || !p2) {
+        this.w.add(`${c.label}: 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, c.line);
+        return -1;
+      }
+      T1 = p1;
+      T2 = p2;
+    }
+    const on1 = onElem(A, T1[0], T1[1]);
+    const on2 = onElem(B, T2[0], T2[1]);
+    // 뒤 원호는 접점 뒤로 조금이라도 남아야 한다(호 표의 차례를 지키려고)
+    if (!on1.ok || !on2.ok || (B.arc && on2.ang >= Math.abs(B.sweep) - 1e-9)) {
+      this.w.add(`${c.label}: 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, c.line);
+      return -1;
+    }
+    const to3 = (q: [number, number]): number[] => {
+      const v = [P[0]!, P[1]!, P[2]!];
+      v[a0] = q[0];
+      v[a1] = q[1];
+      return v;
+    };
+    const t1 = to3(T1);
+    const t2 = to3(T2);
+    this.trimLast(t1, A.arc ? A.dir * on1.ang : undefined);
+    const feed0 = this.feed;
+    if (c.feed !== undefined) this.feed = c.feed;
+    if (F) {
+      let sw = Math.atan2(T2[1] - F[1], T2[0] - F[0]) - Math.atan2(T1[1] - F[1], T1[0] - F[0]);
+      if (sg > 0) while (sw <= 0) sw += TAU;
+      else while (sw >= 0) sw -= TAU;
+      if (Math.abs(sw) > 1e-9 && Math.abs(sw) < TAU - 1e-9) this.emitArc(c.plane, to3(F), sw, t2[0]!, t2[1]!, t2[2]!, c.line);
+      else this.emit(MOVE_FEED, t2[0]!, t2[1]!, t2[2]!, c.line);
+    } else this.emit(MOVE_FEED, t2[0]!, t2[1]!, t2[2]!, c.line);
+    this.feed = feed0;
+    if (!B.arc) return -1;
+    // 뒤 원호: 중심 그대로, 접점에서 끝까지
+    const rest = B.dir * (Math.abs(B.sweep) - on2.ang);
+    mb.arcSweep[arcIdx] = rest;
+    const ctr = [mb.arcCenter[arcIdx * 3]!, mb.arcCenter[arcIdx * 3 + 1]!, mb.arcCenter[arcIdx * 3 + 2]!];
+    return arcLength(this.pos, E, ctr, c.plane, rest);
+  }
+
+  /** 마지막 이동의 끝을 n(출력 좌표)으로 줄인다: 길이·시간도 줄인 만큼 덜고 지금 자리를 n으로. 원호면 새 중심각(sweep)도 */
+  private trimLast(n: readonly number[], sweep?: number): void {
     const seg = this.lastSeg!;
     const i = seg.i;
-    const oldLen = Math.hypot(seg.e[0] - seg.s[0], seg.e[1] - seg.s[1], seg.e[2] - seg.s[2]);
-    const newLen = Math.hypot(n[0]! - seg.s[0], n[1]! - seg.s[1], n[2]! - seg.s[2]);
+    let oldLen: number;
+    let newLen: number;
+    if (seg.arc >= 0 && sweep !== undefined) {
+      const a = seg.arc;
+      const ctr = [this.mb.arcCenter[a * 3]!, this.mb.arcCenter[a * 3 + 1]!, this.mb.arcCenter[a * 3 + 2]!];
+      const plane = this.mb.arcPlane[a]!;
+      oldLen = arcLength(seg.s, seg.e, ctr, plane, this.mb.arcSweep[a]!);
+      newLen = arcLength(seg.s, n, ctr, plane, sweep);
+      this.mb.arcSweep[a] = sweep;
+    } else {
+      oldLen = Math.hypot(seg.e[0] - seg.s[0], seg.e[1] - seg.s[1], seg.e[2] - seg.s[2]);
+      newLen = Math.hypot(n[0]! - seg.s[0], n[1]! - seg.s[1], n[2]! - seg.s[2]);
+    }
     const k = (i + 1) * 3;
     this.mb.points[k] = n[0]!;
     this.mb.points[k + 1] = n[1]!;

@@ -265,6 +265,8 @@ export interface MprOpRow {
   tool?: number;
   diameter?: number;
   depth?: number;
+  /** 엣지 밴딩 띠 두께 */
+  thickness?: number;
   holeCount?: number;
 }
 

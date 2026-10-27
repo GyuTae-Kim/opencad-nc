@@ -6,13 +6,14 @@
  * 호는 각도 허용치(기본 5도)로 나눈다. 공작물이 있으면 반투명 상자(group "공작물").
  *
  * mprToScene(MPR·WangShi PGI·KDT XML 공용): 판 상자(반투명), 수직·수평 구멍은 원기둥, 윤곽 가공은 공구 경로 선, 홈은 얇은 상자,
- * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로). meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
+ * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로·MPR 자유 형상 포켓 윤곽), 엣지 밴딩은 판 옆면에 띠 두께만큼 바깥으로 띄운 테두리 선(윗변·아랫변·양 끝).
+ * meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
-import type { MprPart, PanelFace } from './mpr';
+import { pathPolyline, type MprEdgeOp, type MprPart, type MprWorkpiece, type PanelFace } from './mpr';
 
 export interface NcSceneOptions {
   /** 원호를 나눌 최대 각도(라디안, 기본 5도). 선분 예산을 넘으면 자동으로 키운다 */
@@ -378,6 +379,7 @@ const DRILL_H_COLOR: Rgba = [0.15, 0.35, 0.8, 1];
 const GROOVE_COLOR: Rgba = [0.2, 0.6, 0.3, 0.85];
 const POCKET_COLOR: Rgba = [0.55, 0.3, 0.7, 0.75];
 const CONTOUR_COLOR: Rgba = [0.5, 0.5, 0.5, 1];
+const EDGE_COLOR: Rgba = [0.05, 0.6, 0.58, 1];
 /** 판 면으로 들어가는 방향 */
 const FACE_DIR: Record<PanelFace, readonly [number, number, number]> = { top: [0, 0, -1], bottom: [0, 0, 1], left: [1, 0, 0], right: [-1, 0, 0], front: [0, 1, 0], back: [0, -1, 0] };
 
@@ -449,6 +451,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       }
       case 'groove':
       case 'pocket': {
+        if (op.contour !== undefined) usedContours.add(op.contour);
         if (op.prism) {
           const pr = op.prism;
           const acc = new MeshAccum();
@@ -513,6 +516,14 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         lines.push({ id: `mpr-op-${oi}`, name: op.label, positions: new Float32Array(seg), color: toolColor(op.tool), group, segmentIds: ids, width: 2 });
         return;
       }
+      case 'edge': {
+        if (op.contour !== undefined) usedContours.add(op.contour);
+        const seg = edgeBandSegments(op, wp);
+        if (!seg.length) return;
+        for (let i = 0; i < seg.length; i += 3) extendBox(box, seg[i]!, seg[i + 1]!, seg[i + 2]!);
+        lines.push({ id: `mpr-op-${oi}`, name: op.label, positions: new Float32Array(seg), color: EDGE_COLOR, group, segmentIds: new Uint32Array(seg.length / 6).fill(oi), width: 3 });
+        return;
+      }
       case 'other':
         // 모르는 매크로: 위치만 점으로(묶음 '기타 가공(위치)')
         if (op.at) {
@@ -568,6 +579,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         diameter: 'diameter' in o ? o.diameter : undefined,
         depth: 'depth' in o ? o.depth : undefined,
         holeCount: 'holes' in o ? o.holes.length : undefined,
+        ...(o.kind === 'edge' && o.thickness !== undefined ? { thickness: o.thickness } : {}),
       })),
       contourCount: part.contours.length,
       variables: part.variables.map((v) => ({ name: v.name, value: v.value, expr: v.expr, comment: v.comment })),
@@ -591,9 +603,51 @@ function opGroup(kind: string): string {
       return '홈';
     case 'pocket':
       return '포켓';
+    case 'edge':
+      return '엣지 밴딩';
     default:
       return '기타';
   }
+}
+
+/**
+ * 엣지 밴딩 띠의 테두리 선분(xyz 쌍): 구간을 띠 쪽으로 두께만큼 띄운 꺾은선을 판 아랫면(Z 0)·윗면(두께) 높이에 긋고 양 끝을 세로로 잇는다.
+ * 판을 모르면 윤곽 높이에 한 줄. 꺾이는 점은 앞뒤 조각의 법선을 더한 쪽으로(모서리에서 띠가 벌어지지 않게)
+ */
+export function edgeBandSegments(op: MprEdgeOp, wp: MprWorkpiece | undefined): number[] {
+  const path = op.path;
+  if (!path || path.length < 2) return [];
+  const pts = pathPolyline(path).filter((q, i, a) => i === 0 || Math.hypot(q[0] - a[i - 1]![0], q[1] - a[i - 1]![1]) > 1e-9);
+  if (pts.length < 2) return [];
+  const off = (op.thickness ?? 0) * (op.side ?? 1);
+  const normals = pts.slice(1).map((b, i) => {
+    const a = pts[i]!;
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l] as const;
+  });
+  const ring = pts.map((q, i) => {
+    const n0 = normals[Math.max(0, i - 1)]!;
+    const n1 = normals[Math.min(normals.length - 1, i)]!;
+    let mx = n0[0] + n1[0];
+    let my = n0[1] + n1[1];
+    const ml = Math.hypot(mx, my);
+    if (ml < 1e-9) {
+      mx = n1[0];
+      my = n1[1];
+    } else {
+      // 꺾인 점: 두 변에서 같은 거리(off)가 되게 늘린다(아주 뾰족하면 4배까지)
+      const k = Math.min(4, 1 / Math.max(0.25, (mx * n1[0] + my * n1[1]) / ml));
+      mx = (mx / ml) * k;
+      my = (my / ml) * k;
+    }
+    return [q[0] + mx * off, q[1] + my * off] as const;
+  });
+  const out: number[] = [];
+  const levels = wp && wp.thickness > 0 ? [0, wp.thickness] : [path[0]!.z];
+  for (const z of levels) for (let i = 1; i < ring.length; i++) out.push(ring[i - 1]![0], ring[i - 1]![1], z, ring[i]![0], ring[i]![1], z);
+  if (levels.length === 2)
+    for (const q of [ring[0]!, ring[ring.length - 1]!]) out.push(q[0], q[1], levels[0]!, q[0], q[1], levels[1]!);
+  return out;
 }
 
 function fmt(v: number): string {
