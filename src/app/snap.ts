@@ -11,8 +11,9 @@
  *   그 이동의 조각 중 고른 점에 가장 가까운 것의 가운데 점(호는 호 위)과 호 중심을 준다.
  * - 판재 가공(MPR·PGI·XML): 워커가 장면과 같은 묶음 id로 만든 붙잡기 표(PanelSnapTable)에서 윤곽·판 외곽선의 원호 중심·원형 포켓 중심을
  *   늘 후보로, 고른 윤곽 선분은 그 요소(직선·호)의 가운데 점과 호 중심을 준다.
- * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 결과 글의 축은 dx·dy·dz로 가린다(measureAxis).
+ * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 축 방향의 축은 코어 결과의 axisA·axisB(0.9.1)를 쓴다.
  */
+import type { SnapAxis } from 'opencad-viewer3d/inference';
 import type { Pick3d, SnapKind, SnapPoint } from 'opencad-viewer3d/types';
 import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
 import type { PanelSnapTable } from '../scene';
@@ -245,7 +246,7 @@ export function moveSnapPoints(pick: Pick3d, nc: SnapMoves): SnapPoint[] | null 
 }
 
 /** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼 */
-export function snapLabel(kind: SnapKind | null | undefined, axis?: 'x' | 'y' | 'z' | null): string {
+export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null): string {
   switch (kind) {
     case 'vertex':
       return '꼭짓점';
@@ -268,20 +269,12 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: 'x' | 'y' | 
   }
 }
 
-/** 축 방향으로 붙잡은 둘째 점의 축: 첫 점에서 한 축으로만 움직였으면 그 축(코어 결과에는 축이 없어 dx·dy·dz로 가린다) */
-export function measureAxis(m: { dx: number; dy: number; dz: number }): 'x' | 'y' | 'z' | null {
-  const d = [Math.abs(m.dx), Math.abs(m.dy), Math.abs(m.dz)];
-  const k = d.indexOf(Math.max(...d));
-  if (!(d[k]! > 0)) return null;
-  // 나머지 두 축이 큰 축의 1e-6 안이면 그 축 방향
-  return d.every((v, i) => i === k || v <= d[k]! * 1e-6) ? (['x', 'y', 'z'] as const)[k]! : null;
-}
-
-/** 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null) */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; dx?: number; dy?: number; dz?: number }): [string, string] | null {
+/**
+ * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
+ * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼
+ */
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis }): [string, string] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
-  // 축 방향은 둘째 점만(첫 점에서 축을 따라 간 점)
-  const axis = m.snapB === 'axis' && m.dx !== undefined ? measureAxis({ dx: m.dx, dy: m.dy ?? 0, dz: m.dz ?? 0 }) : null;
-  return [snapLabel(m.snapA), snapLabel(m.snapB, axis)];
+  return [snapLabel(m.snapA, m.axisA), snapLabel(m.snapB, m.axisB)];
 }

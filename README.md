@@ -290,7 +290,7 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.9.0`(잠금 커밋 `0b9faa5`)으로 받습니다. 코어를 올리면
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.9.1`(잠금 커밋 `b1839ec`)으로 받습니다. 코어를 올리면
 `npm install "opencad-viewer3d@github:GyuTae-Kim/opencad-viewer3d#<태그>"`로 받아 `package.json`·`package-lock.json`을 함께 바꿉니다(그냥 `npm install`은 옛 커밋을 남김).
 표본·임시 파일은 `.runtime/`(git 무시)에 둡니다.
 

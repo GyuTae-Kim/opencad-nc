@@ -64,7 +64,7 @@ vi.mock('../../src/app/client', async () => {
 });
 
 import { NcViewerApp } from '../../src/app/app';
-import { arcCenterCount, arcCenters, measureAxis, movePointAt, moveSnapPoints, snapLabel, snapPair } from '../../src/app/snap';
+import { arcCenterCount, arcCenters, movePointAt, moveSnapPoints, snapLabel, snapPair } from '../../src/app/snap';
 import { ncPayload } from '../../src/app/payload';
 import { loadNcFile, ncPathSetId, MOVE_ARC } from '../../src/index';
 import { catalogs, translate } from '../../site/i18n.mjs';
@@ -227,15 +227,12 @@ describe('붙잡은 종류 글', () => {
     expect(snapLabel('point')).toBe('붙잡은 점');
   });
 
-  it('추론 붙잡기(코어 0.9.0): 교차점·수직 발, 축 방향은 둘째 점이 첫 점에서 한 축으로만 움직였으면 그 축', () => {
-    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular', dx: 3, dy: 4, dz: 0 })).toEqual(['교차점', '수직 발']);
-    expect(snapPair({ snapA: 'center', snapB: 'axis', dx: 0, dy: -12.5, dz: 0 })).toEqual(['중심', 'Y축 방향']);
-    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', dx: 1e-9, dy: 0, dz: 40 })).toEqual(['끝점', 'Z축 방향']);
-    // 축을 가릴 수 없으면(두 축으로 움직임·길이 0) 그냥 '축 방향'
-    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', dx: 3, dy: 4, dz: 0 })).toEqual(['끝점', '축 방향']);
+  it('추론 붙잡기(코어 0.9.0): 교차점·수직 발, 축 방향은 코어가 준 축(axisB, 코어 0.9.1)', () => {
+    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular' })).toEqual(['교차점', '수직 발']);
+    expect(snapPair({ snapA: 'center', snapB: 'axis', axisB: 'y' })).toEqual(['중심', 'Y축 방향']);
+    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', axisB: 'z' })).toEqual(['끝점', 'Z축 방향']);
+    // 축이 없으면(옛 결과) 그냥 '축 방향' — dx·dy·dz로 짐작하지 않는다
     expect(snapPair({ snapA: 'endpoint', snapB: 'axis' })).toEqual(['끝점', '축 방향']);
-    expect(measureAxis({ dx: -7, dy: 0, dz: 0 })).toBe('x');
-    expect(measureAxis({ dx: 0, dy: 0, dz: 0 })).toBeNull();
     expect(snapLabel('axis', 'x')).toBe('X축 방향');
   });
 
