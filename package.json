@@ -24,7 +24,9 @@
     "test:seo": "node --test tools/seo.test.mjs",
     "update:content-dates": "vite build && node tools/update-content-dates.mjs",
     "check:i18n": "node tools/check-i18n.mjs",
-    "test:i18n": "vitest run tests/i18n.test.ts"
+    "test:i18n": "vitest run tests/i18n.test.ts",
+    "sweep": "vite-node scripts/sweep/sweep.ts --",
+    "sweep:compare": "vite-node scripts/sweep/compare.ts --"
   },
   "dependencies": {
     "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.8.0"
