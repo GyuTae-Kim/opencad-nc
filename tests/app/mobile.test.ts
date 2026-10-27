@@ -190,6 +190,7 @@ describe('좁은 화면 도구 막대', () => {
       '격자:menuitemcheckbox:true',
       '뷰 큐브:menuitemcheckbox:true',
       '좌표축:menuitemcheckbox:true',
+      '소재 깎기:menuitemcheckbox:false',
       'PNG 저장:menuitem:null',
     ]);
     expect(list.querySelectorAll('.menu-sep')).toHaveLength(3);

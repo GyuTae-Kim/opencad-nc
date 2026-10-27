@@ -3,7 +3,8 @@
  *
  * - 원호 중심: 해석기가 호 표(arcs.center)에 둔 G2/G3 중심을 그대로 쓴다(장면 좌표가 곧 세계 좌표 — NC 장면은 묶음 원점·행렬이 없다).
  *   커서가 중심 자리(빈 곳)에 와야 붙으므로 늘 후보(points)로 주고, 그 호가 그려진 선분 묶음 id를 달아 숨긴 공구·단면을 따르게 한다.
- *   재생 중에는 아직 그리지 않은 이동의 중심을 빼도록 이동 번호 차례로 둔다(arcCenterCount).
+ *   재생 중에는 아직 그리지 않은 이동의 중심을 빼도록 점마다 처음 그린 이동 번호를 차례(order)로 두고, 코어 붙잡기 한도
+ *   (setMeasureSnapLimit, 0.10.0)로 거른다 — 재생 자리가 바뀌어도 점 목록·색인을 다시 주지 않는다.
  * - 이동 가운데 점(pointsFor): 고른 선분의 이동 번호(segmentIds)로 그 G0·G1·드릴 이동의 가운데, 원호는 현이 아니라 호 위의 가운데 점
  *   (장면이 호를 나눌 때와 같은 식 — 각·반지름·직선 축을 반씩). 장면은 호를 짧은 선분 여럿으로 그리므로 코어의 선분 가운데 점
  *   (midpoints)은 그 조각의 가운데일 뿐이라 쓰지 않는다.
@@ -77,7 +78,7 @@ export interface ArcCenters {
 const PATH_SET = /^nc-(?:cut|drill)-|^nc-(?:rapid|machine)$/;
 
 /**
- * 모든 원호 이동의 중심 → 붙잡기 점(kind 'center', id = 그 호의 선분 묶음). 같은 묶음 안 같은 자리 중심(여러 바퀴 나선·나눈 원 등)은
+ * 모든 원호 이동의 중심 → 붙잡기 점(kind 'center', id = 그 호의 선분 묶음, order = 처음 그린 이동 번호). 같은 묶음 안 같은 자리 중심(여러 바퀴 나선·나눈 원 등)은
  * 처음 것 하나로. limit을 넘으면 거기까지(코어 0.9.0은 512개 이상이면 점 범위 나무로 커서 둘레만 보므로 마우스 이동은 빠르지만,
  * 점 목록·나무의 메모리를 아주 큰 프로그램에서 묶는다 — 고른 호의 중심은 pointsFor가 준다)
  */
@@ -100,13 +101,14 @@ export function arcCenters(nc: SnapMoves, limit = 200_000): ArcCenters {
     const key = `${id}|${Math.round(x * 1e6)}|${Math.round(y * 1e6)}|${Math.round(z * 1e6)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    points.push({ point: [x, y, z], kind: 'center', id });
+    // 차례 = 그 중심을 처음 그린 이동 번호(재생 중 코어 붙잡기 한도로 거른다)
+    points.push({ point: [x, y, z], kind: 'center', id, order: i });
     at.push(i);
   }
   return { points, moves: Uint32Array.from(at) };
 }
 
-/** 재생 중 그린 이동이 lastMove까지일 때 쓸 중심 수(그 이동까지 처음 나온 중심). lastMove가 없으면 모두 */
+/** 재생 중 그린 이동이 lastMove까지일 때 붙잡는 중심 수(그 이동까지 처음 나온 중심 — 코어 한도 lastMove + 1로 거른 것과 같다). lastMove가 없으면 모두 */
 export function arcCenterCount(c: ArcCenters, lastMove: number | null): number {
   if (lastMove === null) return c.points.length;
   let lo = 0;

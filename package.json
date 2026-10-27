@@ -26,10 +26,11 @@
     "check:i18n": "opencad-site check-i18n",
     "test:i18n": "vitest run tests/i18n.test.ts",
     "sweep": "vite-node scripts/sweep/sweep.ts --",
-    "sweep:compare": "vite-node scripts/sweep/compare.ts --"
+    "sweep:compare": "vite-node scripts/sweep/compare.ts --",
+    "sim:bench": "vite-node scripts/sim/bench.ts --"
   },
   "dependencies": {
-    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.9.1"
+    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.10.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

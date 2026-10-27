@@ -29,8 +29,17 @@ const fake = vi.hoisted(() => {
     setMeasureMode(on: boolean): void {
       this.measureMode = on;
     }
-    setMeasureSnap(o: unknown): void {
+    /** 붙잡기 한도(코어 0.10.0): setMeasureSnap의 limit, 그 뒤 setMeasureSnapLimit으로 바꾼 값 */
+    readonly limits: (number | null)[] = [];
+    setMeasureSnap(o: { limit?: number | null } | null): void {
       this.snaps.push(o);
+      if (o) this.limits.push(o.limit ?? null);
+    }
+    setMeasureSnapLimit(n: number | null): void {
+      this.limits.push(n);
+    }
+    get measureSnapLimit(): number | null {
+      return this.limits.at(-1) ?? null;
     }
     get measureSnap(): unknown {
       return this.snaps.at(-1) ?? null;
@@ -141,6 +150,15 @@ describe('원호 중심 붙잡기 점', () => {
     expect(arcCenterCount(c, c.moves[0]!)).toBe(1);
     expect(arcCenterCount(c, c.moves[2]! - 1)).toBe(2);
     expect(arcCenterCount(c, nc.moves.count)).toBe(5);
+  });
+
+  it('차례(order) = 처음 그린 이동 번호: 코어 한도 lastMove + 1로 거른 점 = 예전처럼 그 이동까지 잘라 다시 준 목록', () => {
+    expect(c.points.map((p) => p.order)).toEqual([...c.moves]);
+    for (let last = -1; last <= nc.moves.count; last++) {
+      const limit = last + 1;
+      const filtered = c.points.filter((p) => p.order === undefined || p.order < limit);
+      expect(filtered).toEqual(c.points.slice(0, arcCenterCount(c, last)));
+    }
   });
 
   it('너무 많으면 limit까지', () => {
@@ -272,7 +290,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     expect(s!.points.length).toBe(5);
     // 추론 붙잡기(교차점·수직 발·축 방향)도 켠다
     expect(s!.inference).toBe(true);
-    expect(s!.points[0]).toEqual({ point: [40, 20, -1], kind: 'center', id: 'nc-cut-1' });
+    expect(s!.points[0]).toMatchObject({ point: [40, 20, -1], kind: 'center', id: 'nc-cut-1' });
     const nc = app.doc!.nc!;
     const arc = [...Array(nc.moves.count).keys()].find((i) => nc.moves.kind[i] === MOVE_ARC)!;
     expect(s!.pointsFor(linePick('nc-cut-1', arc))!.map((p) => p.kind)).toEqual(['midpoint', 'center']);
@@ -284,19 +302,32 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     expect(v.snaps.at(-1)).toBeNull();
   });
 
-  it('재생 중에는 그린 이동까지의 중심만, 재생을 끝내면 모두', async () => {
+  it('재생 중에는 그린 이동까지의 중심만(코어 붙잡기 한도 — 점 목록은 다시 주지 않는다), 재생을 끝내면 모두', async () => {
     const { app, root } = makeApp();
     await app.openBuffer('snap-test.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer);
     const v = fake.FakeViewer.last!;
     measureBtn(root).click();
     const nc = app.doc!.nc!;
     const c = arcCenters(nc);
+    const given = v.snaps.length;
+    const shown = (): SnapPoint[] => {
+      const lim = v.measureSnapLimit;
+      return (v.snaps.at(-1) as Snap)!.points.filter((p) => lim === null || p.order === undefined || p.order < lim);
+    };
     // 셋째 중심(나선 첫 바퀴)을 그리기 직전 이동의 끝 시각
     const before = c.moves[2]! - 1;
     app.seek(nc.timeline[before]! - 1e-6);
-    expect((v.snaps.at(-1) as Snap)!.points.length).toBe(2);
+    expect(v.snaps.length).toBe(given);
+    expect(v.measureSnapLimit).toBe(before + 1);
+    expect(shown()).toEqual(c.points.slice(0, 2));
+    // 같은 이동 안에서 시각만 바뀌면 한도도 그대로(코어를 부르지 않는다)
+    const calls = v.limits.length;
+    app.seek(nc.timeline[before]! - 2e-6);
+    expect(v.limits.length).toBe(calls);
     app.seek(null);
-    expect((v.snaps.at(-1) as Snap)!.points.length).toBe(5);
+    expect(v.measureSnapLimit).toBeNull();
+    expect(shown()).toEqual(c.points);
+    expect(v.snaps.length).toBe(given);
   });
 
   it('결과의 붙잡은 종류를 측정 띠·상태 막대·패널에 "중심 → 끝점"으로', async () => {

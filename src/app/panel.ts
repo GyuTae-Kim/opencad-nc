@@ -60,6 +60,8 @@ export interface PanelHost {
   /** 기계·읽기 설정(앱 전체, 기억된다) */
   readonly settings: NcSettings;
   setSettings(s: NcSettings): void;
+  /** "깎기" 탭(소재 깎기 시뮬레이션 — 앱이 나눠 받은 모듈로 그린다) */
+  renderSimTab(body: HTMLElement, d: NcDoc): void;
 }
 
 const MPR_KIND: Record<string, string> = {
@@ -285,6 +287,7 @@ export class NcPanel {
       if (d.panelTab === 'tools') this.renderTools(d);
       else if (d.panelTab === 'ops') this.renderOps(d);
       else if (d.panelTab === 'vars') this.renderVars(d);
+      else if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d);
       else this.renderInfo(d);
       if (sameTab) this.body.scrollTop = scroll;
     }
@@ -1026,7 +1029,7 @@ export class NcPanel {
       }
     } else if (p) {
       const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);
-      const name = item?.name ?? p.id;
+      const name = item?.name ?? (p.id.startsWith('sim-') ? '깎인 소재' : p.id);
       lines.push(h('div', {}, h('b', {}, '고른 것 '), name, item?.group && item.group !== name ? h('span', { class: 'dim' }, ` · ${item.group}`) : null));
       lines.push(h('div', { class: 'dim' }, `점 ${fmtPt(p.point)}`));
     }

@@ -8,12 +8,8 @@
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  */
 import type { ViewName } from 'opencad-viewer3d';
-
-/**
- * 숫자 키 → 표준 뷰(코어 VIEW_KEYS와 같은 표 — 시험이 견준다). 코어 입구(opencad-viewer3d)는 문서를 열 때 나눠 받으므로(core.ts)
- * 첫 화면에서 쓰는 메뉴 글은 이 표로 만든다
- */
-export const VIEW_KEYS: Readonly<Record<string, ViewName>> = { '1': 'front', '2': 'back', '3': 'left', '4': 'right', '5': 'top', '6': 'bottom', '7': 'seIso' };
+// 숫자 키 → 표준 뷰 표는 코어의 작은 모듈에서(0.10.0 — 코어 입구는 문서를 열 때 나눠 받으므로 첫 화면 메뉴 글은 camera 모듈의 표로)
+import { VIEW_KEYS } from 'opencad-viewer3d/camera';
 
 export type KeyAction =
   | { type: 'open' }
