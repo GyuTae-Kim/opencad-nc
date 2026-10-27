@@ -3,12 +3,14 @@
  *
  * 3축(공구 방향 Z)이 아닌 프로그램은 그리지 않고 까닭을 알린다: 선반, 회전축(A·B·C) 낱말, 기울인 작업 평면·공구 끝점 제어
  * (G68.2·G68.3·G68.4·G268·G43.4·G43.5·G53.1·G53.6, Siemens TRAORI·CYCLE800·ROT X/Y, Heidenhain PLANE·CYCL DEF 19·M128·
- * FUNCTION TCPM·공구 축이 X·Y인 TOOL CALL), 판재 형식(MPR·PGI·XML — 아직 다음 단계). 주석 안의 낱말은 보지 않는다.
+ * FUNCTION TCPM·공구 축이 X·Y인 TOOL CALL). 주석 안의 낱말은 보지 않는다.
+ * 판재 형식(MPR·PGI·XML)은 해석 워커가 만든 재료(src/sim/panel.ts)로 윗면 가공만 시뮬레이션한다 — 재료가 없거나 윗면 가공이 없으면 알린다.
  */
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_FEED, type NcTool } from '../model';
+import type { PanelSimSource } from './panel';
 import { resolveTool, fileTool, toolHintsFromSource, type SimToolRow, type SimToolTable } from './tool';
 
-export type SimBlockCode = 'panel' | 'lathe' | 'rotary' | 'tilt' | 'tool-axis' | 'no-cut';
+export type SimBlockCode = 'panel' | 'panel-none' | 'lathe' | 'rotary' | 'tilt' | 'tool-axis' | 'no-cut';
 
 /** 시뮬레이션하지 않는 까닭 */
 export interface SimBlock {
@@ -21,7 +23,8 @@ export interface SimBlock {
 
 /** 까닭 → 화면 글(사전에 같은 글이 있다) */
 export const SIM_BLOCK_TEXT: Record<SimBlockCode, string> = {
-  panel: '판재 형식(MPR·PGI·XML)은 아직 시뮬레이션하지 않습니다(다음 단계).',
+  panel: '판재 파일의 시뮬레이션 자료가 없습니다(파일을 다시 열어 보십시오).',
+  'panel-none': '판 윗면에서 위→아래로 깎는 가공이 없어 시뮬레이션할 것이 없습니다.',
   lathe: '선반 프로그램은 시뮬레이션하지 않습니다.',
   rotary: '회전축(A·B·C)을 쓰는 프로그램은 시뮬레이션하지 않습니다(4·5축).',
   tilt: '기울인 작업 평면·공구 끝점 제어(5축)가 있어 시뮬레이션하지 않습니다.',
@@ -65,6 +68,13 @@ export function simBlocker(input: { kind: string; lathe: boolean; rotaryAxes: bo
     }
   }
   if (!input.hasCut) return { code: 'no-cut', line: -1 };
+  return null;
+}
+
+/** 판재 파일을 시뮬레이션할 수 있는지(되면 null): 재료가 없으면 panel, 윗면에서 깎는 가공이 없으면 panel-none */
+export function panelBlocker(src: PanelSimSource | null | undefined): SimBlock | null {
+  if (!src) return { code: 'panel', line: -1 };
+  if (!src.items.length) return { code: 'panel-none', line: -1 };
   return null;
 }
 
@@ -233,5 +243,20 @@ export function simToolRows(
     const t = input.tools.find((x) => x.number === n);
     const file = t ? fileTool(t, hints.get(n)) : {};
     return resolveTool(n, file, user[String(n)], input.units);
+  });
+}
+
+/** 판재 공구의 사용자 표 열쇠(G-code 공구 번호와 섞이지 않게 'panel:' 앞붙임 — panel:D8 · panel:T101 · panel:R12) */
+export function panelToolKey(t: { key: string }): string {
+  return `panel:${t.key}`;
+}
+
+/**
+ * 판재 공구 표: 재료의 공구마다 파일 값(구멍 지름·공구 폭)과 사용자 표를 합친 값. number = 재료의 공구 차례(이동의 공구 번호), key = 사용자 표 열쇠
+ */
+export function panelToolRows(src: PanelSimSource, user: SimToolTable): SimToolRow[] {
+  return src.tools.map((t, i) => {
+    const key = panelToolKey(t);
+    return { ...resolveTool(i, t.diameter !== undefined && t.diameter > 0 ? { diameter: t.diameter } : {}, user[key], src.units), key };
   });
 }

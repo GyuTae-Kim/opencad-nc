@@ -11,6 +11,7 @@ import type { Scene3d } from 'opencad-viewer3d/types';
 import type { PanelFileKind } from '../extensions';
 import type { NcDialect, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
 import type { PanelSnapTable } from '../scene';
+import type { PanelSimSource } from '../sim/panel';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -129,6 +130,8 @@ export interface MprPayload {
   warnItems?: NcWarningItem[];
   /** 측정 붙잡기 표(원호 중심·윤곽 요소 — 장면과 같은 묶음 id) */
   snap?: PanelSnapTable;
+  /** 깎기 시뮬레이션 재료(윗면 가공의 구멍·경로·영역, 시뮬레이션하지 않는 가공과 까닭 — src/sim/panel-source.ts) */
+  sim?: PanelSimSource;
 }
 
 export type NcKind = 'gcode' | 'heidenhain' | PanelFileKind;

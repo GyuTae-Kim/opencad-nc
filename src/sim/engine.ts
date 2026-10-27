@@ -6,11 +6,13 @@
  *   다시 내려도 결과가 같다 — 앞으로 가는 것은 남은 조각만 내리면 된다.
  * - 직선·급속·드릴 이동은 선분 하나, 원호·나선은 현의 처짐이 chordTol 안인 선분들로 나눈다.
  * - 기계 좌표 쪽 추정 이동(FLAG_MACHINE_EST — 높이를 모르는 이동)은 내리지 않는다.
+ * - 영역 이동(SIM_MOVE_REGION — 판재의 홈·포켓처럼 파일이 모양을 정한 가공)은 공구 없이 그 영역을 바닥 높이로 한 번에 내린다(이동의 일부만
+ *   해도 다 한 것으로 본다).
  * - 급속 이동이 소재를 깎으면(rapidTol보다 깊게) 그 이동을 사건으로 남긴다(마디도 표시해 빨갛게 그린다).
  * - 저장점: 한 일(살펴본 마디 수)이 checkpointWork를 넘을 때마다 사본을 두고, maxCheckpoints를 넘으면 하나 걸러 버리고 간격을 두 배로.
  */
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_RAPID, PLANE_AXES } from '../model';
-import type { HeightGrid } from './grid';
+import type { HeightGrid, SimRegions } from './grid';
 import type { PreparedTool } from './tool';
 
 /** 엔진이 쓰는 이동 자료(NcPayload의 일부와 같은 꼴) */
@@ -25,7 +27,12 @@ export interface SimMoves {
   arcCenter: Float64Array;
   arcPlane: Uint8Array;
   arcSweep: Float64Array;
+  /** 영역 이동(SIM_MOVE_REGION)의 영역 표 — 그 이동의 arc 값이 영역 번호다 */
+  regions?: SimRegions;
 }
+
+/** 시뮬레이션만 쓰는 이동 종류: 영역을 바닥 높이로(model.ts의 MOVE_* 다음 번호) */
+export const SIM_MOVE_REGION = 4;
 
 /** 이동 [0, move)를 다 하고 move번 이동을 frac(0~1)만큼 한 자리 */
 export interface SimPosition {
@@ -171,6 +178,11 @@ export class SimEngine {
     const m = this.moves;
     if (i < 0 || i >= m.count || frac <= 0) return 0;
     if (m.flags[i]! & FLAG_MACHINE_EST) return 0;
+    if (m.kind[i] === SIM_MOVE_REGION) {
+      const w = m.regions ? this.grid.stampRegion(m.regions, m.arc[i]!).visited + 8 : 0;
+      this.work += w;
+      return w;
+    }
     const t = this.toolFor(m.tool[i]!);
     const rapid = m.kind[i] === MOVE_RAPID;
     const p = m.points;
