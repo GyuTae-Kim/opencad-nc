@@ -16,10 +16,12 @@
  * 좌표: 판 왼쪽 아래(앞) 모서리의 밑면이 원점, X = 길이(LA), Y = 폭(BR), Z = 두께 방향 위(윗면 Z = DI).
  * 구멍·홈 깊이(TI)는 윗면에서 잰다(UfluBohr는 아랫면에서). 호 KA: DS=0 시계, DS=1 반시계, R 반지름(.I/.J = 계산된 중심).
  * 조건 `??`가 0이거나 EN=0인 가공은 꺼진 것으로 둔다.
- * 윤곽 KR(둥글리기 R)·KF(모따기)는 앞뒤가 직선인 모서리에서 호·직선으로 깎는다(호가 낀 모서리는 그대로, 경고).
+ * 윤곽 KR(둥글리기 R)·KF(모따기)는 모서리를 호·직선으로 깎는다. 앞뒤가 직선이면 그 자리에서, 원호가 낀 모서리는 G-code 원호 모서리와 같은
+ * 기하(corner.ts — 원호 중심은 그대로, 원호 위 모따기 점은 모서리에서 현 길이)로.
  * 변수는 정의 차례대로 계산하고, 뒤에 정의된 변수를 쓰는 식은 다시 돌며 푼다. 모르는 매크로는 XA·YA가 있으면 위치만 남긴다.
  */
 import { ExprError, evalMprExpr } from './expr';
+import { cornerCut, cornerElem } from './corner';
 import { NcWarnings, type NcWarningItem, type PathPoint } from './model';
 import { guessEncoding } from './text';
 
@@ -470,13 +472,14 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         continue;
       } else if (type !== 'KL' && type !== 'KSL') w.add(`알 수 없는 윤곽 요소 ${type || '(종류 없음)'}`, e.line);
       if (corner) {
-        // 앞 직선(A0 → A1)과 이 직선(A1 → 끝) 사이 모서리
+        // 앞 요소(A0 → A1)와 이 요소(A1 → 끝) 사이 모서리
         const cr = corner;
         corner = null;
         const n = c.elements.length;
         const A1 = c.elements[n - 1];
         const A0 = c.elements[n - 2];
-        if (!A0 || !A1 || A1.arc || el.arc || (type !== 'KL' && type !== 'KSL')) sharp(cr, '앞뒤가 직선인 모서리만 지원');
+        if (!A0 || !A1 || (type !== 'KL' && type !== 'KSL' && type !== 'KA' && type !== 'KSA')) sharp(cr, '앞뒤 요소가 직선·원호가 아님');
+        else if (A1.arc || el.arc) arcCorner(c, A0, A1, el, cr, sharp);
         else {
           const l1 = Math.hypot(A1.x - A0.x, A1.y - A0.y);
           const l2 = Math.hypot(x - A1.x, y - A1.y);
@@ -718,6 +721,42 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
  * 호 중심: I·J(절대 중심)가 있으면 그것, 아니면 R과 방향으로 두 후보를 구해 .I/.J(계산된 중심)에 가까운 것,
  * 그것도 없으면 짧은 호(R<0이면 긴 호).
  */
+/**
+ * 원호가 낀 모서리의 KR(둥글리기 — 두 요소에 접하는 반지름 R 호)·KF(모따기 — 모서리에서 두 요소 위로 현 길이 R인 두 점을 잇는 직선).
+ * G-code의 원호 모서리 다듬기와 같은 기하(corner.ts)로, 원호 요소의 중심은 그대로 두고 앞 원호는 끝을, 뒤 원호는 시작을 접점으로 옮긴다
+ */
+function arcCorner(
+  c: MprContour,
+  A0: MprContourElement,
+  A1: MprContourElement,
+  el: MprContourElement,
+  cr: { type: string; size: number; index: number; line: number },
+  sharp: (cr: { type: string; line: number }, why: string) => void,
+): void {
+  const A = cornerElem(A0.x, A0.y, A1.x, A1.y, A1.arc ?? null);
+  const B = cornerElem(A1.x, A1.y, el.x, el.y, el.arc ?? null);
+  if (!A || !B) {
+    sharp(cr, '길이가 없는 요소');
+    return;
+  }
+  const cut = cornerCut(A, B, A1.x, A1.y, cr.type === 'KR' ? 'round' : 'chamferLeg', cr.size);
+  if (!cut.ok) {
+    sharp(cr, cut.reason === 'too-big' ? '크기가 변보다 큼' : cut.reason === 'reverse' ? '되돌아가는 모서리' : '모서리가 꺾이지 않음');
+    return;
+  }
+  A1.x = cut.t1[0];
+  A1.y = cut.t1[1];
+  if (A1.arc) A1.arc = { ...A1.arc, sweep: A.dir * cut.angA };
+  const fe: MprContourElement = { type: cr.type, index: cr.index, line: cr.line, x: cut.t2[0], y: cut.t2[1], z: A1.z };
+  if (cut.fillet) {
+    fe.arc = { ...cut.fillet };
+    fe.radius = cr.size;
+    fe.dir = cut.fillet.sweep > 0 ? 'ccw' : 'cw';
+  }
+  c.elements.push(fe);
+  if (el.arc) el.arc = { ...el.arc, sweep: B.dir * (Math.abs(B.sweep) - cut.angB) };
+}
+
 function arcFrom(
   sx: number,
   sy: number,

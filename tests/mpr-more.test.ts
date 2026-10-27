@@ -66,7 +66,7 @@ Y=50
     expect(p.warnings.filter((w) => w.includes('KR') || w.includes('KF'))).toEqual([]);
   });
 
-  it('호가 낀 모서리·크기 없음·변보다 큰 둥글리기는 모서리 그대로(경고)', () => {
+  it('크기 없음·변보다 큰 둥글리기는 모서리 그대로(경고 — 원호가 낀 모서리는 mpr-arc-corner.test.ts)', () => {
     const p = parseMpr(`${head}${board}]1
 $E0
 KP
