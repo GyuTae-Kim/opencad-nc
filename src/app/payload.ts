@@ -66,6 +66,7 @@ export function ncPayload(p: NcProgram): NcPayload {
     notices: p.notices ?? [],
     warnItems: p.warningItems ?? [],
     ...(p.feedBounds ? { cutBounds: { min: [p.feedBounds.min[0], p.feedBounds.min[1], p.feedBounds.min[2]], max: [p.feedBounds.max[0], p.feedBounds.max[1], p.feedBounds.max[2]] } } : {}),
+    ...(p.stock ? { stock: { min: [p.stock.min[0], p.stock.min[1], p.stock.min[2]], max: [p.stock.max[0], p.stock.max[1], p.stock.max[2]] } } : {}),
   };
 }
 

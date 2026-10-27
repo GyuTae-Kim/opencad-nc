@@ -38,6 +38,7 @@ import { arcCenterCount, arcCenters, moveSnapPoints, panelCenters, panelSnapPoin
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
+import type { SimHost, SimState, SimView } from './sim';
 
 export const APP_TITLE = 'OpenCAD NC 뷰어';
 const TOOLS_URL = 'https://gyutae-kim.github.io/opencad';
@@ -114,6 +115,8 @@ export interface AppState {
   section: { axis: SectionAxis | null; t: number; flip: boolean } | null;
   /** 여러 파일 작업이면 이은 파일(주 프로그램 먼저), 아니면 null */
   jobFiles: string[] | null;
+  /** 소재 깎기 시뮬레이션(한 번도 켜지 않았으면 null) */
+  sim: SimState | null;
 }
 
 export interface OpencadAppApi {
@@ -141,6 +144,8 @@ export interface OpencadAppApi {
   cancel(): boolean;
   /** 단면 보기: 축과 범위 안 위치(0~1), null이면 끈다 */
   setSection(axis: SectionAxis | null, t?: number, flip?: boolean): void;
+  /** 소재 깎기 시뮬레이션 켜고 끄기(선택: 공구 경로 함께·색·해상도·소재 상자) */
+  setSim(on: boolean, opts?: Parameters<SimView['setOptions']>[0]): Promise<void>;
 }
 
 declare global {
@@ -218,6 +223,9 @@ export class NcViewerApp implements PanelHost {
   private recentSeq = 0;
   /** 다음 파일 고르기가 열린 작업에 더할 파일인지 */
   private pickAdd = false;
+  /** 소재 깎기 시뮬레이션(켤 때 나눠 받는다 — sim.ts) */
+  private sim: SimView | null = null;
+  private simLoad: Promise<SimView> | null = null;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -246,7 +254,9 @@ export class NcViewerApp implements PanelHost {
   private readonly renderItems: { mode: RenderMode; el: HTMLButtonElement }[] = [];
   private secHandle: HTMLDivElement | null = null;
   /** 좁은 화면 "보기 설정" 메뉴의 투영·켜고 끄기 항목(그리기 모드는 renderItems에 함께 둔다) */
-  private readonly moreItems: { proj: Record<'perspective' | 'orthographic', HTMLButtonElement>; grid: HTMLButtonElement; cube: HTMLButtonElement; axes: HTMLButtonElement };
+  private readonly moreItems: { proj: Record<'perspective' | 'orthographic', HTMLButtonElement>; grid: HTMLButtonElement; cube: HTMLButtonElement; axes: HTMLButtonElement; sim: HTMLButtonElement };
+  /** 넓은 화면 "그리기" 메뉴의 소재 깎기(구분선과 항목) */
+  private readonly simWide: [HTMLDivElement, HTMLButtonElement] = [h('div', { class: 'menu-sep', role: 'separator' }), menuItem('소재 깎기', 'menuitemcheckbox', () => void this.setSim())];
   // ── 측정 띠(휴대폰·터치) ──
   private readonly measureBar: HTMLDivElement;
   private readonly measureText: HTMLDivElement;
@@ -316,6 +326,7 @@ export class NcViewerApp implements PanelHost {
       grid: menuItem('격자', 'menuitemcheckbox', () => this.toggleGrid()),
       cube: menuItem('뷰 큐브', 'menuitemcheckbox', () => this.toggleCube()),
       axes: menuItem('좌표축', 'menuitemcheckbox', () => this.toggleAxes()),
+      sim: menuItem('소재 깎기', 'menuitemcheckbox', () => void this.setSim()),
     };
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': '보기 도구' });
     const add = (key: string, el: HTMLButtonElement, run: () => void, needsDoc = true): HTMLButtonElement => {
@@ -350,12 +361,17 @@ export class NcViewerApp implements PanelHost {
       this.menu(
         'render',
         tbtn('render', '그리기', '그리기 모드: 음영 · 음영+모서리 · 와이어프레임 · X-ray'),
-        RENDER_MODES.map(([m, label]) => {
-          const b = h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': 'false' }, h('span', {}, label));
-          b.addEventListener('click', () => this.setRenderMode(m));
-          this.renderItems.push({ mode: m, el: b });
-          return b;
-        }),
+        [
+          ...RENDER_MODES.map(([m, label]) => {
+            const b = h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': 'false' }, h('span', {}, label));
+            b.addEventListener('click', () => this.setRenderMode(m));
+            this.renderItems.push({ mode: m, el: b });
+            return b;
+          }),
+          // 소재 깎기(G-code·Heidenhain 문서에만 — 도구 막대를 넓히지 않게 그리기 메뉴에)
+          this.simWide[0],
+          this.simWide[1],
+        ],
         true,
         'wide-only',
       ),
@@ -614,11 +630,13 @@ export class NcViewerApp implements PanelHost {
       }
     });
     list.addEventListener('keydown', (ev) => {
-      const i = items.indexOf(document.activeElement as HTMLButtonElement);
+      // 숨긴 항목(문서에 따라 — 소재 깎기)은 건너뛴다
+      const shown = items.filter((b) => !b.hidden);
+      const i = shown.indexOf(document.activeElement as HTMLButtonElement);
       if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
         ev.preventDefault();
-        const n = items.length;
-        items[(i + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n]?.focus();
+        const n = shown.length;
+        shown[(i + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n]?.focus();
       }
     });
     this.tools[key] = { el: button, needsDoc };
@@ -642,7 +660,7 @@ export class NcViewerApp implements PanelHost {
     return this.menu(
       'more',
       tbtn('sliders', '보기 설정', '보기 설정'),
-      [m.proj.perspective, m.proj.orthographic, line(), ...render, line(), m.grid, m.cube, m.axes, line(), menuItem('PNG 저장', 'menuitem', () => void this.savePng())],
+      [m.proj.perspective, m.proj.orthographic, line(), ...render, line(), m.grid, m.cube, m.axes, m.sim, line(), menuItem('PNG 저장', 'menuitem', () => void this.savePng())],
       true,
       'narrow-only',
     );
@@ -1031,6 +1049,7 @@ export class NcViewerApp implements PanelHost {
       this.stopPlay();
       const cam = !unitsChanged ? this.viewer?.getCamera() : null;
       replaceResult(d, res, opts);
+      this.sim?.docChanged(d);
       this.error = null;
       this.applyDoc(d, cam ?? null);
       this.panel.show(d);
@@ -1218,6 +1237,7 @@ export class NcViewerApp implements PanelHost {
   private setDoc(d: NcDoc): void {
     this.stopPlay();
     this.doc = d;
+    this.sim?.docChanged(d);
     this.error = null;
     this.root.classList.remove('no-doc');
     this.startError.hidden = true;
@@ -1246,7 +1266,8 @@ export class NcViewerApp implements PanelHost {
   private applyDoc(d: NcDoc, cam: ReturnType<Viewer3d['getCamera']> | null): void {
     const v = this.viewer;
     if (!v) return;
-    v.setScene(d.scene, { keepView: !!cam });
+    // 깎기 시뮬레이션이 켜져 있으면 문서 장면 + 소재 그물(sim.ts)
+    v.setScene(this.sim?.sceneFor(d) ?? d.scene, { keepView: !!cam });
     if (cam) v.setCamera(cam);
     // 선반: XZ 단면이 보이게 앞에서
     else if (sceneFeatures(d.scene).lathe) v.setView('front', false);
@@ -1285,8 +1306,8 @@ export class NcViewerApp implements PanelHost {
       this.clearSelection();
       return;
     }
-    if (p.section) {
-      // 단면 잘린 면: 원본 번호가 없다(index −1) — 줄 고르기는 하지 않는다
+    if (p.section || p.id.startsWith('sim-')) {
+      // 단면 잘린 면(원본 번호 −1)·깎인 소재 그물: 줄 고르기·강조는 하지 않는다
       this.setHighlight([]);
       d.selKey = null;
       this.selectLine(-1, []);
@@ -1492,6 +1513,58 @@ export class NcViewerApp implements PanelHost {
     }
   }
 
+  // ───────────────────────── 소재 깎기 시뮬레이션(sim.ts를 켤 때 받는다) ─────────────────────────
+
+  private ensureSim(): Promise<SimView> {
+    if (!this.simLoad) {
+      const app = this;
+      const host: SimHost = {
+        get viewer() {
+          return app.viewer;
+        },
+        get doc() {
+          return app.doc;
+        },
+        viewLayer: this.viewEl,
+        refreshScene: () => {
+          if (this.doc && this.viewer) this.applyDoc(this.doc, this.viewer.getCamera());
+        },
+        holdScene: () => (this.viewer?.measurePointCount ?? 0) > 0 || !!this.aim?.aiming,
+        selectLine: (l, m, r) => this.selectLine(l, m, r),
+        refreshPanel: () => {
+          if (this.doc?.panelTab === 'sim') this.panel.refresh();
+        },
+        renderToolbar: () => this.renderToolbar(),
+      };
+      const p = import('./sim').then((m) => (this.sim = new m.SimView(host)));
+      this.simLoad = p;
+      p.catch(() => {
+        if (this.simLoad === p) this.simLoad = null;
+      });
+    }
+    return this.simLoad;
+  }
+
+  /** 깎기 시뮬레이션 켜고 끄기(on을 주지 않으면 바꾼다) */
+  async setSim(on?: boolean, opts?: Parameters<SimView['setOptions']>[0]): Promise<void> {
+    let s: SimView;
+    try {
+      s = await this.ensureSim();
+    } catch (e) {
+      toast(`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`, 'error');
+      return;
+    }
+    if (opts) s.setOptions(opts);
+    s.setOn(on ?? !s.on);
+  }
+
+  /** 패널 "깎기" 탭(모듈을 받기 전이면 받은 뒤 다시 그린다) */
+  renderSimTab(body: HTMLElement, d: NcDoc): void {
+    if (this.sim) return this.sim.renderTab(body, d);
+    body.append(h('p', { class: 'hint' }, '불러오는 중…'));
+    void this.ensureSim().then(() => this.panel.refresh(), () => undefined);
+  }
+
   // ───────────────────────── 재생 ─────────────────────────
 
   get isPlaying(): boolean {
@@ -1655,6 +1728,7 @@ export class NcViewerApp implements PanelHost {
   private applyPlayback(d: NcDoc): void {
     const v = this.viewer;
     if (!v) return;
+    this.sim?.follow(d);
     this.syncMeasureSnap();
     if (!d.nc || d.playSec === null) {
       v.setDrawLimitBySegmentId(null);
@@ -1698,6 +1772,10 @@ export class NcViewerApp implements PanelHost {
     more.grid.setAttribute('aria-checked', String(v?.gridVisible ?? true));
     more.cube.setAttribute('aria-checked', String(v?.viewCubeVisible ?? true));
     more.axes.setAttribute('aria-checked', String(v?.axesVisible ?? true));
+    // 깎기: G-code·Heidenhain 문서에만
+    const simOn = !!this.sim?.on;
+    for (const el of [more.sim, ...this.simWide]) el.hidden = !this.doc?.nc;
+    for (const el of [more.sim, this.simWide[1]]) el.setAttribute('aria-checked', String(simOn));
     const canPlay = this.canPlay();
     this.playBtn.hidden = !canPlay;
     this.playSep.hidden = !canPlay;
@@ -1972,6 +2050,7 @@ export class NcViewerApp implements PanelHost {
       playSec: d?.playSec ?? null,
       selLine: d?.selLine ?? -1,
       jobFiles: d?.job ? [...d.job.files] : null,
+      sim: this.sim?.state() ?? null,
       theme: this.theme,
       measuring: this.measuring,
       aiming: !!this.aim?.aiming,
@@ -2015,6 +2094,7 @@ export class NcViewerApp implements PanelHost {
       togglePlay: () => app.togglePlay(),
       cancel: () => app.cancelLoad(),
       setSection: (axis, t, flip) => app.setSectionAxis(axis, t, flip),
+      setSim: (on, opts) => app.setSim(on, opts),
     };
     window.opencadApp = api;
   }

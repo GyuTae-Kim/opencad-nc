@@ -28,7 +28,7 @@ import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint } from './measure';
 import type { MprPayload, NcJobInfo, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
-export type PanelTab = 'code' | 'tools' | 'info' | 'ops' | 'vars';
+export type PanelTab = 'code' | 'tools' | 'info' | 'ops' | 'vars' | 'sim';
 
 export interface NcDoc {
   /** 파일 이름 */
@@ -224,6 +224,7 @@ export function panelTabs(d: Pick<NcDoc, 'kind'>): [PanelTab, string][] {
     ['code', '코드'],
     ['tools', '공구'],
     ['info', '정보'],
+    ['sim', '깎기'],
   ];
 }
 

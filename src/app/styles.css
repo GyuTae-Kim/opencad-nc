@@ -1798,3 +1798,44 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
     font-size: 16px;
   }
 }
+
+/* 소재 깎기 시뮬레이션: 계산 중 표시(3D 보기 왼쪽 위), 깎기 탭의 짝 칸·공구 표 */
+.sim-chip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  padding: 4px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.sim-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+.prop-row .sim-v {
+  overflow: visible;
+  white-space: normal;
+}
+.sim-status {
+  margin: 4px 0;
+}
+.sim-block {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+table.sim-tools .select.small {
+  max-width: 9.5em;
+}
+table.sim-tools .sim-num .num-input {
+  width: 5.2em;
+}

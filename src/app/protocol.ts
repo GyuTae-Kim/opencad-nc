@@ -96,6 +96,8 @@ export interface NcPayload {
   stats: NcStats;
   /** 절삭(이송·호·드릴) 범위 — 급속·기계 좌표 쪽 추정 이동 빼고 */
   cutBounds?: { min: [number, number, number]; max: [number, number, number] };
+  /** 프로그램이 정한 공작물(Heidenhain BLK FORM 등 — 깎기 시뮬레이션의 소재 기본값) */
+  stock?: { min: [number, number, number]; max: [number, number, number] };
   /** 띠로 알릴 해석 판단(선반 자동·소수점 없는 좌표·판별한 방언) */
   notices: NcNotice[];
   /** 해석 경고(줄 번호와 따로 — 누르면 그 줄로, 코드 줄 앞 표시) */

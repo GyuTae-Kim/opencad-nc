@@ -147,7 +147,7 @@ describe('G-code 문서', () => {
     const d = createDoc(NC_SAMPLE_NAME, 1234, res, { dialect: 'auto' });
     expect(d.kind).toBe('gcode');
     expect(d.panelTab).toBe('code');
-    expect(panelTabs(d).map(([k]) => k)).toEqual(['code', 'tools', 'info']);
+    expect(panelTabs(d).map(([k]) => k)).toEqual(['code', 'tools', 'info', 'sim']);
     expect(docLabel(d)).toMatch(/^G-code · /);
     expect(unitLabel(d.scene.units)).toBe('mm');
     expect(unitLabel('inch')).toBe('in');

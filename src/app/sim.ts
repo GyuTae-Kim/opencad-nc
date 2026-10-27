@@ -1,0 +1,708 @@
+/**
+ * 소재 깎기 시뮬레이션 화면(켤 때 나눠 받는다 — 첫 화면 JS에 넣지 않는다).
+ *
+ * - 계산은 웹 워커(src/worker/sim.worker.ts)가 한다. 재생 막대의 자리(이동·비율)를 목표로 보내면 워커가 거기까지 깎고 바뀐 조각 그물만 돌려준다.
+ * - 3D 뷰어 코어는 장면 일부만 바꾸는 길이 없어(v0.9.1), 문서 장면 + 소재 그물로 새 장면을 만들어 카메라를 지킨 채 다시 올린다.
+ *   다시 올리는 데 걸린 시간의 네 배(0.08~1초)마다 한 번만 올리고, 측정 점을 찍었거나 정밀 조준 중이면 기다린다.
+ * - 패널 "깎기" 탭: 켜고 끄기, 공구 경로 함께 보이기, 계산 상태, 급속이 소재를 지난 줄, 소재 상자, 해상도·색, 공구 표.
+ * - 3축(공구 방향 Z) 높이 지도 근사다. 선반·회전축·기울인 평면·판재 형식은 그리지 않고 까닭을 보인다(src/sim/setup.ts).
+ */
+import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
+import { lineAtLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
+import { h, toast } from './dom';
+import { fmtNum } from './format';
+import { sourceLine, sourceText } from '../text';
+import { gridFor, type GridSpec } from '../sim/grid';
+import { STOCK_RGB, fanIndices, gridIndices, type PlainArrays, type SimColorMode, type TileArrays } from '../sim/mesh';
+import type { SimEvent, SimPosition } from '../sim/engine';
+import type { SimRequest, SimResponse, SimStats, SimUpdate } from '../sim/protocol';
+import {
+  SIM_BLOCK_TEXT,
+  SIM_RESOLUTIONS,
+  autoLongCells,
+  defaultStock,
+  hasCutMoves,
+  longCellsFor,
+  rapidEventRows,
+  simBlocker,
+  simToolRows,
+  sweepArea,
+  usedTools,
+  type SimBlock,
+  type SimBox,
+  type SimResolution,
+} from '../sim/setup';
+import { SIM_TOOL_KINDS, type SimTool, type SimToolKind, type SimToolRow, type SimToolTable } from '../sim/tool';
+
+/** 앱이 시뮬레이션 화면에 주는 것 */
+export interface SimHost {
+  readonly viewer: Viewer3d | null;
+  readonly doc: NcDoc | null;
+  /** 3D 보기 요소(계산 중 표시를 붙인다) */
+  readonly viewLayer: HTMLElement;
+  /** 장면을 다시 올린다(카메라 지킴) */
+  refreshScene(): void;
+  /** 측정 점을 찍었거나 정밀 조준 중이면 true(장면을 바꾸지 않는다) */
+  holdScene(): boolean;
+  selectLine(line: number, moves?: number[], reveal?: boolean): void;
+  /** 패널을 다시 그린다(깎기 탭을 보고 있으면) */
+  refreshPanel(): void;
+  /** 도구 막대 단추 상태를 맞춘다 */
+  renderToolbar(): void;
+}
+
+/** 자동 확인용 상태 */
+export interface SimState {
+  on: boolean;
+  paths: boolean;
+  /** 시뮬레이션하지 않는 까닭(되면 null) */
+  blocked: string | null;
+  computing: boolean;
+  /** 계산한 자리(이동·비율) */
+  at: SimPosition | null;
+  target: SimPosition | null;
+  /** 격자 마디 수(가로·세로) */
+  grid: [number, number] | null;
+  /** 소재 그물이 장면에 올라갔는지 */
+  shown: boolean;
+  /** 급속이 소재를 지난 이동 수 */
+  rapidEvents: number;
+  stats: SimStats | null;
+}
+
+const PREF_KEY = 'opencad-nc.sim';
+const TOOLS_KEY = 'opencad-nc.sim.tools';
+/** 소재 그물 이름·묶음 */
+export const SIM_GROUP = '깎인 소재';
+const KIND_LABEL: Record<SimToolKind, string> = { flat: '평 엔드밀', ball: '볼 엔드밀', bull: '불 노즈', drill: '드릴·V 날' };
+const FROM_LABEL = { file: '파일 값', user: '사용자 값', default: '기본값' } as const;
+
+interface Prefs {
+  res: SimResolution;
+  color: SimColorMode;
+  paths: boolean;
+}
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return { ...fallback, ...(JSON.parse(raw) as T) };
+  } catch {
+    /* 저장소를 못 쓰는 환경 */
+  }
+  return fallback;
+}
+
+function writeJson(key: string, v: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    /* 저장소를 못 쓰는 환경 */
+  }
+}
+
+function isPhone(): boolean {
+  try {
+    return window.matchMedia('(max-width: 759.98px), (pointer: coarse) and (max-height: 499.98px)').matches;
+  } catch {
+    return window.innerWidth < 760;
+  }
+}
+
+/** 문서 장면 + 소재 그물(공구 경로를 빼면 선분·점 묶음 없이). 소재가 있으면 공작물 상자 그물(nc-stock)은 뺀다 */
+export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, box: SimBox | null): Scene3d {
+  const meshes = [...base.meshes.filter((m) => m.id !== 'nc-stock'), ...sim];
+  let bounds = base.bounds;
+  if (box) {
+    const b = bounds ?? { min: [...box.min] as [number, number, number], max: [...box.max] as [number, number, number] };
+    bounds = { min: [Math.min(b.min[0], box.min[0]), Math.min(b.min[1], box.min[1]), Math.min(b.min[2], box.min[2])], max: [Math.max(b.max[0], box.max[0]), Math.max(b.max[1], box.max[1]), Math.max(b.max[2], box.max[2])] };
+  }
+  return { ...base, meshes, lines: paths ? base.lines : [], points: paths ? (base.points ?? []) : [], ...(bounds ? { bounds } : {}) };
+}
+
+export class SimView {
+  on = false;
+  private prefs: Prefs = readJson<Prefs>(PREF_KEY, { res: 'auto', color: 'depth', paths: true });
+  private userTools: SimToolTable = readJson<SimToolTable>(TOOLS_KEY, {});
+  // ── 문서마다 ──
+  private key: object | null = null;
+  private block: SimBlock | null = null;
+  /** 3축 확인 결과(문서 자료마다 한 번 — 큰 파일은 글 훑기에 시간이 든다) */
+  private readonly blocks = new WeakMap<object, SimBlock | null>();
+  private rows: SimToolRow[] = [];
+  private auto: SimBox | null = null;
+  private userStock: SimBox | null = null;
+  private area = 0;
+  // ── 계산 ──
+  private worker: Worker | null = null;
+  private gen = 0;
+  private spec: GridSpec | null = null;
+  private origin: [number, number, number] = [0, 0, 0];
+  private tiles: (Mesh3d | null)[] = [];
+  private tilesX = 0;
+  private walls: Mesh3d | null = null;
+  private bottom: Mesh3d | null = null;
+  private sent: SimPosition | null = null;
+  private last: SimUpdate | null = null;
+  private error: string | null = null;
+  private readonly indexCache = new Map<string, Uint32Array>();
+  // ── 장면 올리기 ──
+  private composed: Scene3d | null = null;
+  private composedFor: object | null = null;
+  private dirtyScene = false;
+  private shown = false;
+  private refreshTimer = 0;
+  private lastRefresh = 0;
+  private minGap = 120;
+  // ── 화면 ──
+  private chip: HTMLDivElement | null = null;
+  private statusEl: HTMLElement | null = null;
+  private eventsKey = '';
+
+  constructor(private readonly host: SimHost) {}
+
+  get paths(): boolean {
+    return this.prefs.paths;
+  }
+
+  // ───────────────────────── 앱이 부르는 것 ─────────────────────────
+
+  /** 켜고 끄기 */
+  setOn(on: boolean): void {
+    if (on === this.on) return;
+    this.on = on;
+    const d = this.host.doc;
+    if (on && d) {
+      this.prepare(d);
+      if (this.block) toast(`시뮬레이션하지 않음 — ${SIM_BLOCK_TEXT[this.block.code]}`, 'info', 5000);
+      this.start();
+    } else this.stop();
+    this.host.renderToolbar();
+    this.host.refreshPanel();
+  }
+
+  /** 새 문서·다시 읽은 결과: 문서마다 값을 새로 정하고 켜져 있으면 다시 계산 */
+  docChanged(d: NcDoc | null): void {
+    this.stop(false);
+    this.key = null;
+    this.userStock = null;
+    if (d && this.on) {
+      this.prepare(d);
+      this.start();
+    }
+  }
+
+  /** 재생 자리(전체 경로면 프로그램 끝)를 워커에 알린다 */
+  follow(d: NcDoc): void {
+    if (!this.on || !this.worker || !d.nc || this.key !== d.nc) return;
+    const t = this.targetOf(d);
+    if (this.sent && this.sent.move === t.move && this.sent.frac === t.frac) return;
+    this.sent = t;
+    this.post({ type: 'target', gen: this.gen, target: t });
+    this.updateStatus();
+  }
+
+  /** 뷰어에 올릴 장면(꺼져 있거나 아직이면 문서 장면 그대로) */
+  sceneFor(d: NcDoc): Scene3d {
+    if (!this.on || !d.nc || this.key !== d.nc || !this.ready()) {
+      this.shown = false;
+      return d.scene;
+    }
+    if (!this.composed || this.dirtyScene || this.composedFor !== d.scene) {
+      const meshes = [...(this.tiles as Mesh3d[]), this.walls!, this.bottom!];
+      this.composed = composeSimScene(d.scene, meshes, this.prefs.paths, this.stockBox());
+      this.composedFor = d.scene;
+      this.dirtyScene = false;
+    }
+    this.shown = true;
+    return this.composed;
+  }
+
+  state(): SimState {
+    const u = this.last;
+    return {
+      on: this.on,
+      paths: this.prefs.paths,
+      blocked: this.block ? SIM_BLOCK_TEXT[this.block.code] : null,
+      computing: this.computing(),
+      at: u ? { ...u.at } : null,
+      target: this.sent ? { ...this.sent } : null,
+      grid: this.spec ? [this.spec.nx, this.spec.ny] : null,
+      shown: this.shown,
+      rapidEvents: u?.events.length ?? 0,
+      stats: u ? { ...u.stats } : null,
+    };
+  }
+
+  /** 자동 확인·설정 바꾸기 */
+  setOptions(o: Partial<{ paths: boolean; color: SimColorMode; res: SimResolution; stock: SimBox | null }>): void {
+    let restart = false;
+    if (o.paths !== undefined && o.paths !== this.prefs.paths) {
+      this.prefs.paths = o.paths;
+      this.dirtyScene = true;
+      this.scheduleRefresh(true);
+    }
+    if (o.color && o.color !== this.prefs.color) {
+      this.prefs.color = o.color;
+      if (this.worker) this.post({ type: 'mode', gen: this.gen, mode: o.color });
+    }
+    if (o.res !== undefined && o.res !== this.prefs.res) {
+      this.prefs.res = o.res;
+      restart = true;
+    }
+    if (o.stock !== undefined) {
+      this.userStock = o.stock;
+      // 계산량 어림은 소재 윗면에 따라 달라진다
+      this.area = 0;
+      restart = true;
+    }
+    writeJson(PREF_KEY, this.prefs);
+    if (restart && this.on) this.start();
+    this.host.refreshPanel();
+  }
+
+  // ───────────────────────── 준비·계산 ─────────────────────────
+
+  /** 문서마다 한 번: 3축 확인, 공구 표, 소재 기본값 */
+  private prepare(d: NcDoc): void {
+    const nc = d.nc;
+    if (!nc) {
+      this.key = null;
+      this.block = { code: 'panel', line: -1 };
+      return;
+    }
+    if (this.key === nc) return;
+    this.key = nc;
+    const f = sceneFeatures(d.scene);
+    const m = nc.moves;
+    let block = this.blocks.get(nc);
+    if (block === undefined) this.blocks.set(nc, (block = simBlocker({ kind: nc.kind, lathe: f.lathe, rotaryAxes: f.rotaryAxes, text: sourceText(nc.source), hasCut: hasCutMoves(m) })));
+    this.block = block;
+    this.rows = simToolRows({ tools: nc.tools, units: nc.units, used: usedTools(m.tool, m.count), lineAt: (i) => sourceLine(nc.source, i), lineCount: nc.source.lineCount }, this.userTools);
+    const maxR = this.rows.reduce((r, x) => Math.max(r, x.tool.diameter / 2), 0);
+    this.auto = defaultStock({ stock: nc.stock ?? null, cutBounds: nc.cutBounds ?? null, units: nc.units, moves: m }, maxR);
+    this.area = 0;
+  }
+
+  private stockBox(): SimBox | null {
+    return this.userStock ?? this.auto;
+  }
+
+  /** 공구 번호의 값(표에 없으면 기본 평 엔드밀) */
+  private toolOf(n: number): SimTool {
+    return this.rows.find((r) => r.number === n)?.tool ?? { kind: 'flat', diameter: this.host.doc?.nc?.units === 'inch' ? 0.25 : 6, corner: 0, angle: 118 };
+  }
+
+  /** 지금 설정으로 긴 변 칸 수 */
+  private longCells(d: NcDoc, box: SimBox): number {
+    const phone = isPhone();
+    const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    const base = longCellsFor(this.prefs.res, phone, mem);
+    if (this.prefs.res !== 'auto' || !d.nc) return base;
+    if (!this.area) {
+      const m = d.nc.moves;
+      const radius = new Map(this.rows.map((r) => [r.number, r.tool.diameter / 2]));
+      this.area = sweepArea(m, (i) => radius.get(m.tool[i]!) ?? 3, box.max[2]);
+    }
+    return autoLongCells(base, Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1]), this.area, phone);
+  }
+
+  private start(): void {
+    const d = this.host.doc;
+    this.stop(false);
+    this.error = null;
+    if (!d?.nc || this.block) return;
+    const box = this.stockBox();
+    if (!box || !(box.max[0] > box.min[0] && box.max[1] > box.min[1] && box.max[2] > box.min[2])) {
+      this.error = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
+      this.host.refreshPanel();
+      return;
+    }
+    const spec = gridFor(box, this.longCells(d, box));
+    this.spec = spec;
+    this.origin = [spec.x0 + ((spec.nx - 1) * spec.dx) / 2, spec.y0 + ((spec.ny - 1) * spec.dy) / 2, spec.top];
+    this.tilesX = Math.ceil((spec.nx - 1) / 64);
+    this.tiles = new Array(this.tilesX * Math.ceil((spec.ny - 1) / 64)).fill(null);
+    this.gen++;
+    let w = this.worker;
+    if (!w) {
+      try {
+        w = new Worker(new URL('../worker/sim.worker.ts', import.meta.url), { type: 'module', name: 'opencad-nc-sim' });
+      } catch (e) {
+        this.error = e instanceof Error ? e.message : String(e);
+        return;
+      }
+      w.onmessage = (ev: MessageEvent<SimResponse>) => this.onMessage(ev.data);
+      w.onerror = (ev: ErrorEvent) => {
+        ev.preventDefault();
+        this.fail(ev.message || '워커가 멈췄습니다(메모리가 모자랄 수 있습니다)');
+      };
+      this.worker = w;
+    }
+    const nc = d.nc;
+    const m = nc.moves;
+    const used = new Set(this.rows.map((r) => r.number));
+    const target = this.targetOf(d);
+    this.sent = target;
+    this.post({
+      type: 'init',
+      gen: this.gen,
+      moves: { count: m.count, kind: m.kind, points: m.points, tool: m.tool, flags: m.flags, arc: m.arc, arcCenter: nc.arcs.center, arcPlane: nc.arcs.plane, arcSweep: nc.arcs.sweep },
+      grid: spec,
+      tools: [...used].map((n) => ({ number: n, tool: this.toolOf(n) })),
+      defaultTool: this.toolOf(-1),
+      mode: this.prefs.color,
+      rapidTol: nc.units === 'inch' ? 0.0005 : 0.01,
+      checkpointBytes: isPhone() ? 24 * 1048576 : 96 * 1048576,
+      target,
+    });
+    this.updateStatus();
+  }
+
+  /** 계산을 멈추고 그물을 버린다(장면에서 빼려면 refresh) */
+  private stop(refresh = true): void {
+    this.gen++;
+    this.worker?.terminate();
+    this.worker = null;
+    this.tiles = [];
+    this.walls = null;
+    this.bottom = null;
+    this.spec = null;
+    this.last = null;
+    this.sent = null;
+    this.composed = null;
+    this.eventsKey = '';
+    this.updateChip();
+    if (refresh && this.shown) this.scheduleRefresh(true);
+  }
+
+  private fail(message: string): void {
+    this.error = `시뮬레이션을 계산하지 못했습니다: ${message}`;
+    this.stop();
+    this.host.refreshPanel();
+  }
+
+  private post(msg: SimRequest): void {
+    try {
+      this.worker?.postMessage(msg);
+    } catch (e) {
+      this.fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  private targetOf(d: NcDoc): SimPosition {
+    const count = d.nc?.moves.count ?? 0;
+    const p = d.playSec === null ? null : playPosition(d);
+    return p && p.move >= 0 ? { move: p.move, frac: p.frac } : { move: count, frac: 0 };
+  }
+
+  private ready(): boolean {
+    return !!this.walls && !!this.bottom && this.tiles.length > 0 && this.tiles.every((t) => !!t);
+  }
+
+  private computing(): boolean {
+    return this.on && !!this.worker && (!this.last || !this.last.reached || !this.sent || this.last.target.move !== this.sent.move || this.last.target.frac !== this.sent.frac);
+  }
+
+  /** 조각 삼각형 번호(같은 크기 조각끼리 한 배열을 함께 쓴다 — 뷰어도 GPU에 한 번만 올린다) */
+  private indices(cols: number, rows: number, flat: boolean): Uint32Array {
+    const k = `${flat ? 'f' : 'g'}${cols}x${rows}`;
+    let a = this.indexCache.get(k);
+    if (!a) this.indexCache.set(k, (a = flat ? fanIndices(cols, rows) : gridIndices(cols, rows)));
+    return a;
+  }
+
+  private mesh(id: string, a: { positions: Float32Array; colors: Float32Array }, indices: Uint32Array): Mesh3d {
+    return {
+      id,
+      name: SIM_GROUP,
+      group: SIM_GROUP,
+      positions: a.positions,
+      colors: a.colors,
+      indices,
+      color: [STOCK_RGB[0], STOCK_RGB[1], STOCK_RGB[2], 1],
+      origin: this.origin,
+      doubleSided: false,
+      triangleEdges: false,
+      capGroup: 'sim-stock',
+    };
+  }
+
+  private onMessage(msg: SimResponse): void {
+    if (msg.gen !== this.gen) return;
+    if (msg.type === 'error') {
+      this.fail(msg.message);
+      return;
+    }
+    let geometry = false;
+    for (const t of msg.tiles as TileArrays[]) {
+      this.tiles[t.ty * this.tilesX + t.tx] = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, this.indices(t.cols, t.rows, t.flat));
+      geometry = true;
+    }
+    const plain = (id: string, p: PlainArrays | undefined): Mesh3d | null => (p ? this.mesh(id, p, p.indices) : null);
+    if (msg.walls) {
+      this.walls = plain('sim-walls', msg.walls);
+      geometry = true;
+    }
+    if (msg.bottom) {
+      this.bottom = plain('sim-bottom', msg.bottom);
+      geometry = true;
+    }
+    this.last = msg;
+    if (geometry) {
+      this.dirtyScene = true;
+      this.scheduleRefresh();
+    }
+    this.updateStatus();
+    const ek = `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
+    if (ek !== this.eventsKey) {
+      this.eventsKey = ek;
+      this.host.refreshPanel();
+    }
+  }
+
+  /** 장면 다시 올리기(묶어서·기다려서) */
+  private scheduleRefresh(soon = false): void {
+    if (this.refreshTimer) return;
+    const wait = soon ? 0 : Math.max(0, this.lastRefresh + this.minGap - performance.now());
+    this.refreshTimer = window.setTimeout(() => {
+      this.refreshTimer = 0;
+      if (this.host.holdScene()) {
+        this.refreshTimer = window.setTimeout(() => {
+          this.refreshTimer = 0;
+          this.scheduleRefresh();
+        }, 400);
+        return;
+      }
+      const t0 = performance.now();
+      this.host.refreshScene();
+      const cost = performance.now() - t0;
+      this.lastRefresh = performance.now();
+      this.minGap = Math.max(80, Math.min(1000, cost * 4));
+    }, wait);
+  }
+
+  // ───────────────────────── 계산 중 표시 ─────────────────────────
+
+  /** 계산 중이면 목표까지 온 비율(%), 아니면 null */
+  private progress(): number | null {
+    const u = this.last;
+    const t = this.sent;
+    if (!this.computing() || !t) return null;
+    const at = u ? u.at.move + u.at.frac : 0;
+    return Math.max(0, Math.min(99, Math.floor((at / Math.max(1e-9, t.move + t.frac)) * 100)));
+  }
+
+  private updateChip(): void {
+    const p = this.on ? this.progress() : null;
+    if (p === null) {
+      this.chip?.remove();
+      this.chip = null;
+      return;
+    }
+    if (!this.chip) {
+      this.chip = h('div', { class: 'sim-chip', role: 'status', 'aria-live': 'polite' });
+      this.host.viewLayer.append(this.chip);
+    }
+    this.chip.textContent = `소재 계산 중 ${p}%`;
+  }
+
+  private statusText(): string {
+    if (!this.on) return '꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.';
+    if (this.error) return this.error;
+    if (this.block) return '시뮬레이션하지 않음';
+    const u = this.last;
+    const count = this.host.doc?.nc?.moves.count ?? 0;
+    const p = this.progress();
+    if (p !== null) return `계산하는 중… ${p}%`;
+    if (!u) return '계산하는 중… 0%';
+    const secs = `${fmtNum((u.stats.computeMs + u.stats.meshMs) / 1000, 2)}초`;
+    if (u.at.move >= count) return `전체 프로그램을 깎았습니다 · ${secs}`;
+    return `이동 ${(u.at.move + (u.at.frac > 0 ? 1 : 0)).toLocaleString('ko-KR')} / ${count.toLocaleString('ko-KR')}까지 깎았습니다 · ${secs}`;
+  }
+
+  private updateStatus(): void {
+    this.updateChip();
+    if (this.statusEl?.isConnected) this.statusEl.textContent = this.statusText();
+  }
+
+  // ───────────────────────── 패널 "깎기" 탭 ─────────────────────────
+
+  renderTab(body: HTMLElement, d: NcDoc): void {
+    if (d.nc && this.key !== d.nc) this.prepare(d);
+    const u = unitLabel(d.scene.units);
+    const row = (k: string, ...v: (Node | string)[]): HTMLElement => h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, k), h('span', { class: 'v sim-v' }, ...v));
+    const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
+    const check = (label: string, on: boolean, run: (on: boolean) => void, hint = ''): HTMLElement => {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = on;
+      cb.addEventListener('change', () => run(cb.checked));
+      return h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label));
+    };
+    this.statusEl = h('p', { class: 'hint sim-status', 'aria-live': 'polite' }, this.statusText());
+    const head: (Node | null)[] = [
+      check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).'),
+      check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on })),
+      this.statusEl,
+    ];
+    if (this.block) {
+      const b = this.block;
+      const p = h('p', { class: 'sim-block' }, h('b', {}, '시뮬레이션하지 않음'), ' ', SIM_BLOCK_TEXT[b.code]);
+      if (b.line >= 0) {
+        const go = h('button', { class: 'linkish', type: 'button', title: '누르면 그 줄로' }, lineAtLabel(d, b.line));
+        go.addEventListener('click', () => this.host.selectLine(b.line, undefined, true));
+        p.append(' ', go, b.token ? h('span', { class: 'dim', translate: 'no' }, ` ${b.token}`) : '');
+      }
+      head.push(p);
+    } else head.push(h('p', { class: 'hint' }, '3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.'));
+    body.append(group('소재 깎기 시뮬레이션', ...head));
+    if (!d.nc || this.block) return;
+
+    // 급속이 소재를 지난 줄
+    const ev: SimEvent[] = this.last?.events ?? [];
+    if (this.on && ev.length) {
+      const { rows, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
+      const list = h('ul', { class: 'warn-list' });
+      for (const r of rows) {
+        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 줄로' }, h('span', { class: 'ln' }, lineAtLabel(d, r.line)), h('span', { class: 'msg' }, `깊이 ${fmtNum(r.depth)} ${u}`));
+        b.addEventListener('click', () => this.host.selectLine(r.line, [r.move], true));
+        list.append(h('li', {}, b));
+      }
+      body.append(
+        group(
+          `급속 이동이 소재를 지남 ${rows.length.toLocaleString('ko-KR')}곳`,
+          rows.length ? list : null,
+          skipped ? h('p', { class: 'hint' }, `해석 경고에 이미 있는 줄 ${skipped.toLocaleString('ko-KR')}곳은 뺐습니다.`) : null,
+          h('p', { class: 'hint' }, '급속이 깎은 자리는 빨갛게 그립니다(지금 재생 자리까지).'),
+        ),
+      );
+    }
+
+    // 소재 상자
+    const box = this.stockBox();
+    if (box) {
+      const num = (v: number, label: string, set: (n: number) => void): HTMLInputElement => {
+        const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label });
+        el.value = String(Math.round(v * 1e6) / 1e6);
+        el.addEventListener('change', () => {
+          const n = Number(el.value);
+          if (el.value.trim() !== '' && Number.isFinite(n)) set(n);
+        });
+        return el;
+      };
+      const edit = (axis: number, which: 'min' | 'max', n: number): void => {
+        const b = this.stockBox()!;
+        const next: SimBox = { min: [...b.min] as SimBox['min'], max: [...b.max] as SimBox['max'] };
+        next[which][axis] = n;
+        this.setOptions({ stock: next });
+      };
+      const axisRow = (label: string, axis: number): HTMLElement =>
+        h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, label), h('span', { class: 'sim-pair' }, num(box.min[axis]!, `${label} — 최소`, (n) => edit(axis, 'min', n)), num(box.max[axis]!, `${label} — 최대`, (n) => edit(axis, 'max', n))));
+      const reset = h('button', { class: 'btn small', type: 'button', disabled: !this.userStock }, '자동으로');
+      reset.addEventListener('click', () => this.setOptions({ stock: null }));
+      const from = this.userStock ? '직접 정함' : d.nc.stock ? '프로그램의 공작물(BLK FORM)' : '절삭 범위에서 추정';
+      body.append(
+        group(
+          '소재',
+          axisRow('X 범위', 0),
+          axisRow('Y 범위', 1),
+          axisRow('Z 범위(바닥 ~ 윗면)', 2),
+          row('정한 곳', from),
+          h('p', { class: 'hint' }, '자동은 절삭 범위(공구 중심)에 공구 반지름과 여유를 더하고, Z0 아래를 깎으면 Z0을 윗면으로 봅니다. 바꾸면 처음부터 다시 계산합니다.'),
+          reset,
+        ),
+      );
+    }
+
+    // 격자·색
+    const res = h('select', { class: 'select', 'aria-label': '해상도(긴 변 칸)' });
+    const autoN = box ? this.longCells(d, box) : longCellsFor('auto', isPhone());
+    for (const r of SIM_RESOLUTIONS) res.append(h('option', { value: String(r) }, r === 'auto' ? `자동 (${autoN})` : String(r)));
+    res.value = String(this.prefs.res);
+    res.addEventListener('change', () => this.setOptions({ res: (res.value === 'auto' ? 'auto' : Number(res.value)) as SimResolution }));
+    const color = h('select', { class: 'select', 'aria-label': '색' });
+    color.append(h('option', { value: 'depth' }, '깊이로'), h('option', { value: 'stock' }, '소재 색'));
+    color.value = this.prefs.color;
+    color.addEventListener('change', () => this.setOptions({ color: color.value as SimColorMode }));
+    const s = this.spec;
+    body.append(
+      group(
+        '격자·색',
+        h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '해상도(긴 변 칸)'), res),
+        s ? row('격자', `${(s.nx - 1).toLocaleString('ko-KR')} × ${(s.ny - 1).toLocaleString('ko-KR')}칸 · 칸 ${fmtNum(Math.max(s.dx, s.dy), 3)} ${u}`) : null,
+        h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '색'), color),
+        h('p', { class: 'hint' }, '자동은 기기(휴대폰은 낮게)와 프로그램 크기로 정합니다. 칸이 많을수록 또렷하지만 계산과 메모리가 늘어납니다.'),
+      ),
+    );
+
+    // 공구 표
+    const tbody = h('tbody');
+    for (const r of this.rows) {
+      const kind = h('select', { class: 'select small', 'aria-label': `T${r.number} 종류` });
+      for (const k of SIM_TOOL_KINDS) kind.append(h('option', { value: k }, KIND_LABEL[k]));
+      kind.value = r.tool.kind;
+      kind.addEventListener('change', () => this.setTool(r.number, { kind: kind.value as SimToolKind }));
+      const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': `T${r.number} 지름` });
+      dia.value = String(r.tool.diameter);
+      dia.addEventListener('change', () => {
+        const n = Number(dia.value);
+        if (n > 0) this.setTool(r.number, { diameter: n });
+      });
+      let extra: HTMLElement | string = '';
+      if (r.tool.kind === 'bull' || r.tool.kind === 'drill') {
+        const isBull = r.tool.kind === 'bull';
+        const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': isBull ? `T${r.number} 모서리 R` : `T${r.number} 끝 각(도)` });
+        el.value = String(isBull ? r.tool.corner : r.tool.angle);
+        el.addEventListener('change', () => {
+          const n = Number(el.value);
+          if (n > 0) this.setTool(r.number, isBull ? { corner: n } : { angle: n });
+        });
+        extra = el;
+      }
+      const from = r.kindFrom === 'user' || r.diameterFrom === 'user' ? 'user' : r.diameterFrom === 'file' || r.kindFrom === 'file' ? 'file' : 'default';
+      const fileNote = from === 'user' && r.file.diameter ? `파일 값 Ø${fmtNum(r.file.diameter)}` : '';
+      tbody.append(
+        h(
+          'tr',
+          {},
+          h('td', {}, r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음'),
+          h('td', {}, kind),
+          h('td', { class: 'sim-num' }, dia),
+          h('td', { class: 'sim-num' }, extra),
+          h('td', { class: 'dim', title: fileNote || null }, FROM_LABEL[from]),
+        ),
+      );
+    }
+    const forget = h('button', { class: 'btn small', type: 'button', disabled: !Object.keys(this.userTools).length }, '기억 지우기');
+    forget.addEventListener('click', () => {
+      this.userTools = {};
+      writeJson(TOOLS_KEY, {});
+      this.retool();
+    });
+    body.append(
+      group(
+        '공구',
+        h('div', { class: 'table-wrap' }, h('table', { class: 'grid sim-tools' }, h('thead', {}, h('tr', {}, h('th', {}, '번호'), h('th', {}, '종류'), h('th', {}, `지름(${u || '단위'})`), h('th', {}, '모서리 R · 끝 각'), h('th', {}, '출처'))), tbody)),
+        h('p', { class: 'hint' }, '파일(공구 주석·공구 정의)에서 알 수 없는 값은 기본값(평 엔드밀 Ø6 mm · 0.25 inch)입니다. 바꾼 값은 공구 번호별로 이 브라우저에 기억하고 파일 값보다 먼저 씁니다.'),
+        forget,
+      ),
+    );
+  }
+
+  /** 공구 하나를 바꾼다(기억) */
+  private setTool(n: number, patch: Partial<SimTool>): void {
+    const k = String(n);
+    this.userTools = { ...this.userTools, [k]: { ...(this.userTools[k] ?? {}), ...patch } };
+    writeJson(TOOLS_KEY, this.userTools);
+    this.retool();
+  }
+
+  /** 공구 표를 다시 정하고 다시 계산 */
+  private retool(): void {
+    this.key = null;
+    const d = this.host.doc;
+    if (d) this.prepare(d);
+    if (this.on) this.start();
+    this.host.refreshPanel();
+  }
+}
