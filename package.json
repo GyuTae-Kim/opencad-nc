@@ -34,7 +34,7 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "jsdom": "22.1.0",
-    "opencad-site-kit": "github:GyuTae-Kim/opencad-site-kit#v0.1.1",
+    "opencad-site-kit": "github:GyuTae-Kim/opencad-site-kit#v0.1.4",
     "typescript": "^7.0.2",
     "vite": "^7.3.7",
     "vitest": "^3.2.7"
