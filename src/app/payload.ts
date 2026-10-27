@@ -2,7 +2,7 @@
  * 워커 쪽 도움(순수 함수): 들어온 바이트가 NC 프로그램으로 읽을 만한지 보고, 해석 결과를 화면에 보낼 자료로 줄인다.
  * 해석기를 가져오므로 화면 코드(app.ts·panel.ts)에서는 부르지 않는다(워커와 시험만).
  */
-import { combineNcFiles, detectNcFormat, jobFileLines, ncParsedToScene, parseNcFile, splitNcJob, type NcFileKind, type NcParseOptions } from '../index';
+import { combineNcFiles, detectNcFormat, jobFileLines, ncParsedToScene, parseNcFile, splitNcJob, type NcCompPath, type NcFileKind, type NcParseOptions, type PanelSnapTable } from '../index';
 import { NC_EXTENSIONS, XML_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
 import { xmlRootName } from '../xml';
@@ -126,11 +126,22 @@ export function parseForView(
   progress(0.15, READING[check.kind ?? 'gcode']);
   const parsed = parseNcFile(base, bytes, parseOptions(check.kind, o));
   progress(0.7, '공구 경로 만드는 중');
-  const scene = ncParsedToScene(parsed, { nc: o.comp ? { compPath: true } : {}, mpr: o.mprDisabled ? { disabled: true } : {} });
+  // 측정 붙잡기 자료: 보정 경로 조각, 판재 원호 중심·윤곽 요소(장면과 같은 묶음 id)
+  let comp: NcCompPath | null = null;
+  let snap: PanelSnapTable | null = null;
+  const scene = ncParsedToScene(parsed, {
+    nc: o.comp ? { compPath: true, onCompPath: (c) => (comp = c) } : {},
+    mpr: { ...(o.mprDisabled ? { disabled: true } : {}), onSnapTable: (t) => (snap = t) },
+  });
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
-  if ('part' in parsed) out.mpr = { lines: parsed.part.lines, warnItems: parsed.part.warningItems ?? [] };
-  else out.nc = ncPayload(parsed.program);
+  const t = snap as PanelSnapTable | null;
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines, warnItems: parsed.part.warningItems ?? [], ...(t ? { snap: t } : {}) };
+  else {
+    out.nc = ncPayload(parsed.program);
+    const c = comp as NcCompPath | null;
+    if (c && c.count) out.nc.comp = { count: c.count, kind: c.kind, move: c.move, points: c.points, center: c.center, sweep: c.sweep, plane: c.plane };
+  }
   if (job) {
     // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄
     const marks = 'part' in parsed ? null : jobFileLines(parsed.program.source);

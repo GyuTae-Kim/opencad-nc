@@ -15,7 +15,8 @@
   --text-dim: #a9b2bf;
   --text-faint: #8590a0;
   --accent: #3d95f0;
-  --accent-strong: #2a7fd8;
+  /* 흰 글자 단추(파일 열기 등) 바탕 — 흰 글자와 4.5:1 넘게(#2a7fd8은 4.1) */
+  --accent-strong: #2575cc;
   --accent-text: #8cc5ff;
   --accent-soft: rgba(61, 149, 240, 0.2);
   --danger: #ff6b6b;

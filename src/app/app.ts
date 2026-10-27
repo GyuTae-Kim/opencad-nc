@@ -3,7 +3,7 @@
  *
  * - 한 번에 문서 하나. 새 파일을 열면 바꾼다(열기에 실패하면 앞 문서를 그대로 둔다).
  * - 해석은 웹 워커(src/worker/parse.worker.ts)에서 하고, 진행률·단계 글을 작업 영역 위 덮개로 보인다.
- * - 뷰어(Viewer3d)는 첫 문서를 열 때 만든다(WebGL2가 없으면 그때 알기 쉬운 오류 글).
+ * - 뷰어(Viewer3d)는 첫 문서를 열 때 만든다(WebGL2가 없으면 그때 알기 쉬운 오류 글). 코어 입구는 그때 나눠 받는다(core.ts — 첫 화면 JS를 줄인다).
  * - 키: 캔버스에 초점이 있으면 뷰어가 F·1~7·Esc를 직접 받고, 다른 곳이면 창 캡처 단계에서 같은 키를 뷰어로 보낸다
  *   (입력 칸 제외). F7 = 격자, Space = 재생/멈춤, Ctrl/⌘+O = 열기.
  * - 자동 확인용으로 window.opencadApp(상태·열기 함수)을 둔다.
@@ -16,11 +16,13 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import { VIEW_LABELS, Viewer3d, type MeasureResult, type Pick3d, type RenderMode, type SectionAxis, type SectionState, type ViewName } from 'opencad-viewer3d';
+import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
+import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
+import { loadViewerCore } from './core';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -32,7 +34,7 @@ import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { measureHint, measureLines } from './measure';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
-import { arcCenterCount, arcCenters, moveSnapPoints, snapPair, type ArcCenters } from './snap';
+import { arcCenterCount, arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -59,6 +61,15 @@ const NARROW_QUERY = `(max-width: ${NARROW_WIDTH - 0.02}px)`;
 const PHONE_QUERY = `${NARROW_QUERY}, (pointer: coarse) and (max-height: 499.98px)`;
 /** 손가락이 주인 기기(휴대폰·태블릿): 안내 글·파일 고르기를 맞춘다 */
 const COARSE_QUERY = '(pointer: coarse)';
+
+/** 요소가 키보드 초점 표시(:focus-visible) 중인지(그 선택자를 모르는 환경이면 false) */
+export function matchesFocusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
 
 /** 지금 휴대폰 화면인지(PHONE_QUERY). matchMedia가 없으면 폭만 본다 */
 function isPhone(): boolean {
@@ -201,7 +212,7 @@ export class NcViewerApp implements PanelHost {
   /** 원호 중심 붙잡기 점(해석 결과마다 한 번 — 측정을 처음 켤 때 만든다) */
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과·중심 수가 같으면 다시 주지 않는다 — 재생 중에는 프레임마다 맞춘다) */
-  private snapKey: { nc: object; n: number } | null = null;
+  private snapKey: { src: object; n: number } | null = null;
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -964,6 +975,8 @@ export class NcViewerApp implements PanelHost {
     const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
     this.closeMenu();
     this.setBusy('여는 중', 0.02, name);
+    // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
+    if (!this.viewer) void loadViewerCore().catch(() => undefined);
     try {
       const res = await this.client.open(
         name,
@@ -980,7 +993,8 @@ export class NcViewerApp implements PanelHost {
         const why = res.scene.warnings?.[0];
         throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
       }
-      this.ensureViewer();
+      await this.ensureViewer();
+      if (seq !== this.loadSeq) return false;
       // 여러 파일 작업이면 이름 = 주 프로그램, 크기 = 이은 글
       this.setDoc(createDoc(res.job?.main ?? name, res.job && res.nc ? res.nc.source.bytes.length : size, res, opts));
       attempt.success();
@@ -1163,12 +1177,23 @@ export class NcViewerApp implements PanelHost {
 
   // ───────────────────────── 문서·뷰어 ─────────────────────────
 
-  private ensureViewer(): Viewer3d {
-    if (this.viewer) return this.viewer;
+  /**
+   * 뷰어를 만든다(첫 문서 — 코어 입구를 받을 때까지 기다린다). 이미 있으면 그대로.
+   * 뷰어는 this.viewer로 쓴다(약속의 값으로 돌려주지 않는다 — 시험의 가짜 뷰어처럼 then이 있는 것도 그대로 두게)
+   */
+  private async ensureViewer(): Promise<void> {
+    if (this.viewer) return;
+    let core: Awaited<ReturnType<typeof loadViewerCore>>;
+    try {
+      core = await loadViewerCore();
+    } catch (e) {
+      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
+    }
+    if (this.viewer) return;
     this.viewEl.hidden = false;
     let v: Viewer3d;
     try {
-      v = new Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
+      v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
@@ -1188,7 +1213,6 @@ export class NcViewerApp implements PanelHost {
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
     });
-    return v;
   }
 
   private setDoc(d: NcDoc): void {
@@ -1211,7 +1235,11 @@ export class NcViewerApp implements PanelHost {
     // 선반 자동·소수점 없는 좌표·판별한 방언은 3D 보기 위 띠로(행동 단추와 함께), 경고는 알림으로
     this.renderNotices();
     if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
-    this.viewer?.canvas.focus({ preventScroll: true });
+    // 코어 0.9.0부터 캔버스는 키보드 초점(:focus-visible)에 테두리를 그린다. 스크립트 초점은 브라우저가 입력 없이 연 경우(?sample·
+    // 공유·파일 연결로 연 첫 화면)에도 테두리를 보이므로, 앞서 초점을 가진 것이 키보드 초점이었을 때만(열기 단추·최근 문서를 키보드로) 보인다
+    const prev = document.activeElement;
+    const keyboard = !!prev && prev !== document.body && matchesFocusVisible(prev);
+    this.viewer?.canvas.focus({ preventScroll: true, focusVisible: keyboard } as FocusOptions);
   }
 
   /** 문서의 장면과 보기 상태를 뷰어에 올린다(cam을 주면 그 카메라를 지킨다) */
@@ -1592,25 +1620,36 @@ export class NcViewerApp implements PanelHost {
   /**
    * 두 점 측정 붙잡기(코어 setMeasureSnap): G-code·Heidenhain 문서를 재는 동안 원호 중심을 늘 후보로 두고, 고른 이동에는
    * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만.
-   * 판재 가공(MPR·PGI·XML)과 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
+   * 추론 붙잡기(코어 0.9.0)도 켠다: 공구 경로 두 선분의 교차점, 첫 점에서 내린 수직 발, 첫 점에서 X·Y·Z 축 방향.
+   * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다. 반경 보정 경로는 보정 조각의 가운데 점·호 중심.
+   * 판재 가공(MPR·PGI·XML)은 워커가 보낸 붙잡기 표로 윤곽·판 외곽선의 원호 중심, 원형 포켓 중심, 고른 윤곽 요소의 가운데 점과 추론 붙잡기.
+   * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
    */
   private syncMeasureSnap(): void {
     const v = this.viewer;
     if (!v) return;
     const d = this.doc;
     const nc = d?.nc;
-    if (!d || !nc || !v.measureMode) {
+    const panel = d && !nc ? (d.mpr?.snap ?? null) : null;
+    if (!d || (!nc && !panel) || !v.measureMode) {
       if (this.snapKey) v.setMeasureSnap(null);
       this.snapKey = null;
       return;
     }
+    if (panel) {
+      if (this.snapKey?.src === panel) return;
+      this.snapKey = { src: panel, n: -1 };
+      v.setMeasureSnap({ points: panelCenters(panel), pointsFor: (p) => panelSnapPoints(p, panel), inference: true });
+      return;
+    }
+    if (!nc) return;
     let c = this.snapCenters.get(nc);
     if (!c) this.snapCenters.set(nc, (c = arcCenters(nc)));
     const pos = d.playSec === null ? null : playPosition(d);
     const n = arcCenterCount(c, pos && pos.move >= 0 ? pos.move : null);
-    if (this.snapKey?.nc === nc && this.snapKey.n === n) return;
-    this.snapKey = { nc, n };
-    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc) });
+    if (this.snapKey?.src === nc && this.snapKey.n === n) return;
+    this.snapKey = { src: nc, n };
+    v.setMeasureSnap({ points: n === c.points.length ? c.points : c.points.slice(0, n), pointsFor: (p) => moveSnapPoints(p, nc), inference: true });
   }
 
   private applyPlayback(d: NcDoc): void {

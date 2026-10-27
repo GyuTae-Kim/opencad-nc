@@ -23,7 +23,7 @@ export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';
 export { parseMpr, looksLikeMpr, type MprPart, type MprOperation, type MprContour, type MprContourElement, type MprDrillOp, type MprContourOp, type MprBoxOp, type MprOtherOp, type MprHole, type MprWorkpiece, type MprVariable, type MprOptions, type PanelFace } from './mpr';
 export { parsePgi, parseKdtXml, looksLikePgi, looksLikeKdtXml, type PanelReadOptions } from './wangs';
 export { parseXml, xmlRootName, type XmlElement } from './xml';
-export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions } from './scene';
+export { ncToScene, mprToScene, toolColors, type NcSceneOptions, type MprSceneOptions, type PanelSnapTable } from './scene';
 export { makeSource, sourceLine, splitLines, type NcSource } from './text';
 export { evalMprExpr } from './expr';
 export { combineNcJob, splitNcJob, type NcJob, type NcJobFile } from './job';

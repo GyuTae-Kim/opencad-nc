@@ -10,6 +10,7 @@
 import type { Scene3d } from 'opencad-viewer3d/types';
 import type { PanelFileKind } from '../extensions';
 import type { NcDialect, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
+import type { PanelSnapTable } from '../scene';
 import type { NcSource } from '../text';
 
 /** 다시 해석할 때 고르는 것 */
@@ -99,6 +100,23 @@ export interface NcPayload {
   notices: NcNotice[];
   /** 해석 경고(줄 번호와 따로 — 누르면 그 줄로, 코드 줄 앞 표시) */
   warnItems: NcWarningItem[];
+  /** 반경 보정 경로(공구 중심)를 그렸으면 그 조각(측정 붙잡기 — 선분 묶음 'nc-comp'의 요소 가운데 점·호 중심) */
+  comp?: NcCompSnap;
+}
+
+/** 보정 경로 조각(comp.ts NcCompPath에서 측정 붙잡기에 쓰는 것만) */
+export interface NcCompSnap {
+  count: number;
+  /** 0 직선, 1 호 */
+  kind: Uint8Array;
+  /** 원래 이동 번호(오름차순 — 'nc-comp' 선분의 segmentIds) */
+  move: Uint32Array;
+  /** 시작·끝 xyz(조각마다 6) */
+  points: Float64Array;
+  /** 호 중심 xyz */
+  center: Float64Array;
+  sweep: Float64Array;
+  plane: Uint8Array;
 }
 
 /** 판재 가공(MPR·PGI·XML) 패널 자료(가공·변수는 scene.meta에 있다) */
@@ -107,6 +125,8 @@ export interface MprPayload {
   lines: string[];
   /** 경고마다 글·첫 줄·횟수·난 줄들(NcPayload.warnItems와 같은 꼴) */
   warnItems?: NcWarningItem[];
+  /** 측정 붙잡기 표(원호 중심·윤곽 요소 — 장면과 같은 묶음 id) */
+  snap?: PanelSnapTable;
 }
 
 export type NcKind = 'gcode' | 'heidenhain' | PanelFileKind;

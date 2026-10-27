@@ -1,5 +1,5 @@
 import { createLanguageMenu } from 'opencad-site-kit/i18n/language-menu';
-import { VIEW_LABELS } from 'opencad-viewer3d';
+import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { CUBE_FACES } from 'opencad-viewer3d/viewcube';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */
 import { currentLanguage, languages, languageUrl, metadataForLanguage, registerCatalog, sourceMessage, translate } from '../../site/i18n-core.mjs';

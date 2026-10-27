@@ -1,0 +1,13 @@
+{
+  "note": "Candidate medians from opencad-site performance-summary (opencad-site-kit; three cold mobile Lighthouse loads, gzip). Local medians on 2026-10-27 after loading the 3D viewer core when a document opens: performance 100, accessibility 100, SEO 100, FCP 1208 ms, LCP 1524 ms, TBT 0 ms, CLS 0, JS 55.0 KiB (before: performance 99, accessibility 96, FCP 1505 ms, LCP 1822 ms, JS 113.7 KiB); with CPU slowdown x12 (a slower CI runner): FCP 1202 ms, LCP 1609 ms, TBT 89 ms. jsBytes leaves about 5 KiB of headroom: pulling the viewer core back into the first screen adds about 60 KiB.",
+  "budget": {
+    "performance": { "min": 90 },
+    "accessibility": { "min": 100 },
+    "seo": { "min": 100 },
+    "fcp": { "max": 2000 },
+    "lcp": { "max": 2200 },
+    "tbt": { "max": 300 },
+    "cls": { "max": 0.02 },
+    "jsBytes": { "max": 61440 }
+  }
+}
