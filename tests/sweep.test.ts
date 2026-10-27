@@ -13,7 +13,7 @@ const MILL = 'G21 G17 G90 G54\nT1 M6\nS1000 M3\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG1 X40
 const NO_UNITS = 'G90\nT1 M6\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG1 X10\nM30\n';
 const HH = '0 BEGIN PGM T MM\n1 TOOL CALL 1 Z S1000\n2 L X+0 Y+0 Z+5 R0 FMAX\n3 L Z-1 F100\n4 L X+20\n5 END PGM T MM\n';
 const C_HEADER = '#ifndef A_H\n#define A_H\nint a(void);\n#endif\n';
-const MPR = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n\n<188 \\Easyedge\\\nXA="0"\n!\n';
+const MPR = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n\n<139 \\Komponente\\\nIN="teil.mpr"\n!\n';
 const BINARY = new Uint8Array(4096).map((_, i) => (i % 3 ? 0 : 0x41));
 
 let root: string;
@@ -101,7 +101,7 @@ describe('파일 하나(앱 워커와 같은 해석 길)', () => {
     const r = sweepOne('panel.mpr', enc(MPR));
     expect(r).toMatchObject({ kind: 'mpr', format: '4.0 Alpha', cls: 'warn' });
     expect(r.metrics).toMatchObject({ ops: 2, otherOps: 1, workpiece: 1 });
-    expect(Object.keys(r.warnings)[0]).toMatch(/Easyedge/);
+    expect(Object.keys(r.warnings)[0]).toMatch(/Komponente/);
   });
 
   it('경고 코드: 줄 번호·수·따옴표 값을 지운다', () => {

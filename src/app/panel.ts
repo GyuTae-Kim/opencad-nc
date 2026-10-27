@@ -68,6 +68,7 @@ const MPR_KIND: Record<string, string> = {
   contour: '윤곽',
   groove: '홈',
   pocket: '포켓',
+  edge: '엣지 밴딩',
   comment: '주석',
   other: '기타',
 };
@@ -658,7 +659,13 @@ export class NcPanel {
     const tbody = h('tbody');
     for (const o of ops) {
       const sel = d.selKey === String(o.index);
-      const detail = [o.diameter ? `Ø${fmtNum(o.diameter)}` : '', o.depth !== undefined ? `깊이 ${fmtNum(o.depth)}` : '', o.holeCount ? `${o.holeCount}개` : '', o.tool !== undefined ? `T${o.tool}` : '']
+      const detail = [
+        o.diameter ? `Ø${fmtNum(o.diameter)}` : '',
+        o.depth !== undefined ? `깊이 ${fmtNum(o.depth)}` : '',
+        o.thickness !== undefined ? `두께 ${fmtNum(o.thickness)}` : '',
+        o.holeCount ? `${o.holeCount}개` : '',
+        o.tool !== undefined ? `T${o.tool}` : '',
+      ]
         .filter(Boolean)
         .join(' · ');
       const tr = h(
@@ -746,7 +753,14 @@ export class NcPanel {
       const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;
       if (st)
         this.body.append(
-          group('가공 요약', row('구멍', `${st.holes ?? 0}개 (드릴 가공 ${st.drillOps ?? 0})`), row('윤곽 가공', String(st.contourOps ?? 0)), row('홈 · 포켓', `${st.grooves ?? 0} · ${st.pockets ?? 0}`), row('꺼진 가공', String(st.disabled ?? 0))),
+          group(
+            '가공 요약',
+            row('구멍', `${st.holes ?? 0}개 (드릴 가공 ${st.drillOps ?? 0})`),
+            row('윤곽 가공', String(st.contourOps ?? 0)),
+            row('홈 · 포켓', `${st.grooves ?? 0} · ${st.pockets ?? 0}`),
+            st.edges ? row('엣지 밴딩', String(st.edges)) : null,
+            row('꺼진 가공', String(st.disabled ?? 0)),
+          ),
         );
       if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled)
         this.body.append(

@@ -8,7 +8,8 @@
  * - `]n` 윤곽 n: `$Em` 요소 머리 + 종류 줄(KP 점·KL 선·KA 호·KR 둥글리기·KF 모따기·KSL/KSA 나눔) + `X=…` 값.
  *   `.X=` 처럼 점으로 시작하는 값은 woodWOP가 계산해 둔 값(외부 프로그램이 쓴 파일은 틀릴 수 있어 검산에만 쓴다)
  * - `<번호 \이름\` 가공 매크로: 100 WerkStck(LA·BR·DI), 101 Kommentar, 102 BohrVert, 103 BohrHoriz,
- *   105 Konturfraesen, 109 Nuten, 112 Tasche, 131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로) …
+ *   105 Konturfraesen, 109 Nuten, 112 Tasche, 131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로),
+ *   188 Easyedge(엣지 밴딩 — 공개 명세가 없어 실제 파일로 추정: 윤곽 구간 EA..EE의 판 옆면에 두께 DK의 띠) …
  *   값 "STANDARD"(F_·S_·TNO 등)는 기계·공구 자료의 기본값이라는 뜻이라 식으로 계산하지 않는다.
  *
  * 좌표: 판 왼쪽 아래(앞) 모서리의 밑면이 원점, X = 길이(LA), Y = 폭(BR), Z = 두께 방향 위(윗면 Z = DI).
@@ -107,13 +108,30 @@ export interface MprBoxOp extends OpBase {
   prism?: { outline: number[]; dir: [number, number, number]; depth: number };
 }
 
+/**
+ * 엣지 밴딩(188 Easyedge): 윤곽 구간(EA..EE)을 따라 판 옆면에 붙이는 띠. 공구 경로가 아니라 가공 시간·이송 길이에 넣지 않는다.
+ * 공개 명세가 없어 실제 파일로 뜻을 정했다(README "woodWOP MPR" 참고).
+ */
+export interface MprEdgeOp extends OpBase {
+  kind: 'edge';
+  contour?: number;
+  startElement?: number;
+  endElement?: number;
+  /** 띠 두께(DK) */
+  thickness?: number;
+  /** 띠를 붙이는 윤곽 구간(앞쪽 차례 그대로) */
+  path?: PathPoint[];
+  /** 띠가 놓이는 쪽: 1 = 진행 방향 왼쪽, -1 = 오른쪽(판 재료에서 먼 쪽) */
+  side?: 1 | -1;
+}
+
 export interface MprOtherOp extends OpBase {
   kind: 'comment' | 'other';
   /** 모르는 매크로의 위치(XA·YA가 있으면, Z = 윗면) — 장면에서 점으로 */
   at?: [number, number, number];
 }
 
-export type MprOperation = MprDrillOp | MprContourOp | MprBoxOp | MprOtherOp;
+export type MprOperation = MprDrillOp | MprContourOp | MprBoxOp | MprEdgeOp | MprOtherOp;
 
 export interface MprWorkpiece {
   length: number;
@@ -149,7 +167,8 @@ export interface MprPart {
   operations: MprOperation[];
   /** 원본 줄 */
   lines: string[];
-  stats: { holes: number; drillOps: number; contourOps: number; grooves: number; pockets: number; disabled: number; other: number };
+  /** edges = 켜진 엣지 밴딩 수(MPR Easyedge가 있을 때만) */
+  stats: { holes: number; drillOps: number; contourOps: number; grooves: number; pockets: number; disabled: number; other: number; edges?: number };
   warnings: string[];
   /** 경고마다 글·첫 줄·횟수·난 줄들(G-code의 warningItems와 같은 꼴 — 패널이 줄 번호·글·횟수를 따로 보여 조각마다 번역된다) */
   warningItems?: NcWarningItem[];
@@ -198,6 +217,7 @@ const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece'> = {
   konturfraesen: 'contour',
   nuten: 'groove',
   tasche: 'pocket',
+  easyedge: 'edge',
 };
 
 /** MPR 글·바이트를 읽는다 */
@@ -492,7 +512,7 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
 
   // 가공
   const operations: MprOperation[] = [];
-  const stats = { holes: 0, drillOps: 0, contourOps: 0, grooves: 0, pockets: 0, disabled: 0, other: 0 };
+  const stats: MprPart['stats'] = { holes: 0, drillOps: 0, contourOps: 0, grooves: 0, pockets: 0, disabled: 0, other: 0 };
   for (const m of macros) {
     const kind = MACRO_KIND[m.name.toLowerCase()];
     if (kind === 'workpiece') continue;
@@ -645,6 +665,12 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         if (enabled) stats.pockets++;
         break;
       }
+      case 'edge': {
+        const op = edgeOp(base, p, contours, workpiece, num, w);
+        operations.push(op);
+        if (enabled) stats.edges = (stats.edges ?? 0) + 1;
+        break;
+      }
       case 'comment':
         operations.push({ ...base, kind: 'comment', label: m.comments.join(' ') || label });
         break;
@@ -750,6 +776,145 @@ function contourRef(v: string | undefined): [number, number | undefined] | undef
   return [+m[1]!, m[2] !== undefined ? +m[2] : undefined];
 }
 
+/** 윤곽 c의 i0번째부터 i1번째 요소까지 점열(i0 > i1이면 거꾸로 — 호는 반대 끝점으로, 각은 반대로) */
+function sectionPath(c: MprContour, i0: number, i1: number): PathPoint[] {
+  if (i0 <= i1) {
+    const path: PathPoint[] = [];
+    for (let i = i0; i <= i1; i++) {
+      const e = c.elements[i]!;
+      const pt: PathPoint = { x: e.x, y: e.y, z: e.z };
+      if (i > i0 && e.arc) pt.arc = { ...e.arc };
+      path.push(pt);
+    }
+    return path;
+  }
+  const fwd = sectionPath(c, i1, i0);
+  const path = fwd.map((q) => ({ x: q.x, y: q.y, z: q.z }) as PathPoint);
+  path.reverse();
+  for (let k = 1; k < fwd.length; k++) {
+    const a = fwd[k]!.arc;
+    if (a) path[fwd.length - k]!.arc = { cx: a.cx, cy: a.cy, sweep: -a.sweep };
+  }
+  return path;
+}
+
+/** 윤곽 요소 번호(e) → 차례(없으면 dflt) */
+function elementAt(c: MprContour, e: number | undefined, dflt: number): number {
+  if (e === undefined) return dflt;
+  const i = c.elements.findIndex((x) => x.index === e);
+  return i < 0 ? dflt : i;
+}
+
+const ARC_STEP = Math.PI / 36;
+
+/** 점열(호 포함)을 XY 꺾은선으로(호는 ARC_STEP 이하 조각) */
+export function pathPolyline(path: readonly PathPoint[], step = ARC_STEP): [number, number][] {
+  const out: [number, number][] = [];
+  path.forEach((b, i) => {
+    if (i === 0 || !b.arc) {
+      out.push([b.x, b.y]);
+      return;
+    }
+    const a = path[i - 1]!;
+    const { cx, cy, sweep } = b.arc;
+    const r0 = Math.hypot(a.x - cx, a.y - cy);
+    const r1 = Math.hypot(b.x - cx, b.y - cy);
+    const t0 = Math.atan2(a.y - cy, a.x - cx);
+    const n = Math.max(1, Math.ceil(Math.abs(sweep) / step - 1e-9));
+    for (let k = 1; k < n; k++) {
+      const f = k / n;
+      const r = r0 + (r1 - r0) * f;
+      out.push([cx + r * Math.cos(t0 + sweep * f), cy + r * Math.sin(t0 + sweep * f)]);
+    }
+    out.push([b.x, b.y]);
+  });
+  return out;
+}
+
+/** 윤곽이 닫혔는지(마지막 점이 첫 점과 같음) */
+function isClosed(c: MprContour): boolean {
+  const a = c.elements[0];
+  const b = c.elements[c.elements.length - 1];
+  return !!a && !!b && c.elements.length > 2 && Math.hypot(a.x - b.x, a.y - b.y) <= 1e-6 * Math.max(1, Math.abs(a.x), Math.abs(a.y));
+}
+
+/**
+ * 띠가 놓이는 쪽(판 재료에서 먼 쪽, 진행 방향 기준 1 = 왼쪽·-1 = 오른쪽).
+ * 닫힌 윤곽: 판 가장자리에 닿거나 판을 모르면 바깥 윤곽이라 둘러싼 넓이의 바깥쪽, 판 안에 떠 있으면 따낸 구멍이라 안쪽.
+ * 열린 윤곽: 조각마다 판 가운데(판을 모르면 윤곽 가운데)에서 먼 쪽을 길이로 투표
+ */
+function bandSide(path: readonly PathPoint[], c: MprContour, wp: MprWorkpiece | undefined): 1 | -1 {
+  const all = pathPolyline(sectionPath(c, 0, c.elements.length - 1));
+  if (isClosed(c)) {
+    let area = 0;
+    for (let i = 1; i < all.length; i++) area += all[i - 1]![0] * all[i]![1] - all[i]![0] * all[i - 1]![1];
+    const tol = 1e-3;
+    const outer = !wp || all.some(([x, y]) => x <= tol || y <= tol || x >= wp.length - tol || y >= wp.width - tol);
+    // 반시계(넓이 +)면 둘러싼 쪽이 왼쪽
+    const enclosedLeft = area > 0;
+    return (outer ? !enclosedLeft : enclosedLeft) ? 1 : -1;
+  }
+  let cx: number;
+  let cy: number;
+  if (wp) {
+    cx = wp.length / 2;
+    cy = wp.width / 2;
+  } else {
+    const xs = all.map((q) => q[0]);
+    const ys = all.map((q) => q[1]);
+    cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  }
+  const pts = pathPolyline(path);
+  let vote = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1]!;
+    const [bx, by] = pts[i]!;
+    // 왼쪽 법선(-dy, dx)과 가운데 → 조각 가운데 방향의 내적(길이 곱해짐)
+    vote += -(by - ay) * ((ax + bx) / 2 - cx) + (bx - ax) * ((ay + by) / 2 - cy);
+  }
+  return vote < 0 ? -1 : 1;
+}
+
+/** 188 Easyedge(엣지 밴딩): EA..EE 윤곽 구간, DK 띠 두께. 띠는 판 재료에서 먼 쪽 옆면에 붙인다 */
+function edgeOp(
+  base: OpBase,
+  p: Record<string, string>,
+  contours: MprContour[],
+  wp: MprWorkpiece | undefined,
+  num: (k: string, d?: number) => number | undefined,
+  w: NcWarnings,
+): MprEdgeOp {
+  const op: MprEdgeOp = { ...base, kind: 'edge' };
+  const dk = num('DK');
+  if (dk !== undefined && dk > 0) op.thickness = dk;
+  const ea = contourRef(p.EA);
+  const ee = contourRef(p.EE);
+  if (!ea) {
+    w.add(`${base.macro}에 시작 요소(EA)가 없음`, base.line);
+    return op;
+  }
+  const c = contours.find((k) => k.id === ea[0]);
+  if (!c || c.elements.length < 2) {
+    w.add(`${base.macro}: 윤곽 ${ea[0]}이 없음`, base.line);
+    return op;
+  }
+  op.contour = c.id;
+  let i0 = elementAt(c, ea[1], 0);
+  let i1 = ee && ee[0] === ea[0] ? elementAt(c, ee[1], c.elements.length - 1) : c.elements.length - 1;
+  // 띠는 방향이 없다: 앞쪽 차례로
+  if (i0 > i1) [i0, i1] = [i1, i0];
+  if (i0 === i1) {
+    w.add(`${base.macro}: 윤곽 구간이 비어 있음`, base.line);
+    return op;
+  }
+  op.startElement = c.elements[i0]!.index;
+  op.endElement = c.elements[i1]!.index;
+  op.path = sectionPath(c, i0, i1);
+  op.side = bandSide(op.path, c, wp);
+  return op;
+}
+
 function contourOp(
   base: OpBase,
   p: Record<string, string>,
@@ -774,39 +939,12 @@ function contourOp(
     w.add(`Konturfraesen: 윤곽 ${ea[0]}이 없음`, base.line);
     return op;
   }
-  const idxOf = (e: number | undefined, dflt: number): number => {
-    if (e === undefined) return dflt;
-    const i = c.elements.findIndex((x) => x.index === e);
-    return i < 0 ? dflt : i;
-  };
-  let i0 = idxOf(ea[1], 0);
-  let i1 = ee && ee[0] === ea[0] ? idxOf(ee[1], c.elements.length - 1) : c.elements.length - 1;
+  const idxOf = (e: number | undefined, dflt: number): number => elementAt(c, e, dflt);
+  const i0 = idxOf(ea[1], 0);
+  const i1 = ee && ee[0] === ea[0] ? idxOf(ee[1], c.elements.length - 1) : c.elements.length - 1;
   op.startElement = c.elements[i0]!.index;
   op.endElement = c.elements[i1]!.index;
-  let path: PathPoint[] = [];
-  if (i0 <= i1) {
-    for (let i = i0; i <= i1; i++) {
-      const e = c.elements[i]!;
-      const pt: PathPoint = { x: e.x, y: e.y, z: e.z };
-      if (i > i0 && e.arc) pt.arc = { ...e.arc };
-      path.push(pt);
-    }
-  } else {
-    // 거꾸로
-    [i0, i1] = [i1, i0];
-    const fwd: PathPoint[] = [];
-    for (let i = i0; i <= i1; i++) {
-      const e = c.elements[i]!;
-      fwd.push({ x: e.x, y: e.y, z: e.z, arc: i > i0 && e.arc ? { ...e.arc } : undefined });
-    }
-    path = fwd.map((q) => ({ x: q.x, y: q.y, z: q.z }));
-    path.reverse();
-    // 호 정보는 반대 끝점으로, 각은 반대로
-    for (let k = 1; k < fwd.length; k++) {
-      const a = fwd[k]!.arc;
-      if (a) path[fwd.length - k]!.arc = { cx: a.cx, cy: a.cy, sweep: -a.sweep };
-    }
-  }
+  const path = sectionPath(c, i0, i1);
   // 깊이: ZA="@d" → 윤곽 Z에서 d 더 깊게, ZA·TI 수 → 윗면에서 그만큼 아래(평면 윤곽)
   const za = (p.ZA ?? '').trim();
   if (za.startsWith('@')) {
