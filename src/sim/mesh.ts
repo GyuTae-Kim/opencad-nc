@@ -6,9 +6,13 @@
  * - 옆면 넷은 가장자리 마디 높이를 따라 바닥까지 세운 띠, 바닥은 사각형 하나.
  * - 좌표는 원점(소재 윗면 가운데) 기준 float32(큰 좌표에서도 정밀도를 지키려고 — Mesh3d.origin).
  * - 색: 'depth'는 깎인 깊이로(얕으면 밝은 하늘색 → 깊으면 짙은 남색), 'stock'은 소재 색과 조금 어두운 깎인 면 색.
- *   급속이 깎은 마디는 빨강. 법선은 넣지 않는다(뷰어가 면 법선으로 평면 음영 — 깎은 벽·바닥이 또렷하다).
+ *   급속이 깎은 마디는 빨강, 판 밖(직사각형이 아닌 판의 바깥 — 처음부터 소재가 없는 곳)은 바닥 색.
+ * - 음영: 기울어진 면(이웃 마디 높이 차가 0보다 크고 벽 문턱 이하)이 있는 조각만 마디 법선(이웃 높이 차분)을 넣어 매끈하게 그린다.
+ *   벽(둘레 칸의 높이 차가 칸 크기 × WALL_SLOPE를 넘는 곳)에 닿은 마디는 법선을 0으로 둔다 — 뷰어는 세 꼭짓점 법선이 모두 0인
+ *   삼각형을 면 법선으로 그리므로 수직 벽과 그 모서리는 날카롭게 남는다. 평평한 바닥과 벽뿐인 조각(판재·2.5D 가공)은 법선을 넣지 않아
+ *   그물이 커지지 않는다(면 법선으로 같은 그림).
  */
-import type { HeightGrid } from './grid';
+import { MARK_OUTSIDE, MARK_RAPID, type HeightGrid } from './grid';
 
 export type SimColorMode = 'depth' | 'stock';
 
@@ -16,6 +20,10 @@ type Rgb = readonly [number, number, number];
 
 export const STOCK_RGB: Rgb = [0.74, 0.76, 0.8];
 const RAPID_RGB: Rgb = [0.9, 0.22, 0.18];
+/** 바닥·판 밖 색 */
+const FLOOR_RGB: Rgb = [STOCK_RGB[0] * 0.8, STOCK_RGB[1] * 0.8, STOCK_RGB[2] * 0.8];
+/** 벽 문턱: 칸 둘레 높이 차가 칸 크기의 이만큼(약 68°)을 넘으면 벽으로 보고 날카롭게 */
+export const WALL_SLOPE = 2.5;
 /** 깊이 색: 얕음 → 깊음 */
 const DEPTH_RAMP: readonly Rgb[] = [
   [0.62, 0.84, 0.95],
@@ -34,6 +42,8 @@ export interface TileArrays {
   flat: boolean;
   positions: Float32Array;
   colors: Float32Array;
+  /** 마디 법선(기울어진 면이 있는 조각만 — 벽에 닿은 마디는 0) */
+  normals?: Float32Array;
 }
 
 /** 옆면·바닥 그물 배열 */
@@ -49,10 +59,11 @@ export function gridOrigin(g: HeightGrid): [number, number, number] {
   return [s.x0 + ((s.nx - 1) * s.dx) / 2, s.y0 + ((s.ny - 1) * s.dy) / 2, s.top];
 }
 
-/** 높이 → 색(rgb를 out[o..o+3]에, 알파 1) */
-function colorAt(out: Float32Array, o: number, z: number, marked: boolean, top: number, depthRange: number, mode: SimColorMode): void {
+/** 높이·마디 표시 → 색(rgb를 out[o..o+3]에, 알파 1) */
+function colorAt(out: Float32Array, o: number, z: number, mark: number, top: number, depthRange: number, mode: SimColorMode): void {
   let c: Rgb;
-  if (marked) c = RAPID_RGB;
+  if (mark === MARK_RAPID) c = RAPID_RGB;
+  else if (mark === MARK_OUTSIDE) c = FLOOR_RGB;
   else if (z >= top - 1e-6 * Math.max(1, Math.abs(top))) c = STOCK_RGB;
   else if (mode === 'stock') c = STOCK_CUT_RGB;
   else {
@@ -108,7 +119,7 @@ export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonl
       positions[v * 3] = x;
       positions[v * 3 + 1] = y;
       positions[v * 3 + 2] = z;
-      colorAt(colors, v * 4, s.top, false, s.top, range, mode);
+      colorAt(colors, v * 4, s.top, 0, s.top, range, mode);
     };
     const X = (i: number): number => s.x0 + i * s.dx - ox;
     const Y = (j: number): number => s.y0 + j * s.dy - oy;
@@ -131,11 +142,65 @@ export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonl
       positions[v * 3] = s.x0 + i * s.dx - ox;
       positions[v * 3 + 1] = y;
       positions[v * 3 + 2] = z - oz;
-      colorAt(colors, v * 4, z, g.mark[b + i] === 1, s.top, range, mode);
+      colorAt(colors, v * 4, z, g.mark[b + i]!, s.top, range, mode);
       v++;
     }
   }
-  return { tx, ty, cols, rows, flat: false, positions, colors };
+  const normals = tileNormals(g, i0, i1, j0, j1);
+  return { tx, ty, cols, rows, flat: false, positions, colors, ...(normals ? { normals } : {}) };
+}
+
+/**
+ * 조각 마디 [i0, i1] × [j0, j1]의 법선(행 우선). 조각 안 칸에 기울어진 면(0 < 높이 차 ≤ 문턱)이 없으면 null(면 법선으로 같은 그림).
+ * 둘레 네 칸 가운데 하나라도 벽(높이 차 > 문턱)이면 0, 아니면 이웃 마디 높이 차분 (−∂z/∂x, −∂z/∂y, 1)을 단위 길이로.
+ * 칸 높이 차는 온 격자에서 재므로 조각 가장자리 마디의 법선은 이웃 조각과 같다(이음매에 음영 턱이 없다)
+ */
+export function tileNormals(g: HeightGrid, i0: number, i1: number, j0: number, j1: number, slope = WALL_SLOPE): Float32Array | null {
+  const s = g.spec;
+  const nx = s.nx;
+  const h = g.h;
+  const thr = slope * Math.max(s.dx, s.dy);
+  // 칸 (i, j)(왼쪽 아래 마디) 높이 차 — 조각 둘레 한 칸까지: qa = i0 - 1 … i1, qb = j0 - 1 … j1
+  const qw = i1 - i0 + 2;
+  const qh = j1 - j0 + 2;
+  const range = new Float32Array(qw * qh);
+  let sloped = false;
+  for (let qj = 0; qj < qh; qj++) {
+    const j = j0 - 1 + qj;
+    for (let qi = 0; qi < qw; qi++) {
+      const i = i0 - 1 + qi;
+      if (i < 0 || j < 0 || i >= nx - 1 || j >= s.ny - 1) continue;
+      const k = j * nx + i;
+      const a = h[k]!;
+      const b = h[k + 1]!;
+      const c = h[k + nx]!;
+      const d = h[k + nx + 1]!;
+      const r = Math.max(a, b, c, d) - Math.min(a, b, c, d);
+      range[qj * qw + qi] = r;
+      if (!sloped && r > 0 && r <= thr && i >= i0 && i < i1 && j >= j0 && j < j1) sloped = true;
+    }
+  }
+  if (!sloped) return null;
+  const out = new Float32Array((i1 - i0 + 1) * (j1 - j0 + 1) * 3);
+  let v = 0;
+  for (let j = j0; j <= j1; j++) {
+    const ja = j > 0 ? j - 1 : j;
+    const jb = j < s.ny - 1 ? j + 1 : j;
+    for (let i = i0; i <= i1; i++, v++) {
+      const qi = i - i0 + 1;
+      const qj = j - j0 + 1;
+      if (range[qj * qw + qi]! > thr || range[qj * qw + qi - 1]! > thr || range[(qj - 1) * qw + qi]! > thr || range[(qj - 1) * qw + qi - 1]! > thr) continue;
+      const ia = i > 0 ? i - 1 : i;
+      const ib = i < nx - 1 ? i + 1 : i;
+      const gx = ib > ia ? (h[j * nx + ib]! - h[j * nx + ia]!) / ((ib - ia) * s.dx) : 0;
+      const gy = jb > ja ? (h[jb * nx + i]! - h[ja * nx + i]!) / ((jb - ja) * s.dy) : 0;
+      const l = Math.sqrt(gx * gx + gy * gy + 1);
+      out[v * 3] = -gx / l;
+      out[v * 3 + 1] = -gy / l;
+      out[v * 3 + 2] = 1 / l;
+    }
+  }
+  return out;
 }
 
 /** 깎이지 않은 조각(가운데 점 + 가장자리 고리 ring개)의 삼각형 번호(위에서 보아 반시계) */
@@ -185,19 +250,19 @@ export function buildWalls(g: HeightGrid, origin: readonly number[], mode: SimCo
   const indices = new Uint32Array((2 * (s.nx - 1) + 2 * (s.ny - 1)) * 6);
   let v = 0;
   let k = 0;
-  const side = (n: number, at: (q: number) => [number, number, number, boolean], flip: boolean): void => {
+  const side = (n: number, at: (q: number) => [number, number, number, number], flip: boolean): void => {
     const base = v;
     for (let q = 0; q < n; q++) {
-      const [x, y, z, marked] = at(q);
+      const [x, y, z, mark] = at(q);
       positions[v * 3] = x - ox;
       positions[v * 3 + 1] = y - oy;
       positions[v * 3 + 2] = s.bottom - oz;
-      colorAt(colors, v * 4, s.top, false, s.top, range, mode);
+      colorAt(colors, v * 4, s.top, 0, s.top, range, mode);
       v++;
       positions[v * 3] = x - ox;
       positions[v * 3 + 1] = y - oy;
       positions[v * 3 + 2] = z - oz;
-      colorAt(colors, v * 4, z >= s.top ? s.top : z, marked, s.top, range, mode === 'depth' ? 'stock' : mode);
+      colorAt(colors, v * 4, z >= s.top ? s.top : z, mark, s.top, range, mode === 'depth' ? 'stock' : mode);
       v++;
     }
     for (let q = 0; q + 1 < n; q++) {
@@ -222,9 +287,9 @@ export function buildWalls(g: HeightGrid, origin: readonly number[], mode: SimCo
       }
     }
   };
-  const H = (i: number, j: number): [number, number, number, boolean] => {
+  const H = (i: number, j: number): [number, number, number, number] => {
     const idx = j * s.nx + i;
-    return [s.x0 + i * s.dx, s.y0 + j * s.dy, g.h[idx]!, g.mark[idx] === 1];
+    return [s.x0 + i * s.dx, s.y0 + j * s.dy, g.h[idx]!, g.mark[idx]!];
   };
   side(s.nx, (i) => H(i, 0), false); // 앞(−Y)
   side(s.nx, (i) => H(i, s.ny - 1), true); // 뒤(+Y)
@@ -244,7 +309,7 @@ export function buildBottom(g: HeightGrid, origin: readonly number[]): PlainArra
   const z = s.bottom - origin[2]!;
   const positions = new Float32Array([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]);
   const colors = new Float32Array(16);
-  for (let v = 0; v < 4; v++) colors.set([STOCK_RGB[0] * 0.8, STOCK_RGB[1] * 0.8, STOCK_RGB[2] * 0.8, 1], v * 4);
+  for (let v = 0; v < 4; v++) colors.set([FLOOR_RGB[0], FLOOR_RGB[1], FLOOR_RGB[2], 1], v * 4);
   return { positions, colors, indices: new Uint32Array([0, 3, 2, 0, 2, 1]) };
 }
 

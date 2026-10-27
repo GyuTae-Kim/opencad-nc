@@ -118,7 +118,7 @@ export class SimRunner {
     s.lastPost = performance.now();
     s.told = reached;
     const transfer: Transferable[] = [];
-    for (const t of tiles) transfer.push(t.positions.buffer, t.colors.buffer);
+    for (const t of tiles) transfer.push(t.positions.buffer, t.colors.buffer, ...(t.normals ? [t.normals.buffer] : []));
     for (const p of [walls, bottom]) if (p) transfer.push(p.positions.buffer, p.colors.buffer, p.indices.buffer);
     this.post(msg, transfer);
   }
