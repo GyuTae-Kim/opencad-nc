@@ -60,6 +60,15 @@ const PHONE_QUERY = `${NARROW_QUERY}, (pointer: coarse) and (max-height: 499.98p
 /** 손가락이 주인 기기(휴대폰·태블릿): 안내 글·파일 고르기를 맞춘다 */
 const COARSE_QUERY = '(pointer: coarse)';
 
+/** 요소가 키보드 초점 표시(:focus-visible) 중인지(그 선택자를 모르는 환경이면 false) */
+export function matchesFocusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
+
 /** 지금 휴대폰 화면인지(PHONE_QUERY). matchMedia가 없으면 폭만 본다 */
 function isPhone(): boolean {
   try {
@@ -1211,7 +1220,11 @@ export class NcViewerApp implements PanelHost {
     // 선반 자동·소수점 없는 좌표·판별한 방언은 3D 보기 위 띠로(행동 단추와 함께), 경고는 알림으로
     this.renderNotices();
     if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
-    this.viewer?.canvas.focus({ preventScroll: true });
+    // 코어 0.9.0부터 캔버스는 키보드 초점(:focus-visible)에 테두리를 그린다. 스크립트 초점은 브라우저가 입력 없이 연 경우(?sample·
+    // 공유·파일 연결로 연 첫 화면)에도 테두리를 보이므로, 앞서 초점을 가진 것이 키보드 초점이었을 때만(열기 단추·최근 문서를 키보드로) 보인다
+    const prev = document.activeElement;
+    const keyboard = !!prev && prev !== document.body && matchesFocusVisible(prev);
+    this.viewer?.canvas.focus({ preventScroll: true, focusVisible: keyboard } as FocusOptions);
   }
 
   /** 문서의 장면과 보기 상태를 뷰어에 올린다(cam을 주면 그 카메라를 지킨다) */

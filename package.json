@@ -29,7 +29,7 @@
     "sweep:compare": "vite-node scripts/sweep/compare.ts --"
   },
   "dependencies": {
-    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.8.0"
+    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#v0.9.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

@@ -308,6 +308,25 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     expect(root.querySelector('.measure-bar .mb-snap')).toBeNull();
   });
 
+  it('문서를 열면 캔버스에 초점: 앞의 초점이 키보드 초점일 때만 테두리(코어 0.9.0 :focus-visible)', async () => {
+    const focus = vi.spyOn(HTMLCanvasElement.prototype, 'focus');
+    try {
+      const { app, root } = makeApp();
+      // 주소(?sample)·공유·파일 연결로 연 첫 화면처럼 입력이 없으면 테두리 없이
+      await app.openBuffer('snap-test.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer);
+      expect(focus.mock.calls.at(-1)).toEqual([{ preventScroll: true, focusVisible: false }]);
+      // 키보드로 고른 단추(:focus-visible)에서 열면 테두리를 보인다
+      const btn = root.querySelector<HTMLButtonElement>('.toolbar .tbtn')!;
+      btn.focus();
+      const matches = vi.spyOn(btn, 'matches').mockImplementation((s: string) => s === ':focus-visible');
+      await app.openBuffer('snap-test.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer);
+      expect(focus.mock.calls.at(-1)).toEqual([{ preventScroll: true, focusVisible: true }]);
+      matches.mockRestore();
+    } finally {
+      focus.mockRestore();
+    }
+  });
+
   it('판재 가공(MPR)은 붙잡기를 켜지 않는다(코어 기본 — 꼭짓점·끝점)', async () => {
     const { app, root } = makeApp();
     const mpr = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n!\n';
