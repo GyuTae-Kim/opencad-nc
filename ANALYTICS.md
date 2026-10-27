@@ -2,7 +2,6 @@
 
 개인 로그인: `gyutae.k1020@gmail.com` · 계정: `GyuTae Kim · Personal` (`412270261`, 조직 없음).
 속성: `Portfolio & OpenCAD` (`559257929`) · 웹 스트림: `16144280939` · 측정 ID: `G-51B8MJ5C4C`.
-회사 `wedraw` 계정과 연결하지 않는다.
 
 [개인 속성 관리](https://analytics.google.com/analytics/web/?authuser=0#/a412270261p559257929/admin)
 
@@ -28,7 +27,7 @@ GA의 페이지명은 `분류 | 이름`으로 고정한다. 페이지 경로는 
 | 대상 | GA 페이지명 예시 | 콘텐츠 그룹 |
 | --- | --- | --- |
 | 홈페이지 | `포트폴리오 \| 홈` | `포트폴리오` |
-| 프로젝트·연구·노트 | `프로젝트 \| Wedraw Pro`, `연구 \| TSP 강화학습`, `개발 노트 \| CAD/CAM 특징 인식` | `프로젝트`, `연구`, `개발 노트` |
+| 프로젝트·연구·노트 | `연구 \| TSP 강화학습`, `개발 노트 \| CAD/CAM 특징 인식` | `프로젝트`, `연구`, `개발 노트` |
 | 도구 소개 | `OpenCAD 소개 \| SKP 뷰어` | `OpenCAD 소개` |
 | 사용 가이드 | `OpenCAD 가이드 \| SKP 열기` | `OpenCAD 가이드` |
 | 실제 실행 앱 | `OpenCAD \| DWG/DXF 캐드`, `OpenCAD \| NC 뷰어`, `OpenCAD \| STEP 뷰어`, `OpenCAD \| SKP 뷰어` | `OpenCAD 앱` |
