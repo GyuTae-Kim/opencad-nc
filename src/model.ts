@@ -560,6 +560,18 @@ export function ncMoveAtTime(timeline: Float64Array, sec: number): number {
   return lo;
 }
 
+/**
+ * 이동이 그려지는 선분 묶음 id(ncToScene과 같은 규칙): 기계 좌표 쪽 추정 이동 'nc-machine', 급속 'nc-rapid',
+ * 드릴 사이클의 내려가는 이송 'nc-drill-<공구>', 그 밖의 이송·호 'nc-cut-<공구>'(공구 없음은 'none').
+ * 장면(scene.ts)과 측정 붙잡기 점(app/snap.ts)이 함께 쓴다 — 붙잡기 점이 그 묶음의 숨김·단면을 따르게
+ */
+export function ncPathSetId(kind: number, flags: number, tool: number): string {
+  if (flags & FLAG_MACHINE_EST) return 'nc-machine';
+  if (kind === MOVE_RAPID) return 'nc-rapid';
+  const key = tool < 0 ? 'none' : String(tool);
+  return kind === MOVE_DRILL ? `nc-drill-${key}` : `nc-cut-${key}`;
+}
+
 // ───────────────────────── 기하 도움 ─────────────────────────
 
 /** 평면의 두 축과 직선 축 번호(0 x, 1 y, 2 z) */

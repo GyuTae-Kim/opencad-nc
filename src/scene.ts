@@ -9,7 +9,7 @@
  * 포켓은 상자 또는 다각형 기둥(둥근 모서리·원·자유 경로). meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
-import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, type NcProgram, type PathPoint } from './model';
+import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions } from './comp';
 import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
 import type { MprPart, PanelFace } from './mpr';
@@ -251,19 +251,18 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     const named = t >= 100000 ? p.tools.find((x) => x.number === t)?.name : undefined;
     return named ?? `T${t}`;
   };
-  const key = (t: number): string => (t < 0 ? 'none' : String(t));
   toolOrder.forEach((t, s) => {
     const col = colors.get(t) ?? TOOL_COLORS[s % TOOL_COLORS.length]!;
     const group = toolName(t);
     const c = cut[s]!;
     if (c.k > 0) {
-      const ls: LineSet3d = { id: `nc-cut-${key(t)}`, name: `${group} 이송`, positions: c.pos, color: col, group, segmentIds: c.ids, width: 1.5 };
+      const ls: LineSet3d = { id: ncPathSetId(MOVE_ARC, 0, t), name: `${group} 이송`, positions: c.pos, color: col, group, segmentIds: c.ids, width: 1.5 };
       if (c.col) ls.colors = c.col;
       lines.push(ls);
     }
     const d = drill[s]!;
     if (d.k > 0) {
-      const ls: LineSet3d = { id: `nc-drill-${key(t)}`, name: `${group} 드릴`, positions: d.pos, color: col, group, segmentIds: d.ids, width: 3 };
+      const ls: LineSet3d = { id: ncPathSetId(MOVE_DRILL, 0, t), name: `${group} 드릴`, positions: d.pos, color: col, group, segmentIds: d.ids, width: 3 };
       if (d.col) ls.colors = d.col;
       lines.push(ls);
     }
