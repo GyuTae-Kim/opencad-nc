@@ -167,6 +167,9 @@ describe('서비스 워커 등록과 새 판 알림', () => {
   it('등록하지 못하거나 서비스 워커가 없으면 조용히 null', async () => {
     expect(await registerServiceWorker(() => {}, { sw: fakeSw({ controller: false, fail: true }).sw, base: 'https://x.test/', reload: () => {} })).toBeNull();
     expect(await registerServiceWorker(() => {}, { base: 'https://x.test/', reload: () => {} })).toBeNull();
+    // 등록을 막은 자동화 브라우저: 결과 없이 끝나도 오류 없이 null
+    const blocked = { controller: null, register: async () => undefined as unknown as SwRegistration, addEventListener: () => {} } satisfies SwContainer;
+    expect(await registerServiceWorker(() => {}, { sw: blocked, base: 'https://x.test/', reload: () => {} })).toBeNull();
     // 시험(개발) 환경의 기본값은 등록하지 않는다
     expect(await registerServiceWorker(() => {})).toBeNull();
   });
