@@ -60,7 +60,9 @@ vi.mock('../../src/app/client', async () => {
 
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
-import { SIM_GROUP, composeSimScene } from '../../src/app/sim';
+import { mprOps } from '../../src/app/doc';
+import { SIM_GROUP, composeSimScene, panelToolLabel } from '../../src/app/sim';
+import { PANEL_SKIP_TEXT } from '../../src/sim/panel';
 import type { SimRequest } from '../../src/sim/protocol';
 import { SIM_BLOCK_TEXT } from '../../src/sim/setup';
 import { SimRunner } from '../../src/sim/runner';
@@ -103,6 +105,48 @@ const settled = (): boolean => {
   return !!s && s.on && s.shown && !s.computing && FakeViewer().scenes.length > 0 && FakeViewer().scene !== null && simMeshes().length > 0;
 };
 const FakeViewer = () => fake.FakeViewer.last!;
+/** 판 600 × 400 × 19: 윗면 구멍·포켓, 옆면 구멍, 아랫면 구멍(UfluBohr) */
+const PANEL_MPR = [
+  '[H',
+  'VERSION="4.0 Alpha"',
+  '_BSX=600',
+  '_BSY=400',
+  '_BSZ=19',
+  '',
+  '<100 \\WerkStck\\',
+  'LA="600"',
+  'BR="400"',
+  'DI="19"',
+  '',
+  '<102 \\BohrVert\\',
+  'XA="100"',
+  'YA="100"',
+  'TI="10"',
+  'DU="8"',
+  '',
+  '<112 \\Tasche\\',
+  'XA="300"',
+  'YA="200"',
+  'LA="100"',
+  'BR="50"',
+  'TI="10"',
+  '',
+  '<103 \\BohrHoriz\\',
+  'XA="0"',
+  'YA="100"',
+  'ZA="9.5"',
+  'DU="8"',
+  'TI="30"',
+  'BM="XP"',
+  '',
+  '<131 \\UfluBohr\\',
+  'XA="500"',
+  'YA="300"',
+  'TI="10"',
+  'DU="15"',
+  '!',
+  '',
+].join('\n');
 /** "소재 깎기" 메뉴 항목(휴대폰 보기 설정, 넓은 화면 그리기 차례) */
 const simItems = (root: HTMLElement): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>('.toolbar .menu button')].filter((b) => b.textContent === '소재 깎기');
 const simMeshes = (): string[] => (FakeViewer().scenes[FakeViewer().scenes.length - 1]?.meshes ?? []).map((m) => m.id).filter((id) => id.startsWith('sim-'));
@@ -231,7 +275,65 @@ describe('깎기 탭', () => {
     expect(api.state.selLine).toBe(8);
   });
 
-  it('선반·기울인 평면 프로그램은 시뮬레이션하지 않고 까닭을, 판재 파일에는 깎기 단추가 없다', async () => {
+  it('판재 파일: 깎기 메뉴·탭이 있고 판 윗면 가공만 깎으며, 시뮬레이션하지 않은 가공은 까닭별로(누르면 그 가공)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    expect(simItems(root).every((b) => !b.hidden)).toBe(true);
+    api.togglePanel(true);
+    expect([...root.querySelectorAll('.panel-tabs [role=tab]')].map((b) => b.textContent)).toContain('깎기');
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    const s = api.state.sim!;
+    expect(s.blocked).toBeNull();
+    expect(s.panel).toEqual({ items: 2, skipped: { side: 1, bottom: 1 }, disabled: 0 });
+    expect(s.at).toEqual({ move: s.target!.move, frac: 0 });
+    // 판 그물은 빼고(소재가 대신), 가공 그림(구멍 기둥·포켓 상자)은 함께
+    let ids = FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.map((m) => m.id);
+    expect(ids).not.toContain('mpr-board');
+    expect(ids.filter((id) => id.startsWith('mpr-op-')).length).toBeGreaterThan(0);
+    await until(() => root.querySelector('.panel-body')!.textContent!.includes('시뮬레이션하지 않은 가공 2개'));
+    const body = root.querySelector('.panel-body')!;
+    expect(body.textContent).toContain('옆면 가공(수평 구멍·옆면 홈·경로) — 위에서 내려오지 않음');
+    expect(body.textContent).toContain('아랫면 가공 — 위에서 내려오지 않음');
+    expect(body.textContent).toContain('판 크기(LA·BR·DI)');
+    expect([...body.querySelectorAll('table.sim-tools tbody tr td:first-child')].map((td) => td.textContent)).toEqual(['구멍 Ø8']);
+    expect(body.querySelector<HTMLInputElement>('input[aria-label="X 범위 — 최대"]')!.value).toBe('600');
+    // 옆면 구멍(가공 3)을 누르면 그 가공을 고른다
+    const items = [...body.querySelectorAll<HTMLButtonElement>('.warn-item')];
+    expect(items.map((b) => b.querySelector('.ln')!.textContent)).toEqual(['가공 3', '가공 4']);
+    items[0]!.click();
+    expect(app.doc!.selKey).toBe('2');
+    expect(api.state.selLine).toBe(mprOps(app.doc!.scene)[2]!.line);
+    // 공구 지름 바꾸기 → 'panel:' 열쇠로 기억
+    const dia = body.querySelector<HTMLInputElement>('input[aria-label="구멍 Ø8 지름"]')!;
+    dia.value = '10';
+    dia.dispatchEvent(new Event('change'));
+    await until(settled);
+    expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 'panel:D8': { diameter: 10 } });
+    // 가공 그림을 빼면 가공 그물도 뺀다
+    await api.setSim(true, { paths: false });
+    await until(() => FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.every((m) => !m.id.startsWith('mpr-op-')) && settled());
+    ids = FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.map((m) => m.id);
+    expect(ids.every((id) => id.startsWith('sim-'))).toBe(true);
+  });
+
+  it('판 윗면 가공이 없는 판재 파일은 까닭과 목록만', async () => {
+    const { app, root } = makeApp();
+    await open(app, 's.mpr', '[H\nVERSION="4.0 Alpha"\n_BSX=600\n_BSY=400\n_BSZ=19\n\n<103 \\BohrHoriz\\\nXA="0"\nYA="100"\nZA="9.5"\nDU="8"\nTI="30"\nBM="XP"\n!\n');
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(() => root.querySelector('.panel-body')!.textContent!.includes('시뮬레이션하지 않음'));
+    expect(api.state.sim!.blocked).toBe(SIM_BLOCK_TEXT['panel-none']);
+    expect(root.querySelector('.panel-body')!.textContent).toContain('시뮬레이션하지 않은 가공 1개');
+    expect(simMeshes()).toEqual([]);
+    expect(app.doc!.kind).toBe('mpr');
+  });
+
+  it('선반·기울인 평면 프로그램은 시뮬레이션하지 않고 까닭을 보인다', async () => {
     const { app, root } = makeApp();
     await open(app, 't.nc', 'G21 G90\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG68.2 X0 Y0 Z0 I0 J30 K0\nG53.1\nG1 X10\nM30\n');
     const api = window.opencadApp!;
@@ -245,9 +347,6 @@ describe('깎기 탭', () => {
     expect(api.state.sim!.blocked).toBe(SIM_BLOCK_TEXT.tilt);
     expect(simMeshes()).toEqual([]);
     expect(FakeWorker.made).toBeGreaterThanOrEqual(0);
-    await open(app, 'p.mpr', '[H\nVERSION="4.0 Alpha"\n_BSX=600\n_BSY=400\n_BSZ=19\n\n<102 \\BohrVert\\\nXA="100"\nYA="100"\nTI="10"\nDU="8"\n');
-    expect(simItems(root).every((b) => b.hidden)).toBe(true);
-    expect([...root.querySelectorAll('.panel-tabs [role=tab]')].map((b) => b.textContent)).not.toContain('깎기');
   });
 });
 
@@ -260,6 +359,18 @@ describe('장면 합치기·번역', () => {
     expect(s.lines).toEqual([]);
     expect(s.bounds).toEqual({ min: [-5, 0, -20], max: [10, 12, 5] });
     expect(composeSimScene(base, [m], true, null).lines.length).toBe(1);
+    // 판재: 판 그물은 늘 빼고, 가공 그물(mpr-op-*)은 가공 그림을 보일 때만
+    const panel = { ...base, meshes: [{ id: 'mpr-board', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }, { id: 'mpr-op-0', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }] };
+    expect(composeSimScene(panel, [m], true, null).meshes.map((x) => x.id)).toEqual(['mpr-op-0', 'sim-walls']);
+    expect(composeSimScene(panel, [m], false, null).meshes.map((x) => x.id)).toEqual(['sim-walls']);
+  });
+
+  it('판재 공구 이름: 구멍 지름, 공구 번호, 경로 폭', () => {
+    expect(panelToolLabel({ key: 'D8', type: 'drill', diameter: 8 })).toBe('구멍 Ø8');
+    expect(panelToolLabel({ key: 'T101', type: 'router', tno: 101 })).toBe('T101');
+    expect(panelToolLabel({ key: 'T101', type: 'router', tno: 101, diameter: 12 })).toBe('T101 Ø12');
+    expect(panelToolLabel({ key: 'R12', type: 'router', diameter: 12 })).toBe('경로 Ø12');
+    expect(panelToolLabel({ key: 'R', type: 'router' })).toBe('경로(지름 모름)');
   });
 
   it('새 화면 글은 네 언어 사전에 있다', () => {
@@ -305,6 +416,20 @@ describe('장면 합치기·번역', () => {
       '기억 지우기',
       '불러오는 중…',
       '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).',
+      // 판재
+      ...Object.values(PANEL_SKIP_TEXT),
+      '판 윗면 가공으로 판을 깎은 모양을 그립니다.',
+      '가공 그림도 보이기',
+      '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.',
+      '판 윗면에서 위→아래로 하는 가공(수직 구멍·홈·포켓·자유 형상 포켓·윤곽)을 3축 높이 지도로 깎은 근사 결과입니다. 구멍은 구멍 지름의 평 끝 공구로, 홈·포켓은 파일이 정한 모양 그대로(공구 모서리 R 없이), 윤곽은 공구 보정(왼쪽·오른쪽)을 넣어 깎습니다. 칸보다 작은 모양은 보지 않습니다.',
+      '판 크기(LA·BR·DI)',
+      '판 정보(길이·폭·두께)',
+      '가공 범위에서 추정',
+      '자동은 판 크기(원점 = 판 왼쪽 앞 아래 모서리)입니다. 직사각형이 아닌 판은 외곽선 밖을 바닥 색으로 그립니다. 바꾸면 처음부터 다시 계산합니다.',
+      '공구',
+      '구멍은 파일의 구멍 지름, 경로는 파일의 공구 폭(PGI·XML)을 씁니다. 공구 번호만 있는 MPR 윤곽처럼 지름을 모르면 기본값(평 엔드밀 Ø6 mm · 0.25 inch)이니 지름을 넣으십시오. 홈·포켓은 공구 없이 파일의 모양 그대로 깎습니다. 바꾼 값은 이 브라우저에 기억합니다.',
+      '누르면 그 가공을 고릅니다',
+      '경로(지름 모름)',
     ];
     const samples = [
       '소재 계산 중 45%',
@@ -325,6 +450,26 @@ describe('장면 합치기·번역', () => {
       '시뮬레이션하지 않음 — 선반 프로그램은 시뮬레이션하지 않습니다.',
       '시뮬레이션을 계산하지 못했습니다: out of memory',
       '시뮬레이션을 불러오지 못했습니다: x',
+      '시뮬레이션하지 않은 가공 3개',
+      '가공 12',
+      '그 밖 7개는 가공 탭에서 보십시오.',
+      '꺼진 가공 2개는 깎지 않습니다.',
+      '구멍 Ø8',
+      '경로 Ø12',
+      '구멍 Ø8 종류',
+      '구멍 Ø8 지름',
+      '구멍 Ø8 끝 각(도)',
+      '구멍 Ø8 모서리 R',
+      '경로 Ø12 종류',
+      '경로 Ø12 지름',
+      '경로 Ø12 끝 각(도)',
+      '경로 Ø12 모서리 R',
+      '경로(지름 모름) 종류',
+      '경로(지름 모름) 지름',
+      '경로(지름 모름) 끝 각(도)',
+      '경로(지름 모름) 모서리 R',
+      'T101 Ø12 종류',
+      '시뮬레이션하지 않음 — 판 윗면에서 위→아래로 깎는 가공이 없어 시뮬레이션할 것이 없습니다.',
     ];
     for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
       for (const t of texts) {

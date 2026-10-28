@@ -33,6 +33,8 @@ export interface SimToolRow {
   kindFrom: SimToolSource;
   /** 파일이 알려 준 값(사용자 표가 덮었을 때 비교용) */
   file: Partial<SimTool>;
+  /** 사용자 표 열쇠(없으면 공구 번호 글 — 판재 공구는 'panel:D8'처럼) */
+  key?: string;
 }
 
 /** 사용자 표(공구 번호 → 바꾼 값만) */

@@ -54,6 +54,28 @@ export function gridFor(box: { min: readonly number[]; max: readonly number[] },
   return { x0: box.min[0]!, y0: box.min[1]!, nx: cx + 1, ny: cy + 1, dx: w / cx, dy: l / cy, top: box.max[2]!, bottom: box.min[2]! };
 }
 
+/**
+ * 바닥이 평평한 영역들(판재의 홈·포켓처럼 파일이 모양을 정한 가공): 영역마다 닫힌 고리 여럿(짝홀 규칙 — 안쪽 고리는 구멍)과 바닥 높이.
+ * 고리는 xy 점열(끝점을 되풀이하지 않아도 된다)
+ */
+export interface SimRegions {
+  /** 영역마다 첫 고리 번호(길이 = 영역 수 + 1) */
+  ringStart: Uint32Array;
+  /** 고리마다 첫 점 번호(길이 = 고리 수 + 1) */
+  pointStart: Uint32Array;
+  /** 점 xy */
+  xy: Float64Array;
+  /** 영역 바닥 높이 */
+  z: Float64Array;
+  /** 1 = 판 외곽선: 고리들 밖(처음부터 소재가 없는 곳)을 소재 바닥까지 내리고 표시 2 */
+  outside: Uint8Array;
+}
+
+/** 마디 표시: 급속이 깎음 */
+export const MARK_RAPID = 1;
+/** 마디 표시: 판 밖(처음부터 소재가 없는 곳) */
+export const MARK_OUTSIDE = 2;
+
 /** 한 번 내리기의 결과 */
 export interface StampResult {
   /** 살펴본 마디 수(일의 양 — 저장점 간격에 쓴다) */
@@ -94,7 +116,7 @@ export class HeightGrid {
   readonly spec: GridSpec;
   /** 마디 높이(행 우선: j·nx + i) */
   readonly h: Float32Array;
-  /** 마디 표시: 1 = 급속이 깎음 */
+  /** 마디 표시: 1 = 급속이 깎음(MARK_RAPID), 2 = 판 밖(MARK_OUTSIDE) */
   readonly mark: Uint8Array;
   readonly tile = TILE_CELLS;
   /** 조각 수(가로·세로) */
@@ -430,7 +452,7 @@ export class HeightGrid {
             changed++;
             if (rapid) {
               const dd = cur - z;
-              if (dd > this.rapidTol) this.mark[k] = 1;
+              if (dd > this.rapidTol) this.mark[k] = MARK_RAPID;
               if (dd > rapidDepth) rapidDepth = dd;
             }
             if (i < ci0) ci0 = i;
@@ -448,6 +470,101 @@ export class HeightGrid {
     res.visited = visited;
     res.changed = changed;
     res.rapidDepth = rapidDepth;
+    return res;
+  }
+
+  /**
+   * 영역 ri(바닥이 평평한 홈·포켓)를 내린다: 고리들 안(짝홀 규칙)의 마디를 바닥 높이로. 줄마다 변과 만나는 x를 구해 짝지은 구간을 채운다.
+   * 줄 높이를 아주 조금 위·아래로 옮겨 두 번 재고 합친다 — 경계 위의 마디(위·아래 변 줄, 꼭짓점이 걸친 줄 포함)를 빠짐없이 안으로 본다.
+   * 판 밖 영역(outside)은 거꾸로 고리들 안이 아닌 마디(경계 위는 판 안)를 소재 바닥까지 내리고 표시 2
+   */
+  stampRegion(reg: SimRegions, ri: number): StampResult {
+    const res: StampResult = { visited: 0, changed: 0, rapidDepth: 0 };
+    if (!(ri >= 0 && ri + 1 < reg.ringStart.length)) return res;
+    const s = this.spec;
+    const outside = reg.outside[ri] === 1;
+    const zIn = reg.z[ri]!;
+    if (!outside && !(zIn < s.top)) return res;
+    const z = Math.fround(outside ? s.bottom : Math.max(s.bottom, zIn));
+    const r0 = reg.ringStart[ri]!;
+    const r1 = reg.ringStart[ri + 1]!;
+    const xy = reg.xy;
+    let ymin = Infinity;
+    let ymax = -Infinity;
+    for (let r = r0; r < r1; r++)
+      for (let p = reg.pointStart[r]!; p < reg.pointStart[r + 1]!; p++) {
+        const y = xy[p * 2 + 1]!;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      }
+    if (!(ymin <= ymax) && !outside) return res;
+    const nx = s.nx;
+    const j0 = outside ? 0 : Math.max(0, Math.ceil((ymin - s.y0) / s.dy - 1e-9));
+    const j1 = outside ? s.ny - 1 : Math.min(s.ny - 1, Math.floor((ymax - s.y0) / s.dy + 1e-9));
+    const xs: number[] = [];
+    const inRow = new Uint8Array(nx);
+    const eps = 1e-6 * s.dy;
+    const h = this.h;
+    let ci0 = Infinity;
+    let ci1 = -Infinity;
+    let cj0 = Infinity;
+    let cj1 = -Infinity;
+    let visited = 0;
+    let changed = 0;
+    for (let j = j0; j <= j1; j++) {
+      const yRow = s.y0 + j * s.dy;
+      inRow.fill(0);
+      let ra = nx;
+      let rb = -1;
+      for (const y of [yRow - eps, yRow + eps]) {
+        xs.length = 0;
+        for (let r = r0; r < r1; r++) {
+          const p0 = reg.pointStart[r]!;
+          const p1 = reg.pointStart[r + 1]!;
+          for (let p = p0; p < p1; p++) {
+            const q = p + 1 < p1 ? p + 1 : p0;
+            const ay = xy[p * 2 + 1]!;
+            const by = xy[q * 2 + 1]!;
+            if (ay <= y === by <= y) continue;
+            const ax = xy[p * 2]!;
+            xs.push(ax + ((y - ay) * (xy[q * 2]! - ax)) / (by - ay));
+          }
+        }
+        xs.sort((a, b) => a - b);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const ia = Math.max(0, Math.ceil((xs[k]! - s.x0) / s.dx - 1e-9));
+          const ib = Math.min(nx - 1, Math.floor((xs[k + 1]! - s.x0) / s.dx + 1e-9));
+          for (let i = ia; i <= ib; i++) inRow[i] = 1;
+          if (ia < ra) ra = ia;
+          if (ib > rb) rb = ib;
+        }
+      }
+      // 안 영역은 채운 구간만, 판 밖은 줄 전체를 본다
+      const ia = outside ? 0 : ra;
+      const ib = outside ? nx - 1 : rb;
+      const base = j * nx;
+      for (let i = ia; i <= ib; i++) {
+        if ((inRow[i] === 1) === outside) continue;
+        const n = base + i;
+        visited++;
+        if (outside) {
+          if (h[n] === z && this.mark[n] === MARK_OUTSIDE) continue;
+          this.mark[n] = MARK_OUTSIDE;
+        } else if (!(z < h[n]!)) continue;
+        h[n] = z;
+        changed++;
+        if (i < ci0) ci0 = i;
+        if (i > ci1) ci1 = i;
+        if (j < cj0) cj0 = j;
+        if (j > cj1) cj1 = j;
+      }
+    }
+    if (ci0 <= ci1) {
+      for (let by = Math.floor(cj0 / BLOCK); by <= Math.floor(cj1 / BLOCK); by++) for (let bx = Math.floor(ci0 / BLOCK); bx <= Math.floor(ci1 / BLOCK); bx++) this.blockMax(bx, by);
+      this.markTiles(Math.max(0, ci0 - 1), Math.min(nx - 1, ci1 + 1), Math.max(0, cj0 - 1), Math.min(s.ny - 1, cj1 + 1));
+    }
+    res.visited = visited;
+    res.changed = changed;
     return res;
   }
 }

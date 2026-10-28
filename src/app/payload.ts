@@ -6,6 +6,7 @@ import { combineNcFiles, detectNcFormat, jobFileLines, ncParsedToScene, parseNcF
 import { NC_EXTENSIONS, XML_EXTENSIONS } from '../extensions';
 import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
 import { xmlRootName } from '../xml';
+import { panelSimSource } from '../sim/panel-source';
 import { BINARY_MESSAGE, looksBinary } from './format';
 import type { NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
@@ -137,7 +138,7 @@ export function parseForView(
   progress(0.95, '화면으로 보내는 중');
   const out: ParseResult = { kind: parsed.kind, scene, ms: 0 };
   const t = snap as PanelSnapTable | null;
-  if ('part' in parsed) out.mpr = { lines: parsed.part.lines, warnItems: parsed.part.warningItems ?? [], ...(t ? { snap: t } : {}) };
+  if ('part' in parsed) out.mpr = { lines: parsed.part.lines, warnItems: parsed.part.warningItems ?? [], ...(t ? { snap: t } : {}), sim: panelSimSource(parsed.part) };
   else {
     out.nc = ncPayload(parsed.program);
     const c = comp as NcCompPath | null;

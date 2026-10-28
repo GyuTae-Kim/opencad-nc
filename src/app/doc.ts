@@ -219,6 +219,7 @@ export function panelTabs(d: Pick<NcDoc, 'kind'>): [PanelTab, string][] {
       ['vars', '변수'],
       ['code', '코드'],
       ['info', '정보'],
+      ['sim', '깎기'],
     ];
   return [
     ['code', '코드'],

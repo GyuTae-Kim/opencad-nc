@@ -409,7 +409,7 @@ describe('판별·장면·화면', () => {
       if ('part' in parsed) res.mpr = { lines: parsed.part.lines };
       const d = createDoc(name, text.length, res);
       expect(d.panelTab).toBe('ops');
-      expect(panelTabs(d).map(([k]) => k)).toEqual(['ops', 'vars', 'code', 'info']);
+      expect(panelTabs(d).map(([k]) => k)).toEqual(['ops', 'vars', 'code', 'info', 'sim']);
       expect(docLabel(d)).toBe(label);
       expect(statusParts(d)).toContain(`가공 ${mprOps(d.scene).length}개`);
     }
