@@ -7,7 +7,9 @@
  *   (setMeasureSnapLimit, 0.10.0)로 거른다 — 재생 자리가 바뀌어도 점 목록·색인을 다시 주지 않는다.
  * - 이동 가운데 점(pointsFor): 고른 선분의 이동 번호(segmentIds)로 그 G0·G1·드릴 이동의 가운데, 원호는 현이 아니라 호 위의 가운데 점
  *   (장면이 호를 나눌 때와 같은 식 — 각·반지름·직선 축을 반씩). 장면은 호를 짧은 선분 여럿으로 그리므로 코어의 선분 가운데 점
- *   (midpoints)은 그 조각의 가운데일 뿐이라 쓰지 않는다.
+ *   (midpoints)은 그 조각의 가운데일 뿐이라 쓰지 않는다. 스플라인(G5·NURBS)을 나눈 조각이면 그 곡선 전체의 호 길이 가운데 점(곡선 위 —
+ *   해석기 스플라인 표, spline.ts)을 준다.
+ * - 수직 발·선분 위 점은 코어가 고른 뒤 곡선 위로 다듬는다(코어 0.14.0 refine — refine.ts).
  * - 보정 경로(공구 중심, 'nc-comp'): 선분의 이동 번호가 프로그램 이동과 같아도 모양이 달라, 워커가 보낸 보정 조각(NcPayload.comp) 가운데
  *   그 이동의 조각 중 고른 점에 가장 가까운 것의 가운데 점(호는 호 위)과 호 중심을 준다.
  * - 판재 가공(MPR·PGI·XML): 워커가 장면과 같은 묶음 id로 만든 붙잡기 표(PanelSnapTable)에서 윤곽·판 외곽선의 원호 중심·원형 포켓 중심을
@@ -15,9 +17,10 @@
  * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 축 방향의 축은 코어 결과의 axisA·axisB(0.9.1)를 쓴다.
  */
 import type { Pick3d, SnapPoint } from 'opencad-viewer3d/types';
-import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
+import { MOVE_ARC, PLANE_AXES, ncPathSetId, type NcSplines } from '../model';
 import type { PanelSnapTable } from '../scene';
 import type { NcCompSnap } from './protocol';
+import { splineCurve, splineMidParam, splineOfMove } from './spline';
 
 /** 붙잡기 점 계산에 쓰는 NC 자료(NcPayload의 일부) */
 export interface SnapMoves {
@@ -25,6 +28,8 @@ export interface SnapMoves {
   arcs: { center: Float64Array; plane: Uint8Array; sweep: Float64Array };
   /** 반경 보정 경로 조각(그렸을 때만) */
   comp?: NcCompSnap;
+  /** 스플라인 곡선 정의(있을 때만 — 조각의 가운데 점·접선·다듬기를 곡선 위로) */
+  splines?: NcSplines;
 }
 
 type V3 = [number, number, number];
@@ -232,6 +237,10 @@ export function moveSnapPoints(pick: Pick3d, nc: SnapMoves): SnapPoint[] | null 
   const o = i * 3;
   const out: SnapPoint[] = [];
   const arc = m.kind[i] === MOVE_ARC && m.arc[i]! >= 0;
+  // 스플라인을 나눈 조각: 조각의 가운데가 아니라 곡선 전체의 호 길이 가운데(곡선 위 — 원호의 가운데 점처럼)
+  const k = arc ? -1 : splineOfMove(nc.splines, i);
+  const sc = k >= 0 ? splineCurve(nc.splines!, k, p) : null;
+  if (sc) return [{ point: sc.at(splineMidParam(nc.splines!, sc)), kind: 'midpoint' }];
   const len = Math.hypot(p[o + 3]! - p[o]!, p[o + 4]! - p[o + 1]!, p[o + 5]! - p[o + 2]!);
   // 시작·끝이 같은 원호(한 바퀴)는 가운데 점이 반대편에 있다 — 길이 0인 직선만 뺀다
   if (arc || len > 1e-9) {
