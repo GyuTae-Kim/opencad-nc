@@ -2,14 +2,14 @@
 /**
  * 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts)의 앱 쪽 손잡이: 코어 0.12.0 잠금 계약(measureHoverLock = Shift·setMeasureInferenceLock(true)가
  * 잠글 방향, 없으면 setMeasureInferenceLock(true)만 첫 점 뒤 마지막으로 본 방향)을 따르는 가짜 뷰어로
- * 툴팁 글, 상태 줄 안내, 잠금 단추·화살표, 잠글 방향이 없다는 알림과 거두기.
+ * 툴팁 글·자리(코어 거리 글상자 피하기), 상태 줄 안내, 잠금 단추·화살표, 잠글 방향이 없다는 알림과 거두기.
  * 실제 코어 판정(모서리 끝에서 바로 Shift 등)은 measure-lock-core.test.ts가 본다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeasureHoverSnap } from 'opencad-viewer3d';
+import type { MeasureHoverSnap, MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint, lockName } from '../../src/app/measure';
-import { MeasureLock, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { MeasureLock, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 
 type Dir = [number, number, number];
 interface Lock {
@@ -30,6 +30,7 @@ class FakeViewer {
   hoverLock: Lock | null = null;
   lastLockable: Lock | null = null;
   lock: (Lock & { source: 'shift' | 'api' }) | null = null;
+  labelRect: MeasureLabelRect | null = null;
   get measureHoverSnap(): MeasureHoverSnap | null {
     return this.hover;
   }
@@ -38,6 +39,9 @@ class FakeViewer {
   }
   get measureInferenceLock(): (Lock & { source: 'shift' | 'api' }) | null {
     return this.lock;
+  }
+  get measureLabelRect(): MeasureLabelRect | null {
+    return this.labelRect;
   }
   setMeasureInferenceLock(l: boolean | 'x' | 'y' | 'z' | null): boolean {
     if (l === false || l === null) {
@@ -68,6 +72,8 @@ class FakeViewer {
 function setup(touch = false) {
   document.body.innerHTML = '';
   const layer = document.createElement('div');
+  // 3D 보기 층 800×600(jsdom은 크기를 재지 않는다)
+  layer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON() {} });
   const bar = document.createElement('div');
   document.body.append(layer, bar);
   const v = new FakeViewer();
@@ -109,6 +115,42 @@ describe('잠금 글', () => {
     expect(snapTip({ snap: 'axis', axis: 'x', locked: true })).toEqual({ name: 'X축 방향', locked: true });
     expect(snapTip({ snap: null })).toBeNull();
     expect(snapTip(null)).toBeNull();
+  });
+});
+
+describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
+  const L = { width: 800, height: 600 };
+  it('점 오른쪽 아래가 먼저, 층 오른쪽·아래 가장자리에서는 왼쪽·위로(예전과 같음)', () => {
+    expect(placeTip(100, 50, 80, 20, L, null)).toEqual({ x: 112, y: 62 });
+    expect(placeTip(750, 50, 80, 20, L, null)).toEqual({ x: 658, y: 62 });
+    expect(placeTip(100, 590, 80, 20, L, null)).toEqual({ x: 112, y: 558 });
+    expect(placeTip(750, 590, 80, 20, L, null)).toEqual({ x: 658, y: 558 });
+  });
+  it('거리 글상자와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로, 겹치지 않는 곳이 없으면 층 안인 첫 자리', () => {
+    // 첫 점이 커서 아래(위로 재기): 글상자가 커서 오른쪽 아래에 걸린다
+    const label = { x: 110, y: 70, width: 200, height: 40 };
+    expect(placeTip(100, 50, 80, 20, L, label)).toEqual({ x: 8, y: 62 });
+    // 왼쪽 아래도 걸리면 오른쪽 위
+    expect(placeTip(100, 50, 80, 20, L, { x: 0, y: 70, width: 400, height: 40 })).toEqual({ x: 112, y: 18 });
+    // 오른쪽 가장자리: 왼쪽 아래가 걸리고 오른쪽 위는 층 밖이면 왼쪽 위
+    expect(placeTip(750, 50, 80, 20, L, { x: 600, y: 60, width: 150, height: 30 })).toEqual({ x: 658, y: 18 });
+    // 붙어 있기만 하면(경계가 맞닿음) 겹치지 않는다
+    expect(placeTip(100, 50, 80, 20, L, { x: 192, y: 62, width: 50, height: 20 })).toEqual({ x: 112, y: 62 });
+    // 네 자리가 모두 걸리면 층 안인 첫 자리(오른쪽 아래)
+    expect(placeTip(100, 50, 80, 20, L, { x: 0, y: 0, width: 800, height: 600 })).toEqual({ x: 112, y: 62 });
+  });
+  it('update: 코어가 지난 프레임에 그린 글상자와 겹치면 툴팁을 옮기고, 글상자가 없으면 제자리', () => {
+    const { v, lock } = setup();
+    v.hover = { point: [1, 2, 3], snap: 'axis', axis: 'y', direction: [0, 1, 0] };
+    lock.update();
+    // 가짜 점 자리 (100, 50), jsdom 툴팁 크기 80×20(재지 못하면 쓰는 값)
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
+    v.labelRect = { x: 110, y: 70, width: 200, height: 40 };
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 8, y: 62 });
+    v.labelRect = null;
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
   });
 });
 

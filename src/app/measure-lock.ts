@@ -4,6 +4,7 @@
  * 이 모듈은 앱 쪽 손잡이만 둔다.
  *
  * - 툴팁: 측정 중 커서 아래 붙잡을 점의 종류(끝점·중심·교차점·X축 방향·나란한 방향 …)를 그 점 오른쪽 아래에, 잠갔으면 "잠금"을 덧붙인다.
+ *   코어가 그린 거리 글상자(measureLabelRect)와 겹치거나 3D 보기 밖으로 나가면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 옮긴다(placeTip).
  *   코어는 미리 보기를 그리기(rAF) 때 구하므로 포인터 이동·키 뒤 다음 프레임에 읽는다. 글은 DOM이라 번역층이 옮긴다.
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
@@ -13,7 +14,7 @@
  *   오지 않으므로 손가락·펜은 pointerdown에서 받는다. 잠글 방향이 없으면 띠 위에 알림을 띄우고, 잠금이 걸리면(어느 길로든) 그 알림만 거둔다.
  * 둘째 점을 찍거나 측정을 지우거나 측정을 끄면 코어가 잠금을 푼다.
  */
-import type { MeasureHoverSnap, Viewer3d } from 'opencad-viewer3d';
+import type { MeasureHoverSnap, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { h, toast } from './dom';
 import { icon } from './icons';
 import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, lockName, type LockName } from './measure';
@@ -22,7 +23,7 @@ import { snapLabel } from './snap';
 /** 이 모듈이 쓰는 뷰어 기능(시험에서 가짜로 바꿀 수 있게) */
 export type LockViewer = Pick<
   Viewer3d,
-  'canvas' | 'measureMode' | 'measurePointCount' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'setMeasureInferenceLock' | 'project'
+  'canvas' | 'measureMode' | 'measurePointCount' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'measureLabelRect' | 'setMeasureInferenceLock' | 'project'
 >;
 
 export interface MeasureLockHost {
@@ -37,11 +38,34 @@ export interface MeasureLockHost {
 
 /** 측정 띠 알림 종류: 잠글 방향이 없음(잠금이 걸리면 거둔다) */
 const NO_LOCK = 'no-lock';
+/** 툴팁과 점 사이(가로·세로), 3D 보기 가장자리 여백 */
+const TIP_GAP = 12;
+const TIP_EDGE = 4;
 
 /** 툴팁 글(붙잡은 종류 이름, 잠갔는지). 붙잡지 않은 점·미리 보기가 없으면 null */
 export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked'> | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
   return { name: snapLabel(hv.snap, hv.axis), locked: !!hv.locked };
+}
+
+/**
+ * 툴팁 왼쪽 위 자리(층 기준 CSS 화소): 점(px, py) 오른쪽 아래가 먼저이고, 층(width × height) 밖으로 나가거나 피할 상자(코어 거리 글상자 —
+ * 같은 층 기준)와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 본다. 층 안이면서 겹치지 않는 곳이 없으면 층 안인 첫 자리(없으면 오른쪽 아래)
+ */
+export function placeTip(px: number, py: number, w: number, ht: number, layer: { width: number; height: number }, avoid: MeasureLabelRect | null): { x: number; y: number } {
+  const right = px + TIP_GAP;
+  const left = px - TIP_GAP - w;
+  const below = py + TIP_GAP;
+  const above = py - TIP_GAP - ht;
+  const spots = [
+    { x: right, y: below },
+    { x: left, y: below },
+    { x: right, y: above },
+    { x: left, y: above },
+  ];
+  const inside = (s: { x: number; y: number }): boolean => s.x >= TIP_EDGE && s.y >= TIP_EDGE && s.x + w <= layer.width - TIP_EDGE && s.y + ht <= layer.height - TIP_EDGE;
+  const clear = (s: { x: number; y: number }): boolean => !avoid || s.x >= avoid.x + avoid.width || avoid.x >= s.x + w || s.y >= avoid.y + avoid.height || avoid.y >= s.y + ht;
+  return spots.find((s) => inside(s) && clear(s)) ?? spots.find(inside) ?? spots[0]!;
 }
 
 export class MeasureLock {
@@ -132,13 +156,14 @@ export class MeasureLock {
       this.tip.hidden = false;
       const c = v!.canvas.getBoundingClientRect();
       const l = this.host.layer.getBoundingClientRect();
-      const x = c.left - l.left + sp.x + 12;
-      const y = c.top - l.top + sp.y + 12;
-      // 오른쪽·아래 가장자리에서는 점 왼쪽·위로
-      const w = this.tip.offsetWidth || 80;
-      const ht = this.tip.offsetHeight || 20;
-      this.tip.style.left = `${Math.round(x + w > l.width - 4 ? x - w - 24 : x)}px`;
-      this.tip.style.top = `${Math.round(y + ht > l.height - 4 ? y - ht - 24 : y)}px`;
+      const ox = c.left - l.left;
+      const oy = c.top - l.top;
+      // 코어 거리 글상자(캔버스 기준 — 지난 그리기)를 층 기준으로
+      const r = v!.measureLabelRect;
+      const avoid = r ? { x: ox + r.x, y: oy + r.y, width: r.width, height: r.height } : null;
+      const at = placeTip(ox + sp.x, oy + sp.y, this.tip.offsetWidth || 80, this.tip.offsetHeight || 20, l, avoid);
+      this.tip.style.left = `${Math.round(at.x)}px`;
+      this.tip.style.top = `${Math.round(at.y)}px`;
     }
     const lock = this.lock;
     if (lock) this.dropFlash(NO_LOCK);
@@ -220,8 +245,16 @@ export class MeasureLock {
     this.flashTimer = null;
   }
 
-  /** 자동 확인용: 툴팁 글(숨었으면 null), 알림, 잠금, Shift로 잠글 방향, 단추 */
-  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; hoverLock: LockName | null; button: boolean } {
-    return { tip: this.tip.hidden ? null : this.tip.textContent, flash: this.flash.hidden ? null : this.flash.textContent, lock: this.lock, hoverLock: this.hoverLock, button: !this.button.hidden };
+  /** 자동 확인용: 툴팁 글(숨었으면 null)·자리, 알림, 잠금, Shift로 잠글 방향, 단추 */
+  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; hoverLock: LockName | null; button: boolean; tipRect: { x: number; y: number } | null } {
+    const hidden = this.tip.hidden;
+    return {
+      tip: hidden ? null : this.tip.textContent,
+      flash: this.flash.hidden ? null : this.flash.textContent,
+      lock: this.lock,
+      hoverLock: this.hoverLock,
+      button: !this.button.hidden,
+      tipRect: hidden ? null : { x: parseFloat(this.tip.style.left), y: parseFloat(this.tip.style.top) },
+    };
   }
 }

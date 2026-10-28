@@ -5,9 +5,10 @@
  * - 모서리 끝(첫 점)에서 그 모서리를 따라 다른 끝을 바로 가리키면(몸통을 지나지 않고) Shift가 그 모서리 방향으로 잠근다
  *   (10차에는 앱이 마지막으로 본 방향으로 메워 몸통을 지나야만 잠겼다). 첫 점을 지나지 않는 선분 끝에서는 잠그지 않는다
  * - 휴대폰 잠금 단추: 끝점에서 바로 누르면 그 모서리 방향, 잠글 방향이 없으면 알림 뒤 잠그면 알림을 거둔다
+ * - 커서 옆 툴팁이 코어 거리 글상자(measureLabelRect)와 겹치면 옮긴다
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Viewer3d, type Scene3d } from 'opencad-viewer3d';
+import { Viewer3d, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
 import { ARROW_LOCK_HINT, LOCK_HINTS, MEASURE_INFERENCE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
 import { installCanvasFakes } from './fake-webgl';
@@ -81,6 +82,8 @@ function setup(touch = false) {
   const hint = (): string | null => lockHint(v.measurePointCount, !!v.measurement(), lock.lock, touch, lock.hoverLock);
   return { v, lock, changed, at, ptr, hover, hoverXY, click, shiftDown, shiftUp, hint };
 }
+
+const overlaps = (a: MeasureLabelRect, b: MeasureLabelRect): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
 describe('측정 방향 잠금(실제 코어 판정)', () => {
   it('모서리 끝에서 그 모서리를 따라 다른 끝을 바로 가리켜도 상태 줄이 Shift 잠금을 알리고, Shift가 그 모서리 방향으로 잠근다', () => {
@@ -167,5 +170,34 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     // 다시 누르면 푼다
     press();
     expect(v.measureInferenceLock).toBeNull();
+  });
+
+  it('커서 옆 툴팁이 코어 거리 글상자와 겹치면(첫 점에서 위로 잴 때) 겹치지 않는 자리로 옮긴다', () => {
+    const w = setup();
+    const { v, lock } = w;
+    w.click([60, 10, 0]);
+    // 첫 점에서 화면 위로 90화소: Y축 방향 붙잡기, 코어 글상자는 두 점 가운데 오른쪽 위라 커서 오른쪽 아래 툴팁 자리에 걸린다
+    const a = w.at([60, 10, 0]);
+    w.hoverXY(a.x, a.y - 90);
+    expect(v.measureHoverSnap).toMatchObject({ snap: 'axis', axis: 'y' });
+    const label = v.measureLabelRect!;
+    expect(label).not.toBeNull();
+    const p = w.at(v.measureHoverSnap!.point);
+    // jsdom은 툴팁 크기를 재지 않아 80×20으로 둔다
+    const def = { x: p.x + 12, y: p.y + 12, width: 80, height: 20 };
+    expect(overlaps(def, label)).toBe(true);
+    const tip = lock.snapshot().tipRect!;
+    expect(lock.snapshot().tip).toBe('Y축 방향');
+    expect(overlaps({ ...tip, width: 80, height: 20 }, label)).toBe(false);
+    // 커서 둘레 네 자리 가운데 하나(글상자가 캔버스 오른쪽 끝으로 당겨지면 왼쪽 아래도 걸려 오른쪽 위로), 3D 보기 안
+    expect([Math.round(p.x + 12), Math.round(p.x - 12 - 80)]).toContain(tip.x);
+    expect([Math.round(p.y + 12), Math.round(p.y - 12 - 20)]).toContain(tip.y);
+    expect(tip.x >= 4 && tip.y >= 4 && tip.x + 80 <= 796 && tip.y + 20 <= 596).toBe(true);
+    // 멀리(글상자가 커서에서 떨어짐) 가면 다시 오른쪽 아래
+    w.hoverXY(a.x, a.y - 300);
+    const far = lock.snapshot().tipRect!;
+    const q = w.at(v.measureHoverSnap!.point);
+    expect(overlaps({ ...far, width: 80, height: 20 }, v.measureLabelRect!)).toBe(false);
+    expect(far).toEqual({ x: Math.round(q.x + 12), y: Math.round(q.y + 12) });
   });
 });
