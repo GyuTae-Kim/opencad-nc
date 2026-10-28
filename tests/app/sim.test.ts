@@ -468,7 +468,8 @@ describe('판재 가공 하나씩 따라가기', () => {
     const text = (sel: string, scope: Element = box()): string => scope.querySelector(sel)!.textContent!;
     expect(text('.ss-count')).toBe('2 / 2');
     expect(text('.ss-name')).toBe('모든 가공');
-    expect(btn('다음 가공').disabled).toBe(true);
+    // 모든 가공에서도 다음 가공은 누를 수 있다(첫 가공부터 — 아래에서 확인)
+    expect(btn('다음 가공').disabled).toBe(false);
     expect(btn('모든 가공 깎기(끝까지)').disabled).toBe(true);
     // 단추는 측정 띠와 같은 38px 꼴(mb-btn)
     expect([...box().querySelectorAll('button')].every((b) => b.classList.contains('mb-btn'))).toBe(true);
@@ -528,6 +529,15 @@ describe('판재 가공 하나씩 따라가기', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(api.state.sim!.step).toMatchObject({ at: 2 });
     btn('하나씩 따라가기 끝내기(모든 가공)', strip).click();
+    // 모든 가공에서 깎기 탭의 다음 가공: 첫 가공부터(→ 키, G-code 재생 띠의 다음 이동과 같은 차례)
+    api.togglePanel(true);
+    await until(() => !!root.querySelector('.panel-body .sim-steps'));
+    expect(text('.ss-name')).toBe('모든 가공');
+    expect(btn('다음 가공').disabled).toBe(false);
+    btn('다음 가공').click();
+    expect(api.state.sim!.step).toMatchObject({ at: 1, count: 2, op: 0 });
+    expect(text('.ss-count')).toBe('1 / 2');
+    await until(() => settled() && api.state.sim!.at!.move === t1);
     // 자동 확인: setSim(true, { step })
     await api.setSim(true, { step: 1 });
     await until(() => settled() && api.state.sim!.at!.move === t1);

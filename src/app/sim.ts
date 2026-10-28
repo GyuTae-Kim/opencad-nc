@@ -1043,7 +1043,8 @@ export class SimView {
     else s.name.replaceChildren(h('span', {}, `가공 ${(op ?? 0) + 1}`), ...(row ? [' · ', h('span', {}, row.label || MPR_KIND[row.kind] || row.kind)] : []));
     s.first.disabled = this.step === 0;
     s.prev.disabled = k === 0;
-    s.next.disabled = this.step === null || k >= n;
+    // 모든 가공(따라가기 전)에서 다음 가공은 첫 가공부터 — → 키·G-code 재생 띠의 다음 이동과 같은 차례(stepBy)
+    s.next.disabled = this.step !== null && k >= n;
     if (s.all.closest('.play-strip') === null) s.all.disabled = this.step === null;
     s.range.max = String(n);
     s.range.value = String(k);
