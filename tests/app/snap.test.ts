@@ -237,8 +237,8 @@ describe('이동 가운데 점', () => {
 
 describe('붙잡은 종류 글', () => {
   it('이름과 두 점 짝(붙잡기를 켠 결과만)', () => {
-    expect(snapPair({ snapA: 'center', snapB: 'endpoint' })).toEqual(['중심', '끝점']);
-    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['가운데 점', '붙잡지 않은 점']);
+    expect(snapPair({ snapA: 'center', snapB: 'endpoint' })).toEqual(['중심', '끝점', false]);
+    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['가운데 점', '붙잡지 않은 점', false]);
     expect(snapPair({ snapA: null, snapB: null })).toBeNull();
     expect(snapPair({})).toBeNull();
     expect(snapLabel('vertex')).toBe('꼭짓점');
@@ -246,12 +246,18 @@ describe('붙잡은 종류 글', () => {
   });
 
   it('추론 붙잡기(코어 0.9.0): 교차점·수직 발, 축 방향은 코어가 준 축(axisB, 코어 0.9.1)', () => {
-    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular' })).toEqual(['교차점', '수직 발']);
-    expect(snapPair({ snapA: 'center', snapB: 'axis', axisB: 'y' })).toEqual(['중심', 'Y축 방향']);
-    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', axisB: 'z' })).toEqual(['끝점', 'Z축 방향']);
+    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular' })).toEqual(['교차점', '수직 발', false]);
+    expect(snapPair({ snapA: 'center', snapB: 'axis', axisB: 'y' })).toEqual(['중심', 'Y축 방향', false]);
+    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', axisB: 'z' })).toEqual(['끝점', 'Z축 방향', false]);
     // 축이 없으면(옛 결과) 그냥 '축 방향' — dx·dy·dz로 짐작하지 않는다
-    expect(snapPair({ snapA: 'endpoint', snapB: 'axis' })).toEqual(['끝점', '축 방향']);
+    expect(snapPair({ snapA: 'endpoint', snapB: 'axis' })).toEqual(['끝점', '축 방향', false]);
     expect(snapLabel('axis', 'x')).toBe('X축 방향');
+  });
+
+  it('나란함·잠금(코어 0.10.0): 나란한 방향, 잠근 선 위에 찍은 둘째 점은 셋째 값', () => {
+    expect(snapLabel('parallel')).toBe('나란한 방향');
+    expect(snapPair({ snapA: 'endpoint', snapB: 'parallel' })).toEqual(['끝점', '나란한 방향', false]);
+    expect(snapPair({ snapA: 'endpoint', snapB: 'axis', axisB: 'z', lockedB: true })).toEqual(['끝점', 'Z축 방향', true]);
   });
 
   it('네 언어 모두 번역이 있다', () => {
@@ -288,8 +294,8 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
     expect(s!.points.length).toBe(5);
-    // 추론 붙잡기(교차점·수직 발·축 방향)도 켠다
-    expect(s!.inference).toBe(true);
+    // 추론 붙잡기(교차점·수직 발·축 방향)와 코어 0.10.0 나란함·Shift 잠금도 켠다
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true });
     expect(s!.points[0]).toMatchObject({ point: [40, 20, -1], kind: 'center', id: 'nc-cut-1' });
     const nc = app.doc!.nc!;
     const arc = [...Array(nc.moves.count).keys()].find((i) => nc.moves.kind[i] === MOVE_ARC)!;
@@ -340,6 +346,11 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     // 이름은 따로 번역되게 조각으로
     expect([...root.querySelectorAll('.st-sel span')].map((e) => e.textContent)).toEqual(['중심', '끝점']);
     expect(root.querySelector('.panel-foot')!.textContent).toContain('중심 → 끝점');
+    // 잠근 선 위에 찍은 둘째 점(코어 0.10.0 lockedB)은 "잠금"을 따로 붙인다
+    fake.FakeViewer.last!.emitMeasure({ distance: 20, dx: 0, dy: 0, dz: 20, snapA: 'endpoint', snapB: 'axis', axisB: 'z', lockedB: true });
+    expect(root.querySelector('.measure-bar .mb-snap')!.textContent).toBe('끝점 → Z축 방향 · 잠금');
+    expect([...root.querySelectorAll('.st-sel span')].map((e) => e.textContent)).toEqual(['끝점', 'Z축 방향', '잠금']);
+    expect(root.querySelector('.panel-foot')!.textContent).toContain('끝점 → Z축 방향 · 잠금');
     // 붙잡기를 켜지 않은 결과(snapA·snapB 없음)는 예전 그대로
     fake.FakeViewer.last!.emitMeasure({ distance: 5, dx: 5, dy: 0, dz: 0, snapA: undefined, snapB: undefined });
     expect(root.querySelector('.st-sel')!.textContent).toBe('거리 5 mm · dx 5 · dy 0 · dz 0');
@@ -374,7 +385,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
-    expect(s!.inference).toBe(true);
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true });
     // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
     expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
     expect(s!.pointsFor({ ...linePick('mpr-contours', 1), point: [20, 0.2, 19] })!.map((p) => [p.kind, ...p.point.map((x) => Math.round(x * 1000) / 1000 + 0)])).toEqual([

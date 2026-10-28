@@ -468,6 +468,50 @@ kbd {
   opacity: 0.42;
   cursor: default;
 }
+/* 방향 잠금 단추(둘째 점 방향을 잡는 동안): 잠그면 강조 색 */
+.mb-btn.mb-lock.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+/* 측정 띠 위 알림(잠글 방향이 없을 때 맞추는 법) — 휴대폰 폭 안에서 줄을 바꾼다 */
+.measure-flash {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--bg-panel);
+  font-size: 12px;
+  text-align: center;
+  word-break: keep-all;
+  transform: translateX(-50%);
+}
+.st-lock {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+/* 커서 옆 붙잡기 툴팁(측정 중: 끝점·X축 방향·나란한 방향 …, 잠갔으면 "잠금") — 누르기는 받지 않는다 */
+.snap-tip {
+  position: absolute;
+  z-index: 9;
+  padding: 2px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.snap-tip.locked {
+  border-color: var(--accent);
+}
 /* 재생 띠가 있으면 알림은 그 위로(띠 높이 약 120px + 띠 아래 10px + 상태 막대 — 넓은 화면·휴대폰 같음).
    앱이 아래쪽 띠(해석 판단·재생·측정) 맨 위를 재어 --toast-clear로 주면 그 위로(띠 두 개 + 재생 띠도 가리지 않게) */
 body:has(.play-strip:not([hidden])) .toasts {

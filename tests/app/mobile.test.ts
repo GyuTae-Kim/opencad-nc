@@ -110,7 +110,7 @@ vi.mock('../../src/app/dom', async (importOriginal) => {
 import { NcViewerApp } from '../../src/app/app';
 import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
-import { measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { LOCK_KEYS_HINT, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 import { translate } from '../../site/i18n.mjs';
@@ -236,7 +236,7 @@ describe('측정 띠(휴대폰·터치)', () => {
     await app.openSample();
     const bar = root.querySelector<HTMLElement>('.measure-bar')!;
     const text = (): string => bar.querySelector('.mb-text')!.textContent ?? '';
-    const [clear, close] = [...bar.querySelectorAll<HTMLButtonElement>('.mb-btn')];
+    const [clear, close] = [...bar.querySelectorAll<HTMLButtonElement>('.mb-btn:not(.mb-lock)')];
     expect(bar.hidden).toBe(true);
 
     menuButton(root, '측정').click();
@@ -249,10 +249,14 @@ describe('측정 띠(휴대폰·터치)', () => {
     const v = fake.FakeViewer.last!;
     v.measurePts = 1;
     v.canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
-    expect(text()).toBe(measureHint(1, false));
+    // 둘째 점 방향을 잡는 동안: 안내 다음에 따로 방향 잠금 안내(키보드 기기 — Shift·화살표)와 잠금 단추
+    expect(bar.querySelector('.mb-hint')!.textContent).toBe(measureHint(1, false));
+    expect(bar.querySelector('.mb-lock-hint')!.textContent).toBe(LOCK_KEYS_HINT);
+    expect(bar.querySelector<HTMLButtonElement>('.mb-lock')!.hidden).toBe(false);
     expect(clear!.disabled).toBe(false);
 
     v.emitMeasure({ distance: 50, dx: 30, dy: -40, dz: 0 });
+    expect(bar.querySelector<HTMLButtonElement>('.mb-lock')!.hidden).toBe(true);
     expect(bar.querySelector('.mb-value')!.textContent).toBe('50 mm');
     expect(bar.querySelector('.mb-sub')!.textContent).toBe('dx 30 · dy -40 · dz 0');
     expect(root.querySelector('.st-sel')!.textContent).toContain('거리 50 mm');

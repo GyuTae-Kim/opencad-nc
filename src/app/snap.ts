@@ -266,6 +266,8 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
       return '수직 발';
     case 'axis':
       return axis === 'x' ? 'X축 방향' : axis === 'y' ? 'Y축 방향' : axis === 'z' ? 'Z축 방향' : '축 방향';
+    case 'parallel':
+      return '나란한 방향';
     default:
       return '붙잡지 않은 점';
   }
@@ -273,10 +275,11 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
 
 /**
  * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
- * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼
+ * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
+ * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추)
  */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis }): [string, string] | null {
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean }): [string, string, boolean] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
-  return [snapLabel(m.snapA, m.axisA), snapLabel(m.snapB, m.axisB)];
+  return [snapLabel(m.snapA, m.axisA), snapLabel(m.snapB, m.axisB), !!m.lockedB];
 }

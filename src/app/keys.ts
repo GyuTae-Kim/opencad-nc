@@ -6,6 +6,8 @@
  * - 입력 칸(글·선택 상자)에서는 아무것도 가로채지 않는다.
  * - 앱 키: F7 = 격자, Space = 재생/멈춤(단추에 초점이 있으면 그 단추를 누르게 둔다), Ctrl/⌘+O = 열기,
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
+ * - 측정 첫 점을 찍은 뒤(둘째 점 방향을 잡는 동안) 화살표는 방향 잠금(SketchUp 추론 잠금): → X · ← Y · ↑ Z축, ↓ 지금 방향.
+ *   코드 목록·메뉴·탭처럼 화살표를 스스로 쓰는 곳에 초점이 있으면 그쪽 것이다. Shift 잠금은 코어가 한다.
  */
 import type { ViewName } from 'opencad-viewer3d';
 // 숫자 키 → 표준 뷰 표는 코어의 작은 모듈에서(0.10.0 — 코어 입구는 문서를 열 때 나눠 받으므로 첫 화면 메뉴 글은 camera 모듈의 표로)
@@ -27,7 +29,9 @@ export type KeyAction =
   /** ↑ ↓ 고른 줄을 앞·뒤로(캔버스·코드 목록에 초점이 있을 때) */
   | { type: 'line'; delta: number }
   /** Ctrl/⌘+F 코드에서 찾기, Ctrl/⌘+G 다음 찾기 */
-  | { type: 'find'; next: boolean };
+  | { type: 'find'; next: boolean }
+  /** 측정 방향 잠금(화살표): 축, 또는 null = 지금 방향(나란함·수직·축) */
+  | { type: 'lock'; axis: 'x' | 'y' | 'z' | null };
 
 export interface KeyContext {
   key: string;
@@ -50,7 +54,14 @@ export interface KeyContext {
   inCode?: boolean;
   /** 열린 문서에 코드가 있음(찾기) */
   hasCode?: boolean;
+  /** 측정 첫 점을 찍었고 결과가 없음(둘째 점 방향을 잡는 중 — 화살표는 방향 잠금) */
+  measureDirecting?: boolean;
+  /** 화살표를 스스로 쓰는 곳(코드 목록·메뉴·탭·목록)에 초점 */
+  arrowOwner?: boolean;
 }
+
+/** 화살표 → 잠글 축(↓는 지금 방향 = null) */
+const LOCK_KEYS: Record<string, 'x' | 'y' | 'z' | null> = { ArrowRight: 'x', ArrowLeft: 'y', ArrowUp: 'z', ArrowDown: null };
 
 export function keyAction(c: KeyContext): KeyAction | null {
   const mod = c.ctrl || c.meta;
@@ -64,6 +75,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if (c.key === 'F7') return { type: 'grid' };
   if (c.key === ' ' || c.key === 'Spacebar') return c.canPlay && !c.onButton ? { type: 'play' } : null;
   if (c.key === 'Escape') return { type: 'escape', canvas: c.onCanvas };
+  if (c.measureDirecting && !c.arrowOwner && !c.inCode && c.key in LOCK_KEYS) return { type: 'lock', axis: LOCK_KEYS[c.key] ?? null };
   if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canPlay) return { type: 'step', delta: (c.key === 'ArrowRight' ? 1 : -1) * (c.shift ? 10 : 1) };
   if ((c.key === 'ArrowDown' || c.key === 'ArrowUp') && (c.onCanvas || c.inCode)) return { type: 'line', delta: c.key === 'ArrowDown' ? 1 : -1 };
   return c.onCanvas ? null : { type: 'viewer' };
