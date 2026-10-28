@@ -4,7 +4,7 @@
  * 블록 읽기: N 번호, 주석 `( )`·`;`, 블록 건너뛰기 `/`, `%`, 대소문자, 공백 없는 꼴(`G01X10Y5`).
  * 흔한 줄은 바이트에서 바로 읽고(빠른 길), `#`·`[`·`=`·낱말(IF·WHILE·GOTO·o-코드)이 있는 줄만 글로 바꿔 읽는다.
  *
- * 지원: G0 G1 G2 G3(IJK·R·나선·완전한 원·LinuxCNC P 바퀴 수) G4 G10(L2/L20 좌표계 값) G17 G18 G19 G20 G21
+ * 지원: G0 G1 G2 G3(IJK·R·나선·완전한 원·LinuxCNC P 바퀴 수) G5·G5.1(LinuxCNC 스플라인) G5.2/G5.3(LinuxCNC NURBS) G4 G10(L2/L20 좌표계 값) G17 G18 G19 G20 G21
  * G28 G30 G40 G41 G42 G43 G44 G49 G52 G53 G54~G59(G54.1 P·G59.1~3) G61 G64 G73 G74 G76 G80~G89 G90 G91
  * G90.1 G91.1 G92(.1/.2) G93 G94 G95 G98 G99, T M6 M3 M4 M5 M7 M8 M9 M0 M1 M2 M30 M98 M99 M97 G65,
  * 변수(#n, #[식], #<이름>)·식, Fanuc IF/GOTO/WHILE/DO/END, LinuxCNC o-코드(sub/call/if/while/do/repeat).
@@ -1428,11 +1428,9 @@ export class Runner extends NcEmitter {
           if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) motionG = g;
           break;
         case 52:
-          // G5.2 NURBS(L·P 조정점 목록)는 끝점까지 직선으로
-          if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) {
-            this.w.add('G5.2 스플라인은 끝점까지 직선으로 그림', line);
-            motionG = 10;
-          }
+        case 53:
+          // LinuxCNC G5.2 NURBS 조정점 블록(X·Y·P 가중치·L 계수) … G5.3 끝 — 이동 꼴(모달). 조정점을 모아 G5.3에서 곡선으로 그린다
+          motionG = g;
           break;
         case 382:
         case 383:
@@ -1904,6 +1902,20 @@ export class Runner extends NcEmitter {
       return this.endBlock(blk, line);
     }
 
+    // LinuxCNC NURBS(G5.2 … G5.3): 다른 이동 꼴·고정 사이클이 끼면 모은 조정점은 G5.3 없이 끝난다
+    if (this.nurbs && ((motionG >= 0 && motionG !== 52 && motionG !== 53) || cycleG > 0)) this.nurbsFallback('G5.3 없이 다른 이동 꼴이 옴', line);
+    if (motionG === 52 || motionG === 53 || (motionG < 0 && cycleG <= 0 && this.motion === 52)) {
+      if (motionG >= 0) {
+        this.motion = motionG;
+        if (this.cycle) this.cancelCycle();
+      }
+      this.splinePQ = null;
+      this.nurbsBlock(blk, line, motionG === 53, machine);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+    if (motionG < 0 && cycleG <= 0 && this.motion === 53 && axisGiven && !this.cycle) this.w.add('G5.3 뒤에 이동 꼴(G0·G1 등) 없이 좌표가 옴 — 이송 직선으로 그림', line);
+
     // 이동
     if (motionG >= 0) {
       if (motionG !== this.motion && motionG < 900) this.boxX = this.boxZ = NaN;
@@ -2150,6 +2162,100 @@ export class Runner extends NcEmitter {
       this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, line);
     }
     this.emit(MOVE_FEED, x, y, z, line);
+  }
+
+  /**
+   * LinuxCNC G5.2 NURBS로 모은 조정점(프로그램 좌표 x·y)·가중치 w·그 블록 줄, 계수(order) L. 첫 조정점은 G5.2 앞의 지금 자리이고,
+   * G5.3에서 곡선으로 그린다. bad = 규칙에 어긋난 까닭(있으면 조정점을 직선으로 잇는다)
+   */
+  protected nurbs: { x: number[]; y: number[]; w: number[]; lines: number[]; order: number; bad: string | null; zWarned: boolean } | null = null;
+
+  /**
+   * G5.2 블록(조정점 X·Y + 가중치 P, 계수 L)과 G5.3(끝) — LinuxCNC 설명서 "G5.2 G5.3 NURBS Block"대로:
+   * G17 평면만, X·Y는 둘 다, P(기본 1)는 0보다 커야, L(기본 3)은 조정점 수 이하. 첫 G5.2 블록의 P는 첫 조정점(지금 자리)의 가중치도 된다.
+   * LinuxCNC는 G5.3까지 지금 자리를 바꾸지 않으므로 G91 조정점은 모두 곡선 시작점(G5.2 앞 자리)에서 잰다. Z는 쓰지 않는다(높이 그대로)
+   */
+  protected nurbsBlock(blk: Block, line: number, end: boolean, machine: boolean): void {
+    const hx = !!blk.has[LX];
+    const hy = !!blk.has[LY];
+    if (end) {
+      if (!this.nurbs) {
+        this.w.add('G5.3 앞에 G5.2가 없음', line);
+        return;
+      }
+      if (hx || hy || blk.has[LZ]) this.w.add('G5.3 블록의 좌표는 쓰지 않음', line);
+      return this.nurbsFinish(line);
+    }
+    const p = blk.has[LP] ? blk.val[LP]! : 1;
+    let n = this.nurbs;
+    if (!n) {
+      const q = this.progPos();
+      n = this.nurbs = { x: [q[0]!], y: [q[1]!], w: [p], lines: [line], order: 3, bad: null, zWarned: false };
+      if (this.plane !== 0) n.bad = 'NURBS는 G17(XY) 평면에서만 읽음';
+    }
+    if (blk.has[LL]) {
+      const l = blk.val[LL]!;
+      if (Number.isInteger(l) && l >= 2) n.order = l;
+      else n.bad ??= `계수 L${fmtWord(l)}이 2 이상의 정수가 아님`;
+    }
+    if (!(p > 0)) n.bad ??= `가중치 P${fmtWord(p)}가 0보다 크지 않음`;
+    if (blk.has[LZ] && !n.zWarned) {
+      n.zWarned = true;
+      this.w.add('G5.2 조정점의 Z는 쓰지 않음(높이는 그대로)', line);
+    }
+    if (!hx && !hy) return;
+    if (hx !== hy) n.bad ??= 'X·Y 가운데 하나만 있는 조정점';
+    if (machine) n.bad ??= 'G53과 함께 쓸 수 없음';
+    // G91: LinuxCNC는 G5.3까지 지금 자리를 바꾸지 않아 증분은 첫 조정점(곡선 시작점)에서 잰다
+    const k = n.x.length - 1;
+    const coord = (has: boolean, letter: number, bit: number, scale: number, start: number, prev: number): number => {
+      if (!has) return prev;
+      const v = blk.val[letter]! * scale;
+      const inc = blk.axInc & bit ? true : blk.axAbs & bit ? false : !this.absolute;
+      return inc ? start + v : v;
+    };
+    n.x.push(coord(hx, LX, 1, this.axScale[0]!, n.x[0]!, n.x[k]!));
+    n.y.push(coord(hy, LY, 2, this.axScale[1]!, n.y[0]!, n.y[k]!));
+    n.w.push(p);
+    n.lines.push(line);
+  }
+
+  /** G5.3: 모은 조정점을 NURBS 곡선으로(열린 균일 매듭 — LinuxCNC와 같음) 이송 직선 조각으로 나눠 그린다 */
+  protected nurbsFinish(line: number): void {
+    const n = this.nurbs!;
+    const cnt = n.x.length;
+    if (!n.bad && cnt < 2) n.bad = '조정점이 없음';
+    if (!n.bad && cnt < n.order) n.bad = `조정점 ${cnt}개가 계수 L${n.order}보다 적음`;
+    if (n.bad) return this.nurbsFallback(n.bad, line);
+    this.nurbs = null;
+    const z = this.progPos()[2]!;
+    const tol = this.displayInch ? 0.0002 : 0.005;
+    const q = [0, 0, z];
+    const out = [0, 0, 0];
+    nurbsSegments(n.x, n.y, n.w, n.order, tol, (x, y, k) => {
+      q[0] = x;
+      q[1] = y;
+      this.toDisplay(q, out);
+      this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
+    });
+    this.known |= 3;
+  }
+
+  /** 규칙에 어긋난(또는 G5.3 없이 끝난) NURBS: 경고하고 조정점을 차례로 이송 직선으로 잇는다(예전처럼) */
+  protected nurbsFallback(why: string, line: number): void {
+    const n = this.nurbs;
+    if (!n) return;
+    this.nurbs = null;
+    this.w.add(`G5.2 NURBS: ${why} — 조정점을 직선으로 이음`, line);
+    const q = [0, 0, this.progPos()[2]!];
+    const out = [0, 0, 0];
+    for (let k = 1; k < n.x.length; k++) {
+      q[0] = n.x[k]!;
+      q[1] = n.y[k]!;
+      this.toDisplay(q, out);
+      this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
+    }
+    if (n.x.length > 1) this.known |= 3;
   }
 
   protected cancelCycle(): void {
@@ -3524,6 +3630,7 @@ export class Runner extends NcEmitter {
   }
 
   finish(opts: GcodeOptions): NcProgram {
+    if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
@@ -3531,6 +3638,113 @@ export class Runner extends NcEmitter {
       this.notices.push({ kind: 'integer-units' });
     }
     return this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
+  }
+}
+
+/** 낱말 값을 경고 글로(소수 6자리까지) */
+function fmtWord(v: number): string {
+  return String(Math.round(v * 1e6) / 1e6);
+}
+
+/** LinuxCNC G5.2 매듭(열린 균일): 조정점 n+1개·계수 k → 앞 k개는 0, 사이는 1씩, 뒤 k개는 n-k+2 */
+export function nurbsKnots(n: number, k: number): number[] {
+  const t: number[] = [];
+  for (let i = 0; i <= n + k; i++) t.push(i < k ? 0 : i <= n ? i - k + 1 : n - k + 2);
+  return t;
+}
+
+/**
+ * NURBS 곡선(조정점 xs·ys, 가중치 ws, 계수 order = 차수 + 1, 매듭은 nurbsKnots)을 직선 조각으로 나눈다.
+ * 매듭 구간마다 조각의 1/4·1/2·3/4 점이 현에서 tol보다 멀면 반으로 나눈다(12번까지 — 4차 이상은 한 번은 나눔).
+ * emit(x, y, k): 조각 끝점과 그 조각 가운데에 가장 가까운 그레빌 점의 조정점 번호(줄 번호를 고르는 데 쓴다 — 같으면 뒤 점).
+ * 마지막 끝점은 마지막 조정점 그대로
+ */
+export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number) => void): void {
+  const n = xs.length - 1;
+  const p = order - 1;
+  if (n < 1 || p < 1 || n < p) return;
+  const knots = nurbsKnots(n, order);
+  const grev: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    let s = 0;
+    for (let j = 1; j <= p; j++) s += knots[i + j]!;
+    grev.push(s / p);
+  }
+  const dx = new Float64Array(order);
+  const dy = new Float64Array(order);
+  const dw = new Float64Array(order);
+  // 구간 s(knots[s] ≤ u ≤ knots[s+1]) 위의 점 — 동차 좌표의 de Boor
+  const at = (s: number, u: number, out: number[]): void => {
+    for (let j = 0; j <= p; j++) {
+      const i = s - p + j;
+      const w = ws[i]!;
+      dx[j] = xs[i]! * w;
+      dy[j] = ys[i]! * w;
+      dw[j] = w;
+    }
+    for (let r = 1; r <= p; r++)
+      for (let j = p; j >= r; j--) {
+        const t0 = knots[j + s - p]!;
+        const t1 = knots[j + 1 + s - r]!;
+        const a = t1 > t0 ? (u - t0) / (t1 - t0) : 0;
+        dx[j] = (1 - a) * dx[j - 1]! + a * dx[j]!;
+        dy[j] = (1 - a) * dy[j - 1]! + a * dy[j]!;
+        dw[j] = (1 - a) * dw[j - 1]! + a * dw[j]!;
+      }
+    out[0] = dx[p]! / dw[p]!;
+    out[1] = dy[p]! / dw[p]!;
+  };
+  const tol2 = tol * tol;
+  const q = [0, 0];
+  // 점 q와 선분 a-b 사이 거리의 제곱
+  const off2 = (ax: number, ay: number, bx: number, by: number): number => {
+    const vx = bx - ax;
+    const vy = by - ay;
+    const l2 = vx * vx + vy * vy;
+    let t = l2 > 0 ? ((q[0]! - ax) * vx + (q[1]! - ay) * vy) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = ax + vx * t - q[0]!;
+    const ey = ay + vy * t - q[1]!;
+    return ex * ex + ey * ey;
+  };
+  let gi = 0;
+  const minDepth = p >= 4 ? 1 : 0;
+  const last = knots[n + 1]!;
+  const piece = (s: number, a: number, ax: number, ay: number, b: number, bx: number, by: number, depth: number): void => {
+    let worst = 0;
+    let mx = 0;
+    let my = 0;
+    for (const f of [0.5, 0.25, 0.75]) {
+      at(s, a + (b - a) * f, q);
+      if (f === 0.5) {
+        mx = q[0]!;
+        my = q[1]!;
+      }
+      worst = Math.max(worst, off2(ax, ay, bx, by));
+    }
+    if (depth < 12 && (depth < minDepth || worst > tol2)) {
+      const m = (a + b) / 2;
+      piece(s, a, ax, ay, m, mx, my, depth + 1);
+      piece(s, m, mx, my, b, bx, by, depth + 1);
+      return;
+    }
+    const mid = (a + b) / 2;
+    while (gi < n && Math.abs(grev[gi + 1]! - mid) <= Math.abs(grev[gi]! - mid)) gi++;
+    emit(bx, by, gi);
+  };
+  const pa = [xs[0]!, ys[0]!];
+  const pb = [0, 0];
+  for (let s = p; s <= n; s++) {
+    const u0 = knots[s]!;
+    const u1 = knots[s + 1]!;
+    if (!(u1 > u0)) continue;
+    if (u1 >= last) {
+      pb[0] = xs[n]!;
+      pb[1] = ys[n]!;
+    } else at(s, u1, pb);
+    piece(s, u0, pa[0]!, pa[1]!, u1, pb[0]!, pb[1]!, 0);
+    pa[0] = pb[0]!;
+    pa[1] = pb[1]!;
   }
 }
 
