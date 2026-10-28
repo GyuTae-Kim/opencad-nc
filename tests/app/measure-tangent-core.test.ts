@@ -6,6 +6,7 @@
  * - 원호를 나눈 첫 현의 끝을 가리키면 코어는 그 현 방향(접선에서 2.5° 어긋남)을 주지만 ↓는 접선으로 잠근다
  * - 원호 끝(직선이 이어짐)에서: 직선을 따라 가리키면 코어 판정(X축), 원호 위면 접선 — 휴대폰 잠금 단추, 결과 이름 "접선 방향"
  * - 방향 추론(축)은 코어 판정 그대로, 커서가 떠난 뒤 잠금은 마지막으로 본 것(접선이면 접선)
+ * - 첫 점이 원호 가운데 점(앱의 가운데 점 붙잡기)이어도 그 점의 접선으로(14차) — Shift·↓·휴대폰 잠금 단추, 결과 이름 "접선 방향"
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
@@ -33,22 +34,22 @@ const A = [0, 40, 0];
 const B = [40, 40, 0];
 const MID = movePointAt(nc, ARC, 0.5)!;
 
-function setup(touch = false) {
+function setup(touch = false, src: { nc: NcProgram; scene: typeof scene } = { nc, scene }) {
   document.body.innerHTML = '';
   const host = document.createElement('div');
   const bar = document.createElement('div');
   document.body.append(host, bar);
   const v = new Viewer3d(host, { animate: false });
-  v.setScene(scene);
+  v.setScene(src.scene);
   v.setView('top', false);
   v.fit(false);
   v.setMeasureMode(true);
   // 앱(app.ts syncMeasureSnap)과 같은 붙잡기
-  v.setMeasureSnap({ points: arcCenters(nc).points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE });
+  v.setMeasureSnap({ points: arcCenters(src.nc).points, pointsFor: (p) => moveSnapPoints(p, src.nc), inference: MEASURE_INFERENCE });
   v.renderNow();
   const tangents = new ArcTangents();
-  const angle = (scene.meta as { arcAngle: number }).arcAngle;
-  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed: vi.fn(), arcTangent: (a, p) => tangents.at(nc, a, p, angle) });
+  const angle = (src.scene.meta as { arcAngle: number }).arcAngle;
+  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed: vi.fn(), arcTangent: (a, p) => tangents.at(src.nc, a, p, angle) });
   bar.append(lock.button, lock.flash);
   const at = (p: readonly number[]): { x: number; y: number } => {
     const s = v.project(p)!;
@@ -209,5 +210,61 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     lock.update();
     w.press();
     expect(lock.lock).toBe('x');
+  });
+});
+
+describe('원호 가운데 점에서 접선 방향 잠금(14차, 실제 코어 판정)', () => {
+  // (20,0) → (0,20) 반시계 1/4 원(중심 (0,0)) → 직선 (0,40): 가운데 점 (14.14, 14.14)의 접선은 (−H, H) — 축과 나란하지 않다
+  const p2 = parseNcFile('mid.nc', ['G21 G90 G17', 'G0 X20 Y0 Z0', 'G3 X0 Y20 I-20 J0 F500', 'G1 X0 Y40'].join('\n'));
+  const src = { nc: (p2 as { program: NcProgram }).program, scene: ncParsedToScene(p2) };
+  const arc = [...src.nc.moves.kind].indexOf(MOVE_ARC);
+  const mid = movePointAt(src.nc, arc, 0.5)!;
+  const T = [-H, H, 0];
+
+  it('첫 점이 원호 가운데 점이고 커서가 그 원호 위면 Shift가 그 점의 접선으로 잠그고, 잠근 선 위에 찍은 결과는 접선 방향', () => {
+    const w = setup(false, src);
+    const { v, lock } = w;
+    w.click(mid);
+    expect(v.measurePoints).toHaveLength(1);
+    expect(v.measurePoints[0]!.snap).toBe('midpoint');
+    for (let k = 0; k < 3; k++) expect(v.measurePoints[0]!.point[k]).toBeCloseTo(mid[k]!, 5);
+    // 원호의 다른 자리(현 위)
+    w.hover(movePointAt(src.nc, arc, 0.15)!);
+    expect(lock.hoverLock).toBe('tangent');
+    expect(w.hint()).toBe(SHIFT_LOCK_HINTS.tangent);
+    w.shiftDown();
+    const l = v.measureInferenceLock!;
+    expect(l).toMatchObject({ kind: 'parallel', source: 'api' });
+    expect(Math.abs(dot(l.direction, T))).toBeCloseTo(1, 12);
+    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', hoverLock: null });
+    expect(w.hint()).toBe(LOCK_HINTS.tangent);
+    // 잠근 채 접선 가까이에 찍는다(원호에서 벗어난 곳)
+    w.click([6, 22.5, 0]);
+    const m = v.measurement()!;
+    expect(m).toMatchObject({ snapA: 'midpoint', snapB: 'parallel', lockedB: true });
+    expect(m.b[0] - m.a[0]).toBeCloseTo(-(m.b[1] - m.a[1]), 6);
+    expect(lock.tangentResult(m)).toBe(true);
+    expect(snapPair({ ...m, tangentB: true })).toEqual(['가운데 점', '접선 방향', true]);
+    w.shiftUp();
+  });
+
+  it('↓·휴대폰 잠금 단추도 같은 접선(원호 끝을 가리켜도), 원호 밖 빈 곳에서는 코어 판정', () => {
+    const w = setup(true, src);
+    const { v, lock } = w;
+    w.click(mid, 'touch');
+    expect(v.measurePointCount).toBe(1);
+    // 원호 시작 끝(20,0)도 원호 위
+    w.hover([20, 0, 0], 'pen');
+    expect(lock.hoverLock).toBe('tangent');
+    w.press();
+    expect(Math.abs(dot(v.measureInferenceLock!.direction, T))).toBeCloseTo(1, 12);
+    expect(lock.lock).toBe('tangent');
+    w.press();
+    expect(v.measureInferenceLock).toBeNull();
+    // 가운데 점에서 위로(빈 곳 — Y축 방향 추론): 원호 위가 아니므로 코어 판정
+    w.hover([mid[0], mid[1] + 8, 0], 'pen');
+    expect(lock.snapshot()).toMatchObject({ tip: 'Y축 방향', hoverLock: 'y' });
+    lock.arrow(null);
+    expect(lock.lock).toBe('y');
   });
 });

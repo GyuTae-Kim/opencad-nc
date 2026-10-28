@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { MOVE_ARC } from '../../src/model';
 import { parseNcFile } from '../../src/index';
 import { movePointAt, type SnapMoves } from '../../src/app/snap';
-import { ArcTangents, arcChordSag, arcEndTangent, arcEndsAt, arcNearest, arcTangentAt } from '../../src/app/tangent';
+import { ArcTangents, arcChordSag, arcEndTangent, arcEndsAt, arcMidsAt, arcNearest, arcTangentAt, arcTangentAtF } from '../../src/app/tangent';
 
 function program(text: string): SnapMoves {
   const p = parseNcFile('t.nc', text);
@@ -117,5 +117,72 @@ describe('원호 접선', () => {
     close(c.at(nc, [0, 40, 0], mid), [H, H, 0]);
     close(c.at(nc, [40, 40, 0], mid), [-H, H, 0]);
     expect(c.at(nc, [60, 40, 0], mid)).toBeNull();
+  });
+});
+
+describe('원호 가운데 점의 접선(14차)', () => {
+  // 위와 같은 1/4 원과 한 바퀴 원, G18 반원, 나선
+  const nc = program(
+    ['G21 G90 G17', 'G0 X0 Y40 Z0', 'G2 X40 Y40 I20 J-20 F500', 'G1 X60 Y40', 'G0 X100 Y0', 'G2 X100 Y0 I-10 J0', 'G18', 'G0 X200 Y5 Z0', 'G2 X220 Z0 I10 K0', 'G17', 'G0 X300 Y0 Z0', 'G3 X300 Y0 Z-6 I-10 J0'].join('\n'),
+  );
+  const [q, circle, half, helix] = arcMoves(nc) as [number, number, number, number];
+  const r = Math.hypot(20, 20);
+
+  it('가운데 점(앱의 원호 가운데 점 붙잡기와 같은 자리)인 원호를 찾는다 — 끝·다른 자리·직선 가운데는 아니다', () => {
+    const mid = movePointAt(nc, q, 0.5)!;
+    close(mid, [20, 20 + r, 0]);
+    expect(arcMidsAt(nc, mid)).toEqual([{ move: q, end: 0.5 }]);
+    // float32 장면 좌표의 반올림만큼 어긋나도 같은 자리
+    expect(arcMidsAt(nc, mid.map((x) => Math.fround(x)))).toEqual([{ move: q, end: 0.5 }]);
+    expect(arcMidsAt(nc, [0, 40, 0])).toEqual([]);
+    expect(arcMidsAt(nc, movePointAt(nc, q, 0.4)!)).toEqual([]);
+    expect(arcMidsAt(nc, [50, 40, 0])).toEqual([]);
+    // 한 바퀴 원의 가운데 점은 시작의 맞은편, G18 반원은 XZ 평면, 나선은 높이도 반
+    expect(arcMidsAt(nc, [80, 0, 0])).toEqual([{ move: circle, end: 0.5 }]);
+    expect(arcMidsAt(nc, movePointAt(nc, half, 0.5)!)).toEqual([{ move: half, end: 0.5 }]);
+    expect(arcMidsAt(nc, movePointAt(nc, helix, 0.5)!)).toEqual([{ move: helix, end: 0.5 }]);
+    expect(arcMidsAt(nc, [280, 0, 0])).toEqual([]);
+    close(movePointAt(nc, helix, 0.5)!, [280, 0, -3]);
+  });
+
+  it('첫 점이 가운데 점이고 커서가 그 원호 위(양쪽 반, 끝, 현 위)면 그 점의 접선, 원호 밖·첫 점 자리면 null', () => {
+    const c = new ArcTangents();
+    const mid = movePointAt(nc, q, 0.5)!;
+    // 시계 방향 1/4 원의 꼭대기: 진행 방향 +X
+    close(arcTangentAtF(nc, q, 0.5), [1, 0, 0]);
+    for (const f of [0.1, 0.3, 0.7, 0.95, 0, 1]) close(c.at(nc, mid, movePointAt(nc, q, f)!), [1, 0, 0]);
+    // 원호를 나눈 현의 가운데(처짐 안)
+    const v9 = movePointAt(nc, q, 9 / 18)!;
+    const v10 = movePointAt(nc, q, 10 / 18)!;
+    close(c.at(nc, mid, [(v9[0] + v10[0]) / 2, (v9[1] + v10[1]) / 2, 0]), [1, 0, 0]);
+    expect(c.at(nc, mid, [mid[0] + 5, mid[1] + 1, 0])).toBeNull();
+    expect(c.at(nc, mid, mid)).toBeNull();
+    // 재생 중 아직 그리지 않은 원호는 보지 않는다
+    expect(c.at(nc, mid, [0, 40, 0], Math.PI / 36, q - 1)).toBeNull();
+  });
+
+  it('한 바퀴 원·G18 반원·나선의 가운데 점 접선', () => {
+    const c = new ArcTangents();
+    // 시계 방향 원(중심 (90,0))의 맞은편 (80,0): 진행 방향 +Y
+    close(c.at(nc, [80, 0, 0], movePointAt(nc, circle, 0.2)!), [0, 1, 0]);
+    // G18 반원 (200,5,0) → (220,5,0), 중심 (210,5,0): 가운데 점에서 접선은 X 방향(XZ 평면, 반지름에 수직)
+    const hm = movePointAt(nc, half, 0.5)!;
+    const ht = c.at(nc, hm, movePointAt(nc, half, 0.2)!)!;
+    expect(ht[1]).toBeCloseTo(0, 12);
+    expect(Math.abs(ht[0])).toBeCloseTo(1, 12);
+    // 나선: 높이 기울기가 든다(반시계, 반지름 10, 한 바퀴에 −6)
+    const lead = Math.hypot(2 * Math.PI * 10, 6);
+    close(c.at(nc, [280, 0, -3], movePointAt(nc, helix, 0.8)!), [0, -(2 * Math.PI * 10) / lead, -6 / lead]);
+  });
+
+  it('끝과 가운데 점이 겹치면(두 원호) 커서가 놓인 원호의 것을 준다', () => {
+    // 첫 원호 (0,0)→(20,0) 반원(중심 (10,0), 시계 — 가운데 점 (10,10)), 둘째 원호 (10,10)→(30,10) 반원 시작
+    const two = program(['G21 G90 G17', 'G0 X0 Y0', 'G2 X20 Y0 I10 J0 F300', 'G0 X10 Y10', 'G2 X30 Y10 I10 J0'].join('\n'));
+    const [i, j] = arcMoves(two) as [number, number];
+    const c = new ArcTangents();
+    close(movePointAt(two, i, 0.5)!, [10, 10, 0]);
+    // 첫 원호 위를 가리키면 그 가운데 점의 접선(+X), 둘째 원호 위면 그 시작의 접선(+Y)
+    close(c.at(two, [10, 10, 0], movePointAt(two, i, 0.2)!), [1, 0, 0]);
+    close(c.at(two, [10, 10, 0], movePointAt(two, j, 0.3)!), [0, 1, 0]);
   });
 });

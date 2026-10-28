@@ -2,11 +2,13 @@
  * 측정 방향 잠금의 원호 접선(순수 함수, DOM 없음 — measure-lock.ts가 코어 setMeasureInferenceLock({ direction, kind: 'parallel' })에 준다).
  *
  * 첫 측정 점이 원호 이동(G2/G3, 나선 포함)의 시작·끝이고 커서 아래 점이 그 원호 위면 그 끝에서 원호 쪽으로 가는 접선 방향을 준다.
+ * 첫 점이 원호의 가운데 점(앱이 주는 원호 가운데 점 붙잡기 — snap.ts moveSnapPoints·movePointAt f = 0.5)이면 그 점의 접선(14차).
  * - 장면은 원호를 짧은 현 여럿으로 그리므로(scene.ts — 실제로 쓴 나누기 각은 scene.meta.arcAngle) 커서 아래 점(현 위)은 원호에서
  *   현의 처짐만큼 떨어질 수 있다. 원호까지 거리가 그 처짐(과 float32 장면 좌표의 반올림) 안이면 원호 위로 본다. 다른 끝(끝점)도 원호 위다.
  * - 접선은 장면이 호를 나누는 식(평면 축의 각·반지름과 직선 축을 f만큼 — snap.ts movePointAt)을 f로 미분한 것이라 나선의 높이 기울기와
- *   반지름이 조금 바뀌는 호도 맞다. 시작이면 진행 방향, 끝이면 그 반대(첫 점에서 원호 쪽으로).
- * - 첫 점에 닿는 원호는 첫 점마다 한 번 모든 이동에서 찾고(arcEndsAt), 커서가 움직일 때는 그 몇 개만 본다(arcTangentAt).
+ *   반지름이 조금 바뀌는 호도 맞다. 시작이면 진행 방향, 끝이면 그 반대(첫 점에서 원호 쪽으로), 가운데 점이면 진행 방향(잠금은 선이라 부호는 상관없다).
+ * - 첫 점에 닿는 원호는 첫 점마다 한 번 모든 이동에서 찾고(arcEndsAt·arcMidsAt), 커서가 움직일 때는 그 몇 개만 본다(arcTangentAt).
+ * - NURBS(G5.2/G5.3)·스플라인 이동은 장면이 직선 조각으로 그려 원호가 아니므로 해당하지 않는다.
  */
 import { MOVE_ARC, PLANE_AXES } from '../model';
 import type { SnapMoves } from './snap';
@@ -14,10 +16,10 @@ import type { SnapMoves } from './snap';
 type V3 = [number, number, number];
 const TAU = Math.PI * 2;
 
-/** 첫 점에 닿는 원호 끝: 이동 번호와 어느 끝(0 = 시작, 1 = 끝) */
+/** 첫 점에 닿는 원호 자리: 이동 번호와 어느 자리(0 = 시작, 1 = 끝, 0.5 = 가운데 점 — arcMidsAt) */
 export interface ArcEnd {
   move: number;
-  end: 0 | 1;
+  end: 0 | 0.5 | 1;
 }
 
 /** 같은 자리로 볼 허용치: 좌표 크기의 1e-6(장면이 float32라 생기는 반올림을 넉넉히 덮는다) */
@@ -38,6 +40,36 @@ export function arcEndsAt(nc: SnapMoves, a: ArrayLike<number>, tol = pointTol(a)
     const o = i * 3;
     if (Math.abs(p[o]! - ax) <= tol && Math.abs(p[o + 1]! - ay) <= tol && Math.abs(p[o + 2]! - az) <= tol) out.push({ move: i, end: 0 });
     if (Math.abs(p[o + 3]! - ax) <= tol && Math.abs(p[o + 4]! - ay) <= tol && Math.abs(p[o + 5]! - az) <= tol) out.push({ move: i, end: 1 });
+  }
+  return out;
+}
+
+/**
+ * 가운데 점이 a(축마다 tol 안)인 원호 이동(이동 차례, 많아야 limit개 — end 0.5). 가운데 점은 앱의 원호 가운데 점 붙잡기(snap.ts movePointAt
+ * f = 0.5)와 같은 식(각·반지름·직선 축을 반씩)이다. 직선 축 높이와 중심에서 거리로 먼저 거르고 남은 것만 각을 계산한다
+ */
+export function arcMidsAt(nc: SnapMoves, a: ArrayLike<number>, tol = pointTol(a), limit = 16): ArcEnd[] {
+  const m = nc.moves;
+  const p = m.points;
+  const arcs = nc.arcs;
+  const out: ArcEnd[] = [];
+  for (let i = 0; i < m.count && out.length < limit; i++) {
+    if (m.kind[i] !== MOVE_ARC) continue;
+    const ai = m.arc[i]!;
+    if (ai < 0 || ai >= arcs.sweep.length) continue;
+    const sweep = arcs.sweep[ai]!;
+    if (!(Math.abs(sweep) > 1e-12)) continue;
+    const [a0, a1, a2] = PLANE_AXES[arcs.plane[ai]!] ?? PLANE_AXES[0]!;
+    const o = i * 3;
+    if (Math.abs((p[o + a2]! + p[o + 3 + a2]!) / 2 - a[a2]!) > tol) continue;
+    const cu = arcs.center[ai * 3 + a0]!;
+    const cv = arcs.center[ai * 3 + a1]!;
+    const su = p[o + a0]! - cu;
+    const sv = p[o + a1]! - cv;
+    const r = (Math.hypot(su, sv) + Math.hypot(p[o + 3 + a0]! - cu, p[o + 3 + a1]! - cv)) / 2;
+    if (Math.abs(Math.hypot(a[a0]! - cu, a[a1]! - cv) - r) > 2 * tol) continue;
+    const t = Math.atan2(sv, su) + sweep / 2;
+    if (Math.abs(cu + r * Math.cos(t) - a[a0]!) <= tol && Math.abs(cv + r * Math.sin(t) - a[a1]!) <= tol) out.push({ move: i, end: 0.5 });
   }
   return out;
 }
@@ -88,12 +120,12 @@ function shapeAt(g: ArcShape, f: number): V3 {
   return q;
 }
 
-/** 원호 이동 i의 한 끝(0 = 시작, 1 = 끝)에서 원호 쪽으로 가는 단위 접선(나선은 높이 기울기 포함). 원호가 아니거나 길이가 없으면 null */
-export function arcEndTangent(nc: SnapMoves, i: number, end: 0 | 1): V3 | null {
+/** 원호 이동 i 위 f(0~1) 자리의 진행 방향 단위 접선(장면이 호를 나누는 식을 f로 미분 — 나선은 높이 기울기 포함). 원호가 아니거나 길이가 없으면 null */
+export function arcTangentAtF(nc: SnapMoves, i: number, f: number): V3 | null {
   const g = arcShape(nc, i);
   if (!g) return null;
-  const t = g.t0 + g.sweep * end;
-  const r = g.r0 + (g.r1 - g.r0) * end;
+  const t = g.t0 + g.sweep * f;
+  const r = g.r0 + (g.r1 - g.r0) * f;
   const dr = g.r1 - g.r0;
   const d: V3 = [0, 0, 0];
   d[g.a0] = dr * Math.cos(t) - r * g.sweep * Math.sin(t);
@@ -101,8 +133,13 @@ export function arcEndTangent(nc: SnapMoves, i: number, end: 0 | 1): V3 | null {
   d[g.a2] = g.e[g.a2]! - g.s[g.a2]!;
   const l = Math.hypot(d[0], d[1], d[2]);
   if (!(l > 1e-12)) return null;
-  const k = (end ? -1 : 1) / l;
-  return [d[0] * k, d[1] * k, d[2] * k];
+  return [d[0] / l, d[1] / l, d[2] / l];
+}
+
+/** 원호 이동 i의 한 끝(0 = 시작, 1 = 끝)에서 원호 쪽으로 가는 단위 접선(나선은 높이 기울기 포함). 원호가 아니거나 길이가 없으면 null */
+export function arcEndTangent(nc: SnapMoves, i: number, end: 0 | 1): V3 | null {
+  const d = arcTangentAtF(nc, i, end);
+  return d && end ? [-d[0], -d[1], -d[2]] : d;
 }
 
 /**
@@ -143,8 +180,9 @@ export function arcChordSag(nc: SnapMoves, i: number, maxAngle: number): number 
 }
 
 /**
- * 첫 점 a에 닿는 원호(ends — arcEndsAt) 가운데 커서 아래 점 p가 그 위에 있는 것의 a 쪽 단위 접선(a에서 원호 쪽).
- * p가 a 자리거나 어느 원호 위도 아니면 null. 여럿이면 p에 가장 가까운 원호. 한 바퀴 원(시작 = 끝 = a)은 p가 놓인 쪽 끝(반 바퀴로 가른다).
+ * 첫 점 a에 닿는 원호(ends — arcEndsAt·arcMidsAt) 가운데 커서 아래 점 p가 그 위에 있는 것의 a 쪽 단위 접선(끝이면 a에서 원호 쪽,
+ * 가운데 점이면 그 점의 진행 방향). p가 a 자리거나 어느 원호 위도 아니면 null. 여럿이면 p에 가장 가까운 원호.
+ * 한 바퀴 원(시작 = 끝 = a)은 p가 놓인 쪽 끝(반 바퀴로 가른다).
  * maxAngle = 장면의 호 나누기 각(scene.meta.arcAngle), lastMove = 재생 중 그린 마지막 이동(그 뒤 원호는 보지 않는다)
  */
 export function arcTangentAt(nc: SnapMoves, ends: readonly ArcEnd[], a: ArrayLike<number>, p: ArrayLike<number>, maxAngle = Math.PI / 36, lastMove = Infinity): V3 | null {
@@ -160,11 +198,12 @@ export function arcTangentAt(nc: SnapMoves, ends: readonly ArcEnd[], a: ArrayLik
   }
   if (!best) return null;
   const b = best;
-  const both = ends.some((o) => o.move === b.e.move && o.end !== b.e.end);
+  if (b.e.end === 0.5) return arcTangentAtF(nc, b.e.move, 0.5);
+  const both = ends.some((o) => o.move === b.e.move && o.end !== 0.5 && o.end !== b.e.end);
   return arcEndTangent(nc, b.e.move, both ? (b.f <= 0.5 ? 0 : 1) : b.e.end);
 }
 
-/** 첫 점마다 그 점에 닿는 원호 끝을 한 번 찾아 두고(문서 자료·첫 점이 바뀌면 다시) 커서마다 접선을 구한다(앱과 시험이 함께 쓴다) */
+/** 첫 점마다 그 점에 닿는 원호 끝·가운데 점을 한 번 찾아 두고(문서 자료·첫 점이 바뀌면 다시) 커서마다 접선을 구한다(앱과 시험이 함께 쓴다) */
 export class ArcTangents {
   private src: object | null = null;
   private key = '';
@@ -176,7 +215,7 @@ export class ArcTangents {
     if (this.src !== nc || this.key !== key) {
       this.src = nc;
       this.key = key;
-      this.ends = arcEndsAt(nc, a);
+      this.ends = [...arcEndsAt(nc, a), ...arcMidsAt(nc, a)];
     }
     return this.ends.length ? arcTangentAt(nc, this.ends, a, p, maxAngle, lastMove) : null;
   }

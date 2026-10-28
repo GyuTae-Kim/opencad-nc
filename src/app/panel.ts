@@ -14,8 +14,7 @@ import { MPR_KIND, cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLab
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
-import { panelMeasureHint } from './measure';
-import { snapPair } from './snap';
+import { panelMeasureHint, snapPair } from './measure';
 import type { NcJobInfo, NcOpenOptions } from './protocol';
 import { defaultSettings, type NcSettings } from './settings';
 

@@ -11,6 +11,9 @@
  *   나머지(투영·그리기 모드·격자·뷰 큐브·좌표축·PNG)는 "보기 설정" 메뉴로 모은다.
  * - 휴대폰·터치: 측정 중에는 3D 보기 아래 가운데 띠(measure.ts)에 안내·거리·dx·dy·dz와 다시 재기·끝내기 단추를 두고,
  *   길게 누르면 손가락 위 십자선으로 정밀 조준한다(aim.ts — 코어 포인터 처리를 그대로 쓴다).
+ * - 측정 도구(방향 잠금·툴팁 measure-lock.ts, 붙잡기 점 snap.ts, 정밀 조준 aim.ts, 원호 접선 tangent.ts)도 문서를 열 때 나눠 받는다
+ *   (core.ts loadMeasureTools — 첫 문서는 코어와 함께 받은 뒤 보인다). 받지 못했으면 측정을 켤 때 다시 받는다(FirstUse — 받는 동안 단추는
+ *   눌림·받는 중, 다시 누르기·Esc면 켜지 않고, 받지 못하면 알린다).
  * - 최근 문서: 파일 고르기·끌어다 놓기로 연 파일을 이 브라우저(IndexedDB, recent.ts)에 두고 시작 화면에서 바로 다시 연다
  *   (휴대폰 브라우저가 뒤로 간 탭을 버렸다가 다시 읽어도 파일 앱을 다시 거치지 않게). 예제·주소로 연 파일은 두지 않는다.
  *
@@ -21,8 +24,9 @@ import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
-import { TouchAim } from './aim';
-import { loadArcTangents, loadViewerCore } from './core';
+// 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
+import type { TouchAim } from './aim';
+import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, measureFailText } from './core';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -32,15 +36,26 @@ import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
-import { MEASURE_INFERENCE, lockHint, measureHint, measureLines } from './measure';
-import { MeasureLock } from './measure-lock';
+import { MEASURE_INFERENCE, MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair } from './measure';
+import type { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
-import { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
+import type { ArcCenters } from './snap';
 import type { ArcTangents } from './tangent';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
 import type { SimHost, SimState, SimView } from './sim';
+
+/** 측정 도구 조각(measure-tools.ts)의 모듈 */
+type MeasureTools = Awaited<ReturnType<typeof loadMeasureTools>>;
+/** 첫 문서에서 코어를 받은 뒤 측정 도구 조각을 더 기다리는 한도(ms) — 넘으면 문서를 먼저 보인다 */
+const MEASURE_WAIT_MS = 3000;
+
+/** 약속이 끝나거나(값·실패 모두) ms가 지날 때까지 기다린다 */
+function settleWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([p.then(() => undefined, () => undefined), new Promise<void>((r) => (timer = setTimeout(r, ms)))]).finally(() => clearTimeout(timer));
+}
 
 export const APP_TITLE = 'OpenCAD NC 뷰어';
 const TOOLS_URL = 'https://gyutae-kim.github.io/opencad';
@@ -115,6 +130,10 @@ export interface AppState {
   aiming: boolean;
   /** 측정 방향 잠금(잠근 방향·툴팁 글·측정 띠 알림·잠금 단추가 보이는지 — 코어 0.10.0 추론 잠금) */
   measureLock: ReturnType<MeasureLock['snapshot']> | null;
+  /** 측정 도구 조각을 받기 전에 측정을 켜서 받는 중이면 true(받으면 켠다) */
+  measureLoading: boolean;
+  /** 측정 도구 조각을 받아 만들었는지 */
+  measureTools: boolean;
   /** 단면 보기(꺼져 있으면 null) */
   section: { axis: SectionAxis | null; t: number; flip: boolean } | null;
   /** 여러 파일 작업이면 이은 파일(주 프로그램 먼저), 아니면 null */
@@ -216,14 +235,21 @@ export class NcViewerApp implements PanelHost {
   private ready = false;
   private openMenu: { wrap: HTMLElement; close: () => void } | null = null;
   private readonly coarse: MediaQueryList | null;
-  /** 정밀 조준(터치 길게 누르기, 뷰어를 만들 때 붙인다) */
+  /** 측정 도구 조각(measure-tools.ts — 문서를 열 때 나눠 받는다, core.ts loadMeasureTools). 받기 전에는 null */
+  private measureTools: MeasureTools | null = null;
+  /** 정밀 조준(터치 길게 누르기, 뷰어와 측정 도구가 다 있을 때 붙인다) */
   private aim: TouchAim | null = null;
   /** 원호 중심 붙잡기 점(해석 결과마다 한 번 — 측정을 처음 켤 때 만든다) */
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
   private snapKey: { src: object; limit: number | null } | null = null;
-  /** 측정 첫 점에 닿는 원호 끝(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금). 문서를 열 때 나눠 받는다(core.ts loadArcTangents) */
+  /** 측정 첫 점에 닿는 원호(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금). 측정 도구 조각과 함께 만든다 */
   private arcTangents: ArcTangents | null = null;
+  /** 측정 도구를 받기 전에 측정을 켰을 때: 받은 뒤에 켠다(받는 동안 다시 누르면 거둔다, 받지 못하면 알린다) */
+  private readonly measureFirstUse = new FirstUse<true>(
+    () => this.ensureMeasureTools(),
+    (want, error) => this.measureArrived(want, error),
+  );
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -267,8 +293,10 @@ export class NcViewerApp implements PanelHost {
   private readonly measureBar: HTMLDivElement;
   private readonly measureText: HTMLDivElement;
   private readonly measureClear: HTMLButtonElement;
-  /** 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts) */
-  private readonly mlock: MeasureLock;
+  /** 측정 띠 단추 자리(잠금 단추는 측정 도구를 받으면 맨 앞에 넣는다) */
+  private readonly measureActs: HTMLDivElement;
+  /** 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts — 측정 도구 조각을 받으면 만든다) */
+  private mlock: MeasureLock | null = null;
   private readonly aimLayer: HTMLDivElement;
   private readonly noticeBar: HTMLDivElement;
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
@@ -419,19 +447,13 @@ export class NcViewerApp implements PanelHost {
     this.measureClear.addEventListener('click', () => {
       this.viewer?.clearMeasure();
       this.refreshBar();
-      this.mlock.schedule();
+      this.mlock?.schedule();
     });
     const measureClose = h('button', { class: 'mb-btn icon', type: 'button', title: '측정 끝내기', 'aria-label': '측정 끝내기', html: icon('close') });
     measureClose.addEventListener('click', () => this.toggleMeasure(false));
-    // 방향 잠금(Shift가 없는 손가락 기기): 둘째 점 방향을 잡는 동안만 보이는 잠금 단추, 띠 위 알림, 커서 옆 붙잡기 툴팁
-    this.mlock = new MeasureLock({
-      viewer: () => this.viewer,
-      touch: () => this.touch,
-      layer: this.viewEl,
-      changed: () => this.renderStatus(),
-      arcTangent: (a, p) => this.arcTangentAt(a, p),
-    });
-    this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, h('div', { class: 'mb-acts' }, this.mlock.button, this.measureClear, measureClose), this.mlock.flash);
+    // 방향 잠금 단추·띠 위 알림·붙잡기 툴팁(measure-lock.ts)은 측정 도구 조각을 받으면 넣는다(installMeasure)
+    this.measureActs = h('div', { class: 'mb-acts' }, this.measureClear, measureClose);
+    this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, this.measureActs);
     // 정밀 조준 십자선 층(캔버스 위, 누르기는 받지 않는다)
     this.aimLayer = h('div', { class: 'aim-layer', 'aria-hidden': 'true' });
     // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언)
@@ -468,15 +490,15 @@ export class NcViewerApp implements PanelHost {
       window.addEventListener(
         type,
         (ev) => {
-          if (ev.key !== 'Shift' || ev.repeat) return;
+          if (ev.key !== 'Shift' || ev.repeat || !this.mlock) return;
           if (type === 'keyup') this.mlock.shiftUp();
           this.mlock.schedule();
         },
         true,
       );
     window.addEventListener('blur', () => {
-      this.mlock.shiftUp();
-      this.mlock.schedule();
+      this.mlock?.shiftUp();
+      this.mlock?.schedule();
     });
     document.addEventListener('pointerdown', (ev) => {
       if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
@@ -1028,12 +1050,8 @@ export class NcViewerApp implements PanelHost {
     this.setBusy('여는 중', 0.02, name);
     // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
     if (!this.viewer) void loadViewerCore().catch(() => undefined);
-    // 원호 접선 잠금도 함께(측정에서만 쓰여 첫 화면 JS에서 뺐다 — 받지 못하면 다음 열기에서 다시)
-    if (!this.arcTangents)
-      void loadArcTangents().then(
-        (m) => (this.arcTangents ??= new m.ArcTangents()),
-        () => undefined,
-      );
+    // 측정 도구 조각도 함께(측정에서만 쓰여 첫 화면 JS에서 뺐다 — 받는 대로 만든다. 받지 못하면 측정을 켤 때 다시 받고 알린다)
+    if (!this.mlock) void this.ensureMeasureTools().catch(() => undefined);
     try {
       const res = await this.client.open(
         name,
@@ -1247,12 +1265,16 @@ export class NcViewerApp implements PanelHost {
    */
   private async ensureViewer(): Promise<void> {
     if (this.viewer) return;
+    // 측정 도구 조각(코어보다 훨씬 작다)도 함께 기다려 첫 문서가 보일 때 측정이 바로 켜지게 한다. 받지 못하거나 코어 뒤에도 늦으면
+    // 기다리지 않고 연다(측정을 켤 때 FirstUse로 받는다)
+    const measure = this.mlock ? null : this.ensureMeasureTools().catch(() => undefined);
     let core: Awaited<ReturnType<typeof loadViewerCore>>;
     try {
       core = await loadViewerCore();
     } catch (e) {
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
     }
+    if (measure) await settleWithin(measure, MEASURE_WAIT_MS);
     if (this.viewer) return;
     this.viewEl.hidden = false;
     let v: Viewer3d;
@@ -1271,13 +1293,46 @@ export class NcViewerApp implements PanelHost {
     v.onSectionChange((st) => this.renderSection(st));
     v.onCameraChange(() => this.placeSecHandle());
     this.renderSection(null);
-    // 측정 중 길게 눌러 정밀 조준(떼면 코어가 십자선 자리를 누른 것으로 처리한다)
-    this.aim = new TouchAim(v.canvas, { enabled: () => !!this.doc && v.measureMode && !this.busy, layer: this.aimLayer });
     // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계)
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
     });
-    this.mlock.attach(v.canvas);
+    this.attachMeasure();
+  }
+
+  /**
+   * 측정 도구를 한 번 만든다(조각을 처음에 받는다 — 문서를 열 때 받기 시작한다). 받지 못하면 거부(다음 부름에서 다시 받는다).
+   * 받는 사이 다른 부름이 먼저 만들었으면 그대로
+   */
+  private async ensureMeasureTools(): Promise<void> {
+    if (this.mlock) return;
+    const m = await loadMeasureTools();
+    if (this.mlock) return;
+    this.measureTools = m;
+    this.arcTangents = new m.ArcTangents();
+    // 방향 잠금(Shift가 없는 손가락 기기): 둘째 점 방향을 잡는 동안만 보이는 잠금 단추, 띠 위 알림, 커서 옆 붙잡기 툴팁
+    const lock = new m.MeasureLock({
+      viewer: () => this.viewer,
+      touch: () => this.touch,
+      layer: this.viewEl,
+      changed: () => this.renderStatus(),
+      arcTangent: (a, p) => this.arcTangentAt(a, p),
+    });
+    this.mlock = lock;
+    this.measureActs.prepend(lock.button);
+    this.measureBar.append(lock.flash);
+    this.attachMeasure();
+  }
+
+  /** 뷰어와 측정 도구가 다 있으면 한 번: 정밀 조준(길게 눌러 십자선 — 떼면 코어가 그 자리를 누른 것으로)과 잠금 툴팁을 캔버스에 붙인다 */
+  private attachMeasure(): void {
+    const v = this.viewer;
+    const m = this.measureTools;
+    const lock = this.mlock;
+    if (!v || !m || !lock || this.aim) return;
+    // 십자선·손가락 자리는 코어 거리 글상자가 비키게 잠금 손잡이가 코어에 넘긴다(코어 0.13.0 setMeasureLabelAvoid)
+    this.aim = new m.TouchAim(v.canvas, { enabled: () => !!this.doc && v.measureMode && !this.busy, layer: this.aimLayer, onMove: (_at, finger) => lock.setAim(finger) });
+    lock.attach(v.canvas);
   }
 
   private setDoc(d: NcDoc): void {
@@ -1322,7 +1377,7 @@ export class NcViewerApp implements PanelHost {
     // 새 장면은 코어가 찍은 측정 점과 방향 잠금을 지운다(측정 모드는 그대로)
     this.aim?.cancel();
     d.measure = null;
-    this.mlock.reset();
+    this.mlock?.reset();
     this.applyPlayback(d);
     this.updateSegHighlight();
   }
@@ -1387,11 +1442,11 @@ export class NcViewerApp implements PanelHost {
     const d = this.doc;
     if (!d) return;
     // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함)
-    d.measure = m && this.mlock.tangentResult(m) ? { ...m, tangentB: true } : m;
+    d.measure = m && this.mlock?.tangentResult(m) ? { ...m, tangentB: true } : m;
     this.panel.onMeasure();
     this.renderStatus();
     // 둘째 점을 찍으면 코어가 잠금을 푼다(잠금 단추·툴팁)
-    this.mlock.schedule();
+    this.mlock?.schedule();
   }
 
   fitItems(ids: string[]): void {
@@ -1515,18 +1570,43 @@ export class NcViewerApp implements PanelHost {
     else this.fileInput.accept = fileAccept();
   }
 
-  toggleMeasure(on = !this.measuring): void {
+  /** 측정 중이거나 측정 도구 조각을 받는 동안 켜려는지(측정 단추 눌림·다시 누르기가 이것을 따른다) */
+  private get measureWanted(): boolean {
+    return this.measuring || !!this.measureFirstUse.wanted;
+  }
+
+  toggleMeasure(on = !this.measureWanted): void {
     const v = this.viewer;
     if (!v) return;
+    const lock = this.mlock;
+    if (!lock) {
+      // 측정 도구 조각을 아직 받지 못했다: 받은 뒤에 켠다(받는 동안 다시 누르기·Esc는 바람을 거둔다 — 받기는 한 번)
+      this.measureFirstUse.request(on || null);
+      this.renderToolbar();
+      this.renderStatus();
+      return;
+    }
     if (on !== v.measureMode) this.aim?.cancel();
     v.setMeasureMode(on);
     this.syncMeasureSnap();
-    this.mlock.reset();
+    lock.reset();
     if (!on && this.doc) this.doc.measure = null;
     this.panel.onMeasure();
     this.renderToolbar();
     this.renderStatus();
     this.refreshPlayStrip();
+  }
+
+  /** 측정을 켤 때 받던 측정 도구 조각이 왔다(또는 받지 못했다): 그때까지 바랐으면 켜고, 받지 못했으면 바랐을 때만 알린다 */
+  private measureArrived(want: true | null, error: unknown): void {
+    if (error) {
+      if (want) toast(isChunkLoadError(error) ? measureFailText(navigator.onLine !== false) : `측정 도구를 열 수 없습니다: ${errorText(error)}`, 'error', 8000);
+    } else if (want && this.mlock && this.viewer && this.doc) {
+      this.toggleMeasure(true);
+      return;
+    }
+    this.renderToolbar();
+    this.renderStatus();
   }
 
   togglePanel(on = !this.panelOpen): void {
@@ -1756,7 +1836,7 @@ export class NcViewerApp implements PanelHost {
    * 화살표·잠금 단추는 measure-lock.ts)도 켠다.
    * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다. 반경 보정 경로는 보정 조각의 가운데 점·호 중심.
    * 판재 가공(MPR·PGI·XML)은 워커가 보낸 붙잡기 표로 윤곽·판 외곽선의 원호 중심, 원형 포켓 중심, 고른 윤곽 요소의 가운데 점과 추론 붙잡기.
-   * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
+   * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점). 붙잡기 점 계산(snap.ts)은 측정 도구 조각에 있다(측정은 그것을 받은 뒤에만 켠다)
    */
   private syncMeasureSnap(): void {
     const v = this.viewer;
@@ -1764,7 +1844,8 @@ export class NcViewerApp implements PanelHost {
     const d = this.doc;
     const nc = d?.nc;
     const panel = d && !nc ? (d.mpr?.snap ?? null) : null;
-    if (!d || (!nc && !panel) || !v.measureMode) {
+    const m = this.measureTools;
+    if (!d || (!nc && !panel) || !v.measureMode || !m) {
       if (this.snapKey) v.setMeasureSnap(null);
       this.snapKey = null;
       return;
@@ -1772,19 +1853,19 @@ export class NcViewerApp implements PanelHost {
     if (panel) {
       if (this.snapKey?.src === panel) return;
       this.snapKey = { src: panel, limit: null };
-      v.setMeasureSnap({ points: panelCenters(panel), pointsFor: (p) => panelSnapPoints(p, panel), inference: MEASURE_INFERENCE });
+      v.setMeasureSnap({ points: m.panelCenters(panel), pointsFor: (p) => m.panelSnapPoints(p, panel), inference: MEASURE_INFERENCE });
       return;
     }
     if (!nc) return;
     let c = this.snapCenters.get(nc);
-    if (!c) this.snapCenters.set(nc, (c = arcCenters(nc)));
+    if (!c) this.snapCenters.set(nc, (c = m.arcCenters(nc)));
     const pos = d.playSec === null ? null : playPosition(d);
     // 재생 중에는 그린 이동까지의 중심(차례 = 처음 그린 이동 번호 < 한도). 점 목록·색인은 문서마다 한 번만 주고 한도만 바꾼다(코어 0.10.0)
     const limit = pos && pos.move >= 0 ? pos.move + 1 : null;
     if (this.snapKey?.src === nc) {
       if (this.snapKey.limit === limit) return;
       v.setMeasureSnapLimit(limit);
-    } else v.setMeasureSnap({ points: c.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit });
+    } else v.setMeasureSnap({ points: c.points, pointsFor: (p) => m.moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit });
     this.snapKey = { src: nc, limit };
   }
 
@@ -1821,7 +1902,11 @@ export class NcViewerApp implements PanelHost {
     pressed('grid', v?.gridVisible ?? true);
     pressed('cube', v?.viewCubeVisible ?? true);
     pressed('axes', v?.axesVisible ?? true);
-    pressed('measure', this.measuring);
+    pressed('measure', this.measureWanted);
+    // 측정 도구 조각을 받는 동안 켤 단추(누르면 거둔다)
+    const mb = this.tools.measure?.el;
+    if (this.measureFirstUse.wanted) mb?.setAttribute('aria-busy', 'true');
+    else mb?.removeAttribute('aria-busy');
     pressed('panel', this.panelOpen && !!this.doc);
     const persp = this.projection === 'perspective';
     this.projBtn.innerHTML = `${icon(persp ? 'perspective' : 'ortho')}<span class="lbl">${persp ? '원근' : '평행'}</span>`;
@@ -1860,7 +1945,8 @@ export class NcViewerApp implements PanelHost {
     const wl = warningLabel(d);
     this.stWarn.hidden = !wl;
     this.stWarn.textContent = wl;
-    const sel = selectionSummary(d, this.measuring, this.touch);
+    // 측정 도구 조각을 받는 동안(받은 뒤 측정을 켠다)
+    const sel = this.measureFirstUse.wanted && !this.measuring ? MEASURE_LOADING : selectionSummary(d, this.measuring, this.touch);
     // 측정 결과의 붙잡은 종류(예: 중심 → 끝점)는 이름마다 따로 번역되게 조각으로 붙인다(잠근 선 위에 찍었으면 "잠금")
     const sp = d.measure ? snapPair(d.measure) : null;
     // 방향 잠금 안내(첫 점을 찍은 뒤): 잠근 방향이나 Shift·화살표 — 안내 글과 따로 둔다(번역이 안내 글 전체를 찾게)
@@ -2006,8 +2092,9 @@ export class NcViewerApp implements PanelHost {
   /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표 */
   private lockHintNow(): string | null {
     const v = this.viewer;
-    if (!v?.measureMode) return null;
-    return lockHint(v.measurePointCount, !!this.doc?.measure, this.mlock.lock, this.touch, this.mlock.hoverLock);
+    const lock = this.mlock;
+    if (!v?.measureMode || !lock) return null;
+    return lockHint(v.measurePointCount, !!this.doc?.measure, lock.lock, this.touch, lock.hoverLock);
   }
 
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */
@@ -2031,7 +2118,7 @@ export class NcViewerApp implements PanelHost {
       if (lock) t.append(h('span', { class: 'mb-sub mb-lock-hint' }, lock));
     }
     this.measureClear.disabled = !d.measure && !v.measurePointCount;
-    this.mlock.update();
+    this.mlock?.update();
   }
 
   // ───────────────────────── 키 ─────────────────────────
@@ -2041,7 +2128,7 @@ export class NcViewerApp implements PanelHost {
     // The language menu owns its keyboard focus, including Escape during loading.
     if (t?.closest?.('.language-control, .language-list')) return;
     // 원호 접선 Shift 잠금은 코어보다 먼저(아래 viewer 갈래·캔버스 키가 코어에 넘기면 코어는 잠금이 있으면 그대로 둔다)
-    if (ev.key === 'Shift' && !ev.repeat && !isEditableTarget(t as (HTMLElement & { type?: string }) | null)) this.mlock.shiftDown();
+    if (ev.key === 'Shift' && !ev.repeat && !isEditableTarget(t as (HTMLElement & { type?: string }) | null)) this.mlock?.shiftDown();
     if (this.busy && ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
@@ -2072,7 +2159,7 @@ export class NcViewerApp implements PanelHost {
       shift: ev.shiftKey,
       inCode: !!t?.closest?.('.code-list, .code-search'),
       hasCode: !!this.doc && (!!this.doc.nc || !!this.doc.mpr),
-      measureDirecting: this.mlock.directing && !this.doc?.measure,
+      measureDirecting: !!this.mlock?.directing && !this.doc?.measure,
       arrowOwner: !!this.openMenu || !!t?.closest?.('[role="menu"], [role="tablist"], [role="listbox"], [role="tree"]'),
       canStepOps: !!this.sim?.canStepOps,
     });
@@ -2092,21 +2179,23 @@ export class NcViewerApp implements PanelHost {
         return;
       case 'escape':
         if (a.canvas) {
-          // 캔버스도 Esc를 받아 뷰어가 측정을 지운다(막지 않는다). 앱은 측정 중이 아닐 때 고른 것만 지운다
-          if (!v.measureMode) this.clearSelection();
+          // 캔버스도 Esc를 받아 뷰어가 측정을 지운다(막지 않는다). 앱은 측정 중이 아닐 때 고른 것만 지운다(측정 도구를 받는 중이면 켜려던 것을 거둔다)
+          if (this.measureFirstUse.wanted) this.toggleMeasure(false);
+          else if (!v.measureMode) this.clearSelection();
           return;
         }
         ev.preventDefault();
         ev.stopPropagation();
-        // 측정 중이면 측정 먼저: 찍힌 점이 있으면 뷰어가 지우고, 없으면 측정을 끈다. 아니면 고른 것을 지운다
+        // 측정 중이면 측정 먼저: 찍힌 점이 있으면 뷰어가 지우고, 없으면 측정을 끈다. 받는 중이면 켜려던 것을 거둔다. 아니면 고른 것을 지운다
         if (v.measureMode) {
           if (!v.handleKey(ev)) this.toggleMeasure(false);
-        } else this.clearSelection();
+        } else if (this.measureFirstUse.wanted) this.toggleMeasure(false);
+        else this.clearSelection();
         return;
     }
     ev.preventDefault();
     ev.stopPropagation();
-    if (a.type === 'lock') this.mlock.arrow(a.axis);
+    if (a.type === 'lock') this.mlock?.arrow(a.axis);
     else if (a.type === 'opStep') this.sim?.stepBy(a.delta);
     else if (a.type === 'grid') this.toggleGrid();
     else if (a.type === 'step') this.stepMove(a.delta);
@@ -2157,7 +2246,9 @@ export class NcViewerApp implements PanelHost {
       theme: this.theme,
       measuring: this.measuring,
       aiming: !!this.aim?.aiming,
-      measureLock: this.measuring ? this.mlock.snapshot() : null,
+      measureLock: this.measuring ? (this.mlock?.snapshot() ?? null) : null,
+      measureLoading: !!this.measureFirstUse.wanted,
+      measureTools: !!this.mlock,
       section: (() => {
         const sc = this.viewer?.section;
         return sc ? { axis: sc.axis, t: sc.t, flip: sc.flip } : null;

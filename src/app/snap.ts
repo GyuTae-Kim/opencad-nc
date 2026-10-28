@@ -14,8 +14,7 @@
  *   늘 후보로, 고른 윤곽 선분은 그 요소(직선·호)의 가운데 점과 호 중심을 준다.
  * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 축 방향의 축은 코어 결과의 axisA·axisB(0.9.1)를 쓴다.
  */
-import type { SnapAxis } from 'opencad-viewer3d/inference';
-import type { Pick3d, SnapKind, SnapPoint } from 'opencad-viewer3d/types';
+import type { Pick3d, SnapPoint } from 'opencad-viewer3d/types';
 import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
 import type { PanelSnapTable } from '../scene';
 import type { NcCompSnap } from './protocol';
@@ -247,43 +246,8 @@ export function moveSnapPoints(pick: Pick3d, nc: SnapMoves): SnapPoint[] | null 
   return out.length ? out : null;
 }
 
-/** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼 */
-export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null): string {
-  switch (kind) {
-    case 'vertex':
-      return '꼭짓점';
-    case 'endpoint':
-      return '끝점';
-    case 'midpoint':
-      return '가운데 점';
-    case 'center':
-      return '중심';
-    case 'point':
-      return '붙잡은 점';
-    case 'intersection':
-      return '교차점';
-    case 'perpendicular':
-      return '수직 발';
-    case 'axis':
-      return axis === 'x' ? 'X축 방향' : axis === 'y' ? 'Y축 방향' : axis === 'z' ? 'Z축 방향' : '축 방향';
-    case 'parallel':
-      return '나란한 방향';
-    default:
-      return '붙잡지 않은 점';
-  }
-}
-
-/** 원호 접선으로 잠근 선 위의 점 이름(측정 툴팁·결과 — 코어 종류는 나란함) */
-export const TANGENT_LABEL = '접선 방향';
-
 /**
- * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
- * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
- * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추).
- * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로)
+ * 붙잡은 종류 이름·결과 짝(snapLabel·snapPair·TANGENT_LABEL)은 측정 도구를 받기 전에도 상태 줄·패널이 쓰므로 첫 화면 모듈(measure.ts)에 두고
+ * 여기서 다시 내보낸다(이 모듈은 문서를 열 때 측정 도구 조각으로 받는다 — core.ts loadMeasureTools)
  */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean }): [string, string, boolean] | null {
-  if (m.snapA === undefined && m.snapB === undefined) return null;
-  if (!m.snapA && !m.snapB) return null;
-  return [snapLabel(m.snapA, m.axisA), m.tangentB && m.lockedB ? TANGENT_LABEL : snapLabel(m.snapB, m.axisB), !!m.lockedB];
-}
+export { TANGENT_LABEL, snapLabel, snapPair } from './measure';

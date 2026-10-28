@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
- * 측정 방향 잠금을 실제 3D 뷰어 코어(0.12.0) 판정으로: jsdom에 가짜 WebGL2(fake-webgl.ts)를 깔고 진짜 Viewer3d에 포인터·키 사건을 넣어
+ * 측정 방향 잠금을 실제 3D 뷰어 코어(0.12.0 판정, 0.13.0 글상자 비키기) 판정으로: jsdom에 가짜 WebGL2(fake-webgl.ts)를 깔고 진짜 Viewer3d에 포인터·키 사건을 넣어
  * 앱의 MeasureLock(툴팁·상태 줄 안내·잠금 단추)이 코어가 정한 잠금을 그대로 따르는지 본다.
  * - 모서리 끝(첫 점)에서 그 모서리를 따라 다른 끝을 바로 가리키면(몸통을 지나지 않고) Shift가 그 모서리 방향으로 잠근다
  *   (10차에는 앱이 마지막으로 본 방향으로 메워 몸통을 지나야만 잠겼다). 첫 점을 지나지 않는 선분 끝에서는 잠그지 않는다
  * - 휴대폰 잠금 단추: 끝점에서 바로 누르면 그 모서리 방향, 잠글 방향이 없으면 알림 뒤 잠그면 알림을 거둔다
  * - 커서 옆 툴팁이 코어 거리 글상자(measureLabelRect)와 겹치면 옮긴다
+ * - 0.13.0: 툴팁 첫 자리·정밀 조준 십자선과 손가락을 코어에 넘기면(setMeasureLabelAvoid) 코어 글상자가 비켜 그린다
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
@@ -199,5 +200,59 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     const q = w.at(v.measureHoverSnap!.point);
     expect(overlaps({ ...far, width: 80, height: 20 }, v.measureLabelRect!)).toBe(false);
     expect(far).toEqual({ x: Math.round(q.x + 12), y: Math.round(q.y + 12) });
+  });
+
+  it('코어 0.13.0: 툴팁 첫 자리를 넘기면 다음 그리기에서 코어 글상자가 비키고 툴팁은 오른쪽 아래 제자리, 둘이 서로 쫓지 않는다', () => {
+    const w = setup();
+    const { v, lock } = w;
+    w.click([60, 10, 0]);
+    const a = w.at([60, 10, 0]);
+    w.hoverXY(a.x, a.y - 90);
+    const p = w.at(v.measureHoverSnap!.point);
+    const first = { x: Math.round(p.x + 12), y: Math.round(p.y + 12), width: 80, height: 20 };
+    expect(v.measureLabelAvoid).toEqual({ rects: [first] });
+    // 이 그리기는 넘기기 전 자리(툴팁 첫 자리에 걸림) — 툴팁이 비켰다
+    expect(overlaps(first, v.measureLabelRect!)).toBe(true);
+    v.renderNow();
+    lock.update();
+    const label = v.measureLabelRect!;
+    expect(overlaps(first, label)).toBe(false);
+    expect(lock.snapshot().tipRect).toEqual({ x: first.x, y: first.y });
+    // 또 그려도 그대로
+    v.renderNow();
+    lock.update();
+    expect(v.measureLabelRect).toEqual(label);
+    expect(lock.snapshot().tipRect).toEqual({ x: first.x, y: first.y });
+    // 측정을 끄면 거둔다
+    v.setMeasureMode(false);
+    lock.reset();
+    expect(v.measureLabelAvoid).toBeNull();
+  });
+
+  it('코어 0.13.0: 정밀 조준 중에는 십자선(커서 둘레 24)과 손가락을 비켜 그린다 — 첫 점 가까이를 가리켜도', () => {
+    const w = setup(true);
+    const { v, lock } = w;
+    w.click([0, 0, 0], 'touch');
+    const a = w.at([0, 0, 0]);
+    // 십자선을 첫 점 오른쪽 위 가까이(빈 곳)에: 기본 자리(두 점 가운데 오른쪽 위)가 십자선에 걸린다
+    const c = { x: a.x + 40, y: a.y - 30 };
+    const before = (() => {
+      w.hoverXY(c.x, c.y, { pointerType: 'pen' });
+      return v.measureLabelRect!;
+    })();
+    const near = (r: MeasureLabelRect, x: number, y: number, rad: number): boolean => Math.hypot(Math.max(r.x - x, 0, x - r.x - r.width), Math.max(r.y - y, 0, y - r.y - r.height)) < rad;
+    expect(near(before, c.x, c.y, 24)).toBe(true);
+    // 앱 aim.ts가 십자선을 옮기는 처리 안에서(펜 움직임 전) 손가락 자리를 알린다
+    lock.setAim({ x: c.x, y: c.y + 64 });
+    w.hoverXY(c.x, c.y, { pointerType: 'pen' });
+    v.renderNow();
+    const avoid = v.measureLabelAvoid!;
+    expect(avoid.pointerRadius).toBe(24);
+    expect(avoid.rects![0]).toEqual({ x: Math.round(c.x - 22), y: Math.round(c.y + 64 - 22), width: 44, height: 44 });
+    const label = v.measureLabelRect!;
+    expect(near(label, c.x, c.y, 24)).toBe(false);
+    for (const r of avoid.rects!) expect(overlaps(label, r)).toBe(false);
+    lock.setAim(null);
+    expect(v.measureLabelAvoid?.pointerRadius).toBeUndefined();
   });
 });
