@@ -13,7 +13,7 @@ import { parseMpr } from '../../src/mpr';
 import type { NcProgram } from '../../src/model';
 import { SimEngine, type SimMoves } from '../../src/sim/engine';
 import { HeightGrid, gridFor } from '../../src/sim/grid';
-import { gridOrigin, takeDirtyTiles, tileNormals } from '../../src/sim/mesh';
+import { WALL_SLOPE, gridOrigin, panelWallSlope, takeDirtyTiles, tileNormals } from '../../src/sim/mesh';
 import { panelSimMoves, panelStock } from '../../src/sim/panel';
 import { panelSimSource } from '../../src/sim/panel-source';
 import { autoLongCells, defaultStock, panelToolRows, sweepArea, type SimBox } from '../../src/sim/setup';
@@ -117,6 +117,8 @@ interface Case {
   area: number;
   toolFor: (n: number) => PreparedTool;
   parseMs: number;
+  /** 매끈한 음영의 벽 문턱(G-code WALL_SLOPE, 판재 panelWallSlope — 앱과 같게) */
+  slope: number;
 }
 
 function ncCase(name: string): Case | null {
@@ -130,7 +132,7 @@ function ncCase(name: string): Case | null {
   const area = sweepArea(p.moves, () => tool.diameter / 2, stock.max[2]);
   const t = prepareTool(tool);
   const m = p.moves;
-  return { moves: { count: m.count, kind: m.kind, points: m.points, tool: m.tool, flags: m.flags, arc: m.arc, arcCenter: p.arcs.center, arcPlane: p.arcs.plane, arcSweep: p.arcs.sweep }, stock, area, toolFor: () => t, parseMs };
+  return { moves: { count: m.count, kind: m.kind, points: m.points, tool: m.tool, flags: m.flags, arc: m.arc, arcCenter: p.arcs.center, arcPlane: p.arcs.plane, arcSweep: p.arcs.sweep }, stock, area, toolFor: () => t, parseMs, slope: WALL_SLOPE };
 }
 
 function panelCase(): Case {
@@ -142,7 +144,7 @@ function panelCase(): Case {
   const moves = panelSimMoves(src, radius, stock);
   const parseMs = performance.now() - t0;
   const tools = rows.map((r) => prepareTool(r.tool));
-  return { moves, stock, area: moves.area, toolFor: (n) => tools[n]!, parseMs };
+  return { moves, stock, area: moves.area, toolFor: (n) => tools[n]!, parseMs, slope: panelWallSlope(rows.map((r) => r.tool)) };
 }
 
 const GEN: Record<string, (n: number) => { text: string; tool: SimTool }> = { raster, pocket, drill };
@@ -166,7 +168,7 @@ for (const name of ONLY) {
     engine.advance({ move: m.count, frac: 0 });
     const simMs = performance.now() - t1;
     const t2 = performance.now();
-    const tiles = takeDirtyTiles(grid, gridOrigin(grid), 'depth');
+    const tiles = takeDirtyTiles(grid, gridOrigin(grid), 'depth', c.slope);
     const meshMs = performance.now() - t2;
     const cut = tiles.filter((x) => !x.flat);
     const meshBytes = tiles.reduce((s, x) => s + x.positions.byteLength + x.colors.byteLength + (x.normals?.byteLength ?? 0), 0);
@@ -176,7 +178,7 @@ for (const name of ONLY) {
     for (const x of cut) {
       const i0 = x.tx * grid.tile;
       const j0 = x.ty * grid.tile;
-      tileNormals(grid, i0, Math.min(spec.nx - 1, i0 + grid.tile), j0, Math.min(spec.ny - 1, j0 + grid.tile));
+      tileNormals(grid, i0, Math.min(spec.nx - 1, i0 + grid.tile), j0, Math.min(spec.ny - 1, j0 + grid.tile), c.slope);
     }
     const normalMs = performance.now() - t3;
     const cp = engine.checkpointInfo;
