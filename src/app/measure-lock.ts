@@ -1,13 +1,14 @@
 /**
- * 측정 방향 잠금·붙잡기 툴팁(3D 뷰어 코어 0.10.0 추론 잠금·나란함 — SketchUp의 추론 잠금을 따른다).
- * 코어 측정 모드가 상태를 가지고(setMeasureSnap({ inference: { lock, parallel } })·setMeasureInferenceLock), 이 모듈은 앱 쪽 손잡이만 둔다.
+ * 측정 방향 잠금·붙잡기 툴팁(3D 뷰어 코어 0.10.0 추론 잠금·나란함, 0.12.0 모서리 끝 선분 방향 잠금 — SketchUp의 추론 잠금을 따른다).
+ * 코어 측정 모드가 상태와 판정을 가지고(setMeasureSnap({ inference: { lock, parallel } })·setMeasureInferenceLock·measureHoverLock),
+ * 이 모듈은 앱 쪽 손잡이만 둔다.
  *
  * - 툴팁: 측정 중 커서 아래 붙잡을 점의 종류(끝점·중심·교차점·X축 방향·나란한 방향 …)를 그 점 오른쪽 아래에, 잠갔으면 "잠금"을 덧붙인다.
  *   코어는 미리 보기를 그리기(rAF) 때 구하므로 포인터 이동·키 뒤 다음 프레임에 읽는다. 글은 DOM이라 번역층이 옮긴다.
- * - Shift: 코어가 누르는 순간의 방향 추론(축·나란함·수직)을 잠그고 떼면 푼다. 커서가 첫 점을 지나는 선분 위의 점 붙잡기(끝점·가운데 점 등 —
- *   첫 점에서 선분을 따라 그 끝을 가리킬 때)면 방향 추론이 없어 코어는 잠그지 않는다. 그때는 마지막으로 본 방향을 잠가 보고, 그 점이 잠근 선
- *   위에 있으면(코어가 점을 옮기지 않으면 — from 없음) 둔다(떼면 푼다). 아니면 바로 푼다.
- * - 화살표(첫 점을 찍은 뒤, 둘째 점 방향을 잡는 동안): → X · ← Y · ↑ Z축, ↓ 지금 방향(없으면 마지막으로 본 방향). 같은 키로 푼다.
+ * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
+ *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
+ *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
+ * - 화살표(첫 점을 찍은 뒤, 둘째 점 방향을 잡는 동안): → X · ← Y · ↑ Z축, ↓ 지금 방향(없으면 첫 점 뒤 마지막으로 본 방향 — 코어). 같은 키로 푼다.
  * - 측정 띠 잠금 단추(손가락 기기 — 넓은 화면에서는 띠가 숨는다): 방향을 잡는 동안만 보인다. 정밀 조준 중 다른 손가락으로 누르면 click이
  *   오지 않으므로 손가락·펜은 pointerdown에서 받는다. 잠글 방향이 없으면 띠 위에 알림을 띄우고, 잠금이 걸리면(어느 길로든) 그 알림만 거둔다.
  * 둘째 점을 찍거나 측정을 지우거나 측정을 끄면 코어가 잠금을 푼다.
@@ -21,7 +22,7 @@ import { snapLabel } from './snap';
 /** 이 모듈이 쓰는 뷰어 기능(시험에서 가짜로 바꿀 수 있게) */
 export type LockViewer = Pick<
   Viewer3d,
-  'canvas' | 'measureMode' | 'measurePointCount' | 'measureHoverSnap' | 'measureInferenceLock' | 'setMeasureInferenceLock' | 'renderNow' | 'project'
+  'canvas' | 'measureMode' | 'measurePointCount' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'setMeasureInferenceLock' | 'project'
 >;
 
 export interface MeasureLockHost {
@@ -30,7 +31,7 @@ export interface MeasureLockHost {
   touch(): boolean;
   /** 툴팁을 붙일 층(3D 보기) */
   layer: HTMLElement;
-  /** 잠금·찍은 점 수가 바뀌었다(상태 줄·측정 띠 다시 그리기) */
+  /** 잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었다(상태 줄·측정 띠 다시 그리기) */
   changed(): void;
 }
 
@@ -54,8 +55,6 @@ export class MeasureLock {
   private want = 0;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private flashKind: string | null = null;
-  /** Shift를 누른 동안 앱이 대신 건 잠금(선분 위 점 붙잡기 — 떼면 푼다) */
-  private shiftLock = false;
   private lastKey = '';
 
   constructor(private readonly host: MeasureLockHost) {
@@ -79,11 +78,7 @@ export class MeasureLock {
   /** 뷰어가 생긴 뒤 한 번: 캔버스 포인터를 듣는다(코어 듣기 다음 — 거품 단계) */
   attach(canvas: HTMLCanvasElement): void {
     const parent = canvas.parentElement ?? canvas;
-    parent.addEventListener('pointermove', (e) => {
-      // 코어처럼 포인터 이동의 shiftKey로도 Shift 떼기를 본다(창 밖에서 뗀 경우)
-      if (this.shiftLock && !e.shiftKey) this.shiftUp();
-      this.schedule();
-    });
+    parent.addEventListener('pointermove', () => this.schedule());
     canvas.addEventListener('pointerleave', () => this.schedule());
     parent.addEventListener('pointerup', () => this.schedule());
   }
@@ -91,6 +86,13 @@ export class MeasureLock {
   /** 지금 잠근 방향 */
   get lock(): LockName | null {
     return lockName(this.host.viewer()?.measureInferenceLock);
+  }
+
+  /** 잠그지 않았을 때 Shift(·잠금 단추)가 지금 잠글 방향(코어 measureHoverLock). 방향을 잡는 중이 아니면 null */
+  get hoverLock(): LockName | null {
+    const v = this.host.viewer();
+    if (!v || !this.directing || v.measureInferenceLock) return null;
+    return lockName(v.measureHoverLock);
   }
 
   /** 둘째 점의 방향을 잡는 중인지(첫 점을 찍었고 결과가 없음) */
@@ -116,7 +118,7 @@ export class MeasureLock {
     });
   }
 
-  /** 툴팁·잠금 단추·알림을 지금 상태로(잠금·찍은 점 수가 바뀌었으면 앱에 알린다) */
+  /** 툴팁·잠금 단추·알림을 지금 상태로(잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었으면 앱에 알린다) */
   update(): void {
     const v = this.host.viewer();
     const on = !!v && v.measureMode;
@@ -145,22 +147,20 @@ export class MeasureLock {
     this.button.setAttribute('aria-pressed', String(!!lock));
     this.button.classList.toggle('on', !!lock);
     this.button.title = lock ? '방향 잠금 풀기' : '지금 방향 잠그기(다시 누르면 풀기)';
-    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}`;
+    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}|${this.hoverLock ?? ''}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.host.changed();
     }
   }
 
-  /** 잠금 단추: 잠겼으면 풀고, 아니면 지금 방향(없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
+  /** 잠금 단추: 잠겼으면 풀고, 아니면 코어가 정한 방향(Shift와 같은 판정, 없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
   toggle(): boolean {
     const v = this.host.viewer();
     if (!v || !this.directing) return false;
     let ok = true;
-    if (v.measureInferenceLock) {
-      v.setMeasureInferenceLock(false);
-      this.shiftLock = false;
-    } else if (!v.setMeasureInferenceLock(true)) {
+    if (v.measureInferenceLock) v.setMeasureInferenceLock(false);
+    else if (!v.setMeasureInferenceLock(true)) {
       ok = false;
       this.noLock();
     }
@@ -173,7 +173,6 @@ export class MeasureLock {
     const v = this.host.viewer();
     if (!v || !this.directing) return;
     const cur = v.measureInferenceLock;
-    this.shiftLock = false;
     if (axis) {
       if (cur?.kind === 'axis' && cur.axis === axis) v.setMeasureInferenceLock(false);
       else v.setMeasureInferenceLock(axis);
@@ -182,42 +181,8 @@ export class MeasureLock {
     this.after();
   }
 
-  /**
-   * Shift를 눌렀다(코어가 먼저 처리한 뒤 — 캔버스에 초점이 있으면 코어 키 듣기가 앱 창 듣기보다 뒤라 한 틈 뒤에 부른다).
-   * 코어가 잠그지 않았고 커서가 점 붙잡기 위면, 마지막으로 본 방향을 잠가 그 점이 선 위인지 본다(아니면 푼다)
-   */
-  shiftDown(): void {
-    const v = this.host.viewer();
-    if (!v || !this.directing || v.measureInferenceLock) {
-      this.schedule();
-      return;
-    }
-    const hv = v.measureHoverSnap;
-    if (hv?.snap && !hv.direction && v.setMeasureInferenceLock(true)) {
-      // 잠근 선으로 미리 보기를 바로 다시 구한다(기다리면 한 프레임 잠금이 보였다 풀린다)
-      v.renderNow();
-      const after = v.measureHoverSnap;
-      if (after?.locked && !after.from) this.shiftLock = true;
-      else {
-        v.setMeasureInferenceLock(false);
-        v.renderNow();
-      }
-    }
-    this.after();
-  }
-
-  /** Shift를 뗐다(창 blur도): 앱이 대신 건 잠금을 푼다(코어 Shift 잠금은 코어가 푼다) */
-  shiftUp(): void {
-    if (!this.shiftLock) return;
-    this.shiftLock = false;
-    const v = this.host.viewer();
-    if (v?.measureInferenceLock?.source === 'api') v.setMeasureInferenceLock(false);
-    this.after();
-  }
-
   /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림을 거둔다 */
   reset(): void {
-    this.shiftLock = false;
     this.tip.hidden = true;
     this.dropFlash(null);
     this.schedule();
@@ -255,8 +220,8 @@ export class MeasureLock {
     this.flashTimer = null;
   }
 
-  /** 자동 확인용: 툴팁 글(숨었으면 null)과 알림 */
-  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; button: boolean } {
-    return { tip: this.tip.hidden ? null : this.tip.textContent, flash: this.flash.hidden ? null : this.flash.textContent, lock: this.lock, button: !this.button.hidden };
+  /** 자동 확인용: 툴팁 글(숨었으면 null), 알림, 잠금, Shift로 잠글 방향, 단추 */
+  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; hoverLock: LockName | null; button: boolean } {
+    return { tip: this.tip.hidden ? null : this.tip.textContent, flash: this.flash.hidden ? null : this.flash.textContent, lock: this.lock, hoverLock: this.hoverLock, button: !this.button.hidden };
   }
 }

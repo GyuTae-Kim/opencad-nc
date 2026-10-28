@@ -32,7 +32,7 @@ import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
-import { lockHint, measureHint, measureLines } from './measure';
+import { MEASURE_INFERENCE, lockHint, measureHint, measureLines } from './measure';
 import { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
@@ -83,9 +83,6 @@ function isPhone(): boolean {
 }
 
 /** 자동 확인용 상태 */
-/** 측정 추론 붙잡기(코어 0.9.0 교차점·수직 발·축, 0.10.0 나란함과 Shift 잠금) */
-const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true } as const;
-
 export interface AppState {
   /** 앱 화면이 준비됨 */
   ready: boolean;
@@ -461,23 +458,17 @@ export class NcViewerApp implements PanelHost {
 
     this.bindDrop();
     window.addEventListener('keydown', (ev) => this.onKey(ev), true);
-    // Shift 방향 잠금: 코어가 먼저 잠근 뒤(한 틈 뒤) 앱이 선분 위 점 붙잡기도 잠가 보고, 떼면(창을 떠나도) 앱이 건 잠금을 푼다
+    // Shift 방향 잠금은 코어가 잠그고 푼다(캔버스 키·onKey가 넘기는 창 키·포인터 이동의 shiftKey). 앱은 누르고 뗄 때 툴팁·상태 줄만 맞춘다
     // (캡처 단계 — 캔버스의 코어 키 듣기가 전파를 막아도 받는다)
-    window.addEventListener(
-      'keydown',
-      (ev) => {
-        if (ev.key === 'Shift' && !ev.repeat) setTimeout(() => this.mlock.shiftDown(), 0);
-      },
-      true,
-    );
-    window.addEventListener(
-      'keyup',
-      (ev) => {
-        if (ev.key === 'Shift' || !ev.shiftKey) this.mlock.shiftUp();
-      },
-      true,
-    );
-    window.addEventListener('blur', () => this.mlock.shiftUp());
+    for (const type of ['keydown', 'keyup'] as const)
+      window.addEventListener(
+        type,
+        (ev) => {
+          if (ev.key === 'Shift' && !ev.repeat) this.mlock.schedule();
+        },
+        true,
+      );
+    window.addEventListener('blur', () => this.mlock.schedule());
     document.addEventListener('pointerdown', (ev) => {
       if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
     });
@@ -1739,7 +1730,8 @@ export class NcViewerApp implements PanelHost {
    * 두 점 측정 붙잡기(코어 setMeasureSnap): G-code·Heidenhain 문서를 재는 동안 원호 중심을 늘 후보로 두고, 고른 이동에는
    * 가운데 점(원호는 현이 아니라 호 위)과 중심을 더한다(snap.ts). 재생 중에는 그린 이동까지의 중심만(코어 0.10.0 붙잡기 한도 — 목록은 그대로).
    * 추론 붙잡기(코어 0.9.0)도 켠다: 공구 경로 두 선분의 교차점, 첫 점에서 내린 수직 발, 첫 점에서 X·Y·Z 축 방향.
-   * 코어 0.10.0의 나란함(커서가 지나간 선분과 나란한 방향)과 방향 잠금(Shift — 화살표·잠금 단추는 measure-lock.ts)도 켠다.
+   * 코어 0.10.0의 나란함(커서가 지나간 선분과 나란한 방향)과 방향 잠금(Shift — 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점도,
+   * 화살표·잠금 단추는 measure-lock.ts)도 켠다.
    * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다. 반경 보정 경로는 보정 조각의 가운데 점·호 중심.
    * 판재 가공(MPR·PGI·XML)은 워커가 보낸 붙잡기 표로 윤곽·판 외곽선의 원호 중심, 원형 포켓 중심, 고른 윤곽 요소의 가운데 점과 추론 붙잡기.
    * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점)
@@ -1974,11 +1966,11 @@ export class NcViewerApp implements PanelHost {
     document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
   }
 
-  /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift·화살표 */
+  /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표 */
   private lockHintNow(): string | null {
     const v = this.viewer;
     if (!v?.measureMode) return null;
-    return lockHint(v.measurePointCount, !!this.doc?.measure, this.mlock.lock, this.touch);
+    return lockHint(v.measurePointCount, !!this.doc?.measure, this.mlock.lock, this.touch, this.mlock.hoverLock);
   }
 
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */

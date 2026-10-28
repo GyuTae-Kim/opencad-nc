@@ -20,6 +20,11 @@ const fake = vi.hoisted(() => {
     axesVisible = true;
     viewCubeSize = 112;
     section = null;
+    /** 코어 측정 읽기(시험이 바꾼다): 미리 보기·잠금(0.10.0), Shift로 잠글 방향·거리 글상자 자리(0.12.0) */
+    measureHoverSnap = null;
+    measureInferenceLock = null;
+    measureHoverLock = null;
+    measureLabelRect = null;
     constructor(host: HTMLElement, opts?: { viewCubeSize?: number }) {
       if (opts?.viewCubeSize) this.viewCubeSize = opts.viewCubeSize;
       const wrap = document.createElement('div');
@@ -110,7 +115,7 @@ vi.mock('../../src/app/dom', async (importOriginal) => {
 import { NcViewerApp } from '../../src/app/app';
 import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
-import { LOCK_KEYS_HINT, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { ARROW_LOCK_HINT, SHIFT_LOCK_HINTS, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 import { translate } from '../../site/i18n.mjs';
@@ -249,11 +254,17 @@ describe('측정 띠(휴대폰·터치)', () => {
     const v = fake.FakeViewer.last!;
     v.measurePts = 1;
     v.canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
-    // 둘째 점 방향을 잡는 동안: 안내 다음에 따로 방향 잠금 안내(키보드 기기 — Shift·화살표)와 잠금 단추
+    // 둘째 점 방향을 잡는 동안: 안내 다음에 따로 방향 잠금 안내(키보드 기기 — Shift로 잠글 방향이 없으면 화살표)와 잠금 단추
     expect(bar.querySelector('.mb-hint')!.textContent).toBe(measureHint(1, false));
-    expect(bar.querySelector('.mb-lock-hint')!.textContent).toBe(LOCK_KEYS_HINT);
+    expect(bar.querySelector('.mb-lock-hint')!.textContent).toBe(ARROW_LOCK_HINT);
     expect(bar.querySelector<HTMLButtonElement>('.mb-lock')!.hidden).toBe(false);
     expect(clear!.disabled).toBe(false);
+    // 커서가 코어가 Shift로 잠글 방향(measureHoverLock — 모서리 끝의 모서리 방향 등) 위면 그 방향을 알린다(측정 띠·상태 줄)
+    (v as unknown as { measureHoverLock: unknown }).measureHoverLock = { kind: 'axis', axis: 'x', direction: [1, 0, 0] };
+    v.canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    expect(bar.querySelector('.mb-lock-hint')!.textContent).toBe(SHIFT_LOCK_HINTS.x);
+    expect(root.querySelector('.st-sel')!.textContent).toContain(SHIFT_LOCK_HINTS.x);
+    (v as unknown as { measureHoverLock: unknown }).measureHoverLock = null;
 
     v.emitMeasure({ distance: 50, dx: 30, dy: -40, dz: 0 });
     expect(bar.querySelector<HTMLButtonElement>('.mb-lock')!.hidden).toBe(true);
