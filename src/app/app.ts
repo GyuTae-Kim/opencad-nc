@@ -22,7 +22,7 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
-import { loadViewerCore } from './core';
+import { loadArcTangents, loadViewerCore } from './core';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -36,7 +36,7 @@ import { MEASURE_INFERENCE, lockHint, measureHint, measureLines } from './measur
 import { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
-import { ArcTangents } from './tangent';
+import type { ArcTangents } from './tangent';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -222,8 +222,8 @@ export class NcViewerApp implements PanelHost {
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
   private snapKey: { src: object; limit: number | null } | null = null;
-  /** 측정 첫 점에 닿는 원호 끝(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금) */
-  private readonly arcTangents = new ArcTangents();
+  /** 측정 첫 점에 닿는 원호 끝(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금). 문서를 열 때 나눠 받는다(core.ts loadArcTangents) */
+  private arcTangents: ArcTangents | null = null;
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -1028,6 +1028,12 @@ export class NcViewerApp implements PanelHost {
     this.setBusy('여는 중', 0.02, name);
     // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
     if (!this.viewer) void loadViewerCore().catch(() => undefined);
+    // 원호 접선 잠금도 함께(측정에서만 쓰여 첫 화면 JS에서 뺐다 — 받지 못하면 다음 열기에서 다시)
+    if (!this.arcTangents)
+      void loadArcTangents().then(
+        (m) => (this.arcTangents ??= new m.ArcTangents()),
+        () => undefined,
+      );
     try {
       const res = await this.client.open(
         name,
@@ -1990,7 +1996,7 @@ export class NcViewerApp implements PanelHost {
   private arcTangentAt(a: [number, number, number], p: [number, number, number]): [number, number, number] | null {
     const d = this.doc;
     const nc = d?.nc;
-    if (!d || !nc) return null;
+    if (!d || !nc || !this.arcTangents) return null;
     const pos = d.playSec === null ? null : playPosition(d);
     const last = pos ? (pos.move >= 0 ? pos.move : -1) : Infinity;
     const angle = (d.scene.meta as { arcAngle?: unknown } | undefined)?.arcAngle;

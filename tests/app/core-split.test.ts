@@ -39,6 +39,21 @@ describe('코어 나눠 받기', () => {
     expect(dynamic).toBe(1);
   });
 
+  it('측정 원호 접선(tangent.ts)도 첫 화면에서 값으로 가져오지 않고 core.ts의 import()로만 — 한 번만 받는다', async () => {
+    const bad: string[] = [];
+    for (const f of files(SRC)) {
+      if (f.includes('/worker/')) continue;
+      const text = readFileSync(f, 'utf8');
+      for (const m of text.matchAll(/^import\s+(type\s+)?[^;]*?from\s+'\.\/tangent';/gms)) if (!m[1]) bad.push(`${relative(SRC, f)}: ${m[0].split('\n')[0]}`);
+      for (const m of text.matchAll(/(?<!typeof )import\(\s*'\.\/tangent'\s*\)/g)) if (!f.endsWith('/app/core.ts')) bad.push(`${relative(SRC, f)}: ${m[0]}`);
+    }
+    expect(bad).toEqual([]);
+    const { loadArcTangents } = await import('../../src/app/core');
+    const a = loadArcTangents();
+    expect(loadArcTangents()).toBe(a);
+    expect(typeof (await a).ArcTangents).toBe('function');
+  });
+
   it('코어 입구를 한 번만 받고 같은 모듈을 준다', async () => {
     const { loadViewerCore } = await import('../../src/app/core');
     const a = loadViewerCore();
