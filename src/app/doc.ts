@@ -188,6 +188,11 @@ const DIALECT_NOTICE: Record<string, string> = {
   okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·NLAP는 읽지 않아 경로가 모자랄 수 있습니다(G15 H 좌표계는 읽음).',
 };
 
+const LATHE_SYSTEM_NOTICE: Record<string, string> = {
+  B: 'Fanuc 선반 G 코드 B 체계로 읽었습니다(판별) — G77·G78·G79는 단순 사이클, G90·G91은 절대·증분 지령입니다.',
+  C: 'Fanuc 선반 G 코드 C 체계로 읽었습니다(판별) — G20·G21·G24는 단순 사이클, G70·G71은 inch·mm, G72~G78은 복합 사이클입니다.',
+};
+
 /** 문서의 해석 판단 → 띠(닫은 것은 뺀다) */
 export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotices'> & Partial<Pick<NcDoc, 'job'>>): NoticeView[] {
   const out: NoticeView[] = [];
@@ -202,6 +207,13 @@ export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotice
     else if (n.kind === 'integer-units')
       v = { key: 'integer-units', text: '소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.', action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
     else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: DIALECT_NOTICE[n.dialect]!, action: { label: '방언 바꾸기', tab: 'info' } };
+    else if (n.kind === 'lathe-system' && n.system) {
+      const text =
+        n.system === 'A'
+          ? `Fanuc 선반 G 코드 B·C 체계일 수 있습니다(${(n.hints ?? []).join(' · ')}) — A 체계(G90·G92·G94 단순 사이클)로 읽었습니다.`
+          : LATHE_SYSTEM_NOTICE[n.system]!;
+      v = { key: `lathe-system-${n.system}`, text, action: { label: '체계 바꾸기', tab: 'info' } };
+    }
     else if (n.kind === 'missing-program' && n.programs?.length) {
       const names = n.programs.length > 6 ? `${n.programs.slice(0, 6).join(', ')}, …` : n.programs.join(', ');
       v = { key: 'missing-program', text: `다른 파일의 프로그램 ${names}을(를) 찾지 못했습니다 — 그 파일을 더하면 이어서 그립니다.`, action: { label: '파일 더하기', add: true } };

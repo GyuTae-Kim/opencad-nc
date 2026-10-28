@@ -4,7 +4,7 @@
  * 블록 읽기: N 번호, 주석 `( )`·`;`, 블록 건너뛰기 `/`, `%`, 대소문자, 공백 없는 꼴(`G01X10Y5`).
  * 흔한 줄은 바이트에서 바로 읽고(빠른 길), `#`·`[`·`=`·낱말(IF·WHILE·GOTO·o-코드)이 있는 줄만 글로 바꿔 읽는다.
  *
- * 지원: G0 G1 G2 G3(IJK·R·나선·완전한 원·LinuxCNC P 바퀴 수) G4 G10(L2/L20 좌표계 값) G17 G18 G19 G20 G21
+ * 지원: G0 G1 G2 G3(IJK·R·나선·완전한 원·LinuxCNC P 바퀴 수) G5·G5.1(LinuxCNC 스플라인) G5.2/G5.3(LinuxCNC NURBS) G4 G10(L2/L20 좌표계 값) G17 G18 G19 G20 G21
  * G28 G30 G40 G41 G42 G43 G44 G49 G52 G53 G54~G59(G54.1 P·G59.1~3) G61 G64 G73 G74 G76 G80~G89 G90 G91
  * G90.1 G91.1 G92(.1/.2) G93 G94 G95 G98 G99, T M6 M3 M4 M5 M7 M8 M9 M0 M1 M2 M30 M98 M99 M97 G65,
  * 변수(#n, #[식], #<이름>)·식, Fanuc IF/GOTO/WHILE/DO/END, LinuxCNC o-코드(sub/call/if/while/do/repeat).
@@ -14,7 +14,8 @@
  * G51.1/G50.1 거울, LinuxCNC G10 L2 R(좌표계 회전). 변환은 프로그램 좌표에 거울 → 배율 → 회전 차례로 건다.
  * 반경 보정: G41/G42(D 번호 → 선택 공구 표·G10 L12/L13(Fanuc)·G10 L1 R(LinuxCNC·Mach3)·공구 주석 지름), G41.1/G42.1 D 지름.
  * 프로그램 경로는 그대로 두고 구간만 기록한다(NcProgram.compRuns → comp.ts가 공구 중심 경로를 계산).
- * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클),
+ * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클,
+ * Fanuc G 코드 체계 B·C는 latheSysCode가 A 체계 코드로 바꿔 읽음),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
 import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
@@ -82,6 +83,12 @@ export interface GcodeOptions {
   lathe?: boolean | 'auto';
   /** 선반 모드에서 처음부터 X를 지름으로 볼지(기본: LinuxCNC·GRBL은 반지름, 그 밖은 지름) */
   latheDiameter?: boolean;
+  /**
+   * Fanuc 계열 선반의 G 코드 체계(기본 'auto' — 글로 판별, 정할 수 없으면 A). A: G90/G92/G94 단순 사이클·U/W 증분·G98/G99 이송 단위,
+   * B: G77/G78/G79 단순 사이클·G90/G91 절대/증분·G94/G95 이송 단위·G98/G99 복귀 높이·G92 좌표 설정,
+   * C: B에 더해 G20/G21/G24 단순 사이클·G70/G71 inch/mm·G72~G78 복합 사이클(A의 G70~G76)
+   */
+  latheSystem?: 'A' | 'B' | 'C' | 'auto';
   /** 회전축 감기(기본 꺼짐 — A·B·C는 무시하고 경고). true면 A→X, B→Y, C→Z 축 둘레 */
   rotary?: boolean | NcRotaryOptions;
   /**
@@ -282,6 +289,7 @@ function parseFast(b: Uint8Array, s: number, e: number, blk: Block, onComment: (
 /** 느린 길에서 쓰는 변수 저장소 연결 */
 interface SlowEnv {
   get(ref: GVarRef): number | undefined;
+  has?(ref: GVarRef): boolean;
   readonly fanucRounding?: boolean;
 }
 
@@ -653,6 +661,57 @@ export function detectLathe(head: string): boolean {
   return score >= 4;
 }
 
+/** detectLatheSystem 결과: 체계와(정하지 못했을 때) B·C 체계일 수 있는 표지 코드 */
+export interface LatheSystemGuess {
+  system: 'A' | 'B' | 'C';
+  /** A로 읽지만 B·C 체계일 수 있는 표지(G91, G77·G78·G79 사이클, G20·G21·G24 사이클, 낱말 없는 G70·G71) */
+  hints: string[];
+}
+
+/**
+ * Fanuc 선반 G 코드 체계(A·B·C — Fanuc 선반 설명서의 G 코드 표)를 글로 판별한다. 단순 사이클이 쓰인 꼴로만 정한다:
+ * B = G79(끝면) 또는 P·Q 없는 G77·G78(바깥지름·나사)이 좌표와 함께, C = G20·G21·G24가 좌표와 함께(같은 블록에 G0~G3·G32·G33 없이).
+ * A 체계 사이클 꼴(G90·G94·G92가 F·좌표와 함께, 다른 이동 G 없이)이 함께 있거나 B·C 꼴이 엇갈리면 정하지 않는다(A + hints)
+ */
+export function detectLatheSystem(head: string): LatheSystemGuess {
+  const code = detectCode(head);
+  const coord = /(?:^|[^A-Z])[XZUW]\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  const pq = /(?:^|[^A-Z])[PQ]\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  const feed = /(?:^|[^A-Z])F\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  let b79 = 0;
+  let b78 = 0;
+  let c = 0;
+  let a = 0;
+  let inc = 0;
+  let cUnits = 0;
+  for (const raw of code.split('\n')) {
+    if (!/G/i.test(raw)) continue;
+    const gs = new Set<number>();
+    const re = /(?<![A-Z_#])G\s*(\d{1,3})(\.\d)?(?![\d.])/gi;
+    for (let m = re.exec(raw); m; m = re.exec(raw)) if (!m[2]) gs.add(+m[1]!);
+    if (!gs.size) continue;
+    const xz = coord.test(raw);
+    const motion = gs.has(0) || gs.has(1) || gs.has(2) || gs.has(3) || gs.has(32) || gs.has(33);
+    if (gs.has(91)) inc++;
+    if (gs.has(79) && xz) b79++;
+    if ((gs.has(77) || gs.has(78)) && xz && !pq.test(raw)) b78++;
+    if ((gs.has(20) || gs.has(21) || gs.has(24)) && xz && !motion) c++;
+    if ((gs.has(90) || gs.has(94) || gs.has(92)) && xz && !motion && feed.test(raw)) a++;
+    // 낱말 없는 G70·G71(C 체계의 inch·mm — A·B 체계의 G70·G71은 P·Q·U·R 낱말이 있는 사이클)
+    if ((gs.has(70) || gs.has(71)) && !/[A-FH-MO-Z]/i.test(raw.replace(/^\s*N\d+/i, ''))) cUnits++;
+  }
+  if (a === 0) {
+    if (c > 0 && b79 === 0) return { system: 'C', hints: [] };
+    if (b79 + b78 > 0 && c === 0) return { system: 'B', hints: [] };
+  }
+  const hints: string[] = [];
+  if (inc) hints.push('G91');
+  if (b79 + b78) hints.push('G77·G78·G79');
+  if (c) hints.push('G20·G21·G24');
+  if (cUnits) hints.push('G70·G71');
+  return { system: 'A', hints };
+}
+
 // ───────────────────────── 실행 ─────────────────────────
 
 interface Frame {
@@ -717,18 +776,20 @@ export function jobFileLines(src: NcSource): Map<number, string> | null {
   return out;
 }
 
-/** 앞쪽 줄에서 처음 나오는 G20/G21로 표시 단위를 정한다(true = inch) */
-function prescanUnits(src: NcSource): boolean | undefined {
+/** 앞쪽 줄에서 처음 나오는 G20/G21(Fanuc 선반 C 체계는 G70/G71)로 표시 단위를 정한다(true = inch) */
+function prescanUnits(src: NcSource, systemC = false): boolean | undefined {
   const b = new Block();
   const n = Math.min(src.lineCount, 5000);
+  const inch = systemC ? 700 : 200;
+  const mm = systemC ? 710 : 210;
   for (let i = 0; i < n; i++) {
     b.reset();
     const [s, e] = lineRange(src, i);
     if (!parseFast(src.bytes, s, e, b, () => {})) continue;
     for (let k = 0; k < b.gCount; k++) {
       const g = b.g[k];
-      if (g === 200) return true;
-      if (g === 210) return false;
+      if (g === inch) return true;
+      if (g === mm) return false;
     }
   }
   return undefined;
@@ -906,6 +967,8 @@ export class Runner extends NcEmitter {
   protected lathe = false;
   /** Fanuc 계열 선반(A 체계): U·W 증분, G90/G92/G94 사이클, G98/G99 이송 단위, G50 좌표 설정 */
   protected fanucLathe = false;
+  /** Fanuc 선반 G 코드 체계(B·C는 latheSysCode가 A 체계 뜻으로 바꾼다) */
+  protected latheSys: 'A' | 'B' | 'C' = 'A';
   protected xMul = 1;
   protected css = false;
   protected cssV = 0;
@@ -961,13 +1024,29 @@ export class Runner extends NcEmitter {
       if (this.fanucLathe) this.feedMode = 95;
       // 선반의 기계 원점은 +X·+Z 쪽(공구대가 멀리 물러난다)
       this.machSafeAxes = 5;
+      // Fanuc 선반 G 코드 체계: 고르지 않았으면 단순 사이클 꼴로 판별(정할 수 없으면 A — B·C 표지가 있으면 띠·경고)
+      if (this.fanucLathe) {
+        const want = opts.latheSystem && opts.latheSystem !== 'auto' ? opts.latheSystem : null;
+        if (want) this.latheSys = want;
+        else if (src.lineCount > 0) {
+          const guess = detectLatheSystem(head());
+          this.latheSys = guess.system;
+          if (guess.system !== 'A') this.notices.push({ kind: 'lathe-system', system: guess.system });
+          else if (guess.hints.length) {
+            this.notices.push({ kind: 'lathe-system', system: 'A', hints: guess.hints });
+            this.w.add(`Fanuc 선반 G 코드 B·C 체계일 수 있음(${guess.hints.join(' · ')}) — A 체계로 읽음`);
+          }
+        }
+      }
     } else if (opts.lathe === undefined && src.lineCount > 0 && detectLathe(head()))
       this.w.add('선반 프로그램으로 보임 — 선반 모드로 읽으면 X를 지름으로 보고 선반 사이클을 그림');
     if (opts.rotary) this.setRotary(opts.rotary === true ? {} : opts.rotary);
-    const pre = dialect === 'siemens' ? prescanSiemensUnits(src) : prescanUnits(src);
+    // C 체계 선반은 G70/G71이 inch/mm(G20/G21은 단순 사이클)
+    const unitsC = dialect === 'siemens' || this.latheSys === 'C';
+    const pre = dialect === 'siemens' ? prescanSiemensUnits(src) : prescanUnits(src, this.latheSys === 'C');
     this.displayInch = pre ?? opts.units === 'inch';
     if (pre === undefined && src.lineCount > 0)
-      this.w.add(dialect === 'siemens' ? `단위 코드(G70/G71)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄` : `단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
+      this.w.add(unitsC ? `단위 코드(G70/G71)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄` : `단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
     this.blockInch = this.displayInch;
     this.updateScale();
     this.tol = this.displayInch ? 0.0001 : 0.002;
@@ -1076,7 +1155,22 @@ export class Runner extends NcEmitter {
   }
 
   // ── 변수 ──
+  /**
+   * 변수 값. LinuxCNC에서 이 범위(주 프로그램·o-코드 부프로그램마다 따로)에 없는 지역 이름 변수(#<이름>)를 읽으면 LinuxCNC는
+   * "Named parameter not defined" 오류로 멈추므로 경고한다(여기서는 빈 값 — 낱말을 빼거나 식에서 0). 전역(#<_이름>)은
+   * LinuxCNC가 미리 정한 것(#<_x> 등)이 많아 보지 않는다
+   */
   get(ref: GVarRef): number | undefined {
+    const v = this.lookup(ref);
+    if (v === undefined && typeof ref === 'string' && this.dialect === 'linuxcnc' && !ref.startsWith('_'))
+      this.w.add(`지역 이름 변수 #<${ref}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)`, this.pc - 1);
+    return v;
+  }
+  /** 변수가 있는지(EXISTS — 경고 없이) */
+  has(ref: GVarRef): boolean {
+    return this.lookup(ref) !== undefined;
+  }
+  protected lookup(ref: GVarRef): number | undefined {
     const f = this.stack[this.stack.length - 1]!;
     if (typeof ref === 'string') {
       if (ref.startsWith('_')) return this.namedGlobals.get(ref);
@@ -1407,8 +1501,13 @@ export class Runner extends NcEmitter {
     /** Haas 볼트 구멍 패턴(G70·G71·G72) */
     let boltG = -1;
     for (let k = 0; k < blk.gCount; k++) {
-      const g = blk.g[k]!;
+      let g = blk.g[k]!;
       if (this.lathe) {
+        // Fanuc 선반 B·C 체계: A 체계와 뜻이 다른 코드는 여기서 처리하거나(-1) A 체계 코드로 바꾼다
+        if (this.latheSys !== 'A') {
+          g = this.latheSysCode(g);
+          if (g < 0) continue;
+        }
         const lr = this.latheCode(g, blk, line);
         if (lr >= 0) {
           if (lr > 0) motionG = lr;
@@ -1428,11 +1527,9 @@ export class Runner extends NcEmitter {
           if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) motionG = g;
           break;
         case 52:
-          // G5.2 NURBS(L·P 조정점 목록)는 끝점까지 직선으로
-          if (blk.has[LX] || blk.has[LY] || blk.has[LZ]) {
-            this.w.add('G5.2 스플라인은 끝점까지 직선으로 그림', line);
-            motionG = 10;
-          }
+        case 53:
+          // LinuxCNC G5.2 NURBS 조정점 블록(X·Y·P 가중치·L 계수) … G5.3 끝 — 이동 꼴(모달). 조정점을 모아 G5.3에서 곡선으로 그린다
+          motionG = g;
           break;
         case 382:
         case 383:
@@ -1904,6 +2001,20 @@ export class Runner extends NcEmitter {
       return this.endBlock(blk, line);
     }
 
+    // LinuxCNC NURBS(G5.2 … G5.3): 다른 이동 꼴·고정 사이클이 끼면 모은 조정점은 G5.3 없이 끝난다
+    if (this.nurbs && ((motionG >= 0 && motionG !== 52 && motionG !== 53) || cycleG > 0)) this.nurbsFallback('G5.3 없이 다른 이동 꼴이 옴', line);
+    if (motionG === 52 || motionG === 53 || (motionG < 0 && cycleG <= 0 && this.motion === 52)) {
+      if (motionG >= 0) {
+        this.motion = motionG;
+        if (this.cycle) this.cancelCycle();
+      }
+      this.splinePQ = null;
+      this.nurbsBlock(blk, line, motionG === 53, machine);
+      this.finishAng();
+      return this.endBlock(blk, line);
+    }
+    if (motionG < 0 && cycleG <= 0 && this.motion === 53 && axisGiven && !this.cycle) this.w.add('G5.3 뒤에 이동 꼴(G0·G1 등) 없이 좌표가 옴 — 이송 직선으로 그림', line);
+
     // 이동
     if (motionG >= 0) {
       if (motionG !== this.motion && motionG < 900) this.boxX = this.boxZ = NaN;
@@ -2150,6 +2261,100 @@ export class Runner extends NcEmitter {
       this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, line);
     }
     this.emit(MOVE_FEED, x, y, z, line);
+  }
+
+  /**
+   * LinuxCNC G5.2 NURBS로 모은 조정점(프로그램 좌표 x·y)·가중치 w·그 블록 줄, 계수(order) L. 첫 조정점은 G5.2 앞의 지금 자리이고,
+   * G5.3에서 곡선으로 그린다. bad = 규칙에 어긋난 까닭(있으면 조정점을 직선으로 잇는다)
+   */
+  protected nurbs: { x: number[]; y: number[]; w: number[]; lines: number[]; order: number; bad: string | null; zWarned: boolean } | null = null;
+
+  /**
+   * G5.2 블록(조정점 X·Y + 가중치 P, 계수 L)과 G5.3(끝) — LinuxCNC 설명서 "G5.2 G5.3 NURBS Block"대로:
+   * G17 평면만, X·Y는 둘 다, P(기본 1)는 0보다 커야, L(기본 3)은 조정점 수 이하. 첫 G5.2 블록의 P는 첫 조정점(지금 자리)의 가중치도 된다.
+   * LinuxCNC는 G5.3까지 지금 자리를 바꾸지 않으므로 G91 조정점은 모두 곡선 시작점(G5.2 앞 자리)에서 잰다. Z는 쓰지 않는다(높이 그대로)
+   */
+  protected nurbsBlock(blk: Block, line: number, end: boolean, machine: boolean): void {
+    const hx = !!blk.has[LX];
+    const hy = !!blk.has[LY];
+    if (end) {
+      if (!this.nurbs) {
+        this.w.add('G5.3 앞에 G5.2가 없음', line);
+        return;
+      }
+      if (hx || hy || blk.has[LZ]) this.w.add('G5.3 블록의 좌표는 쓰지 않음', line);
+      return this.nurbsFinish(line);
+    }
+    const p = blk.has[LP] ? blk.val[LP]! : 1;
+    let n = this.nurbs;
+    if (!n) {
+      const q = this.progPos();
+      n = this.nurbs = { x: [q[0]!], y: [q[1]!], w: [p], lines: [line], order: 3, bad: null, zWarned: false };
+      if (this.plane !== 0) n.bad = 'NURBS는 G17(XY) 평면에서만 읽음';
+    }
+    if (blk.has[LL]) {
+      const l = blk.val[LL]!;
+      if (Number.isInteger(l) && l >= 2) n.order = l;
+      else n.bad ??= `계수 L${fmtWord(l)}이 2 이상의 정수가 아님`;
+    }
+    if (!(p > 0)) n.bad ??= `가중치 P${fmtWord(p)}가 0보다 크지 않음`;
+    if (blk.has[LZ] && !n.zWarned) {
+      n.zWarned = true;
+      this.w.add('G5.2 조정점의 Z는 쓰지 않음(높이는 그대로)', line);
+    }
+    if (!hx && !hy) return;
+    if (hx !== hy) n.bad ??= 'X·Y 가운데 하나만 있는 조정점';
+    if (machine) n.bad ??= 'G53과 함께 쓸 수 없음';
+    // G91: LinuxCNC는 G5.3까지 지금 자리를 바꾸지 않아 증분은 첫 조정점(곡선 시작점)에서 잰다
+    const k = n.x.length - 1;
+    const coord = (has: boolean, letter: number, bit: number, scale: number, start: number, prev: number): number => {
+      if (!has) return prev;
+      const v = blk.val[letter]! * scale;
+      const inc = blk.axInc & bit ? true : blk.axAbs & bit ? false : !this.absolute;
+      return inc ? start + v : v;
+    };
+    n.x.push(coord(hx, LX, 1, this.axScale[0]!, n.x[0]!, n.x[k]!));
+    n.y.push(coord(hy, LY, 2, this.axScale[1]!, n.y[0]!, n.y[k]!));
+    n.w.push(p);
+    n.lines.push(line);
+  }
+
+  /** G5.3: 모은 조정점을 NURBS 곡선으로(열린 균일 매듭 — LinuxCNC와 같음) 이송 직선 조각으로 나눠 그린다 */
+  protected nurbsFinish(line: number): void {
+    const n = this.nurbs!;
+    const cnt = n.x.length;
+    if (!n.bad && cnt < 2) n.bad = '조정점이 없음';
+    if (!n.bad && cnt < n.order) n.bad = `조정점 ${cnt}개가 계수 L${n.order}보다 적음`;
+    if (n.bad) return this.nurbsFallback(n.bad, line);
+    this.nurbs = null;
+    const z = this.progPos()[2]!;
+    const tol = this.displayInch ? 0.0002 : 0.005;
+    const q = [0, 0, z];
+    const out = [0, 0, 0];
+    nurbsSegments(n.x, n.y, n.w, n.order, tol, (x, y, k) => {
+      q[0] = x;
+      q[1] = y;
+      this.toDisplay(q, out);
+      this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
+    });
+    this.known |= 3;
+  }
+
+  /** 규칙에 어긋난(또는 G5.3 없이 끝난) NURBS: 경고하고 조정점을 차례로 이송 직선으로 잇는다(예전처럼) */
+  protected nurbsFallback(why: string, line: number): void {
+    const n = this.nurbs;
+    if (!n) return;
+    this.nurbs = null;
+    this.w.add(`G5.2 NURBS: ${why} — 조정점을 직선으로 이음`, line);
+    const q = [0, 0, this.progPos()[2]!];
+    const out = [0, 0, 0];
+    for (let k = 1; k < n.x.length; k++) {
+      q[0] = n.x[k]!;
+      q[1] = n.y[k]!;
+      this.toDisplay(q, out);
+      this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
+    }
+    if (n.x.length > 1) this.known |= 3;
   }
 
   protected cancelCycle(): void {
@@ -2700,17 +2905,19 @@ export class Runner extends NcEmitter {
       }
       return -1;
     }
+    // B·C 체계에서 바꿔 온 단순 사이클(G77/G78/G79·G20/G21/G24)은 좌표가 없어도 사이클(모달)
+    const sys = this.latheSys !== 'A';
     switch (g) {
       case 900:
         // A 체계: 바깥·안지름 단순 사이클. 좌표가 없으면 절대 지령(B 체계)으로 본다
-        if (xz) return 900;
+        if (xz || sys) return 900;
         this.absolute = true;
         return 0;
       case 920:
         // 나사 단순 사이클(리드 F가 있을 때). 아니면 좌표 설정(G92)으로
-        return xz && blk.has[LF] ? 920 : -1;
+        return (xz && blk.has[LF]) || sys ? 920 : -1;
       case 940:
-        if (xz) return 940;
+        if (xz || sys) return 940;
         this.feedMode = 94;
         return 0;
       case 980:
@@ -2740,6 +2947,53 @@ export class Runner extends NcEmitter {
         return 0;
     }
     return -1;
+  }
+
+  /**
+   * Fanuc 선반 B·C 체계 코드(×10) → A 체계 코드(Fanuc 선반 설명서의 G 코드 표). A와 뜻이 다른 G90/G91(절대·증분)·G94/G95(분당·회전당 이송)·
+   * G98/G99(고정 사이클 복귀 높이)와 C 체계의 G70/G71(inch·mm)은 여기서 처리하고 -1. B: G77→G90·G78→G92·G79→G94·G92→G50,
+   * C: G20→G90·G21→G92·G24→G94·G72~G78→G70~G76·G92→G50. U·W는 A처럼 증분으로도 읽는다
+   */
+  protected latheSysCode(g: number): number {
+    switch (g) {
+      case 900:
+      case 910:
+        this.absolute = g === 900;
+        return -1;
+      case 940:
+      case 950:
+        this.feedMode = g === 940 ? 94 : 95;
+        return -1;
+      case 980:
+      case 990:
+        this.retractR = g === 990;
+        return -1;
+      case 920:
+        return 500;
+    }
+    if (this.latheSys === 'B') return g === 770 ? 900 : g === 780 ? 920 : g === 790 ? 940 : g;
+    switch (g) {
+      case 200:
+        return 900;
+      case 210:
+        return 920;
+      case 240:
+        return 940;
+      case 700:
+      case 710:
+        this.blockInch = g === 700;
+        this.updateScale();
+        return -1;
+      case 720:
+      case 730:
+      case 740:
+      case 750:
+      case 760:
+      case 770:
+      case 780:
+        return g - 20;
+    }
+    return g;
   }
 
   /** 주속 일정(G96): 반지름 r에서의 회전수로 this.speed를 맞춘다(최고 회전수로 자름) */
@@ -2903,7 +3157,7 @@ export class Runner extends NcEmitter {
       for (let k = 0; k < b.gCount; k++) {
         const g = b.g[k]!;
         if (g === 0 || g === 10 || g === 20 || g === 30) mot = g;
-        else if (!this.fanucLathe && (g === 900 || g === 910)) abs = g === 900;
+        else if ((!this.fanucLathe || this.latheSys !== 'A') && (g === 900 || g === 910)) abs = g === 900;
       }
       const hx = b.has[LX] || (this.fanucLathe && b.has[LU]);
       const hz = b.has[LZ] || (this.fanucLathe && b.has[LW]);
@@ -3524,13 +3778,123 @@ export class Runner extends NcEmitter {
   }
 
   finish(opts: GcodeOptions): NcProgram {
+    if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
       this.w.add(`소수점 없는 큰 좌표가 많음(${this.intBig}개) — Fanuc 최소 입력 단위(0.001)로 쓴 프로그램이면 "소수점 없는 값 = 최소 단위"를 켜십시오`);
       this.notices.push({ kind: 'integer-units' });
     }
-    return this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
+    const prog = this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
+    if (this.fanucLathe) prog.latheSystem = this.latheSys;
+    return prog;
+  }
+}
+
+/** 낱말 값을 경고 글로(소수 6자리까지) */
+function fmtWord(v: number): string {
+  return String(Math.round(v * 1e6) / 1e6);
+}
+
+/** LinuxCNC G5.2 매듭(열린 균일): 조정점 n+1개·계수 k → 앞 k개는 0, 사이는 1씩, 뒤 k개는 n-k+2 */
+export function nurbsKnots(n: number, k: number): number[] {
+  const t: number[] = [];
+  for (let i = 0; i <= n + k; i++) t.push(i < k ? 0 : i <= n ? i - k + 1 : n - k + 2);
+  return t;
+}
+
+/**
+ * NURBS 곡선(조정점 xs·ys, 가중치 ws, 계수 order = 차수 + 1, 매듭은 nurbsKnots)을 직선 조각으로 나눈다.
+ * 매듭 구간마다 조각의 1/4·1/2·3/4 점이 현에서 tol보다 멀면 반으로 나눈다(12번까지 — 4차 이상은 한 번은 나눔).
+ * emit(x, y, k): 조각 끝점과 그 조각 가운데에 가장 가까운 그레빌 점의 조정점 번호(줄 번호를 고르는 데 쓴다 — 같으면 뒤 점).
+ * 마지막 끝점은 마지막 조정점 그대로
+ */
+export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number) => void): void {
+  const n = xs.length - 1;
+  const p = order - 1;
+  if (n < 1 || p < 1 || n < p) return;
+  const knots = nurbsKnots(n, order);
+  const grev: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    let s = 0;
+    for (let j = 1; j <= p; j++) s += knots[i + j]!;
+    grev.push(s / p);
+  }
+  const dx = new Float64Array(order);
+  const dy = new Float64Array(order);
+  const dw = new Float64Array(order);
+  // 구간 s(knots[s] ≤ u ≤ knots[s+1]) 위의 점 — 동차 좌표의 de Boor
+  const at = (s: number, u: number, out: number[]): void => {
+    for (let j = 0; j <= p; j++) {
+      const i = s - p + j;
+      const w = ws[i]!;
+      dx[j] = xs[i]! * w;
+      dy[j] = ys[i]! * w;
+      dw[j] = w;
+    }
+    for (let r = 1; r <= p; r++)
+      for (let j = p; j >= r; j--) {
+        const t0 = knots[j + s - p]!;
+        const t1 = knots[j + 1 + s - r]!;
+        const a = t1 > t0 ? (u - t0) / (t1 - t0) : 0;
+        dx[j] = (1 - a) * dx[j - 1]! + a * dx[j]!;
+        dy[j] = (1 - a) * dy[j - 1]! + a * dy[j]!;
+        dw[j] = (1 - a) * dw[j - 1]! + a * dw[j]!;
+      }
+    out[0] = dx[p]! / dw[p]!;
+    out[1] = dy[p]! / dw[p]!;
+  };
+  const tol2 = tol * tol;
+  const q = [0, 0];
+  // 점 q와 선분 a-b 사이 거리의 제곱
+  const off2 = (ax: number, ay: number, bx: number, by: number): number => {
+    const vx = bx - ax;
+    const vy = by - ay;
+    const l2 = vx * vx + vy * vy;
+    let t = l2 > 0 ? ((q[0]! - ax) * vx + (q[1]! - ay) * vy) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = ax + vx * t - q[0]!;
+    const ey = ay + vy * t - q[1]!;
+    return ex * ex + ey * ey;
+  };
+  let gi = 0;
+  const minDepth = p >= 4 ? 1 : 0;
+  const last = knots[n + 1]!;
+  const piece = (s: number, a: number, ax: number, ay: number, b: number, bx: number, by: number, depth: number): void => {
+    let worst = 0;
+    let mx = 0;
+    let my = 0;
+    for (const f of [0.5, 0.25, 0.75]) {
+      at(s, a + (b - a) * f, q);
+      if (f === 0.5) {
+        mx = q[0]!;
+        my = q[1]!;
+      }
+      worst = Math.max(worst, off2(ax, ay, bx, by));
+    }
+    if (depth < 12 && (depth < minDepth || worst > tol2)) {
+      const m = (a + b) / 2;
+      piece(s, a, ax, ay, m, mx, my, depth + 1);
+      piece(s, m, mx, my, b, bx, by, depth + 1);
+      return;
+    }
+    const mid = (a + b) / 2;
+    while (gi < n && Math.abs(grev[gi + 1]! - mid) <= Math.abs(grev[gi]! - mid)) gi++;
+    emit(bx, by, gi);
+  };
+  const pa = [xs[0]!, ys[0]!];
+  const pb = [0, 0];
+  for (let s = p; s <= n; s++) {
+    const u0 = knots[s]!;
+    const u1 = knots[s + 1]!;
+    if (!(u1 > u0)) continue;
+    if (u1 >= last) {
+      pb[0] = xs[n]!;
+      pb[1] = ys[n]!;
+    } else at(s, u1, pb);
+    piece(s, u0, pa[0]!, pa[1]!, u1, pb[0]!, pb[1]!, 0);
+    pa[0] = pb[0]!;
+    pa[1] = pb[1]!;
   }
 }
 

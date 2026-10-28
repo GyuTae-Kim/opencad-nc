@@ -211,15 +211,23 @@ export interface NcRotaryOptions {
 /**
  * 화면이 띠로 알릴 해석 판단(경고와 따로 — 사용자가 바로 바꿀 수 있는 것):
  * 'lathe-auto' 선반 프로그램으로 보여 선반 모드로 읽음, 'integer-units' 소수점 없는 큰 좌표가 많음(최소 입력 단위일 수 있음),
- * 'dialect' 글로 판별한 방언(dialect)으로 읽음
+ * 'dialect' 글로 판별한 방언(dialect)으로 읽음, 'lathe-system' Fanuc 선반 G 코드 체계를 B·C로 판별함(system) 또는
+ * A로 읽었지만 B·C 체계일 수 있음(system 'A' + hints)
  */
 export interface NcNotice {
   /** missing-program = 다른 파일에 있을 프로그램을 찾지 못함(programs에 이름) */
-  kind: 'lathe-auto' | 'integer-units' | 'dialect' | 'missing-program';
+  kind: 'lathe-auto' | 'integer-units' | 'dialect' | 'missing-program' | 'lathe-system';
   dialect?: NcDialect | 'heidenhain-iso' | 'okuma';
   /** 찾지 못한 프로그램 이름·번호(O1001·SUB1·L100 — 처음 나온 차례, 20개까지) */
   programs?: string[];
+  /** lathe-system: 읽은 체계 */
+  system?: NcLatheSystem;
+  /** lathe-system(A): B·C 체계일 수 있는 표지 코드(G91·G77·G78·G79 등) */
+  hints?: string[];
 }
+
+/** Fanuc 선반 G 코드 체계(A: G90/G92/G94 단순 사이클·U/W 증분, B: G77/G78/G79·G90/G91 절대/증분, C: B + G20/G21/G24·G70/G71 inch/mm) */
+export type NcLatheSystem = 'A' | 'B' | 'C';
 
 /**
  * 기계 설정(화면의 "기계·읽기 설정" — 값은 mm, 해석기가 프로그램 단위로 바꾼다)
@@ -263,6 +271,8 @@ export interface NcProgram {
   compRuns?: NcCompRun[];
   /** 선반 모드로 읽었으면 true(X = 반지름 값, XZ 평면 단면 경로, 회전축 = Z) */
   lathe?: boolean;
+  /** Fanuc 계열 선반으로 읽었으면 그 G 코드 체계 */
+  latheSystem?: NcLatheSystem;
   /** 회전축(A·B·C) 낱말이 있었는지 */
   rotaryAxes?: boolean;
   /** 화면이 띠로 알릴 해석 판단(있을 때만) */

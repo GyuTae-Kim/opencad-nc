@@ -1070,7 +1070,13 @@ export class NcViewerApp implements PanelHost {
     else if (d.mpr) copy = new TextEncoder().encode(`${d.mpr.lines.join('\n')}\n`).buffer as ArrayBuffer;
     else return;
     // 단위·선반·회전축을 바꾸면 모양이 달라지므로 카메라를 새로 맞춘다
-    const unitsChanged = (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') || opts.lathe !== d.ncOptions.lathe || !!opts.rotary !== !!d.ncOptions.rotary || !!opts.integerUnits !== !!d.ncOptions.integerUnits || (opts.jobMain ?? d.name) !== (d.ncOptions.jobMain ?? d.name);
+    const unitsChanged =
+      (opts.units ?? 'mm') !== (d.ncOptions.units ?? 'mm') ||
+      opts.lathe !== d.ncOptions.lathe ||
+      opts.latheSystem !== d.ncOptions.latheSystem ||
+      !!opts.rotary !== !!d.ncOptions.rotary ||
+      !!opts.integerUnits !== !!d.ncOptions.integerUnits ||
+      (opts.jobMain ?? d.name) !== (d.ncOptions.jobMain ?? d.name);
     const seq = ++this.loadSeq;
     this.setBusy('다시 읽는 중', 0.05, d.name);
     try {

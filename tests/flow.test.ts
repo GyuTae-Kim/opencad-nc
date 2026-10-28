@@ -178,6 +178,33 @@ G1 X#<_last>`, { dialect: 'linuxcnc' });
     expect(p.moves.count).toBe(2);
   });
 
+  it('이 범위에 없는 지역 이름 변수(#<이름>)를 읽으면 경고(LinuxCNC는 오류) — EXISTS·부프로그램 안에서 만든 것·전역(#<_이름>)은 그대로', () => {
+    const text = `G21 G17 G90
+#<depth> = 5
+o100 sub
+  G1 X10 Z-#<depth> F100
+  o101 if [EXISTS[#<depth>]]
+    G1 X99
+  o101 endif
+  #<inner> = 2
+  G1 Y#<inner>
+o100 endsub
+G0 X0 Y0 Z1
+o100 call
+G1 Z-#<depth>
+M2`;
+    const p = run(text, { dialect: 'linuxcnc' });
+    expect(p.warnings).toEqual(['4번 줄: 지역 이름 변수 #<depth>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)']);
+    // 부프로그램 안의 #<depth>는 빈 값(Z 낱말을 뺌), EXISTS는 0이라 X99로 가지 않음, 주 프로그램에서는 5
+    expect(Array.from({ length: p.moves.count }, (_, i) => moveEnd(p.moves, i))).toEqual([
+      [0, 0, 1],
+      [10, 0, 1],
+      [10, 2, 1],
+      [10, 2, -5],
+    ]);
+    expect(run(text.replace(/#<depth>/g, '#<_depth>'), { dialect: 'linuxcnc' }).warnings).toEqual([]);
+  });
+
   it('if/elseif/else/endif', () => {
     const text = (v: number): string => `#1 = ${v}
 o1 if [#1 LT 1]
