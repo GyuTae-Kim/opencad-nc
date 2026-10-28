@@ -20,8 +20,13 @@
  *   첫 점 뒤 마지막으로 본 방향 — 그것이 접선이었으면 접선. Shift는 앱 onKey가 코어보다 먼저 shiftDown을 불러 잠그고(코어는 잠금이 있으면
  *   Shift를 넘긴다) 떼면 shiftUp이 푼다(코어는 제가 잠근 Shift만 푼다). 툴팁·안내·결과는 "접선 방향"이라 적는다.
  * 둘째 점을 찍거나 측정을 지우거나 측정을 끄면 코어가 잠금을 푼다.
+ * - 코어 거리 글상자 비키기(코어 0.13.0 setMeasureLabelAvoid): 툴팁이 먼저 서려는 자리(placeTip의 첫 자리 — 점 오른쪽 아래, 코어 글상자와
+ *   상관없이 정해진다)를 캔버스 기준으로 넘겨 코어 글상자가 먼저 비키게 하고, 그래도 겹치면 placeTip이 예전처럼 툴팁을 옮긴다(둘이 서로 쫓지 않는다).
+ *   휴대폰 정밀 조준 중에는 십자선(커서 둘레 반지름)과 손가락 자리도 넘긴다(setAim — 십자선을 옮기는 같은 처리 안에서, 같은 프레임에).
+ *   툴팁을 숨기고 조준도 하지 않으면 null.
  */
-import type { MeasureHoverSnap, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
+import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
+import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
 import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, type LockName } from './measure';
@@ -31,7 +36,17 @@ type V3 = [number, number, number];
 /** 이 모듈이 쓰는 뷰어 기능(시험에서 가짜로 바꿀 수 있게) */
 export type LockViewer = Pick<
   Viewer3d,
-  'canvas' | 'measureMode' | 'measurePointCount' | 'measurePoints' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'measureLabelRect' | 'setMeasureInferenceLock' | 'project'
+  | 'canvas'
+  | 'measureMode'
+  | 'measurePointCount'
+  | 'measurePoints'
+  | 'measureHoverSnap'
+  | 'measureHoverLock'
+  | 'measureInferenceLock'
+  | 'measureLabelRect'
+  | 'setMeasureInferenceLock'
+  | 'setMeasureLabelAvoid'
+  | 'project'
 >;
 
 export interface MeasureLockHost {
@@ -109,6 +124,12 @@ export class MeasureLock {
   private firstKey = '';
   /** 접선 잠금으로 찍은 둘째 점을 결과에서 알아보려고 남기는 방향(다른 잠금·첫 점이 바뀌면 지운다) */
   private resultTangent: V3 | null = null;
+  /** 코어 글상자가 비킬 툴팁 첫 자리(캔버스 기준, 툴팁을 숨겼으면 null) */
+  private tipAvoid: MeasureLabelRect | null = null;
+  /** 코어 글상자가 비킬 손가락 자리(캔버스 기준, 정밀 조준 중이 아니면 null) */
+  private aimAvoid: MeasureLabelRect | null = null;
+  /** 코어에 마지막으로 준 비킬 자리(같으면 다시 주지 않는다) */
+  private avoidKey = 'null';
 
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
@@ -208,8 +229,10 @@ export class MeasureLock {
     const tip = snap && snap.locked && v!.measureHoverSnap?.snap === 'parallel' && v!.measureInferenceLock && this.tangentLocked(v!.measureInferenceLock) ? { ...snap, name: TANGENT_LABEL } : snap;
     const hv = on ? v!.measureHoverSnap : null;
     const sp = tip && hv ? v!.project(hv.point) : null;
-    if (!tip || !sp || !sp.onScreen) this.tip.hidden = true;
-    else {
+    if (!tip || !sp || !sp.onScreen) {
+      this.tip.hidden = true;
+      this.tipAvoid = null;
+    } else {
       this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
       this.tip.classList.toggle('locked', tip.locked);
       this.tip.hidden = false;
@@ -217,13 +240,18 @@ export class MeasureLock {
       const l = this.host.layer.getBoundingClientRect();
       const ox = c.left - l.left;
       const oy = c.top - l.top;
+      const w = this.tip.offsetWidth || 80;
+      const ht = this.tip.offsetHeight || 20;
+      // 코어 글상자가 비킬 자리: 툴팁의 첫 자리(점 오른쪽 아래 — 캔버스 기준). 코어 글상자와 상관없이 정해지므로 서로 쫓지 않는다
+      this.tipAvoid = { x: Math.round(sp.x + TIP_GAP), y: Math.round(sp.y + TIP_GAP), width: Math.round(w), height: Math.round(ht) };
       // 코어 거리 글상자(캔버스 기준 — 지난 그리기)를 층 기준으로
       const r = v!.measureLabelRect;
       const avoid = r ? { x: ox + r.x, y: oy + r.y, width: r.width, height: r.height } : null;
-      const at = placeTip(ox + sp.x, oy + sp.y, this.tip.offsetWidth || 80, this.tip.offsetHeight || 20, l, avoid);
+      const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid);
       this.tip.style.left = `${Math.round(at.x)}px`;
       this.tip.style.top = `${Math.round(at.y)}px`;
     }
+    this.pushAvoid();
     const lock = this.lock;
     if (lock) this.dropFlash(NO_LOCK);
     const directing = this.directing;
@@ -342,14 +370,49 @@ export class MeasureLock {
     else if (v.measureHoverLock) this.seenTangent = null;
   }
 
-  /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림·접선 기록을 거둔다 */
+  /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림·접선 기록·코어 글상자가 비킬 자리를 거둔다 */
   reset(): void {
     this.tip.hidden = true;
+    this.tipAvoid = null;
+    this.aimAvoid = null;
+    this.pushAvoid();
     this.dropFlash(null);
     this.forgetTangent();
     this.seenTangent = null;
     this.firstKey = '';
     this.schedule();
+  }
+
+  /**
+   * 정밀 조준 십자선을 옮겼다(손가락 자리 — 화면 좌표, 조준을 마치면 null — aim.ts onMove). 십자선을 옮기는 같은 처리 안에서 코어에
+   * 십자선(커서 둘레 반지름)과 손가락 둘레 사각형을 넘겨 코어 거리 글상자가 같은 프레임에 비키게 한다
+   */
+  setAim(finger: { x: number; y: number } | null): void {
+    const v = this.host.viewer();
+    if (!finger || !v) this.aimAvoid = null;
+    else {
+      const c = v.canvas.getBoundingClientRect();
+      const half = AIM_FINGER_PX / 2;
+      this.aimAvoid = { x: Math.round(finger.x - c.left - half), y: Math.round(finger.y - c.top - half), width: AIM_FINGER_PX, height: AIM_FINGER_PX };
+    }
+    this.pushAvoid();
+  }
+
+  /** 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리, 조준 중이면 커서 둘레)를 코어에 준다 — 바뀌었을 때만, 둘 다 없으면 null */
+  private pushAvoid(): void {
+    const v = this.host.viewer();
+    if (!v) return;
+    const rects = [this.aimAvoid, this.tipAvoid].filter((r): r is MeasureLabelRect => !!r);
+    const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid ? { rects, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
+    const key = JSON.stringify(avoid);
+    if (key === this.avoidKey) return;
+    this.avoidKey = key;
+    v.setMeasureLabelAvoid(avoid);
+  }
+
+  /** 자동 확인용: 코어에 준 비킬 자리 */
+  get labelAvoid(): MeasureLabelAvoid | null {
+    return JSON.parse(this.avoidKey) as MeasureLabelAvoid | null;
   }
 
   private after(): void {

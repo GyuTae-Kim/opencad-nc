@@ -67,6 +67,11 @@ class FakeViewer {
   project(): { x: number; y: number; onScreen: boolean } {
     return { x: 100, y: 50, onScreen: true };
   }
+  /** 코어 0.13.0 setMeasureLabelAvoid로 받은 것(차례대로) */
+  readonly avoids: unknown[] = [];
+  setMeasureLabelAvoid(a: unknown): void {
+    this.avoids.push(a);
+  }
 }
 
 function setup(touch = false) {
@@ -151,6 +156,37 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     v.labelRect = null;
     lock.update();
     expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
+  });
+
+  it('코어 0.13.0: 툴팁 첫 자리(점 오른쪽 아래, 캔버스 기준)를 코어 글상자가 비킬 자리로 넘기고, 조준 중이면 손가락·커서 둘레도, 바뀔 때만 준다', () => {
+    const { v, lock } = setup(true);
+    v.hover = { point: [1, 2, 3], snap: 'axis', axis: 'y', direction: [0, 1, 0] };
+    lock.update();
+    const tip = { x: 112, y: 62, width: 80, height: 20 };
+    expect(v.avoids).toEqual([{ rects: [tip] }]);
+    expect(lock.labelAvoid).toEqual({ rects: [tip] });
+    // 코어 글상자가 옮겨도 넘기는 자리는 툴팁 첫 자리 그대로(서로 쫓지 않는다) — 같으면 다시 주지 않는다
+    v.labelRect = { x: 110, y: 70, width: 200, height: 40 };
+    lock.update();
+    lock.update();
+    expect(v.avoids).toHaveLength(1);
+    // 정밀 조준(손가락 (130, 180), 십자선은 그 위): 손가락 둘레 44화소 사각형과 십자선 반지름 24
+    lock.setAim({ x: 130, y: 180 });
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }, tip], pointerRadius: 24 });
+    // 툴팁을 숨기면(붙잡지 않은 점) 조준 자리만
+    v.hover = { point: [1, 2, 3], snap: null };
+    lock.update();
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }], pointerRadius: 24 });
+    // 조준을 마치면 끈다(0.12.0과 같은 자리)
+    lock.setAim(null);
+    expect(v.avoids.at(-1)).toBeNull();
+    expect(lock.labelAvoid).toBeNull();
+    // 측정을 끄거나 문서를 바꾸면 거둔다
+    v.hover = { point: [1, 2, 3], snap: 'endpoint' };
+    lock.update();
+    expect(v.avoids.at(-1)).toEqual({ rects: [tip] });
+    lock.reset();
+    expect(v.avoids.at(-1)).toBeNull();
   });
 });
 

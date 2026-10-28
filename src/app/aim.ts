@@ -33,6 +33,10 @@ export const AIM_OFFSET_PX = 64;
  * 손가락이 6~9화소 떨려도 코어는 돌리지 않으므로 길게 누르기(정밀 조준)도 그대로 시작한다
  */
 export const AIM_SLOP_PX = TOUCH_DRAG_START_PX;
+/** 십자선 반지름(화소 — .aim-reticle 48화소의 반): 코어 측정 거리 글상자가 커서(십자선 가운데) 둘레로 비킬 거리(코어 0.13.0 pointerRadius) */
+export const AIM_RETICLE_RADIUS = 24;
+/** 손가락 자리로 볼 정사각형 한 변(화소): 코어 측정 거리 글상자가 비킬 손가락 둘레 */
+export const AIM_FINGER_PX = 44;
 
 export interface AimOptions {
   /** 조준을 받을 때인지(측정 중) */
@@ -41,6 +45,11 @@ export interface AimOptions {
   layer: HTMLElement;
   /** 조준 시작·끝 알림 */
   onChange?: (aiming: boolean) => void;
+  /**
+   * 십자선을 옮길 때마다(코어에 그 자리 움직임을 보내기 바로 전) 십자선 가운데와 손가락 자리(화면 좌표), 조준을 마치면 null —
+   * 코어 측정 거리 글상자가 같은 프레임에 비키게(measure-lock.ts setAim)
+   */
+  onMove?: (at: { x: number; y: number } | null, finger: { x: number; y: number } | null) => void;
 }
 
 interface Rect {
@@ -232,6 +241,7 @@ export class TouchAim {
     this.at = at;
     const lr = this.opts.layer.getBoundingClientRect();
     this.reticle.style.transform = `translate(${at.x - lr.left}px, ${at.y - lr.top}px)`;
+    this.opts.onMove?.({ ...at }, { x, y });
     if (this.heldId !== null) this.relay('pointermove', this.heldId, at, AIM_POINTER_TYPE);
   }
 
@@ -239,6 +249,7 @@ export class TouchAim {
   private hide(): void {
     this.aimOn = false;
     this.reticle.hidden = true;
+    this.opts.onMove?.(null, null);
     if (this.heldId !== null) this.relay('pointerleave', this.heldId, this.at, AIM_POINTER_TYPE);
     this.opts.onChange?.(false);
   }

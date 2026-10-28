@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOUCH_DRAG_START_PX } from 'opencad-viewer3d';
-import { AIM_HOLD_MS, AIM_OFFSET_PX, AIM_POINTER_TYPE, AIM_SLOP_PX, TouchAim, aimPoint, touchPointerEvent } from '../../src/app/aim';
+import { AIM_HOLD_MS, AIM_OFFSET_PX, AIM_POINTER_TYPE, AIM_RETICLE_RADIUS, AIM_SLOP_PX, TouchAim, aimPoint, touchPointerEvent } from '../../src/app/aim';
 
 interface Seen {
   type: string;
@@ -281,5 +281,24 @@ describe('정밀 조준(터치 길게 누르기)', () => {
     canvas.dispatchEvent(e);
     vi.advanceTimersByTime(AIM_HOLD_MS * 2);
     expect(aim.aiming).toBe(false);
+  });
+
+  it('십자선을 옮길 때마다 코어에 움직임을 보내기 전에 십자선·손가락 자리를 알리고, 조준을 마치면 null(코어 글상자 비키기 — 14차)', () => {
+    aim.dispose();
+    const moves: ({ at: { x: number; y: number } | null; finger: { x: number; y: number } | null; seen: number })[] = [];
+    aim = new TouchAim(canvas, { enabled: () => true, layer, onMove: (at, finger) => moves.push({ at, finger, seen: seen.length }) });
+    fire('pointerdown', 100, 200);
+    vi.advanceTimersByTime(AIM_HOLD_MS);
+    expect(moves.map((m) => [m.at, m.finger])).toEqual([[{ x: 100, y: 200 - AIM_OFFSET_PX }, { x: 100, y: 200 }]]);
+    // 펜 움직임(코어 미리 보기)보다 먼저 — 같은 처리 안에서 코어 글상자가 비킨다
+    expect(seen[moves[0]!.seen]).toMatchObject({ type: 'pointermove', pointerType: 'pen' });
+    fire('pointermove', 130, 230);
+    expect(moves.at(-1)).toMatchObject({ at: { x: 130, y: 230 - AIM_OFFSET_PX }, finger: { x: 130, y: 230 } });
+    // 위 가장자리에서는 십자선이 멈춰도 손가락 자리는 그대로
+    fire('pointermove', 130, 20);
+    expect(moves.at(-1)).toMatchObject({ at: { x: 130, y: 0 }, finger: { x: 130, y: 20 } });
+    fire('pointerup', 130, 20);
+    expect(moves.at(-1)).toMatchObject({ at: null, finger: null });
+    expect(AIM_RETICLE_RADIUS * 2).toBe(48);
   });
 });

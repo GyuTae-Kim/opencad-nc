@@ -1328,9 +1328,11 @@ export class NcViewerApp implements PanelHost {
   private attachMeasure(): void {
     const v = this.viewer;
     const m = this.measureTools;
-    if (!v || !m || !this.mlock || this.aim) return;
-    this.aim = new m.TouchAim(v.canvas, { enabled: () => !!this.doc && v.measureMode && !this.busy, layer: this.aimLayer });
-    this.mlock.attach(v.canvas);
+    const lock = this.mlock;
+    if (!v || !m || !lock || this.aim) return;
+    // 십자선·손가락 자리는 코어 거리 글상자가 비키게 잠금 손잡이가 코어에 넘긴다(코어 0.13.0 setMeasureLabelAvoid)
+    this.aim = new m.TouchAim(v.canvas, { enabled: () => !!this.doc && v.measureMode && !this.busy, layer: this.aimLayer, onMove: (_at, finger) => lock.setAim(finger) });
+    lock.attach(v.canvas);
   }
 
   private setDoc(d: NcDoc): void {
