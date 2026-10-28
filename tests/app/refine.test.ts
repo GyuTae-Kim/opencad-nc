@@ -234,6 +234,27 @@ describe('붙잡기 다듬기(refineSnap)', () => {
     expect(refineSnap(input('perpendicular', id, arc, chord, mid), nc)).toBeNull();
   });
 
+  it('모르는 종류(코어가 뒤에 더할 교차점 등)는 풀지 않는다(null — 코어 점 그대로)', () => {
+    const e = input('onEdge', id, arc, chord, onChord(0.5), [0, 0, 0]);
+    for (const kind of ['intersection', 'vertex', 'axis', ''])
+      expect(refineSnap({ ...e, kind } as unknown as SnapRefineInput, nc)).toBeNull();
+  });
+
+  it('수직 발은 커서 광선과 상관없고, 코어 점이 토막 끝으로 자른 점(열린 수직 발 — 코어 0.15.0)이어도 원 위 정확한 발', () => {
+    const first = [20 + 60 * Math.cos((122 * Math.PI) / 180), 20 + 60 * Math.sin((122 * Math.PI) / 180), 0];
+    const rays = [
+      { origin: [0, 0, 100], dir: [0, 0, -1] },
+      { origin: [500, -300, 7], dir: [Math.SQRT1_2, 0, -Math.SQRT1_2] },
+    ];
+    const got = rays.map((ray) => refineSnap(input('perpendicular', id, arc, chord, onChord(0.4), first, ray), nc)!);
+    expect(dist(got[0]!, at(122))).toBeLessThan(1e-9);
+    expect(got[1]).toEqual(got[0]);
+    // 발(122°)이 이웃 토막(120° → 115°)에 있고 코어 점은 그 토막의 끝(120°)으로 잘렸다
+    const next = [at(120), at(115)];
+    const open = refineSnap({ ...input('perpendicular', id, arc, next, next[0]!, first), open: true } as SnapRefineInput, nc)!;
+    expect(dist(open, at(122))).toBeLessThan(1e-9);
+  });
+
   it('토막 가운데 점: 토막 두 끝 매개변수 가운데의 원 위 점, 직선 이동·모르는 묶음·원호 밖 토막은 null', () => {
     // 토막 끝은 장면 float32 좌표라 매개변수가 그만큼(1e-7 안팎) 흔들린다 — 점은 원 위 그대로
     const qm = refineSnap(input('midpoint', id, arc, chord, onChord(0.5)), nc)!;
