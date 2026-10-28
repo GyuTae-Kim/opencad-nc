@@ -130,15 +130,18 @@ function holedIndices(g: HeightGrid, i0: number, i1: number, j0: number, j1: num
     break;
   }
   if (!any) return null;
-  const out: number[] = [];
+  // 크기를 아는 배열에 바로 채운다(JS 배열에 쌓아 옮기면 관통 조각이 많은 판에서 그물 시간이 눈에 띄게 늘었다).
+  // 왼쪽 두 마디(a·d)의 관통은 앞 칸의 오른쪽 두 마디(b·e)라 다시 보지 않는다
+  const out = new Uint32Array((i1 - i0) * (j1 - j0) * 6);
+  let n = 0;
   let removed = 0;
   let sig = 0;
-  for (let j = j0; j < j1; j++)
+  for (let j = j0; j < j1; j++) {
+    let ta = throughAt(g, j * nx + i0, bz);
+    let td = throughAt(g, (j + 1) * nx + i0, bz);
     for (let i = i0; i < i1; i++) {
       const k = j * nx + i;
-      const ta = throughAt(g, k, bz);
       const tb = throughAt(g, k + 1, bz);
-      const td = throughAt(g, k + nx, bz);
       const te = throughAt(g, k + nx + 1, bz);
       const a = (j - j0) * cols + (i - i0);
       const b = a + 1;
@@ -147,14 +150,25 @@ function holedIndices(g: HeightGrid, i0: number, i1: number, j0: number, j1: num
       if (ta && tb && te) {
         removed++;
         sig = (Math.imul(sig, 31) + k * 2 + 1) | 0;
-      } else out.push(a, b, e);
+      } else {
+        out[n++] = a;
+        out[n++] = b;
+        out[n++] = e;
+      }
       if (ta && te && td) {
         removed++;
         sig = (Math.imul(sig, 31) + k * 2 + 2) | 0;
-      } else out.push(a, e, d);
+      } else {
+        out[n++] = a;
+        out[n++] = e;
+        out[n++] = d;
+      }
+      ta = tb;
+      td = te;
     }
+  }
   if (!removed) return null;
-  return { indices: Uint32Array.from(out), holes: (Math.imul(sig, 31) + removed) | 0 || 1 };
+  return { indices: out.slice(0, n), holes: (Math.imul(sig, 31) + removed) | 0 || 1 };
 }
 
 /** 조각이 한 번도 깎이지 않았는지(가장자리 마디 포함) */

@@ -367,6 +367,16 @@ describe('관통한 곳은 구멍으로(13차)', () => {
     // 남은 삼각형은 세 마디가 모두 바닥이 아니다(구멍 벽 칸은 남는다)
     const z = (v: number): number => t.positions[v * 3 + 2]! + o[2]!;
     for (let k = 0; k < t.indices!.length; k += 3) expect([t.indices![k]!, t.indices![k + 1]!, t.indices![k + 2]!].every((v) => z(v) <= bz)).toBe(false);
+    // 남은 번호 = gridIndices에서 세 마디가 모두 관통한 삼각형만 뺀 것(차례 그대로), 워커가 넘기는 버퍼는 꼭 맞는 크기
+    const thr = (v: number): boolean => {
+      const k = Math.floor(v / t.cols) * spec.nx + (v % t.cols);
+      return g.h[k]! <= bz && g.mark[k] !== MARK_OUTSIDE;
+    };
+    const full = gridIndices(t.cols, t.rows);
+    const keep: number[] = [];
+    for (let k = 0; k < full.length; k += 3) if (!(thr(full[k]!) && thr(full[k + 1]!) && thr(full[k + 2]!))) keep.push(full[k]!, full[k + 1]!, full[k + 2]!);
+    expect(Array.from(t.indices!)).toEqual(keep);
+    expect(t.indices!.buffer.byteLength).toBe(t.indices!.byteLength);
     // 바닥은 뺀 삼각형 자리만 비운다
     const b = buildBottom(g, o);
     expect(b.indices.length).toBeGreaterThan(6);
