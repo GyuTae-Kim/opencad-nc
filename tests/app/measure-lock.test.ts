@@ -1,53 +1,56 @@
 // @vitest-environment jsdom
 /**
- * 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts): 코어 0.10.0 추론 잠금을 흉내 낸 가짜 뷰어로
- * 툴팁 글, 잠금 단추·화살표, Shift로 선분 위 점 붙잡기 잠그기(첫 점에서 선분을 따라 그 끝을 가리킬 때), 잠글 방향이 없다는 알림과 거두기.
+ * 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts)의 앱 쪽 손잡이: 코어 0.12.0 잠금 계약(measureHoverLock = Shift·setMeasureInferenceLock(true)가
+ * 잠글 방향, 없으면 setMeasureInferenceLock(true)만 첫 점 뒤 마지막으로 본 방향)을 따르는 가짜 뷰어로
+ * 툴팁 글·자리(코어 거리 글상자 피하기), 상태 줄 안내, 잠금 단추·화살표, 잠글 방향이 없다는 알림과 거두기.
+ * 실제 코어 판정(모서리 끝에서 바로 Shift 등)은 measure-lock-core.test.ts가 본다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeasureHoverSnap } from 'opencad-viewer3d';
+import type { MeasureHoverSnap, MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
-import { LOCK_HINTS, LOCK_KEYS_HINT, NO_LOCK_MOUSE, NO_LOCK_TOUCH, lockHint, lockName } from '../../src/app/measure';
-import { MeasureLock, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint, lockName } from '../../src/app/measure';
+import { MeasureLock, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 
 type Dir = [number, number, number];
 interface Lock {
   kind: 'axis' | 'parallel' | 'perpendicular';
   axis?: 'x' | 'y' | 'z';
   direction: Dir;
-  source: 'shift' | 'api';
 }
+const X: Lock = { kind: 'axis', axis: 'x', direction: [1, 0, 0] };
+const Z: Lock = { kind: 'axis', axis: 'z', direction: [0, 0, 1] };
 
-/** 코어 측정 잠금 흉내: true는 지금 미리 보기의 방향 추론, 없으면 첫 점 뒤 마지막으로 본 방향(lastLockable) */
+/** 코어 0.12.0 잠금 계약 흉내: 판정(hoverLock·lastLockable)은 시험이 정하고, Shift는 shift()로 코어처럼 잠그고 푼다 */
 class FakeViewer {
   canvas = document.createElement('canvas');
   measureMode = true;
   measurePointCount = 1;
-  /** 잠그지 않았을 때 미리 보기 */
-  base: MeasureHoverSnap | null = null;
   hover: MeasureHoverSnap | null = null;
-  lock: Lock | null = null;
-  lastLockable: Omit<Lock, 'source'> | null = null;
-  /** 잠갔을 때 미리 보기(잠근 선으로 옮긴 점) */
-  lockedHover: (l: Lock) => MeasureHoverSnap | null = () => null;
-  renders = 0;
+  /** 지금 미리 보기에서 잠글 방향(코어가 구한 measureHoverLock) */
+  hoverLock: Lock | null = null;
+  lastLockable: Lock | null = null;
+  lock: (Lock & { source: 'shift' | 'api' }) | null = null;
+  labelRect: MeasureLabelRect | null = null;
   get measureHoverSnap(): MeasureHoverSnap | null {
     return this.hover;
   }
-  get measureInferenceLock(): Lock | null {
+  get measureHoverLock(): Lock | null {
+    return this.measureMode && this.measurePointCount === 1 ? this.hoverLock : null;
+  }
+  get measureInferenceLock(): (Lock & { source: 'shift' | 'api' }) | null {
     return this.lock;
+  }
+  get measureLabelRect(): MeasureLabelRect | null {
+    return this.labelRect;
   }
   setMeasureInferenceLock(l: boolean | 'x' | 'y' | 'z' | null): boolean {
     if (l === false || l === null) {
       this.lock = null;
-      this.hover = this.base;
       return false;
     }
     if (!this.measureMode) return false;
     if (l === true) {
-      if (this.measurePointCount !== 1) return false;
-      const h = this.hover;
-      const cur = h?.direction && (h.snap === 'axis' || h.snap === 'parallel' || h.snap === 'perpendicular') ? { kind: h.snap, ...(h.axis ? { axis: h.axis } : {}), direction: h.direction as Dir } : null;
-      const c = cur ?? this.lastLockable;
+      const c = this.measurePointCount === 1 ? (this.hoverLock ?? this.lastLockable) : null;
       if (!c) return false;
       this.lock = { ...c, source: 'api' };
       return true;
@@ -55,9 +58,11 @@ class FakeViewer {
     this.lock = { kind: 'axis', axis: l, direction: l === 'x' ? [1, 0, 0] : l === 'y' ? [0, 1, 0] : [0, 0, 1], source: 'api' };
     return true;
   }
-  renderNow(): void {
-    this.renders++;
-    this.hover = this.lock ? this.lockedHover(this.lock) : this.base;
+  /** 코어 Shift: 누르는 순간 measureHoverLock만(마지막으로 본 방향은 쓰지 않는다), 떼면 Shift 잠금만 푼다 */
+  shift(down: boolean): void {
+    if (down) {
+      if (!this.lock && this.measureHoverLock) this.lock = { ...this.measureHoverLock, source: 'shift' };
+    } else if (this.lock?.source === 'shift') this.lock = null;
   }
   project(): { x: number; y: number; onScreen: boolean } {
     return { x: 100, y: 50, onScreen: true };
@@ -67,6 +72,8 @@ class FakeViewer {
 function setup(touch = false) {
   document.body.innerHTML = '';
   const layer = document.createElement('div');
+  // 3D 보기 층 800×600(jsdom은 크기를 재지 않는다)
+  layer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON() {} });
   const bar = document.createElement('div');
   document.body.append(layer, bar);
   const v = new FakeViewer();
@@ -76,6 +83,7 @@ function setup(touch = false) {
   return { v, lock, changed, bar, layer };
 }
 
+/** 첫 점에서 모서리를 따라 그 끝을 가리킨 끝점 붙잡기(방향 추론 없음 — 코어 0.12.0이 그 모서리 방향을 잠글 방향으로 준다) */
 const END: MeasureHoverSnap = { point: [50, 0, 0], snap: 'endpoint' };
 
 beforeEach(() => {
@@ -86,15 +94,19 @@ afterEach(() => {
 });
 
 describe('잠금 글', () => {
-  it('잠근 방향 이름과 안내(첫 점 뒤 결과 전만, 손가락 기기는 단추라 키 안내 없음)', () => {
+  it('잠근 방향 이름과 안내: 첫 점 뒤 결과 전만, 잠갔으면 그 방향, Shift로 잠글 방향이 있으면 그 방향, 없으면 화살표(손가락 기기는 단추라 키 안내 없음)', () => {
     expect(lockName({ kind: 'axis', axis: 'z' })).toBe('z');
     expect(lockName({ kind: 'parallel' })).toBe('parallel');
     expect(lockName({ kind: 'perpendicular' })).toBe('perpendicular');
     expect(lockName(null)).toBeNull();
-    expect(lockHint(1, false, null)).toBe(LOCK_KEYS_HINT);
+    expect(lockHint(1, false, null)).toBe(ARROW_LOCK_HINT);
+    expect(lockHint(1, false, null, false, 'x')).toBe(SHIFT_LOCK_HINTS.x);
+    expect(lockHint(1, false, null, false, 'parallel')).toBe('Shift로 나란한 방향 잠그기');
+    expect(lockHint(1, false, 'z', false, 'x')).toBe(LOCK_HINTS.z);
     expect(lockHint(1, false, null, true)).toBeNull();
+    expect(lockHint(1, false, null, true, 'x')).toBeNull();
     expect(lockHint(1, false, 'x', true)).toBe(LOCK_HINTS.x);
-    expect(lockHint(0, false, null)).toBeNull();
+    expect(lockHint(0, false, null, false, 'x')).toBeNull();
     expect(lockHint(2, true, 'x')).toBeNull();
   });
 
@@ -106,28 +118,76 @@ describe('잠금 글', () => {
   });
 });
 
-describe('측정 방향 잠금', () => {
-  it('툴팁·잠금 단추는 지금 상태를 따르고, 찍은 점 수·잠금이 바뀌면 앱에 알린다', () => {
-    const { v, lock, changed } = setup();
+describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
+  const L = { width: 800, height: 600 };
+  it('점 오른쪽 아래가 먼저, 층 오른쪽·아래 가장자리에서는 왼쪽·위로(예전과 같음)', () => {
+    expect(placeTip(100, 50, 80, 20, L, null)).toEqual({ x: 112, y: 62 });
+    expect(placeTip(750, 50, 80, 20, L, null)).toEqual({ x: 658, y: 62 });
+    expect(placeTip(100, 590, 80, 20, L, null)).toEqual({ x: 112, y: 558 });
+    expect(placeTip(750, 590, 80, 20, L, null)).toEqual({ x: 658, y: 558 });
+  });
+  it('거리 글상자와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로, 겹치지 않는 곳이 없으면 층 안인 첫 자리', () => {
+    // 첫 점이 커서 아래(위로 재기): 글상자가 커서 오른쪽 아래에 걸린다
+    const label = { x: 110, y: 70, width: 200, height: 40 };
+    expect(placeTip(100, 50, 80, 20, L, label)).toEqual({ x: 8, y: 62 });
+    // 왼쪽 아래도 걸리면 오른쪽 위
+    expect(placeTip(100, 50, 80, 20, L, { x: 0, y: 70, width: 400, height: 40 })).toEqual({ x: 112, y: 18 });
+    // 오른쪽 가장자리: 왼쪽 아래가 걸리고 오른쪽 위는 층 밖이면 왼쪽 위
+    expect(placeTip(750, 50, 80, 20, L, { x: 600, y: 60, width: 150, height: 30 })).toEqual({ x: 658, y: 18 });
+    // 붙어 있기만 하면(경계가 맞닿음) 겹치지 않는다
+    expect(placeTip(100, 50, 80, 20, L, { x: 192, y: 62, width: 50, height: 20 })).toEqual({ x: 112, y: 62 });
+    // 네 자리가 모두 걸리면 층 안인 첫 자리(오른쪽 아래)
+    expect(placeTip(100, 50, 80, 20, L, { x: 0, y: 0, width: 800, height: 600 })).toEqual({ x: 112, y: 62 });
+  });
+  it('update: 코어가 지난 프레임에 그린 글상자와 겹치면 툴팁을 옮기고, 글상자가 없으면 제자리', () => {
+    const { v, lock } = setup();
     v.hover = { point: [1, 2, 3], snap: 'axis', axis: 'y', direction: [0, 1, 0] };
     lock.update();
-    expect(lock.snapshot()).toEqual({ tip: 'Y축 방향', flash: null, lock: null, button: true });
+    // 가짜 점 자리 (100, 50), jsdom 툴팁 크기 80×20(재지 못하면 쓰는 값)
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
+    v.labelRect = { x: 110, y: 70, width: 200, height: 40 };
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 8, y: 62 });
+    v.labelRect = null;
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
+  });
+});
+
+describe('측정 방향 잠금', () => {
+  it('툴팁·잠금 단추는 지금 상태를 따르고, 찍은 점 수·잠금·Shift로 잠글 방향이 바뀌면 앱에 알린다', () => {
+    const { v, lock, changed } = setup();
+    v.hover = { point: [1, 2, 3], snap: 'axis', axis: 'y', direction: [0, 1, 0] };
+    v.hoverLock = { kind: 'axis', axis: 'y', direction: [0, 1, 0] };
+    lock.update();
+    expect(lock.snapshot()).toMatchObject({ tip: 'Y축 방향', flash: null, lock: null, hoverLock: 'y', button: true });
     expect(changed).toHaveBeenCalledTimes(1);
     lock.update();
     expect(changed).toHaveBeenCalledTimes(1);
-    // 첫 점 전: 단추 숨김
-    v.measurePointCount = 0;
+    // 모서리 끝을 가리킴: 툴팁은 끝점, Shift로 잠글 방향은 그 모서리(X축) — 상태 줄을 다시 그린다
     v.hover = END;
+    v.hoverLock = X;
     lock.update();
-    expect(lock.snapshot()).toMatchObject({ tip: '끝점', button: false });
+    expect(lock.snapshot()).toMatchObject({ tip: '끝점', hoverLock: 'x' });
     expect(changed).toHaveBeenCalledTimes(2);
+    // 잠그면 Shift로 잠글 방향은 따로 알리지 않는다(잠근 방향)
+    v.shift(true);
+    lock.update();
+    expect(lock.snapshot()).toMatchObject({ lock: 'x', hoverLock: null });
+    expect(changed).toHaveBeenCalledTimes(3);
+    v.shift(false);
+    // 첫 점 전: 단추 숨김, Shift로 잠글 방향도 없음
+    v.measurePointCount = 0;
+    lock.update();
+    expect(lock.snapshot()).toMatchObject({ tip: '끝점', button: false, hoverLock: null });
+    expect(changed).toHaveBeenCalledTimes(4);
     // 측정을 끄면 툴팁도 없다
     v.measureMode = false;
     lock.update();
     expect(lock.snapshot().tip).toBeNull();
   });
 
-  it('화살표: 축 잠그기·같은 키로 풀기, ↓는 지금 방향(없으면 마지막으로 본 방향)', () => {
+  it('화살표: 축 잠그기·같은 키로 풀기, ↓는 코어가 정한 방향(없으면 마지막으로 본 방향)', () => {
     const { v, lock } = setup();
     lock.arrow('x');
     expect(lock.lock).toBe('x');
@@ -137,53 +197,45 @@ describe('측정 방향 잠금', () => {
     lock.arrow('z');
     expect(lock.lock).toBeNull();
     v.hover = { point: [0, 5, 0], snap: 'parallel', direction: [0.6, 0.8, 0] };
+    v.hoverLock = { kind: 'parallel', direction: [0.6, 0.8, 0] };
     lock.arrow(null);
     expect(lock.lock).toBe('parallel');
     lock.arrow(null);
     expect(lock.lock).toBeNull();
+    // 미리 보기에 잠글 방향이 없으면 마지막으로 본 방향
+    v.hoverLock = null;
+    v.lastLockable = Z;
+    lock.arrow(null);
+    expect(lock.lock).toBe('z');
+    lock.arrow(null);
     // 첫 점 전에는 아무것도 하지 않는다
     v.measurePointCount = 0;
     lock.arrow('x');
     expect(lock.lock).toBeNull();
   });
 
-  it('Shift: 첫 점에서 선분을 따라 그 끝(끝점 붙잡기)을 가리키면 마지막으로 본 방향이 그 점을 지날 때 잠그고, 떼면 푼다', () => {
+  it('Shift는 코어가 잠그고 푼다: 앱의 잠금 단추로 건 잠금(api)은 Shift를 누르고 떼도 그대로', () => {
     const { v, lock } = setup();
-    // 선분 몸통을 지나며 X축 방향을 봤고, 지금은 그 끝점 위(방향 추론 없음 — 코어는 Shift로 잠그지 않는다)
-    v.lastLockable = { kind: 'axis', axis: 'x', direction: [1, 0, 0] };
-    v.base = v.hover = END;
-    v.lockedHover = (l) => ({ point: [50, 0, 0], snap: 'axis', axis: l.axis, direction: l.direction, locked: true });
-    lock.shiftDown();
+    v.hover = END;
+    v.hoverLock = X;
+    expect(lock.toggle()).toBe(true);
+    expect(v.lock?.source).toBe('api');
+    v.shift(true);
+    v.shift(false);
+    lock.update();
     expect(lock.lock).toBe('x');
-    expect(lock.snapshot().tip).toBe('X축 방향 · 잠금');
-    expect(v.renders).toBe(1);
-    lock.shiftUp();
-    expect(lock.lock).toBeNull();
   });
 
-  it('Shift: 마지막으로 본 방향이 그 점을 지나지 않으면(코어가 점을 선으로 옮김 — from) 잠그지 않는다', () => {
-    const { v, lock } = setup();
-    v.lastLockable = { kind: 'axis', axis: 'z', direction: [0, 0, 1] };
-    v.base = v.hover = END;
-    v.lockedHover = (l) => ({ point: [0, 0, 0], snap: 'axis', axis: l.axis, direction: l.direction, locked: true, from: [50, 0, 0], fromSnap: 'endpoint' });
-    lock.shiftDown();
+  it('잠금 단추: 모서리 끝에서 그 모서리를 따라 가리켰으면(마지막으로 본 방향 없이도) 코어가 정한 그 모서리 방향을 잠근다', () => {
+    const { v, lock } = setup(true);
+    v.hover = END;
+    v.hoverLock = X;
+    expect(v.lastLockable).toBeNull();
+    expect(lock.toggle()).toBe(true);
+    expect(lock.snapshot()).toMatchObject({ lock: 'x', flash: null });
+    expect(lock.button.classList.contains('on')).toBe(true);
+    expect(lock.toggle()).toBe(true);
     expect(lock.lock).toBeNull();
-    expect(v.renders).toBe(2);
-    expect(v.hover).toBe(END);
-  });
-
-  it('Shift: 코어가 이미 잠갔거나(방향 추론 위) 붙잡지 않은 점이면 앱은 건드리지 않고, 코어 Shift 잠금은 코어가 푼다', () => {
-    const { v, lock } = setup();
-    v.lock = { kind: 'axis', axis: 'y', direction: [0, 1, 0], source: 'shift' };
-    lock.shiftDown();
-    lock.shiftUp();
-    expect(lock.lock).toBe('y');
-    v.lock = null;
-    v.hover = { point: [3, 3, 3], snap: null };
-    v.lastLockable = { kind: 'axis', axis: 'x', direction: [1, 0, 0] };
-    lock.shiftDown();
-    expect(lock.lock).toBeNull();
-    expect(v.renders).toBe(0);
   });
 
   it('잠금 단추: 잠글 방향이 없으면 띠 위 알림(손가락 기기 글), 그 뒤 잠금이 걸리면 그 알림만 거둔다', () => {
@@ -193,6 +245,7 @@ describe('측정 방향 잠금', () => {
     expect(lock.snapshot().flash).toBe(NO_LOCK_TOUCH);
     // 정밀 조준으로 Z축에 맞춘 뒤 다시 누름
     v.hover = { point: [0, 0, 9], snap: 'axis', axis: 'z', direction: [0, 0, 1] };
+    v.hoverLock = Z;
     expect(lock.toggle()).toBe(true);
     expect(lock.snapshot()).toMatchObject({ lock: 'z', flash: null });
     // 다시 누르면 풀기
@@ -204,14 +257,16 @@ describe('측정 방향 잠금', () => {
     expect(lock.snapshot().flash).toBe('복사했습니다');
   });
 
-  it('Shift·화살표로 잠가도 잠글 방향이 없다는 알림을 거둔다', () => {
+  it('잠글 방향이 없다는 알림 뒤 코어 Shift 잠금(모서리 끝 끝점)이 걸려도 그 알림을 거둔다', () => {
     const { v, lock } = setup(true);
-    v.hover = END;
+    v.hover = { point: [3, 3, 3], snap: null };
     lock.toggle();
     expect(lock.snapshot().flash).toBe(NO_LOCK_TOUCH);
-    v.lock = { kind: 'axis', axis: 'x', direction: [1, 0, 0], source: 'shift' };
+    v.hover = END;
+    v.hoverLock = X;
+    v.shift(true);
     lock.update();
-    expect(lock.snapshot().flash).toBeNull();
+    expect(lock.snapshot()).toMatchObject({ lock: 'x', flash: null });
   });
 
   it('측정 띠가 숨었으면(넓은 화면 키보드) 잠글 방향이 없다는 글은 알림 상자로', () => {
@@ -226,6 +281,7 @@ describe('측정 방향 잠금', () => {
   it('손가락·펜은 누르는 순간(pointerdown) 받고 뒤따르는 click은 무시한다(정밀 조준 중 둘째 손가락)', () => {
     const { v, lock } = setup(true);
     v.hover = { point: [0, 0, 9], snap: 'axis', axis: 'z', direction: [0, 0, 1] };
+    v.hoverLock = Z;
     const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
     Object.defineProperty(down, 'pointerType', { value: 'touch' });
     lock.button.dispatchEvent(down);
@@ -237,7 +293,18 @@ describe('측정 방향 잠금', () => {
 
 describe('번역', () => {
   it('새 글은 네 언어 사전에 있다(툴팁·상태 줄·측정 띠·단추)', () => {
-    const texts = ['나란한 방향', ...Object.values(LOCK_HINTS), LOCK_KEYS_HINT, NO_LOCK_TOUCH, NO_LOCK_MOUSE, '잠금', '지금 방향 잠그기(다시 누르면 풀기)', '방향 잠금', '방향 잠금 풀기'];
+    const texts = [
+      '나란한 방향',
+      ...Object.values(LOCK_HINTS),
+      ...Object.values(SHIFT_LOCK_HINTS),
+      ARROW_LOCK_HINT,
+      NO_LOCK_TOUCH,
+      NO_LOCK_MOUSE,
+      '잠금',
+      '지금 방향 잠그기(다시 누르면 풀기)',
+      '방향 잠금',
+      '방향 잠금 풀기',
+    ];
     for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
       for (const t of texts) {
         expect(catalogs[lang]?.[t], `${lang}: ${t}`).toBeTruthy();
