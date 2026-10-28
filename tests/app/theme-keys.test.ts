@@ -84,6 +84,21 @@ describe('키 고르기', () => {
     expect(k('f', { ctrl: true, hasCode: false })).toBeNull();
   });
 
+  it('측정 첫 점을 찍은 뒤 화살표는 방향 잠금(→ X · ← Y · ↑ Z, ↓ 지금 방향) — 코드 목록·메뉴에서는 그쪽 것', () => {
+    const m = { measureDirecting: true };
+    expect(k('ArrowRight', m)).toEqual({ type: 'lock', axis: 'x' });
+    expect(k('ArrowLeft', { ...m, shift: true })).toEqual({ type: 'lock', axis: 'y' });
+    expect(k('ArrowUp', { ...m, onCanvas: true })).toEqual({ type: 'lock', axis: 'z' });
+    expect(k('ArrowDown', { ...m, canPlay: false })).toEqual({ type: 'lock', axis: null });
+    expect(k('ArrowDown', { ...m, inCode: true })).toEqual({ type: 'line', delta: 1 });
+    expect(k('ArrowRight', { ...m, arrowOwner: true })).toEqual({ type: 'step', delta: 1 });
+    expect(k('ArrowRight', { ...m, editable: true })).toBeNull();
+    // 첫 점 전·결과 뒤(measureDirecting 아님)는 그대로 이동·줄
+    expect(k('ArrowRight', { measureDirecting: false })).toEqual({ type: 'step', delta: 1 });
+    // Shift 자체는 뷰어로(코어가 잠근다)
+    expect(k('Shift', m)).toEqual({ type: 'viewer' });
+  });
+
   it('F7 격자, Space 재생(단추 위·재생 못 할 때는 아님)', () => {
     expect(k('F7')).toEqual({ type: 'grid' });
     expect(k(' ')).toEqual({ type: 'play' });

@@ -994,5 +994,18 @@
   "경로(지름 모름) 종류": "Path (diameter unknown) type",
   "경로(지름 모름) 지름": "Path (diameter unknown) diameter",
   "경로(지름 모름) 끝 각(도)": "Path (diameter unknown) tip angle (degrees)",
-  "경로(지름 모름) 모서리 R": "Path (diameter unknown) corner radius"
+  "경로(지름 모름) 모서리 R": "Path (diameter unknown) corner radius",
+  "나란한 방향": "Parallel",
+  "X축 방향으로 잠금": "Locked to X axis",
+  "Y축 방향으로 잠금": "Locked to Y axis",
+  "Z축 방향으로 잠금": "Locked to Z axis",
+  "나란한 방향으로 잠금": "Locked parallel",
+  "수직 방향으로 잠금": "Locked perpendicular",
+  "Shift·화살표로 방향 잠금": "Shift or arrow keys lock the direction",
+  "잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요": "No direction to lock: press and hold to aim, line up with an axis or a parallel direction, then tap",
+  "잠글 방향이 없습니다: 커서를 축·나란한 방향에 맞춘 뒤 누르세요": "No direction to lock: line the cursor up with an axis or a parallel direction, then press",
+  "잠금": "Locked",
+  "지금 방향 잠그기(다시 누르면 풀기)": "Lock the current direction (press again to unlock)",
+  "방향 잠금": "Direction lock",
+  "방향 잠금 풀기": "Unlock direction"
 }

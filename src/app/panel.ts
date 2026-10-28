@@ -1038,7 +1038,7 @@ export class NcPanel {
       lines.push(h('div', {}, h('b', {}, '거리 '), `${fmtNum(m.distance)} ${u}`, h('span', { class: 'dim' }, ` · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`)));
       // 붙잡은 종류(이름마다 따로 번역되게 조각으로)
       const sp = snapPair(m);
-      if (sp) lines.push(h('div', { class: 'dim' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1])));
+      if (sp) lines.push(h('div', { class: 'dim' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1]), ...(sp[2] ? [' · ', h('span', {}, '잠금')] : [])));
     } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch, !!d.nc || !!d.mpr?.snap)));
     f.hidden = !lines.length;
     f.append(...lines);

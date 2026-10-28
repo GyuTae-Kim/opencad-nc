@@ -12,6 +12,10 @@ const fake = vi.hoisted(() => {
     measureMode = false;
     scenes: { meshes: { id: string }[]; lines: unknown[]; bounds?: unknown }[] = [];
     keepView: boolean[] = [];
+    /** 코어 0.11.0 setMesh처럼: 같은 id 자리에서 바꾼 새 장면 객체(장면 전체를 다시 주지 않았다) */
+    current: FakeViewer['scenes'][number] | null = null;
+    meshEdits: { id: string }[] = [];
+    points = 0;
     constructor(host: HTMLElement) {
       const wrap = document.createElement('div');
       this.canvas = document.createElement('canvas');
@@ -21,14 +25,26 @@ const fake = vi.hoisted(() => {
       return new Proxy(this, { get: (t, p, r) => (p in t ? Reflect.get(t, p, r) : () => null) });
     }
     get measurePointCount(): number {
-      return 0;
+      return this.points;
     }
     get scene(): unknown {
-      return this.scenes[this.scenes.length - 1] ?? null;
+      return this.current;
     }
     setScene(s: FakeViewer['scenes'][number], o: { keepView?: boolean } = {}): void {
       this.scenes.push(s);
+      this.current = s;
       this.keepView.push(!!o.keepView);
+    }
+    setMesh(m: { id: string }): boolean {
+      const s = this.current;
+      if (!s) return false;
+      const meshes = s.meshes.slice();
+      const k = meshes.findIndex((x) => x.id === m.id);
+      if (k >= 0) meshes[k] = m;
+      else meshes.push(m);
+      this.current = { ...s, meshes };
+      this.meshEdits.push(m);
+      return true;
     }
     getCamera(): object {
       return { cam: 1 };
@@ -61,7 +77,7 @@ vi.mock('../../src/app/client', async () => {
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 import { mprOps } from '../../src/app/doc';
-import { SIM_GROUP, composeSimScene, panelToolLabel } from '../../src/app/sim';
+import { SIM_GROUP, composeSimScene, fullSceneCheaper, panelToolLabel, sumBytes } from '../../src/app/sim';
 import { PANEL_SKIP_TEXT } from '../../src/sim/panel';
 import type { SimRequest } from '../../src/sim/protocol';
 import { SIM_BLOCK_TEXT } from '../../src/sim/setup';
@@ -71,6 +87,8 @@ import { ncSampleProgram } from '../../src/view/sample';
 /** 워커 대신: 같은 실행기를 이 스레드에서(메시지는 다음 틱에) */
 class FakeWorker {
   static made = 0;
+  /** 받은 처음 요청(벽 문턱 등) */
+  static inits: Extract<SimRequest, { type: 'init' }>[] = [];
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onerror: unknown = null;
   private dead = false;
@@ -79,6 +97,7 @@ class FakeWorker {
     FakeWorker.made++;
   }
   postMessage(msg: SimRequest): void {
+    if (msg.type === 'init') FakeWorker.inits.push(msg);
     if (!this.dead) this.runner.handle(msg);
   }
   terminate(): void {
@@ -211,6 +230,8 @@ describe('깎기 시뮬레이션 켜고 끄기', () => {
     await until(() => settled() && api.state.sim!.at!.move < app.doc!.nc!.moves.count);
     const at = api.state.sim!.at!;
     expect(at.move).toBeGreaterThan(0);
+    // G-code는 벽 문턱을 주지 않는다(워커 기본 WALL_SLOPE)
+    expect(FakeWorker.inits.at(-1)!.wallSlope).toBeUndefined();
     expect(api.state.sim!.stats!.rewinds).toBe(1);
     api.seek(null);
     await until(() => settled() && api.state.sim!.at!.move === app.doc!.nc!.moves.count);
@@ -218,6 +239,71 @@ describe('깎기 시뮬레이션 켜고 끄기', () => {
     await open(app, 'b.nc', 'G21 G90\nT1 M6 (T1 D=4. FLAT END MILL)\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG1 X20\nG0 Z5\n');
     await until(() => settled() && api.state.sim!.at!.move === app.doc!.nc!.moves.count);
     expect(api.state.sim!.grid).not.toBeNull();
+  });
+
+  it('소재가 처음 다 모였을 때만 장면 전체를 올리고, 그 뒤 바뀐 조각은 그물 하나 바꾸기(setMesh)로 — 측정 중에도 기다리지 않는다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    const v = FakeViewer();
+    const before = v.scenes.length;
+    await api.setSim(true);
+    await until(settled);
+    // 켜서 다 모인 뒤 장면 전체는 한 번(문서 장면 + 공구 경로 + 소재)
+    expect(v.scenes.length).toBe(before + 1);
+    expect(api.state.sim!.uploads.scenes).toBe(1);
+    const edits0 = v.meshEdits.length;
+    // 측정 점을 찍었어도(장면 전체를 바꾸면 지워진다) 되감기 결과는 바로 그물 하나씩
+    v.points = 1;
+    api.seek(9);
+    await until(() => settled() && api.state.sim!.at!.move < app.doc!.nc!.moves.count && v.meshEdits.length > edits0);
+    expect(v.scenes.length).toBe(before + 1);
+    const edited = v.meshEdits.slice(edits0).map((m) => m.id);
+    expect(edited.every((id) => /^sim-(tile-\d+-\d+|walls)$/.test(id))).toBe(true);
+    expect(api.state.sim!.uploads.meshes).toBe(v.meshEdits.length);
+    // 뷰어의 장면에는 워커가 마지막으로 보낸 그물이 있고, 공구 경로·다른 그물 차례는 그대로
+    const cur = v.scene as { meshes: { id: string }[]; lines: unknown[] };
+    const last = v.scenes[v.scenes.length - 1]!;
+    expect(cur.meshes.map((m) => m.id)).toEqual(last.meshes.map((m) => m.id));
+    expect(cur.lines).toBe(last.lines);
+    const lastEdit = v.meshEdits[v.meshEdits.length - 1]!;
+    expect(cur.meshes.find((m) => m.id === lastEdit.id)).toBe(lastEdit);
+    // 측정 중에 색을 바꾸면(조각이 모두 바뀐다) 측정을 지키려고 그물만
+    api.seek(null);
+    await until(() => settled() && api.state.sim!.at!.move === app.doc!.nc!.moves.count);
+    const e1 = v.meshEdits.length;
+    await api.setSim(true, { color: 'stock' });
+    await until(() => settled() && v.meshEdits.length > e1);
+    expect(v.scenes.length).toBe(before + 1);
+    v.points = 0;
+    // 측정 중이 아니고 조각이 모두 바뀌면(같은 격자로 다시 계산 — 공구 바꾸기) 공구 경로가 작은 이 예제는 장면 전체가 싸다
+    // (계산이 여러 번에 나뉘어 오면 그 뒤 조각은 그물만이거나, 많이 바뀌었으면 다시 장면 전체 — 기계 부하에 따라 횟수가 다르다)
+    const count = app.doc!.nc!.moves.count;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('select[aria-label="T2 종류"]'));
+    const t2 = root.querySelector<HTMLSelectElement>('select[aria-label="T2 종류"]')!;
+    const n0 = v.scenes.length;
+    t2.value = 'ball';
+    t2.dispatchEvent(new Event('change'));
+    await until(() => settled() && v.scenes.length > n0 && api.state.sim!.at!.move === count);
+    expect(api.state.sim!.uploads.scenes).toBeGreaterThanOrEqual(1);
+    // 해상도를 바꾸면 격자가 달라져(조각 id·크기가 다르다) 장면 전체
+    const n1 = v.scenes.length;
+    await api.setSim(true, { res: 256 });
+    await until(() => settled() && v.scenes.length > n1 && api.state.sim!.at!.move === count);
+    expect(api.state.sim!.uploads.scenes).toBeGreaterThanOrEqual(1);
+    // 공구 경로 보이기를 바꾸면 장면 전체(선분 묶음이 빠진다)
+    const n2 = v.scenes.length;
+    await api.setSim(true, { paths: false });
+    await until(() => v.scenes.length > n2);
+    expect(v.scenes[v.scenes.length - 1]!.lines).toEqual([]);
+    // 누가 장면을 바꿔 놓았으면(소재 그물이 없는 장면) 그물 하나 바꾸기 대신 장면 전체를 다시
+    v.setScene(app.doc!.scene as unknown as InstanceType<typeof fake.FakeViewer>['scenes'][number], { keepView: true });
+    const n = v.scenes.length;
+    api.seek(3);
+    await until(() => settled() && v.scenes.length > n && simMeshes().length > 0);
+    expect(simMeshes()).toContain('sim-bottom');
   });
 });
 
@@ -288,6 +374,8 @@ describe('깎기 탭', () => {
     const s = api.state.sim!;
     expect(s.blocked).toBeNull();
     expect(s.panel).toEqual({ items: 2, skipped: { side: 1, bottom: 1 }, disabled: 0 });
+    // 판재 구멍은 평 끝 공구라 기울어진 면이 없다 — 벽 문턱 0(칸이 굵어도 얕은 구멍이 매끈한 오목이 되지 않게)
+    expect(FakeWorker.inits.at(-1)!.wallSlope).toBe(0);
     expect(s.at).toEqual({ move: s.target!.move, frac: 0 });
     // 판 그물은 빼고(소재가 대신), 가공 그림(구멍 기둥·포켓 상자)은 함께
     let ids = FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.map((m) => m.id);
@@ -363,6 +451,16 @@ describe('장면 합치기·번역', () => {
     const panel = { ...base, meshes: [{ id: 'mpr-board', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }, { id: 'mpr-op-0', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }] };
     expect(composeSimScene(panel, [m], true, null).meshes.map((x) => x.id)).toEqual(['mpr-op-0', 'sim-walls']);
     expect(composeSimScene(panel, [m], false, null).meshes.map((x) => x.id)).toEqual(['sim-walls']);
+  });
+
+  it('그물 하나씩 바꾸기와 장면 전체: 바뀐 바이트가 장면 전체의 반을 넘으면 장면 전체', () => {
+    const tile = { id: 'sim-tile-0-0', positions: new Float32Array(30), colors: new Float32Array(30), indices: new Uint32Array(12), color: [1, 1, 1, 1] as const };
+    expect(sumBytes([tile])).toBe(30 * 4 * 2 + 12 * 4);
+    expect(sumBytes([{ id: 'nc-cut-1', positions: new Float32Array(6), name: 'x' }])).toBe(24);
+    // 공구 경로가 작고 조각이 모두 바뀜 → 장면 전체. 큰 공구 경로(수십만 이동) 또는 조각 몇 개 → 그물만
+    expect(fullSceneCheaper(100, 10, 100)).toBe(true);
+    expect(fullSceneCheaper(100, 300, 100)).toBe(false);
+    expect(fullSceneCheaper(10, 10, 100)).toBe(false);
   });
 
   it('판재 공구 이름: 구멍 지름, 공구 번호, 경로 폭', () => {

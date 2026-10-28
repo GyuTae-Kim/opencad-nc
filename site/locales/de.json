@@ -994,5 +994,18 @@
   "경로(지름 모름) 종류": "Pfad (Durchmesser unbekannt) Typ",
   "경로(지름 모름) 지름": "Pfad (Durchmesser unbekannt) Durchmesser",
   "경로(지름 모름) 끝 각(도)": "Pfad (Durchmesser unbekannt) Spitzenwinkel (Grad)",
-  "경로(지름 모름) 모서리 R": "Pfad (Durchmesser unbekannt) Eckenradius"
+  "경로(지름 모름) 모서리 R": "Pfad (Durchmesser unbekannt) Eckenradius",
+  "나란한 방향": "Parallel",
+  "X축 방향으로 잠금": "In X-Richtung gesperrt",
+  "Y축 방향으로 잠금": "In Y-Richtung gesperrt",
+  "Z축 방향으로 잠금": "In Z-Richtung gesperrt",
+  "나란한 방향으로 잠금": "Parallel gesperrt",
+  "수직 방향으로 잠금": "Senkrecht gesperrt",
+  "Shift·화살표로 방향 잠금": "Shift oder Pfeiltasten sperren die Richtung",
+  "잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요": "Keine Richtung zum Sperren: lange drücken zum Zielen, an einer Achse oder parallelen Richtung ausrichten und dann tippen",
+  "잠글 방향이 없습니다: 커서를 축·나란한 방향에 맞춘 뒤 누르세요": "Keine Richtung zum Sperren: Cursor an einer Achse oder parallelen Richtung ausrichten und dann drücken",
+  "잠금": "Gesperrt",
+  "지금 방향 잠그기(다시 누르면 풀기)": "Aktuelle Richtung sperren (erneut drücken zum Entsperren)",
+  "방향 잠금": "Richtungssperre",
+  "방향 잠금 풀기": "Richtungssperre aufheben"
 }

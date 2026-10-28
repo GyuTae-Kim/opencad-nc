@@ -2,8 +2,9 @@
  * 소재 깎기 시뮬레이션 화면(켤 때 나눠 받는다 — 첫 화면 JS에 넣지 않는다).
  *
  * - 계산은 웹 워커(src/worker/sim.worker.ts)가 한다. 재생 막대의 자리(이동·비율)를 목표로 보내면 워커가 거기까지 깎고 바뀐 조각 그물만 돌려준다.
- * - 3D 뷰어 코어는 장면 일부만 바꾸는 길이 없어(v0.10.0까지), 문서 장면 + 소재 그물로 새 장면을 만들어 카메라를 지킨 채 다시 올린다.
- *   다시 올리는 데 걸린 시간의 네 배(0.08~1초)마다 한 번만 올리고, 측정 점을 찍었거나 정밀 조준 중이면 기다린다.
+ * - 장면은 소재가 처음 다 모였을 때(켜기·다시 계산·공구 경로 보이기를 바꿀 때) 한 번만 문서 장면 + 소재 그물로 만들어 카메라를 지킨 채 올린다
+ *   (측정 점을 찍었거나 정밀 조준 중이면 기다린다 — 장면을 바꾸면 측정이 지워진다).
+ *   그 뒤 워커가 보낸 조각·옆면·바닥은 코어 0.11.0 setMesh로 그 그물만 바꾼다: 공구 경로 버퍼·고르기 BVH·측정 점·강조·숨김·단면은 그대로다.
  * - 패널 "깎기" 탭: 켜고 끄기, 공구 경로 함께 보이기, 계산 상태, 급속이 소재를 지난 줄, 소재 상자, 해상도·색, 공구 표.
  * - 3축(공구 방향 Z) 높이 지도 근사다. 선반·회전축·기울인 평면은 그리지 않고 까닭을 보인다(src/sim/setup.ts).
  * - 판재 파일(MPR·PGI·XML)은 해석 워커가 만든 재료(MprPayload.sim)로 판 윗면 가공만 깎는다(src/sim/panel.ts). 재생 막대가 없어 늘 끝까지,
@@ -15,7 +16,7 @@ import { h, toast } from './dom';
 import { fmtNum } from './format';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
-import { STOCK_RGB, fanIndices, gridIndices, type PlainArrays, type SimColorMode, type TileArrays } from '../sim/mesh';
+import { STOCK_RGB, fanIndices, gridIndices, panelWallSlope, type SimColorMode, type TileArrays } from '../sim/mesh';
 import type { SimEvent, SimMoves, SimPosition } from '../sim/engine';
 import { PANEL_SKIP_TEXT, panelSimMoves, panelStock, type PanelSimMoves, type PanelSimSkip, type PanelSimSource, type PanelSimTool, type PanelSkipCode } from '../sim/panel';
 import type { SimRequest, SimResponse, SimStats, SimUpdate } from '../sim/protocol';
@@ -47,7 +48,7 @@ export interface SimHost {
   readonly viewLayer: HTMLElement;
   /** 장면을 다시 올린다(카메라 지킴) */
   refreshScene(): void;
-  /** 측정 점을 찍었거나 정밀 조준 중이면 true(장면을 바꾸지 않는다) */
+  /** 측정 점을 찍었거나 정밀 조준 중이면 true(장면 전체는 바꾸지 않는다 — 그물 하나 바꾸기는 측정을 지키므로 기다리지 않는다) */
   holdScene(): boolean;
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
   /** 판재 가공 고르기(시뮬레이션하지 않은 가공 목록에서) */
@@ -77,6 +78,8 @@ export interface SimState {
   stats: SimStats | null;
   /** 판재 파일: 시뮬레이션하는 가공 수와 하지 않는 가공(까닭별 수). G-code·Heidenhain이면 null */
   panel: { items: number; skipped: Partial<Record<PanelSkipCode, number>>; disabled: number } | null;
+  /** 이번 계산에서 뷰어에 올린 횟수: 장면 전체(setScene)와 그물 하나 바꾸기(setMesh) */
+  uploads: { scenes: number; meshes: number };
 }
 
 const PREF_KEY = 'opencad-nc.sim';
@@ -124,6 +127,27 @@ function skipCounts(list: readonly PanelSimSkip[]): Partial<Record<PanelSkipCode
   const out: Partial<Record<PanelSkipCode, number>> = {};
   for (const s of list) out[s.code] = (out[s.code] ?? 0) + 1;
   return out;
+}
+
+/** 묶음들(그물·선분·점)의 배열 바이트 합(GPU에 올리는 양 어림 — 함께 쓰는 색인도 묶음마다 센다) */
+export function sumBytes(items: readonly object[]): number {
+  let n = 0;
+  for (const it of items) for (const v of Object.values(it)) if (ArrayBuffer.isView(v)) n += v.byteLength;
+  return n;
+}
+
+/**
+ * 바뀐 소재 그물을 하나씩 바꾸기(setMesh)보다 장면 전체를 다시 올리기(setScene)가 싼지. 같은 바이트를 올릴 때 기존 버퍼를 채우는 setMesh가
+ * 새 버퍼를 만드는 setScene보다 느렸다(헤드리스 Chrome Metal, 944² 격자 조각 225개 모두: setMesh 12~16 ms, setScene 8~9 ms) — 바뀐 양이
+ * 장면 전체의 반을 넘으면 장면 전체로
+ */
+export function fullSceneCheaper(changed: number, rest: number, sim: number): boolean {
+  return changed * 2 > rest + sim;
+}
+
+/** 두 격자가 같은지(조각 나누기·그물 원점이 같다) */
+function sameGrid(a: GridSpec, b: GridSpec): boolean {
+  return a.x0 === b.x0 && a.y0 === b.y0 && a.nx === b.nx && a.ny === b.ny && a.dx === b.dx && a.dy === b.dy && a.top === b.top && a.bottom === b.bottom;
 }
 
 function isPhone(): boolean {
@@ -183,8 +207,11 @@ export class SimView {
   private dirtyScene = false;
   private shown = false;
   private refreshTimer = 0;
-  private lastRefresh = 0;
-  private minGap = 120;
+  /** 소재 그물이 든 장면이 뷰어에 올라가 있으면 그 장면 객체(setMesh마다 코어가 새 객체로 바꾼다 — 다르면 누가 장면을 바꾼 것) */
+  private live: Scene3d | null = null;
+  /** 장면에서 소재 그물 밖(공구 경로·가공 그림 등)의 배열 바이트 */
+  private restBytes = 0;
+  private uploads = { scenes: 0, meshes: 0 };
   // ── 화면 ──
   private chip: HTMLDivElement | null = null;
   private statusEl: HTMLElement | null = null;
@@ -235,11 +262,12 @@ export class SimView {
     this.updateStatus();
   }
 
-  /** 뷰어에 올릴 장면(꺼져 있거나 아직이면 문서 장면 그대로) */
+  /** 뷰어에 올릴 장면(꺼져 있거나 아직이면 문서 장면 그대로). 앱은 이것을 setScene으로 올린다 */
   sceneFor(d: NcDoc): Scene3d {
     const key = d.nc ?? d.mpr;
     if (!this.on || !key || this.key !== key || !this.ready()) {
       this.shown = false;
+      this.live = null;
       return d.scene;
     }
     if (!this.composed || this.dirtyScene || this.composedFor !== d.scene) {
@@ -247,8 +275,11 @@ export class SimView {
       this.composed = composeSimScene(d.scene, meshes, this.prefs.paths, this.stockBox());
       this.composedFor = d.scene;
       this.dirtyScene = false;
+      this.restBytes = sumBytes([...this.composed.meshes.filter((m) => !m.id.startsWith('sim-')), ...this.composed.lines, ...(this.composed.points ?? [])]);
     }
     this.shown = true;
+    this.live = this.composed;
+    this.uploads.scenes++;
     return this.composed;
   }
 
@@ -266,6 +297,7 @@ export class SimView {
       rapidEvents: u?.events.length ?? 0,
       stats: u ? { ...u.stats } : null,
       panel: this.panel ? { items: this.panel.items.length, skipped: skipCounts(this.panel.skipped), disabled: this.panel.disabled } : null,
+      uploads: { ...this.uploads },
     };
   }
 
@@ -392,6 +424,8 @@ export class SimView {
 
   private start(): void {
     const d = this.host.doc;
+    // 같은 격자로 다시 계산하면(공구·같은 소재) 조각 id·크기가 같으니 올라가 있는 소재 장면에서 그물만 바꾼다
+    const prev = { live: this.live, spec: this.spec };
     this.stop(false);
     this.error = null;
     if (!d || (!d.nc && !this.panel) || this.block) return;
@@ -403,9 +437,11 @@ export class SimView {
     }
     const spec = gridFor(box, this.longCells(d, box));
     this.spec = spec;
+    if (prev.live && prev.spec && sameGrid(prev.spec, spec)) this.live = prev.live;
     this.origin = [spec.x0 + ((spec.nx - 1) * spec.dx) / 2, spec.y0 + ((spec.ny - 1) * spec.dy) / 2, spec.top];
     this.tilesX = Math.ceil((spec.nx - 1) / 64);
     this.tiles = new Array(this.tilesX * Math.ceil((spec.ny - 1) / 64)).fill(null);
+    this.uploads = { scenes: 0, meshes: 0 };
     this.gen++;
     let w = this.worker;
     if (!w) {
@@ -425,6 +461,7 @@ export class SimView {
     const moves = this.simMoves(d, box);
     if (!moves) return;
     const used = new Set(this.rows.map((r) => r.number));
+    const tools = [...used].map((n) => ({ number: n, tool: this.toolOf(n) }));
     const target = this.targetOf(d);
     this.sent = target;
     this.post({
@@ -432,7 +469,9 @@ export class SimView {
       gen: this.gen,
       moves,
       grid: spec,
-      tools: [...used].map((n) => ({ number: n, tool: this.toolOf(n) })),
+      tools,
+      // 판재: 평 끝 공구뿐이면 기울어진 면이 없어 문턱 0(칸이 굵어도 얕은 구멍·홈의 벽이 날카롭게)
+      ...(this.panel ? { wallSlope: panelWallSlope(tools.map((t) => t.tool)) } : {}),
       defaultTool: this.toolOf(-1),
       mode: this.prefs.color,
       rapidTol: (d.nc?.units ?? this.panel?.units) === 'inch' ? 0.0005 : 0.01,
@@ -454,6 +493,7 @@ export class SimView {
     this.last = null;
     this.sent = null;
     this.composed = null;
+    this.live = null;
     this.eventsKey = '';
     this.updateChip();
     if (refresh && this.shown) this.scheduleRefresh(true);
@@ -519,24 +559,20 @@ export class SimView {
       this.fail(msg.message);
       return;
     }
-    let geometry = false;
+    const changed: Mesh3d[] = [];
     for (const t of msg.tiles as TileArrays[]) {
-      this.tiles[t.ty * this.tilesX + t.tx] = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, this.indices(t.cols, t.rows, t.flat));
-      geometry = true;
+      const m = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, this.indices(t.cols, t.rows, t.flat));
+      this.tiles[t.ty * this.tilesX + t.tx] = m;
+      changed.push(m);
     }
-    const plain = (id: string, p: PlainArrays | undefined): Mesh3d | null => (p ? this.mesh(id, p, p.indices) : null);
-    if (msg.walls) {
-      this.walls = plain('sim-walls', msg.walls);
-      geometry = true;
-    }
-    if (msg.bottom) {
-      this.bottom = plain('sim-bottom', msg.bottom);
-      geometry = true;
-    }
+    if (msg.walls) changed.push((this.walls = this.mesh('sim-walls', msg.walls, msg.walls.indices)));
+    if (msg.bottom) changed.push((this.bottom = this.mesh('sim-bottom', msg.bottom, msg.bottom.indices)));
     this.last = msg;
-    if (geometry) {
+    if (changed.length) {
+      // 다음에 장면 전체를 만들 일이 있으면(공구 경로 보이기 등) 지금 그물로
       this.dirtyScene = true;
-      this.scheduleRefresh();
+      // 소재 장면이 이미 올라가 있으면 바뀐 그물만, 아니면(처음 다 모였을 때) 장면 전체를 한 번
+      if (!this.patch(changed) && this.ready()) this.scheduleRefresh();
     }
     this.updateStatus();
     const ek = `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
@@ -546,25 +582,46 @@ export class SimView {
     }
   }
 
-  /** 장면 다시 올리기(묶어서·기다려서) */
+  /**
+   * 소재 장면이 뷰어에 올라가 있으면 바뀐 그물만 코어 setMesh로 바꾼다(같은 id 자리에서 — 워커가 넘긴 새 배열이 앞 배열과 크기가 같으면
+   * 코어가 그 GPU 버퍼에 채우고, 같은 크기 조각의 색인은 indexCache의 같은 배열이라 다시 올리지 않는다). 올라가 있지 않으면 false
+   */
+  private patch(changed: readonly Mesh3d[]): boolean {
+    const v = this.host.viewer;
+    if (!v || !this.live || v.scene !== this.live) {
+      this.live = null;
+      return false;
+    }
+    // 조각 거의 모두가 바뀌었고(색·공구를 바꿔 다시 계산) 공구 경로가 작으면 장면 전체 한 번이 더 싸다 — 측정 중이면 그래도 그물만(측정을 지킨다)
+    if (!this.host.holdScene() && fullSceneCheaper(sumBytes(changed), this.restBytes, sumBytes([...this.tiles, this.walls, this.bottom].filter((m): m is Mesh3d => !!m)))) return false;
+    for (const m of changed) {
+      if (!v.setMesh(m)) {
+        this.live = null;
+        return false;
+      }
+      this.uploads.meshes++;
+    }
+    this.live = v.scene;
+    return true;
+  }
+
+  /** 장면 전체 다시 올리기(처음 다 모였을 때·공구 경로 보이기·끄기). 측정 점을 찍었거나 정밀 조준 중이면 기다린다 */
   private scheduleRefresh(soon = false): void {
     if (this.refreshTimer) return;
-    const wait = soon ? 0 : Math.max(0, this.lastRefresh + this.minGap - performance.now());
-    this.refreshTimer = window.setTimeout(() => {
-      this.refreshTimer = 0;
-      if (this.host.holdScene()) {
-        this.refreshTimer = window.setTimeout(() => {
-          this.refreshTimer = 0;
-          this.scheduleRefresh();
-        }, 400);
-        return;
-      }
-      const t0 = performance.now();
-      this.host.refreshScene();
-      const cost = performance.now() - t0;
-      this.lastRefresh = performance.now();
-      this.minGap = Math.max(80, Math.min(1000, cost * 4));
-    }, wait);
+    this.refreshTimer = window.setTimeout(
+      () => {
+        this.refreshTimer = 0;
+        if (this.host.holdScene()) {
+          this.refreshTimer = window.setTimeout(() => {
+            this.refreshTimer = 0;
+            this.scheduleRefresh(true);
+          }, 400);
+          return;
+        }
+        this.host.refreshScene();
+      },
+      soon ? 0 : 16,
+    );
   }
 
   // ───────────────────────── 계산 중 표시 ─────────────────────────

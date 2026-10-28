@@ -64,8 +64,9 @@ const MAIN = 'O1000 (MAIN)\nG21 G90 G54\nT1 M6\nS1000 M3\nG0 X0 Y0 Z5\nM98 P1001
 const SUB = 'O1001 (SUB)\nG1 Z-1 F100\nX10\nG0 Z5\nM99\n';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-const until = async (ok: () => boolean): Promise<void> => {
-  for (let i = 0; i < 80 && !ok(); i++) await tick();
+/** 조건이 될 때까지 기다린다(틱 수가 아니라 시간으로 — 혼자 돌리면 뷰어 코어를 처음 변환하느라 틱 80번을 넘길 수 있다) */
+const until = async (ok: () => boolean, ms = 5000): Promise<void> => {
+  for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await tick();
 };
 
 function makeApp(recent: MemoryBackend, search = ''): { app: NcViewerApp; root: HTMLElement } {

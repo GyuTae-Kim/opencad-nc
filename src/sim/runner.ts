@@ -5,7 +5,7 @@
  */
 import { SimEngine, comparePosition, type SimPosition } from './engine';
 import { HeightGrid } from './grid';
-import { buildBottom, buildWalls, gridOrigin, takeDirtyTiles, type SimColorMode } from './mesh';
+import { WALL_SLOPE, buildBottom, buildWalls, gridOrigin, takeDirtyTiles, type SimColorMode } from './mesh';
 import type { SimRequest, SimResponse, SimUpdate } from './protocol';
 import { prepareTool, type PreparedTool } from './tool';
 
@@ -15,6 +15,8 @@ interface State {
   engine: SimEngine;
   origin: [number, number, number];
   mode: SimColorMode;
+  /** 벽 문턱(칸 크기에 곱할 값) */
+  slope: number;
   target: SimPosition;
   computeMs: number;
   meshMs: number;
@@ -46,7 +48,7 @@ export class SimRunner {
         const nodes = req.grid.nx * req.grid.ny;
         const maxCheckpoints = Math.max(2, Math.min(48, Math.floor(req.checkpointBytes / Math.max(1, nodes * 5))));
         const engine = new SimEngine(req.moves, grid, (n) => prepared.get(n) ?? fallback, { rapidTol: req.rapidTol, maxCheckpoints });
-        this.st = { gen: req.gen, grid, engine, origin: gridOrigin(grid), mode: req.mode, target: req.target, computeMs: 0, meshMs: 0, sentBottom: false, sentEvents: -1, lastPost: 0, told: false };
+        this.st = { gen: req.gen, grid, engine, origin: gridOrigin(grid), mode: req.mode, slope: req.wallSlope ?? WALL_SLOPE, target: req.target, computeMs: 0, meshMs: 0, sentBottom: false, sentEvents: -1, lastPost: 0, told: false };
         this.schedule();
       } catch (e) {
         this.st = null;
@@ -96,7 +98,7 @@ export class SimRunner {
 
   private send(s: State, reached: boolean): void {
     const t0 = performance.now();
-    const tiles = takeDirtyTiles(s.grid, s.origin, s.mode);
+    const tiles = takeDirtyTiles(s.grid, s.origin, s.mode, s.slope);
     const walls = s.grid.wallDirty ? buildWalls(s.grid, s.origin, s.mode) : undefined;
     const bottom = s.sentBottom ? undefined : buildBottom(s.grid, s.origin);
     s.sentBottom = true;

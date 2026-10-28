@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { HeightGrid, MARK_OUTSIDE, type GridSpec, type SimRegions } from '../src/sim/grid';
-import { STOCK_RGB, WALL_SLOPE, buildTile, gridOrigin, tileNormals } from '../src/sim/mesh';
+import { STOCK_RGB, WALL_SLOPE, buildTile, gridOrigin, panelWallSlope, takeDirtyTiles, tileNormals } from '../src/sim/mesh';
 
 const SPEC: GridSpec = { x0: 0, y0: 0, nx: 21, ny: 21, dx: 1, dy: 1, top: 0, bottom: -20 };
 
@@ -72,6 +72,40 @@ describe('마디 법선과 벽 문턱', () => {
     )!;
     expect(normalAt(above, 10, 5)).toEqual([0, 0, 0]);
     expect(normalAt(above, 9, 5)).toEqual([0, 0, 0]);
+  });
+
+  it('판재 문턱: 공구가 만들 수 있는 가장 가파른 경사(평 끝 0, 드릴 끝 각의 비탈 × √2 × 1.2, 볼·불 노즈 WALL_SLOPE)', () => {
+    const flat = { kind: 'flat' as const, angle: 118 };
+    expect(panelWallSlope([])).toBe(0);
+    expect(panelWallSlope([flat, flat])).toBe(0);
+    expect(panelWallSlope([flat, { kind: 'drill', angle: 118 }])).toBeCloseTo((Math.SQRT2 * 1.2) / Math.tan((59 * Math.PI) / 180), 9);
+    expect(panelWallSlope([{ kind: 'drill', angle: 90 }])).toBeCloseTo(Math.SQRT2 * 1.2, 9);
+    expect(panelWallSlope([{ kind: 'drill', angle: 60 }])).toBe(WALL_SLOPE);
+    expect(panelWallSlope([flat, { kind: 'ball', angle: 118 }])).toBe(WALL_SLOPE);
+  });
+
+  it('판재(평 끝 공구뿐 — 문턱 0): 칸이 굵어 얕은 구멍 벽 높이 차가 칸 × 2.5보다 작아도 매끈하게 하지 않는다', () => {
+    // 칸 1, 깊이 2.4인 구멍(벽 높이 차 2.4 ≤ 2.5): G-code 문턱이면 매끈한 오목, 판재 문턱 0이면 면 법선(날카로운 벽)
+    const g = gridWith((i, j) => (Math.hypot(i - 10, j - 10) <= 4 ? -2.4 : 0));
+    expect(tileNormals(g, 0, 20, 0, 20)).not.toBeNull();
+    expect(tileNormals(g, 0, 20, 0, 20, 0)).toBeNull();
+    expect(takeDirtyTiles(g, gridOrigin(g), 'depth', 0).every((t) => !t.normals)).toBe(true);
+  });
+
+  it('판재 드릴 끝(118°): 원뿔 비탈은 매끈하고, 그보다 가파른 구멍 벽은 날카롭게', () => {
+    const slope = panelWallSlope([{ kind: 'drill', angle: 118 }]);
+    const k = 1 / Math.tan((59 * Math.PI) / 180);
+    // 반지름 6 구멍(깊이 4 → 벽 4 > 문턱 약 1.02) 바닥에 원뿔 끝(비탈 k ≈ 0.6)
+    const g = gridWith((i, j) => {
+      const r = Math.hypot(i - 10, j - 10);
+      return r <= 6 ? -4 - k * (6 - r) : 0;
+    });
+    const n = tileNormals(g, 0, 20, 0, 20, slope)!;
+    expect(n).not.toBeNull();
+    // 원뿔 비탈(중심에서 2칸)은 기울어진 법선, 구멍 벽(반지름 6 근처)은 0
+    expect(normalAt(n, 12, 10)[0]).toBeLessThan(-0.3);
+    expect(normalAt(n, 16, 10)).toEqual([0, 0, 0]);
+    expect(normalAt(n, 17, 10)).toEqual([0, 0, 0]);
   });
 
   it('조각 가장자리 마디의 법선은 이웃 조각과 같다(온 격자 기준 차분)', () => {
