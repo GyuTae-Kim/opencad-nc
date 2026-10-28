@@ -6,12 +6,10 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { USAGE, fromJsonl, listFiles, parseSweepArgs, summarize, sweepItems, toJsonl, uniqueFiles, type SweepFile, type SweepRecord } from './core';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const VITE_NODE = resolve(HERE, '../../node_modules/vite-node/vite-node.mjs');
+import { viteNodeCli } from './vite-node';
 
 type Item = SweepFile & { sha: string; size: number; dups: number };
 
@@ -21,13 +19,14 @@ async function runJobs(items: Item[], jobs: number, out: string): Promise<SweepR
   items.forEach((it, i) => parts[i % jobs]!.push(it));
   const tmp = join(out, '.jobs');
   mkdirSync(tmp, { recursive: true });
+  const cli = viteNodeCli();
   const runs = parts.map(
     (part, k) =>
       new Promise<SweepRecord[]>((res, rej) => {
         const queue = join(tmp, `queue-${k}.json`);
         const result = join(tmp, `records-${k}.jsonl`);
         writeFileSync(queue, JSON.stringify(part));
-        const child = spawn(process.execPath, [VITE_NODE, fileURLToPath(import.meta.url), '--', '--child', queue, result], { stdio: ['ignore', 'ignore', 'inherit'] });
+        const child = spawn(process.execPath, [cli, fileURLToPath(import.meta.url), '--', '--child', queue, result], { stdio: ['ignore', 'ignore', 'inherit'] });
         child.on('error', rej);
         child.on('exit', (code) => (code === 0 ? res(fromJsonl(readFileSync(result, 'utf8'))) : rej(new Error(`자식 훑기 ${k}가 ${code}로 끝남`))));
       }),

@@ -4,9 +4,10 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { compareMain, compareRuns, fromJsonl, isCHeader, listFiles, messageCode, parseSweepArgs, percentile, sceneSignatures, summarize, sweepItems, sweepOne, toJsonl, uniqueFiles, type SweepRecord } from '../scripts/sweep/core';
+import { viteNodeCli } from '../scripts/sweep/vite-node';
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const MILL = 'G21 G17 G90 G54\nT1 M6\nS1000 M3\nG0 X0 Y0 Z5\nG1 Z-1 F100\nG1 X40\nG3 X60 Y20 I0 J20\nG0 Z5\nM30\n';
@@ -182,7 +183,7 @@ describe('요약과 비교', () => {
 });
 
 describe('CLI(npm run sweep)', () => {
-  const VITE_NODE = resolve('node_modules/vite-node/vite-node.mjs');
+  const VITE_NODE = viteNodeCli();
   const run = (args: string[], env: Record<string, string> = {}) => spawnSync(process.execPath, [VITE_NODE, 'scripts/sweep/sweep.ts', '--', ...args], { encoding: 'utf8', env: { ...process.env, OPENCAD_SWEEP_DIRS: '', ...env } });
 
   it('폴더가 없으면 쓰는 법만 찍고 0, 자식 둘로 나눠 훑어 합친 결과는 한 프로세스와 같다, 기준 결과는 덮어쓰지 않는다', () => {
