@@ -40,7 +40,6 @@ import { MEASURE_INFERENCE, MEASURE_LOADING, lockHint, measureHint, measureLines
 import type { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
-import type { ArcTangents } from './tangent';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -243,8 +242,6 @@ export class NcViewerApp implements PanelHost {
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
   private snapKey: { src: object; limit: number | null } | null = null;
-  /** 측정 첫 점에 닿는 원호(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금). 측정 도구 조각과 함께 만든다 */
-  private arcTangents: ArcTangents | null = null;
   /** 측정 도구를 받기 전에 측정을 켰을 때: 받은 뒤에 켠다(받는 동안 다시 누르면 거둔다, 받지 못하면 알린다) */
   private readonly measureFirstUse = new FirstUse<true>(
     () => this.ensureMeasureTools(),
@@ -1309,14 +1306,16 @@ export class NcViewerApp implements PanelHost {
     const m = await loadMeasureTools();
     if (this.mlock) return;
     this.measureTools = m;
-    this.arcTangents = new m.ArcTangents();
+    // 원호 접선 잠금: 첫 측정 점에 닿는 원호(G2/G3·판재 윤곽 호 — 첫 점마다 한 번 찾는다) 가운데 커서 아래 점이 그 위에 있는 것의 접선
+    // (재생 중이면 그린 이동까지 — tangent.ts ArcTangents.ofDoc)
+    const tangents = new m.ArcTangents();
     // 방향 잠금(Shift가 없는 손가락 기기): 둘째 점 방향을 잡는 동안만 보이는 잠금 단추, 띠 위 알림, 커서 옆 붙잡기 툴팁
     const lock = new m.MeasureLock({
       viewer: () => this.viewer,
       touch: () => this.touch,
       layer: this.viewEl,
       changed: () => this.renderStatus(),
-      arcTangent: (a, p) => this.arcTangentAt(a, p),
+      arcTangent: (a, p) => (this.doc ? tangents.ofDoc(this.doc, a, p) : null),
     });
     this.mlock = lock;
     this.measureActs.prepend(lock.button);
@@ -2073,20 +2072,6 @@ export class NcViewerApp implements PanelHost {
       if (r.height > 0 && r.bottom > vh / 2 && r.top < top) top = r.top;
     }
     document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
-  }
-
-  /**
-   * 원호 접선 잠금(measure-lock.ts): 첫 측정 점 a에 닿는 G2/G3 원호(첫 점마다 한 번 찾는다) 가운데 커서 아래 점 p가 그 위에 있는 것의 접선.
-   * 재생 중이면 그린 이동까지의 원호만. 판재 문서는 원호 이동이 없어 null
-   */
-  private arcTangentAt(a: [number, number, number], p: [number, number, number]): [number, number, number] | null {
-    const d = this.doc;
-    const nc = d?.nc;
-    if (!d || !nc || !this.arcTangents) return null;
-    const pos = d.playSec === null ? null : playPosition(d);
-    const last = pos ? (pos.move >= 0 ? pos.move : -1) : Infinity;
-    const angle = (d.scene.meta as { arcAngle?: unknown } | undefined)?.arcAngle;
-    return this.arcTangents.at(nc, a, p, typeof angle === 'number' && angle > 0 ? angle : undefined, last);
   }
 
   /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표 */
