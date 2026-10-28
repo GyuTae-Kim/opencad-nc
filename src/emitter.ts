@@ -24,6 +24,7 @@ import {
   MOVE_RAPID,
   MoveBuilder,
   NcWarnings,
+  SplineBuilder,
   PLANE_AXES,
   arcExtend,
   arcLength,
@@ -41,6 +42,13 @@ import {
   type NcRotaryOptions,
   type NcTool,
 } from './model';
+
+/** 쌓는 중인 스플라인 곡선: 첫 이동 번호, 지금까지 쌓은 조각 끝 매개변수(첫 값 = 곡선 시작), 조각을 그대로 쌓지 못했는지 */
+export interface SplineRec {
+  move: number;
+  params: number[];
+  bad: boolean;
+}
 
 /** 반경 보정 사건(보정이 켜지거나 꺼지거나 반지름이 바뀐 곳) */
 interface CompEvent {
@@ -1126,6 +1134,33 @@ export class NcEmitter {
     for (let a = 0; a < 3; a++) if (this.machHigh & (1 << a)) this.pos[a] = safe[a]!;
   }
 
+  // ── 스플라인 표(측정용 곡선 정의 — 이동·장면은 그대로) ──
+  private splineTable = new SplineBuilder();
+
+  /**
+   * 스플라인 곡선을 이송 직선 조각으로 쌓기 전에(u0 = 곡선 시작 매개변수): 조각이 곡선 위 점 그대로 쌓이는 때만 기록을 시작한다.
+   * 출력 변환(좌표 변환 사이클)·예약한 모서리 다듬기·회전축 감기·기계 좌표 쪽 추정 높이·첫 이동의 모르는 축이면 null(표에 넣지 않는다)
+   */
+  protected splineBegin(u0: number): SplineRec | null {
+    if (this.outXf || this.corner || (this.rotAxis !== null && !this.rotOff && this.rotActive())) return null;
+    if (this.machHigh !== 0 || this.machPending !== 0 || this.machLast !== 0 || (this.known !== 7 && this.mb.count === 0)) return null;
+    return { move: this.mb.count, params: [u0], bad: false };
+  }
+
+  /** 조각 하나를 emit한 뒤(u = 그 조각 끝 매개변수): 이동이 하나 늘었으면 매개변수를 남기고, 길이 0으로 빠졌으면 넘어가고, 그 밖이면 버린다 */
+  protected splineStep(r: SplineRec | null, u: number): void {
+    if (!r || r.bad) return;
+    const n = r.move + r.params.length - 1;
+    if (this.mb.count === n + 1) r.params.push(u);
+    else if (this.mb.count !== n) r.bad = true;
+  }
+
+  /** 곡선을 다 쌓았다: 차수·매듭·조정점 xyz(표시 좌표)·가중치와 함께 표에 넣는다(조각이 하나도 없거나 버렸으면 넣지 않는다) */
+  protected splineEnd(r: SplineRec | null, degree: number, knots: readonly number[], ctrl: readonly number[], weight: readonly number[]): void {
+    if (!r || r.bad || r.params.length < 2) return;
+    this.splineTable.add(r.move, degree, knots, ctrl, weight, r.params);
+  }
+
   /** 모델로 마무리 */
   protected build(o: { name: string; format: NcProgram['format']; dialect: NcDialect; blocks: number; stock?: Box3 }): NcProgram {
     this.fixMachine();
@@ -1274,6 +1309,8 @@ export class NcEmitter {
     if (this.sawRotary) prog.rotaryAxes = true;
     if (this.missingPrograms.size) this.notices.push({ kind: 'missing-program', programs: [...this.missingPrograms] });
     if (this.notices.length) prog.notices = this.notices.slice();
+    const splines = this.splineTable.finish();
+    if (splines) prog.splines = splines;
     return prog;
   }
 }

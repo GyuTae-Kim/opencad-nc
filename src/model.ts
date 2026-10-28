@@ -115,6 +115,79 @@ export interface NcArcs {
   sweep: Float64Array;
 }
 
+/**
+ * 스플라인 표(LinuxCNC G5 3차·G5.1 2차 베지어, G5.2/G5.3 NURBS — 곡선이 있을 때만 NcProgram.splines): 곡선마다 그 곡선을 나눈
+ * 이송 직선 조각(이동 move … move + moves − 1)과 곡선 정의(유리 B-스플라인 — 차수·매듭·조정점(표시 좌표)·가중치), 조각 끝의 매개변수.
+ * 이동·장면은 이 표와 상관없이 그대로이고, 측정(접선 잠금·붙잡기 다듬기)이 나눈 조각이 아닌 곡선 위를 쓰려고 남긴다.
+ * 조각을 그대로 쌓지 못한 곡선(회전축 감기·좌표 변환 사이클·모서리 다듬기·기계 좌표 쪽 추정 높이)은 넣지 않는다
+ */
+export interface NcSplines {
+  count: number;
+  /** 곡선마다 첫 이동 번호(오름차순)와 이동 수 */
+  move: Uint32Array;
+  moves: Uint32Array;
+  /** 차수(G5.1 = 2, G5 = 3, NURBS = 계수 L − 1) */
+  degree: Uint8Array;
+  /** 곡선마다 조정점(점 번호)·매듭·매개변수가 시작하는 자리 — 길이 count + 1 */
+  ctrlStart: Uint32Array;
+  knotStart: Uint32Array;
+  paramStart: Uint32Array;
+  /** 조정점 xyz(표시 좌표 — 좌표계·변환을 거친 값) */
+  ctrl: Float64Array;
+  /** 조정점마다 가중치(베지어는 1) */
+  weight: Float64Array;
+  /** 매듭(베지어는 0과 1을 차수 + 1개씩) */
+  knots: Float64Array;
+  /** 조각 끝 매개변수(곡선마다 이동 수 + 1개 — 첫 값은 곡선 시작) */
+  param: Float64Array;
+}
+
+/** 스플라인 표 쌓기(곡선이 드물어 보통 배열에 모았다가 끝에 형식 배열로) */
+export class SplineBuilder {
+  private move: number[] = [];
+  private moves: number[] = [];
+  private degree: number[] = [];
+  private ctrlStart = [0];
+  private knotStart = [0];
+  private paramStart = [0];
+  private ctrl: number[] = [];
+  private weight: number[] = [];
+  private knots: number[] = [];
+  private param: number[] = [];
+
+  /** 곡선 하나: 첫 이동 번호, 차수, 매듭, 조정점 xyz, 가중치, 조각 끝 매개변수(이동 수 + 1개) */
+  add(move: number, degree: number, knots: readonly number[], ctrl: readonly number[], weight: readonly number[], param: readonly number[]): void {
+    this.move.push(move);
+    this.moves.push(param.length - 1);
+    this.degree.push(degree);
+    // 큰 NURBS도 되게(펼쳐 넣기는 인수 수 한도에 걸린다)
+    for (const v of ctrl) this.ctrl.push(v);
+    for (const v of weight) this.weight.push(v);
+    for (const v of knots) this.knots.push(v);
+    for (const v of param) this.param.push(v);
+    this.ctrlStart.push(this.weight.length);
+    this.knotStart.push(this.knots.length);
+    this.paramStart.push(this.param.length);
+  }
+
+  finish(): NcSplines | null {
+    if (!this.move.length) return null;
+    return {
+      count: this.move.length,
+      move: Uint32Array.from(this.move),
+      moves: Uint32Array.from(this.moves),
+      degree: Uint8Array.from(this.degree),
+      ctrlStart: Uint32Array.from(this.ctrlStart),
+      knotStart: Uint32Array.from(this.knotStart),
+      paramStart: Uint32Array.from(this.paramStart),
+      ctrl: Float64Array.from(this.ctrl),
+      weight: Float64Array.from(this.weight),
+      knots: Float64Array.from(this.knots),
+      param: Float64Array.from(this.param),
+    };
+  }
+}
+
 /** 드릴 구멍(고정 사이클 한 번 = 구멍 하나) */
 export interface NcHoles {
   count: number;
@@ -269,6 +342,8 @@ export interface NcProgram {
   stock?: Box3;
   /** 반경 보정 구간(보정 코드가 있을 때만) */
   compRuns?: NcCompRun[];
+  /** 스플라인(G5·G5.1·G5.2/G5.3) 곡선 정의와 그것을 나눈 이동(곡선이 있을 때만 — 측정이 쓴다) */
+  splines?: NcSplines;
   /** 선반 모드로 읽었으면 true(X = 반지름 값, XZ 평면 단면 경로, 회전축 = Z) */
   lathe?: boolean;
   /** Fanuc 계열 선반으로 읽었으면 그 G 코드 체계 */

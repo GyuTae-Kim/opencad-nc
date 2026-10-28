@@ -259,6 +259,49 @@ describe('LinuxCNC G5.2/G5.3 NURBS', () => {
     expect(curve(lone).length).toBe(1);
   });
 
+  it('곡선 정의를 스플라인 표에 남긴다(측정용 — 이동은 그대로): 열린 균일 매듭·가중치·조정점, 조각 끝 매개변수의 곡선 점 = 이동 끝점', () => {
+    const p = run('F10\nG5.2 P1 L3\nX0 Y1 P1\nX2 Y2 P1\nX2 Y0 P1\nX0 Y0 P2\nG5.3\nG1 X5\n');
+    expect(p.warnings).toEqual([]);
+    const t = p.splines!;
+    expect(t.count).toBe(1);
+    expect(t.degree[0]).toBe(2);
+    expect([...t.knots]).toEqual(nurbsKnots(4, 3));
+    expect([...t.weight]).toEqual([1, 1, 1, 1, 2]);
+    expect([...t.ctrl]).toEqual([0, 0, 0, 0, 1, 0, 2, 2, 0, 2, 0, 0, 0, 0, 0]);
+    const n = t.moves[0]!;
+    expect(t.move[0]).toBe(0);
+    expect(n).toBe(p.moves.count - 1);
+    const par = [...t.param];
+    expect(par[0]).toBe(0);
+    expect(par[n]).toBe(3);
+    // 조각 끝 매개변수에서 따로 짠 Cox–de Boor 곡선 점 = 이동 끝점
+    const cp = [
+      [0, 0],
+      [0, 1],
+      [2, 2],
+      [2, 0],
+      [0, 0],
+    ];
+    const w = [1, 1, 1, 1, 2];
+    const kt = knotsRef(5, 3);
+    const all = pts(p);
+    for (let k = 1; k <= n; k++) {
+      let x = 0;
+      let y = 0;
+      let d = 0;
+      for (let i = 0; i < 5; i++) {
+        const nb = basis(i, 3, par[k]!, kt) * w[i]!;
+        x += nb * cp[i]![0]!;
+        y += nb * cp[i]![1]!;
+        d += nb;
+      }
+      expect(Math.hypot(all[k - 1]![0]! - x / d, all[k - 1]![1]! - y / d)).toBeLessThan(1e-12);
+      expect(par[k]!).toBeGreaterThan(par[k - 1]!);
+    }
+    // 규칙에 어긋나 직선으로 이은 NURBS는 표에 넣지 않는다
+    expect(run('G5.2 X5 Y5 F100\nX10 Y0\nG1 X20 Y0\n').splines).toBeUndefined();
+  });
+
   it('작업 좌표계 원점·inch 단위도 다른 이동과 같게', () => {
     const p = parseGcode('G20 G17 G90\nG54 G0 X0 Y0 Z0\nG10 L2 P2 X1 Y2 Z0\nG55 G0 X0 Y0\nG5.2 L2 X1 Y0 F10\nG5.3\nM2\n', { dialect: 'linuxcnc', initialPosition: [0, 0, 0] });
     expect(p.warnings).toEqual([]);
