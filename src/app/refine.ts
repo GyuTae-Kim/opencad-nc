@@ -7,7 +7,8 @@
  * 여기서 그 토막이 놓인 곡선을 찾아 정확한 곡선 위 점으로 옮긴다(받을지는 코어가 화면 붙잡기 거리로 정한다).
  * - 곡선 찾기: NC 공구 경로 토막(선분 묶음 nc-cut-…)은 이동 번호(segmentIds)로 원호 이동이나 스플라인 조각(해석기 스플라인 표),
  *   보정 경로(nc-comp)는 그 이동의 보정 조각 가운데 토막 두 끝이 놓인 호, 판재는 붙잡기 표(`${묶음 id}#${번호}`)의 요소 가운데 토막 두 끝이
- *   놓인 호. 토막 두 끝이 곡선 위(장면 float32 반올림 안)가 아니면 다듬지 않는다(직선·다른 모양)
+ *   놓인 호. 판 외곽선·포켓 둘레는 그물 윤곽선(위·아래 고리)이라 그물 id로 붙잡기 표의 둘레 호(outlines)에서 찾는다.
+ *   토막 두 끝이 곡선 위(장면 float32 반올림 안)가 아니면 다듬지 않는다(직선·다른 모양)
  * - 찾는 범위: 코어 점의 곡선 위 자리 둘레(원호는 양옆 토막 둘씩, 스플라인은 그 조각과 양옆 조각) — 구간 나눔으로 시작값을 고르고 뉴턴(curve.ts)
  * - 수직 발: 첫 점에서 곡선에 내린 발 가운데 코어 발에 가장 가까운 것(첫 점이 원의 축 위 — 원 중심 등 — 이면 어디나 발이라 코어 점에 가장 가까운 곡선 위 점).
  *   발이 그 범위에 없으면(곡선 끝 밖) 코어 점 그대로. 종류·토막·코어 점·첫 점으로만 정하고 커서 광선은 쓰지 않는다
@@ -90,7 +91,7 @@ function compTarget(nc: SnapMoves, i: number, ends: readonly (readonly number[])
   return null;
 }
 
-/** 판재 윤곽 토막(붙잡기 표의 요소 가운데 토막 두 끝이 놓인 호) */
+/** 판재 윤곽 토막(붙잡기 표의 요소 가운데 토막 두 끝이 놓인 호 — 윤곽 선분 묶음, 판 외곽선·포켓 둘레의 그물 윤곽선) */
 function panelTarget(t: PanelSnapTable, key: string, ends: readonly (readonly number[])[], point: readonly number[]): Target | null {
   for (const g of panelArcsOf(t, key)) {
     const r = arcTarget(g, ends, point, ARC_ANGLE);
@@ -110,11 +111,11 @@ export function refineSnap(c: SnapRefineInput, src: SnapMoves | PanelSnapTable, 
   const s = c.segment;
   const ends = s.ends;
   let t: Target | null = null;
-  if (s.kind !== 'line') return null;
   if ('moves' in src) {
+    if (s.kind !== 'line') return null;
     if (/^nc-cut-/.test(s.id)) t = ncTarget(src, s.index, ends, c.point, arcAngle);
     else if (s.id === 'nc-comp') t = compTarget(src, s.index, ends, c.point, arcAngle);
-  } else t = panelTarget(src, `${s.id}#${s.index}`, ends, c.point);
+  } else t = panelTarget(src, s.kind === 'edge' ? `edge:${s.id}` : `${s.id}#${s.index}`, ends, c.point);
   if (!t) return null;
   const { c: curve, lo, hi } = t;
   switch (kind) {
@@ -163,7 +164,10 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
   return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit, refine: (c) => refineSnap(c, nc, arcAngle) };
 }
 
-/** 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소의 가운데 점·중심, 추론 붙잡기, 호 위로 다듬기 */
+/**
+ * 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소(판 외곽선·포켓 둘레의 호 포함)의
+ * 가운데 점·중심, 추론 붙잡기, 호 위로 다듬기. 측정 중에는 그물 윤곽선(판·포켓·홈·구멍의 모서리 — 이미 그려 둔 선)도 고른다(edges)
+ */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, refine: (c) => refineSnap(c, t) };
+  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t) };
 }

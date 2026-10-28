@@ -289,3 +289,77 @@ describe('스플라인 위로 다듬은 측정 점과 접선(실제 코어 0.14.
     expect(Math.abs(v.measurement()!.distance - dist(F, foot))).toBeLessThan(1e-9);
   });
 });
+
+describe('판 외곽선·포켓 둘레(그물 윤곽선)의 호도 측정에서 고르고 다듬고 접선으로(실제 코어 0.14.0)', () => {
+  // 판 400 × 300 × 18, 오른쪽 앞 모서리를 R50 1/4 원으로 둥글린 외곽선(중심 (350,50)), 원형 포켓 Ø40(중심 (100,150), 윗면에서 10)
+  const PGI = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <outlines>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+   <outline x="350" y="0" bulge="0.41421356237309503" banding="0"/>
+   <outline x="400" y="50" bulge="0" banding="0"/>
+   <outline x="400" y="300" bulge="0" banding="0"/>
+   <outline x="0" y="300" bulge="0" banding="0"/>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+  </outlines>
+  <circle centerX="100" centerY="150" centerZ="0" radius="20" width="8" depth="10" direction="z-" empty="1" enable="1" order="1"/>
+ </panel>
+</pgi>`;
+  const r = parseForView('p.pgi', enc(PGI));
+  const src = { panel: r.mpr!.snap!, scene: r.scene };
+  const D = Math.PI / 180;
+  /** 둥근 모서리 위 deg 자리(윗면 z 18) */
+  const C = (deg: number): number[] => [350 + 50 * Math.cos(deg * D), 50 + 50 * Math.sin(deg * D), 18];
+
+  it('붙잡기 표에 판 외곽선 호와 원형 포켓 둘레가 위·아래 고리마다 있다', () => {
+    const o = src.panel.outlines!;
+    expect([...o.keys()]).toEqual(['mpr-board', 'mpr-op-0']);
+    expect(o.get('mpr-board')!.length).toBe(18);
+    expect([...o.get('mpr-op-0')!].map((v) => Math.round(v * 1000) / 1000)).toEqual([120, 150, 18, 120, 150, 18, 100, 150, 6.283, 120, 150, 8, 120, 150, 8, 100, 150, 6.283]);
+  });
+
+  it('둥근 모서리 현 위를 가리키면 원 위 점(refined), 호의 가운데 점, 원형 포켓 둘레도 원 위', () => {
+    const w = setup(src);
+    const { v } = w;
+    w.zoomTo([330, -5], [410, 60], 18);
+    // 5°씩 18개 현(−90°부터) — −75° → −70° 현의 0.4 자리
+    const p = C(-75).map((x, k) => x + (C(-70)[k]! - x) * 0.4);
+    w.hover(p);
+    const h = v.measureHoverSnap!;
+    expect(h.refined).toBe(true);
+    expect(Math.abs(Math.hypot(h.point[0] - 350, h.point[1] - 50) - 50)).toBeLessThan(1e-9);
+    expect(h.point[2]).toBeCloseTo(18, 9);
+    // 호의 가운데 점(앱 점 — 둘레 호의 가운데)
+    w.hover(C(-45));
+    expect(v.measureHoverSnap).toMatchObject({ snap: 'midpoint' });
+    expect(dist(v.measureHoverSnap!.point, C(-45))).toBeLessThan(1e-9);
+    // 원형 포켓 둘레(48각 기둥)
+    const w2 = setup(src);
+    w2.zoomTo([75, 125], [125, 175], 18);
+    // 48각(7.5°씩) — 7.5° → 15° 현의 가운데
+    const q = [100 + 20 * Math.cos(15 * D), 150 + 20 * Math.sin(15 * D), 18];
+    const q2 = [100 + 20 * Math.cos(7.5 * D), 150 + 20 * Math.sin(7.5 * D), 18];
+    const mid = q.map((x, k) => (x + q2[k]!) / 2);
+    w2.hover(mid);
+    const h2 = w2.v.measureHoverSnap!;
+    expect(h2.refined).toBe(true);
+    expect(Math.abs(Math.hypot(h2.point[0] - 100, h2.point[1] - 150) - 20)).toBeLessThan(1e-9);
+  });
+
+  it('둥근 모서리 현 위 첫 점(원 위로 다듬음)에서 Shift는 그 자리의 접선(커서 쪽)', () => {
+    const w = setup(src);
+    const { v, lock } = w;
+    w.zoomTo([330, -5], [410, 60], 18);
+    w.click(C(-75).map((x, k) => x + (C(-70)[k]! - x) * 0.4));
+    const a = v.measurePoints[0]!;
+    expect(a.refined).toBe(true);
+    const deg = Math.atan2(a.point[1] - 50, a.point[0] - 350) / D;
+    // 반시계 호: 진행 방향 (−sin, cos) — 커서는 앞쪽(−20°)
+    w.hover(C(-20));
+    expect(lock.hoverLock).toBe('tangent');
+    w.shiftDown();
+    expect(dot(v.measureInferenceLock!.direction, [-Math.sin(deg * D), Math.cos(deg * D), 0])).toBeCloseTo(1, 9);
+    expect(lock.lock).toBe('tangent');
+  });
+});

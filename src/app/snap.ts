@@ -13,7 +13,7 @@
  * - 보정 경로(공구 중심, 'nc-comp'): 선분의 이동 번호가 프로그램 이동과 같아도 모양이 달라, 워커가 보낸 보정 조각(NcPayload.comp) 가운데
  *   그 이동의 조각 중 고른 점에 가장 가까운 것의 가운데 점(호는 호 위)과 호 중심을 준다.
  * - 판재 가공(MPR·PGI·XML): 워커가 장면과 같은 묶음 id로 만든 붙잡기 표(PanelSnapTable)에서 윤곽·판 외곽선의 원호 중심·원형 포켓 중심을
- *   늘 후보로, 고른 윤곽 선분은 그 요소(직선·호)의 가운데 점과 호 중심을 준다.
+ *   늘 후보로, 고른 윤곽 선분은 그 요소(직선·호)의 가운데 점과 호 중심을 준다. 판 외곽선·포켓 둘레(그물 윤곽선)의 호도 같다(16차).
  * - 추론 붙잡기(코어 0.9.0 inference — 교차점·수직 발·축 방향)는 코어가 장면 선분으로 찾는다. 축 방향의 축은 코어 결과의 axisA·axisB(0.9.1)를 쓴다.
  */
 import type { Pick3d, SnapPoint } from 'opencad-viewer3d/types';
@@ -199,10 +199,15 @@ export function panelCenters(t: PanelSnapTable): SnapPoint[] {
 
 const XY = [0, 1, 2] as const;
 
-/** 판재에서 고른 윤곽 선분 → 그 요소(고른 점에 가장 가까운 직선·호)의 가운데 점(호는 호 위)과 호 중심. 표에 없는 것(구멍·홈·띠 등)은 null */
+/**
+ * 판재에서 고른 윤곽 선분 → 그 요소(고른 점에 가장 가까운 직선·호)의 가운데 점(호는 호 위)과 호 중심. 그물 윤곽선(판 외곽선·포켓 둘레의
+ * 위·아래 고리 — 16차)은 고른 점이 둘레 호 위일 때 그 호의 가운데 점과 중심. 표에 없는 것(구멍·홈·띠·곧은 모서리 등)은 null
+ */
 export function panelSnapPoints(pick: Pick3d, t: PanelSnapTable): SnapPoint[] | null {
-  if (pick.kind !== 'line') return null;
-  const el = t.paths.get(`${pick.id}#${pick.index}`);
+  if (pick.kind !== 'line' && pick.kind !== 'edge') return null;
+  // 그물 윤곽선(판 외곽선·포켓 둘레의 위·아래 고리)은 둘레 호(outlines)만 있으므로, 고른 점이 그 호 위(현의 처짐 안)일 때만
+  const edge = pick.kind === 'edge';
+  const el = edge ? t.outlines?.get(pick.id) : t.paths.get(`${pick.id}#${pick.index}`);
   if (!el) return null;
   let best = -1;
   let bestD = Infinity;
@@ -214,6 +219,12 @@ export function panelSnapPoints(pick: Pick3d, t: PanelSnapTable): SnapPoint[] | 
     }
   }
   if (best < 0) return null;
+  if (edge) {
+    // 현은 호 안쪽으로 많아야 반지름 × (1 − cos(나누기 각 / 2)) — 판 장면은 5°, 원형 포켓 다각형은 7.5°(넉넉히 10°로 본다)
+    const r = Math.hypot(el[best]! - el[best + 6]!, el[best + 1]! - el[best + 7]!);
+    const p = pick.point;
+    if (bestD > r * (1 - Math.cos(Math.PI / 36)) * 1.05 + 1e-6 * (1 + Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) return null;
+  }
   const s = el.subarray(best, best + 3);
   const e = el.subarray(best + 3, best + 6);
   const sweep = el[best + 8]!;

@@ -12,7 +12,7 @@ import { parseForView } from '../../src/app/payload';
 import { closestToRay, footsFrom, nearestOn, solveBracket, unitTangent, type Curve } from '../../src/app/curve';
 import { pieceSag, splineCurve, splineMidParam, splineNearest, splineOfMove } from '../../src/app/spline';
 import { refineSnap } from '../../src/app/refine';
-import { moveSnapPoints, type SnapMoves } from '../../src/app/snap';
+import { moveSnapPoints, panelSnapPoints, type SnapMoves } from '../../src/app/snap';
 import { ArcTangents, splineTangentAt, splinesAt } from '../../src/app/tangent';
 
 const run = (body: string, start = 'G0 X0 Y0 Z0', head = 'G21 G17 G90 G54'): NcProgram =>
@@ -335,6 +335,61 @@ describe('붙잡기 다듬기(refineSnap)', () => {
     expect(dist(qf, [10 * Math.cos(ang + 0.001), 10 * Math.sin(ang + 0.001), -1])).toBeLessThan(1e-9);
     const qm = refineSnap(input('midpoint', sid, i, [a, b], mid), sn)!;
     expect(Math.abs(Math.hypot(qm[0], qm[1]) - 10)).toBeLessThan(1e-9);
+  });
+});
+
+describe('판 외곽선·포켓 둘레(그물 윤곽선)의 호', () => {
+  // 판 400 × 300 × 18, 오른쪽 앞 모서리 R50(중심 (350,50)) — PGI 외곽선 bulge, 원형 포켓 Ø40(중심 (100,150))
+  const PGI = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <outlines>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+   <outline x="350" y="0" bulge="0.41421356237309503" banding="0"/>
+   <outline x="400" y="50" bulge="0" banding="0"/>
+   <outline x="400" y="300" bulge="0" banding="0"/>
+   <outline x="0" y="300" bulge="0" banding="0"/>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+  </outlines>
+  <circle centerX="100" centerY="150" centerZ="0" radius="20" width="8" depth="10" direction="z-" empty="1" enable="1" order="1"/>
+ </panel>
+</pgi>`;
+  const r = parseForView('p.pgi', new TextEncoder().encode(PGI));
+  const t = r.mpr!.snap!;
+  const D = Math.PI / 180;
+  const C = (deg: number, z = 18): number[] => [350 + 50 * Math.cos(deg * D), 50 + 50 * Math.sin(deg * D), z];
+
+  it('둘레 호의 가운데 점·중심(고른 점이 호 위일 때), 곧은 모서리·호에서 먼 점은 null', () => {
+    const mid = C(-77.5).map((v, k) => (v + C(-72.5)[k]!) / 2);
+    const pts = panelSnapPoints({ kind: 'edge', id: 'mpr-board', index: 3, point: mid } as never, t)!;
+    expect(pts.map((p) => p.kind)).toEqual(['midpoint', 'center']);
+    expect(dist(pts[0]!.point, C(-45))).toBeLessThan(1e-9);
+    expect(dist(pts[1]!.point, [350, 50, 18])).toBeLessThan(1e-9);
+    // 아래 고리(z 0)도
+    expect(dist(panelSnapPoints({ kind: 'edge', id: 'mpr-board', index: 40, point: C(-60, 0) } as never, t)![0]!.point, C(-45, 0))).toBeLessThan(1e-9);
+    expect(panelSnapPoints({ kind: 'edge', id: 'mpr-board', index: 0, point: [200, 0, 18] } as never, t)).toBeNull();
+    expect(panelSnapPoints({ kind: 'edge', id: 'mpr-board', index: 0, point: [400, 200, 18] } as never, t)).toBeNull();
+    // 원형 포켓 둘레: 한 바퀴 원
+    const cp = panelSnapPoints({ kind: 'edge', id: 'mpr-op-0', index: 0, point: [120, 150, 18] } as never, t)!;
+    expect(dist(cp[1]!.point, [100, 150, 18])).toBeLessThan(1e-9);
+  });
+
+  it('그물 윤곽선 토막 위 점·수직 발이 원 위로, 첫 점이 둘레 호 위면 접선', () => {
+    const seg = [C(-75), C(-70)];
+    const asEdge = (c: SnapRefineInput): SnapRefineInput => ({ ...c, segment: { ...c.segment, kind: 'edge' } });
+    const line = input('onEdge', 'mpr-board', 5, seg, seg[0]!.map((v, k) => (v + seg[1]![k]!) / 2));
+    const q = refineSnap(asEdge(line), t)!;
+    expect(Math.abs(Math.hypot(q[0] - 350, q[1] - 50) - 50)).toBeLessThan(1e-9);
+    // 같은 id의 선분 묶음은 없다(그물 윤곽선만)
+    expect(refineSnap(line, t)).toBeNull();
+    // 바깥 첫 점에서 내린 발: 반지름 방향의 원 위 점
+    const first = [350 + 90 * Math.cos(-73 * D), 50 + 90 * Math.sin(-73 * D), 18];
+    const f = refineSnap(asEdge(input('perpendicular', 'mpr-board', 5, seg, C(-73).map((v, k) => v - 0.01 * (v - [350, 50, 18][k]!) / 50), first)), t)!;
+    expect(dist(f, C(-73))).toBeLessThan(1e-9);
+    // 둘레 호 위 첫 점 → 커서 앞쪽(반시계): (−sin, cos)
+    const a = C(-60);
+    const d = new ArcTangents().at(t, a, C(-30))!;
+    expect(dot(d, [-Math.sin(-60 * D), Math.cos(-60 * D), 0])).toBeCloseTo(1, 12);
   });
 });
 

@@ -284,12 +284,15 @@ export function arcsOnAt(nc: SnapMoves, a: ArrayLike<number>, maxAngle = ARC_ANG
 /** 판재 붙잡기 표의 호 요소 모양(표마다 한 번 — 윤곽 가공·가공 없는 윤곽, XY 평면, 직선 축 Z) */
 const panelCache = new WeakMap<PanelSnapTable, ArcShape[]>();
 
-/** 판재 붙잡기 표(PanelSnapTable.paths — 요소마다 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각)의 호 요소들(차례 = ArcEnd.move) */
+/**
+ * 판재 붙잡기 표(PanelSnapTable.paths — 요소마다 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각)의 호 요소들(차례 = ArcEnd.move).
+ * 16차부터 판 외곽선·포켓 둘레(그물 윤곽선 고리 — PanelSnapTable.outlines)의 호도 잇는다
+ */
 export function panelArcs(t: PanelSnapTable): ArcShape[] {
   let out = panelCache.get(t);
   if (out) return out;
   out = [];
-  for (const el of t.paths.values())
+  for (const el of [...t.paths.values(), ...(t.outlines?.values() ?? [])])
     for (let i = 0; i + 9 <= el.length; i += 9) {
       const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
       if (g && Number.isFinite(g.r0 + g.r1 + g.t0)) out.push(g);
@@ -298,7 +301,10 @@ export function panelArcs(t: PanelSnapTable): ArcShape[] {
   return out;
 }
 
-/** 판재 붙잡기 표 한 묶음(`${선분 묶음 id}#${segmentIds 값}`)의 호 요소 모양(표·묶음마다 한 번 — 붙잡기 다듬기 refine.ts) */
+/**
+ * 판재 붙잡기 표 한 묶음의 호 요소 모양(표·묶음마다 한 번 — 붙잡기 다듬기 refine.ts·붙잡기 점 snap.ts): 선분 묶음은
+ * `${선분 묶음 id}#${segmentIds 값}`(paths), 그물 윤곽선은 `edge:${그물 id}`(outlines — 판 외곽선·포켓 둘레)
+ */
 const panelKeyCache = new WeakMap<PanelSnapTable, Map<string, ArcShape[]>>();
 
 export function panelArcsOf(t: PanelSnapTable, key: string): ArcShape[] {
@@ -307,7 +313,7 @@ export function panelArcsOf(t: PanelSnapTable, key: string): ArcShape[] {
   let out = m.get(key);
   if (out) return out;
   out = [];
-  const el = t.paths.get(key);
+  const el = key.startsWith('edge:') ? t.outlines?.get(key.slice(5)) : t.paths.get(key);
   if (el)
     for (let i = 0; i + 9 <= el.length; i += 9) {
       const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);

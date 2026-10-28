@@ -391,6 +391,11 @@ export interface PanelSnapTable {
    * 윤곽 가공(mpr-op-번호, segmentIds = 가공 번호)과 가공 없는 윤곽(mpr-contours, segmentIds = 윤곽 번호)
    */
   paths: Map<string, Float64Array>;
+  /**
+   * 그물 id → 그 기둥 둘레(그물 윤곽선 Mesh3d.edges로 그린 위·아래 고리)의 호 요소(paths와 같은 9개씩, XY 평면 — 한 바퀴 원은 시작 = 끝,
+   * 중심각 ±2π). 판 외곽선(mpr-board — PGI·XML), MPR 자유 형상 포켓의 윤곽, 지름을 아는 원형 포켓(윗면·아랫면에서 판 것). 호가 있을 때만
+   */
+  outlines?: Map<string, Float64Array>;
 }
 
 /** 붙잡기 표 모으기(mprToScene 안에서 장면과 같은 조건으로 부른다) */
@@ -432,6 +437,51 @@ class SnapTableBuilder {
     this.arcCenters(id, path);
   }
 
+  readonly outlines = new Map<string, Float64Array>();
+
+  private addOutline(id: string, out: readonly number[]): void {
+    if (!out.length) return;
+    const prev = this.outlines.get(id);
+    this.outlines.set(id, prev ? Float64Array.from([...prev, ...out]) : Float64Array.from(out));
+  }
+
+  /** 기둥 둘레(XY 평면 경로를 높이 zs마다 고리로 그린 그물 윤곽선)의 호 요소 — 측정이 그 모서리 위 점을 호 위로 다듬고 접선으로 잠근다 */
+  outline(id: string, path: readonly PathPoint[], zs: readonly number[]): void {
+    const out: number[] = [];
+    for (const z of zs)
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1]!;
+        const b = path[i]!;
+        if (b.arc && b.arc.sweep) out.push(a.x, a.y, z, b.x, b.y, z, b.arc.cx, b.arc.cy, b.arc.sweep);
+      }
+    this.addOutline(id, out);
+  }
+
+  /** 원형 포켓 둘레(윗면·아랫면에서 판 기둥 — 외곽선 꼭짓점이 모두 원 위면 위·아래 고리마다 한 바퀴 원) */
+  circleOutline(id: string, outline: readonly number[], diameter: number, dir: readonly number[], depth: number): void {
+    const n = Math.floor(outline.length / 3);
+    if (n < 6 || !(diameter > 0) || dir[0] || dir[1] || !dir[2]) return;
+    let x = 0;
+    let y = 0;
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+      x += outline[i * 3]!;
+      y += outline[i * 3 + 1]!;
+      const j = (i + 1) % n;
+      area += outline[i * 3]! * outline[j * 3 + 1]! - outline[j * 3]! * outline[i * 3 + 1]!;
+    }
+    x /= n;
+    y /= n;
+    const r = diameter / 2;
+    for (let i = 0; i < n; i++) if (Math.abs(Math.hypot(outline[i * 3]! - x, outline[i * 3 + 1]! - y) - r) > r * 0.01) return;
+    const sweep = area >= 0 ? 2 * Math.PI : -2 * Math.PI;
+    const sx = outline[0]!;
+    const sy = outline[1]!;
+    const out: number[] = [];
+    for (const z of [outline[2]!, outline[2]! + dir[2]! * depth]) out.push(sx, sy, z, sx, sy, z, x, y, sweep);
+    this.addOutline(id, out);
+  }
+
   /** 원형 포켓(지름을 아는 기둥): 외곽선 꼭짓점의 가운데가 모두 반지름 안팎 1%면 그 자리(들어가는 면 위) */
   circlePocket(id: string, outline: readonly number[], diameter: number): void {
     const n = Math.floor(outline.length / 3);
@@ -453,7 +503,7 @@ class SnapTableBuilder {
   }
 
   table(): PanelSnapTable {
-    return { centers: Float64Array.from(this.centers), centerIds: this.centerIds.slice(), paths: this.paths };
+    return { centers: Float64Array.from(this.centers), centerIds: this.centerIds.slice(), paths: this.paths, ...(this.outlines.size ? { outlines: this.outlines } : {}) };
   }
 }
 
@@ -480,6 +530,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
     const acc = new MeshAccum();
     if (wp.outline && wp.outline.length > 2) {
       snap?.arcCenters('mpr-board', wp.outline, wp.thickness);
+      // 위·아래 고리(그물 윤곽선)의 호 — 측정이 판 외곽선 호 위 점을 다듬고 접선으로 잠근다
+      snap?.outline('mpr-board', wp.outline, [wp.thickness, 0]);
       // 직사각형이 아닌 판(PGI·XML 외곽선): 윗면 외곽선을 두께만큼 아래로 민 기둥
       const seg: number[] = [];
       tessellatePath(wp.outline.map((q) => ({ ...q, z: wp.thickness })), maxAngle, seg);
@@ -548,6 +600,9 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
             const c = op.contour !== undefined ? part.contours.find((k) => k.id === op.contour) : undefined;
             if (c) snap.arcCenters(`mpr-op-${oi}`, c.elements, pr.outline[2]);
             else if (op.kind === 'pocket' && op.diameter) snap.circlePocket(`mpr-op-${oi}`, pr.outline, op.diameter);
+            // 둘레 위·아래 고리(그물 윤곽선)의 호: 윤곽이 있으면 그 호, 없으면 지름을 아는 원(윗면·아랫면에서 판 것만)
+            if (c && !pr.dir[0] && !pr.dir[1]) snap.outline(`mpr-op-${oi}`, c.elements, [pr.outline[2]!, pr.outline[2]! + pr.dir[2] * pr.depth]);
+            else if (!c && op.kind === 'pocket' && op.diameter) snap.circleOutline(`mpr-op-${oi}`, pr.outline, op.diameter, pr.dir, pr.depth);
           }
           meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
           for (let i = 0; i + 2 < pr.outline.length; i += 3)
