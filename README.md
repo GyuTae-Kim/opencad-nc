@@ -354,7 +354,7 @@ const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 �
 | `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site.mjs` 설정으로 공용 사이트 도구가 만든다 |
 | `tools/site.mjs`, `tools/sw-source.mjs` | 이 앱의 사이트 설정(앱 정보 원본·파일 연결·서비스 워커 판 이름 짓기 — `vite.config.ts`와 시험이 같이 씀)과 오프라인 서비스 워커 본문(미리 담은 것 쓰기·공유 받기). 언어 페이지·검색 정보·사이트맵·`dist/sw.js`는 [공용 사이트 도구](https://github.com/GyuTae-Kim/opencad-site-kit)의 Vite 플러그인이 이 설정으로 만든다 |
 | `site/i18n-core.mjs`, `site/i18n.mjs`, `site/locales/` | 공용 번역기에 이 앱의 사이트 정보(`site/metadata.json`)를 넘기고 사전을 넣는다 |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `measure.ts`·`snap.ts`(측정 안내 글, 원호 중심·이동 가운데 점·판재 윤곽 붙잡기), `measure-lock.ts`(측정 방향 잠금·잠금 단추·붙잡기 툴팁), `tangent.ts`(원호 끝 접선 잠금), `core.ts`(3D 뷰어 코어를 문서를 열 때 받기), `styles.css` |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(코드·공구·정보·가공·변수 탭), `doc.ts`(문서 상태·요약 글), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `measure.ts`·`snap.ts`(측정 안내 글, 원호 중심·이동 가운데 점·판재 윤곽 붙잡기), `measure-lock.ts`(측정 방향 잠금·잠금 단추·붙잡기 툴팁), `tangent.ts`(원호 끝 접선 잠금), `core.ts`(3D 뷰어 코어·원호 접선을 문서를 열 때 받기), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile`, `combineNcFiles` |
 | `src/job.ts` | 여러 파일을 한 작업으로 잇기·나누기(표지 줄, 주 프로그램 고르기) |
@@ -392,6 +392,8 @@ npm run preview    # 빌드 결과 보기
 앱은 코어 입구(`opencad-viewer3d`)를 첫 문서를 열 때 `src/app/core.ts`의 `import()`로 받습니다(시작 화면 JS를 줄이려고 — 파일을 열기 시작하면
 해석과 함께 받고, 오프라인 앱은 서비스 워커가 미리 담아 둡니다). 첫 화면 코드는 코어의 작은 모듈(`opencad-viewer3d/camera`·`pointer`·`viewcube`)만
 값으로 가져오고 나머지는 `import type`으로만 씁니다(`tests/app/core-split.test.ts`가 지킵니다).
+측정에서만 쓰는 원호 접선 잠금(`src/app/tangent.ts`)도 같은 때 `core.ts`의 `import()`로 따로 받습니다. 첫 화면 JS는 끌어오기 요청의
+휴대폰 성능 예산(`tools/performance-budget.json` — gzip 60 KiB)에 걸리므로, 측정·깎기처럼 문서를 연 뒤에만 쓰는 코드는 이렇게 나눕니다.
 측정 방향 잠금 시험(`tests/app/measure-lock-core.test.ts`)은 jsdom에 가짜 WebGL2(`tests/app/fake-webgl.ts`)를 깔고 진짜 코어 뷰어에
 포인터·키를 넣어, 앱의 툴팁·안내·잠금 단추가 코어 판정을 그대로 따르는지 봅니다(그림은 그리지 않습니다).
 
