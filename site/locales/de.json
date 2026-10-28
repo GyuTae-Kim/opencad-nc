@@ -1034,5 +1034,6 @@
   "A 체계": "System A",
   "B 체계": "System B",
   "C 체계": "System C",
-  "Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm": "Fanuc-Dreh-G-Code-System — A: G90, G92, G94 einfache Zyklen und U/W inkremental; B: G77, G78, G79 einfache Zyklen und G90/G91 absolut/inkremental; C: G20, G21, G24 einfache Zyklen und G70/G71 inch/mm"
+  "Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm": "Fanuc-Dreh-G-Code-System — A: G90, G92, G94 einfache Zyklen und U/W inkremental; B: G77, G78, G79 einfache Zyklen und G90/G91 absolut/inkremental; C: G20, G21, G24 einfache Zyklen und G70/G71 inch/mm",
+  "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Lokaler benannter Parameter #<{0}> ist in diesem Bereich nicht definiert — in LinuxCNC ein Fehler (als leer gelesen)"
 }

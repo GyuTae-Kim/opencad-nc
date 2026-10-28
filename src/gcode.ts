@@ -289,6 +289,7 @@ function parseFast(b: Uint8Array, s: number, e: number, blk: Block, onComment: (
 /** 느린 길에서 쓰는 변수 저장소 연결 */
 interface SlowEnv {
   get(ref: GVarRef): number | undefined;
+  has?(ref: GVarRef): boolean;
   readonly fanucRounding?: boolean;
 }
 
@@ -1154,7 +1155,22 @@ export class Runner extends NcEmitter {
   }
 
   // ── 변수 ──
+  /**
+   * 변수 값. LinuxCNC에서 이 범위(주 프로그램·o-코드 부프로그램마다 따로)에 없는 지역 이름 변수(#<이름>)를 읽으면 LinuxCNC는
+   * "Named parameter not defined" 오류로 멈추므로 경고한다(여기서는 빈 값 — 낱말을 빼거나 식에서 0). 전역(#<_이름>)은
+   * LinuxCNC가 미리 정한 것(#<_x> 등)이 많아 보지 않는다
+   */
   get(ref: GVarRef): number | undefined {
+    const v = this.lookup(ref);
+    if (v === undefined && typeof ref === 'string' && this.dialect === 'linuxcnc' && !ref.startsWith('_'))
+      this.w.add(`지역 이름 변수 #<${ref}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)`, this.pc - 1);
+    return v;
+  }
+  /** 변수가 있는지(EXISTS — 경고 없이) */
+  has(ref: GVarRef): boolean {
+    return this.lookup(ref) !== undefined;
+  }
+  protected lookup(ref: GVarRef): number | undefined {
     const f = this.stack[this.stack.length - 1]!;
     if (typeof ref === 'string') {
       if (ref.startsWith('_')) return this.namedGlobals.get(ref);

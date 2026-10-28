@@ -71,8 +71,10 @@ describe('language URLs and UI presentation', () => {
   it('translates the NURBS warnings and the lathe G code system notices and choices in every language', () => {
     const nurbs = parseGcode('G21 G17\nG0 X0 Y0 Z0\nG5.2 L1 X5 Y5 Z1 F100\nX10\nG5.3 X1\nX20 Y0\nG5.3\nG18\nG5.2 X1 Y1\nG5.3\nG17\nG5.2 X1 Y1 P0\nG5.3\nG5.2 L5 X1 Y1\nG5.3\nG5.2 L2 X1 Y1\nG5.3\nG5.2 X1 Y1\nG1 X0\nG5.2 X1 Y1\n', { dialect: 'linuxcnc' });
     const hint = parseGcode('O1\nG21 G18\nG0 X50 Z2\nG91 G1 X-10 F0.2\nG90\nM30', { lathe: true });
-    const texts = [...nurbs.warningItems!.map((w) => w.text), ...hint.warningItems!.map((w) => w.text)].filter((t) => /NURBS|G5\.[23]|체계/.test(t));
-    expect(texts.length).toBeGreaterThanOrEqual(10);
+    const named = parseGcode('G21\n#<a> = 1\no1 sub\nG1 X#<a> F100\no1 endsub\no1 call\nM2\n', { dialect: 'linuxcnc' });
+    const texts = [...nurbs.warningItems!, ...hint.warningItems!, ...named.warningItems!].map((w) => w.text).filter((t) => /NURBS|G5\.[23]|체계|이름 변수/.test(t));
+    expect(texts.length).toBeGreaterThanOrEqual(11);
+    expect(texts).toContain('지역 이름 변수 #<a>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)');
     const notices = noticeViews({ nc: { notices: [{ kind: 'lathe-system', system: 'B' }, { kind: 'lathe-system', system: 'C' }, { kind: 'lathe-system', system: 'A', hints: ['G91', 'G77·G78·G79'] }] } as never, ncOptions: {}, dismissedNotices: new Set() });
     expect(notices).toHaveLength(3);
     const ui = ['체계 바꾸기', '선반 G 코드', '선반 G 코드 체계', '자동 (A 체계)', '자동 (B 체계)', '자동 (C 체계)', 'A 체계', 'B 체계', 'C 체계',

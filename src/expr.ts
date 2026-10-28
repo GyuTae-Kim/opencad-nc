@@ -54,6 +54,8 @@ export type GVarRef = number | string;
 export interface GExprEnv {
   /** 변수 값(빈 변수는 undefined) */
   get(ref: GVarRef): number | undefined;
+  /** 변수가 있는지(EXISTS[#…] — 없으면 get으로 본다). get과 달리 읽기 경고를 내지 않는다 */
+  has?(ref: GVarRef): boolean;
   /**
    * Fanuc 매크로 B의 FIX·FUP(Fanuc·ISO·Haas): FIX = 소수 버림(0 쪽, FIX[-1.2] = -1), FUP = 소수 올림(0에서 먼 쪽, FUP[-1.2] = -2).
    * 없거나 false면 LinuxCNC처럼 FIX = floor, FUP = ceil
@@ -180,7 +182,10 @@ export class GExpr {
         if (f === 'EXISTS' && this.s[this.pos + k] === '[') {
           this.pos += k + 1;
           let v = 0;
-          if (this.eat('#')) v = this.env.get(this.varRef()) === undefined ? 0 : 1;
+          if (this.eat('#')) {
+            const ref = this.varRef();
+            v = (this.env.has ? this.env.has(ref) : this.env.get(ref) !== undefined) ? 1 : 0;
+          }
           if (!this.eat(']')) throw new ExprError('] 없음');
           return v;
         }
