@@ -10,7 +10,7 @@ import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { MPR_KIND, cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
@@ -63,17 +63,6 @@ export interface PanelHost {
   /** "깎기" 탭(소재 깎기 시뮬레이션 — 앱이 나눠 받은 모듈로 그린다) */
   renderSimTab(body: HTMLElement, d: NcDoc): void;
 }
-
-const MPR_KIND: Record<string, string> = {
-  drillV: '수직 구멍',
-  drillH: '수평 구멍',
-  contour: '윤곽',
-  groove: '홈',
-  pocket: '포켓',
-  edge: '엣지 밴딩',
-  comment: '주석',
-  other: '기타',
-};
 
 const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
 

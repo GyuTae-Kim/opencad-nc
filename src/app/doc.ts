@@ -51,7 +51,8 @@ export interface NcDoc {
   /** 뷰어 강조(항목 id) */
   highlight: string[];
   pick: Pick3d | null;
-  measure: MeasureResult | null;
+  /** 두 점 측정 결과(tangentB = 둘째 점을 원호 접선 잠금으로 찍음 — 앱이 붙인다) */
+  measure: (MeasureResult & { tangentB?: boolean }) | null;
   /** 코드 보기에서 고른 줄(-1 없음)과 덧그림으로 강조할 이동 */
   selLine: number;
   selMoves: number[];
@@ -283,6 +284,18 @@ export interface MprOpRow {
   thickness?: number;
   holeCount?: number;
 }
+
+/** 판재 가공 종류 이름(가공 탭·깎기 탭의 가공 하나씩 따라가기) */
+export const MPR_KIND: Record<string, string> = {
+  drillV: '수직 구멍',
+  drillH: '수평 구멍',
+  contour: '윤곽',
+  groove: '홈',
+  pocket: '포켓',
+  edge: '엣지 밴딩',
+  comment: '주석',
+  other: '기타',
+};
 
 export function mprOps(scene: Scene3d): MprOpRow[] {
   const ops = (scene.meta as { operations?: unknown } | undefined)?.operations;

@@ -1040,5 +1040,20 @@
   "B 체계": "System B",
   "C 체계": "System C",
   "Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm": "Fanuc-Dreh-G-Code-System — A: G90, G92, G94 einfache Zyklen und U/W inkremental; B: G77, G78, G79 einfache Zyklen und G90/G91 absolut/inkremental; C: G20, G21, G24 einfache Zyklen und G70/G71 inch/mm",
-  "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Lokaler benannter Parameter #<{0}> ist in diesem Bereich nicht definiert — in LinuxCNC ein Fehler (als leer gelesen)"
+  "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Lokaler benannter Parameter #<{0}> ist in diesem Bereich nicht definiert — in LinuxCNC ein Fehler (als leer gelesen)",
+  "접선 방향": "Tangential",
+  "접선 방향으로 잠금": "Tangential gesperrt",
+  "Shift로 접선 방향 잠그기": "Shift sperrt tangential",
+  "가공 하나씩 따라가기": "Bearbeitungen einzeln durchgehen",
+  "가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 단추가 남습니다.": "Schneidet die Bearbeitungen einzeln in der Reihenfolge der Liste. Die aktuelle Bearbeitung wird in der Bearbeitungsdarstellung (Bearbeitungen auch anzeigen) und im Reiter Bearbeitungen hervorgehoben. Wenn Sie das Panel schließen, bleiben dieselben Schaltflächen unter der 3D-Ansicht.",
+  "처음으로(깎기 전)": "Zum Anfang (vor dem Schneiden)",
+  "이전 가공": "Vorherige Bearbeitung",
+  "다음 가공": "Nächste Bearbeitung",
+  "하나씩 따라가기 끝내기(모든 가공)": "Einzelschritte beenden (alle Bearbeitungen)",
+  "모든 가공 깎기(끝까지)": "Alle Bearbeitungen schneiden (bis zum Ende)",
+  "끝까지": "Bis zum Ende",
+  "깎은 가공 수": "Geschnittene Bearbeitungen",
+  "모든 가공": "Alle Bearbeitungen",
+  "깎기 전": "Vor dem Schneiden",
+  "가공 {0} / {1}개까지 깎았습니다": "{0} von {1} Bearbeitungen geschnitten"
 }

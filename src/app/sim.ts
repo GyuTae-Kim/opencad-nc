@@ -7,18 +7,34 @@
  *   그 뒤 워커가 보낸 조각·옆면·바닥은 코어 0.11.0 setMesh로 그 그물만 바꾼다: 공구 경로 버퍼·고르기 BVH·측정 점·강조·숨김·단면은 그대로다.
  * - 패널 "깎기" 탭: 켜고 끄기, 공구 경로 함께 보이기, 계산 상태, 급속이 소재를 지난 줄, 소재 상자, 해상도·색, 공구 표.
  * - 3축(공구 방향 Z) 높이 지도 근사다. 선반·회전축·기울인 평면은 그리지 않고 까닭을 보인다(src/sim/setup.ts).
- * - 판재 파일(MPR·PGI·XML)은 해석 워커가 만든 재료(MprPayload.sim)로 판 윗면 가공만 깎는다(src/sim/panel.ts). 재생 막대가 없어 늘 끝까지,
+ * - 판재 파일(MPR·PGI·XML)은 해석 워커가 만든 재료(MprPayload.sim)로 판 윗면 가공만 깎는다(src/sim/panel.ts). 재생 막대가 없어 기본은 끝까지,
  *   시뮬레이션하지 않은 가공(옆면·아랫면·엣지 밴딩 등)은 까닭별 목록으로 보인다. 판 그물(mpr-board)은 소재가 보이면 뺀다.
+ * - 판재 가공 하나씩 따라가기(13차): 깎기 탭의 처음·이전 가공·다음 가공·끝까지·막대로 가공 목록 차례대로 k개까지만 깎는다
+ *   (G-code 재생과 같은 길 — 목표 자리를 워커에 보내고 바뀐 조각만 setMesh). 지금 가공(k번째)은 가공 고르기로 강조하고,
+ *   패널을 닫으면 3D 보기 아래에 같은 단추의 띠(재생 띠 자리)를 보인다.
  */
 import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
-import { lineAtLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
+import { MPR_KIND, lineAtLabel, mprOps, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { fmtNum } from './format';
+import { icon, type IconName } from './icons';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
 import { STOCK_RGB, fanIndices, gridIndices, panelWallSlope, type SimColorMode, type TileArrays } from '../sim/mesh';
 import type { SimEvent, SimMoves, SimPosition } from '../sim/engine';
-import { PANEL_SKIP_TEXT, panelSimMoves, panelStock, type PanelSimMoves, type PanelSimSkip, type PanelSimSource, type PanelSimTool, type PanelSkipCode } from '../sim/panel';
+import {
+  PANEL_SKIP_TEXT,
+  panelOpSteps,
+  panelSimMoves,
+  panelStepTarget,
+  panelStock,
+  type PanelOpStep,
+  type PanelSimMoves,
+  type PanelSimSkip,
+  type PanelSimSource,
+  type PanelSimTool,
+  type PanelSkipCode,
+} from '../sim/panel';
 import type { SimRequest, SimResponse, SimStats, SimUpdate } from '../sim/protocol';
 import {
   SIM_BLOCK_TEXT,
@@ -51,8 +67,12 @@ export interface SimHost {
   /** 측정 점을 찍었거나 정밀 조준 중이면 true(장면 전체는 바꾸지 않는다 — 그물 하나 바꾸기는 측정을 지키므로 기다리지 않는다) */
   holdScene(): boolean;
   selectLine(line: number, moves?: number[], reveal?: boolean): void;
-  /** 판재 가공 고르기(시뮬레이션하지 않은 가공 목록에서) */
+  /** 판재 가공 고르기(시뮬레이션하지 않은 가공 목록에서, 가공 하나씩 따라가기의 지금 가공 — 음수면 고른 것 지우기) */
   selectMprOp(i: number, reveal?: boolean): void;
+  /** 패널이 열려 있는지(닫혔으면 가공 하나씩 따라가기 띠를 3D 보기에) */
+  panelOpen?(): boolean;
+  /** 측정 중인지(측정 띠와 자리가 겹쳐 따라가기 띠를 숨긴다) */
+  measuring?(): boolean;
   /** 패널을 다시 그린다(깎기 탭을 보고 있으면) */
   refreshPanel(): void;
   /** 도구 막대 단추 상태를 맞춘다 */
@@ -80,6 +100,20 @@ export interface SimState {
   panel: { items: number; skipped: Partial<Record<PanelSkipCode, number>>; disabled: number } | null;
   /** 이번 계산에서 뷰어에 올린 횟수: 장면 전체(setScene)와 그물 하나 바꾸기(setMesh) */
   uploads: { scenes: number; meshes: number };
+  /** 판재 가공 하나씩 따라가기: 깎은 가공 수·걸음 수·지금 가공 번호(깎기 전이면 null)·띠가 보이는지. 끝까지(기본)면 null */
+  step: { at: number; count: number; op: number | null; strip: boolean } | null;
+}
+
+/** 가공 하나씩 따라가기 단추·막대(깎기 탭과 3D 보기 띠가 같은 꼴) */
+interface StepEls {
+  el: HTMLElement;
+  count: HTMLElement;
+  name: HTMLElement;
+  first: HTMLButtonElement;
+  prev: HTMLButtonElement;
+  next: HTMLButtonElement;
+  all: HTMLButtonElement;
+  range: HTMLInputElement;
 }
 
 const PREF_KEY = 'opencad-nc.sim';
@@ -188,6 +222,11 @@ export class SimView {
   /** 판재 파일: 재료와 지금 공구로 만든 이동(공구·소재를 바꾸면 다시 만든다) */
   private panel: PanelSimSource | null = null;
   private panelMoves: PanelSimMoves | null = null;
+  /** 판재 가공 하나씩 따라가기: 깎은 가공 수(null = 끝까지 — 기본)와 가공 차례(판재 이동마다 다시) */
+  private step: number | null = null;
+  private steps: { of: PanelSimMoves; list: PanelOpStep[] } | null = null;
+  private stepTab: StepEls | null = null;
+  private stepStrip: StepEls | null = null;
   // ── 계산 ──
   private worker: Worker | null = null;
   private gen = 0;
@@ -234,9 +273,13 @@ export class SimView {
       this.prepare(d);
       if (this.block) toast(`시뮬레이션하지 않음 — ${SIM_BLOCK_TEXT[this.block.code]}`, 'info', 5000);
       this.start();
-    } else this.stop();
+    } else {
+      this.step = null;
+      this.stop();
+    }
     this.host.renderToolbar();
     this.host.refreshPanel();
+    this.refreshStrip();
   }
 
   /** 새 문서·다시 읽은 결과: 문서마다 값을 새로 정하고 켜져 있으면 다시 계산 */
@@ -246,10 +289,12 @@ export class SimView {
     this.userStock = null;
     this.panel = null;
     this.panelMoves = null;
+    this.step = null;
     if (d && this.on) {
       this.prepare(d);
       this.start();
     }
+    this.refreshStrip();
   }
 
   /** 재생 자리(전체 경로면 프로그램 끝)를 워커에 알린다 */
@@ -298,11 +343,13 @@ export class SimView {
       stats: u ? { ...u.stats } : null,
       panel: this.panel ? { items: this.panel.items.length, skipped: skipCounts(this.panel.skipped), disabled: this.panel.disabled } : null,
       uploads: { ...this.uploads },
+      step: this.stepState(),
     };
   }
 
-  /** 자동 확인·설정 바꾸기 */
-  setOptions(o: Partial<{ paths: boolean; color: SimColorMode; res: SimResolution; stock: SimBox | null }>): void {
+  /** 자동 확인·설정 바꾸기(step = 판재 가공 하나씩 따라가기의 깎은 가공 수, null = 끝까지) */
+  setOptions(o: Partial<{ paths: boolean; color: SimColorMode; res: SimResolution; stock: SimBox | null; step: number | null }>): void {
+    if (o.step !== undefined) this.setStep(o.step);
     let restart = false;
     if (o.paths !== undefined && o.paths !== this.prefs.paths) {
       this.prefs.paths = o.paths;
@@ -513,10 +560,14 @@ export class SimView {
     }
   }
 
-  /** 재생 자리(판재는 재생 막대가 없어 늘 끝) */
+  /** 재생 자리(판재는 가공 하나씩 따라가기의 자리, 아니면 끝) */
   private targetOf(d: NcDoc): SimPosition {
     const count = this.moveCount(d);
-    const p = d.playSec === null || !d.nc ? null : playPosition(d);
+    if (!d.nc) {
+      const k = this.stepAt();
+      return k === null ? { move: count, frac: 0 } : panelStepTarget(this.opSteps(), k, count);
+    }
+    const p = d.playSec === null ? null : playPosition(d);
     return p && p.move >= 0 ? { move: p.move, frac: p.frac } : { move: count, frac: 0 };
   }
 
@@ -561,7 +612,8 @@ export class SimView {
     }
     const changed: Mesh3d[] = [];
     for (const t of msg.tiles as TileArrays[]) {
-      const m = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, this.indices(t.cols, t.rows, t.flat));
+      // 관통한 칸이 있는 조각은 제 삼각형 번호(그 칸을 뺀 것), 아니면 같은 크기 조각끼리 함께 쓰는 번호
+      const m = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, t.indices ?? this.indices(t.cols, t.rows, t.flat));
       this.tiles[t.ty * this.tilesX + t.tx] = m;
       changed.push(m);
     }
@@ -659,6 +711,8 @@ export class SimView {
     if (p !== null) return `계산하는 중… ${p}%`;
     if (!u) return '계산하는 중… 0%';
     const secs = `${fmtNum((u.stats.computeMs + u.stats.meshMs) / 1000, 2)}초`;
+    const k = this.panel ? this.stepAt() : null;
+    if (k !== null) return `가공 ${k.toLocaleString('ko-KR')} / ${this.opSteps().length.toLocaleString('ko-KR')}개까지 깎았습니다 · ${secs}`;
     if (u.at.move >= count) return `전체 프로그램을 깎았습니다 · ${secs}`;
     return `이동 ${(u.at.move + (u.at.frac > 0 ? 1 : 0)).toLocaleString('ko-KR')} / ${count.toLocaleString('ko-KR')}까지 깎았습니다 · ${secs}`;
   }
@@ -712,6 +766,17 @@ export class SimView {
       );
     else head.push(h('p', { class: 'hint' }, '3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.'));
     body.append(group('소재 깎기 시뮬레이션', ...head));
+    if (panel && this.on && !this.block && this.opSteps().length) {
+      this.stepTab = this.buildSteps(false);
+      this.fillSteps(this.stepTab);
+      body.append(
+        group(
+          '가공 하나씩 따라가기',
+          this.stepTab.el,
+          h('p', { class: 'hint' }, '가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 단추가 남습니다.'),
+        ),
+      );
+    } else this.stepTab = null;
     if (panel) this.renderSkipped(body, panel);
     if (this.block || (!d.nc && !panel)) return;
 
@@ -863,6 +928,127 @@ export class SimView {
         forget,
       ),
     );
+  }
+
+  // ───────────────────────── 판재 가공 하나씩 따라가기 ─────────────────────────
+
+  /** 판재 이동의 가공 차례(이동을 아직 만들지 않았으면 빈 목록) */
+  private opSteps(): PanelOpStep[] {
+    const m = this.panelMoves;
+    if (!m) return [];
+    if (this.steps?.of !== m) this.steps = { of: m, list: panelOpSteps(m) };
+    return this.steps.list;
+  }
+
+  /** 지금 깎은 가공 수(따라가기 중이 아니면 null — 걸음 수를 넘으면 끝) */
+  private stepAt(): number | null {
+    if (this.step === null) return null;
+    return Math.min(this.step, this.opSteps().length || this.step);
+  }
+
+  private stepState(): SimState['step'] {
+    const k = this.panel ? this.stepAt() : null;
+    if (k === null) return null;
+    const list = this.opSteps();
+    return { at: k, count: list.length, op: k > 0 ? (list[k - 1]?.op ?? null) : null, strip: !!this.stepStrip && !this.stepStrip.el.hidden };
+  }
+
+  /**
+   * 판재 가공 하나씩 따라가기: 가공 k개까지 깎는다(0 = 깎기 전, null = 끝까지 — 따라가기를 끝냄). 워커에 목표를 보내고(G-code 재생과 같은 길),
+   * 지금 가공(k번째)을 고른다(가공 그림·가공 탭 강조 — 깎기 전이면 고른 것을 지운다)
+   */
+  setStep(k: number | null): void {
+    const n = this.opSteps().length;
+    const next = k === null || !Number.isFinite(k) ? null : Math.max(0, n ? Math.min(n, Math.round(k)) : Math.round(k));
+    if (next === this.step) return;
+    this.step = next;
+    const d = this.host.doc;
+    if (d && !d.nc && this.worker && this.panelMoves) {
+      const t = this.targetOf(d);
+      if (!this.sent || this.sent.move !== t.move || this.sent.frac !== t.frac) {
+        this.sent = t;
+        this.post({ type: 'target', gen: this.gen, target: t });
+      }
+    }
+    const list = this.opSteps();
+    if (next !== null && list.length) this.host.selectMprOp(next > 0 ? list[Math.min(next, list.length) - 1]!.op : -1, false);
+    this.updateStatus();
+    if (this.stepTab?.el.isConnected) this.fillSteps(this.stepTab);
+    this.refreshStrip();
+  }
+
+  /** 판재를 깎아 보는 중이라 가공 하나씩 따라갈 수 있는지(← → 키) */
+  get canStepOps(): boolean {
+    return this.on && !!this.panel && !this.block && this.opSteps().length > 0;
+  }
+
+  /** 한 가공 앞·뒤로. 끝까지 보고 있으면(따라가기 전) 앞으로는 첫 가공부터, 뒤로는 마지막 가공 앞으로(G-code 한 이동씩과 같은 차례) */
+  stepBy(delta: number): void {
+    const n = this.opSteps().length;
+    if (!n || !delta) return;
+    const k = this.stepAt();
+    this.setStep(k === null ? (delta > 0 ? Math.min(n, delta) : Math.max(0, n + delta)) : k + delta);
+  }
+
+  /** 3D 보기 아래 따라가기 띠: 켜져 있고 판재를 하나씩 따라가는 중이며 패널이 닫혔고 측정 중이 아닐 때 */
+  refreshStrip(): void {
+    const show = this.canStepOps && this.step !== null && !(this.host.panelOpen?.() ?? false) && !(this.host.measuring?.() ?? false);
+    if (!show) {
+      if (this.stepStrip) this.stepStrip.el.hidden = true;
+      return;
+    }
+    if (!this.stepStrip) {
+      this.stepStrip = this.buildSteps(true);
+      this.host.viewLayer.append(this.stepStrip.el);
+    }
+    this.stepStrip.el.hidden = false;
+    this.fillSteps(this.stepStrip);
+  }
+
+  /** 단추·막대(strip = 3D 보기 띠 — 재생 띠와 같은 꼴, ✕가 끝까지) */
+  private buildSteps(strip: boolean): StepEls {
+    const btn = (ic: IconName, label: string, run: () => void, text = ''): HTMLButtonElement => {
+      const b = h('button', { class: `mb-btn${text ? '' : ' icon'}`, type: 'button', title: label, 'aria-label': label, html: `${icon(ic)}${text ? `<span>${text}</span>` : ''}` });
+      b.addEventListener('click', run);
+      return b;
+    };
+    const count = h('span', { class: 'ss-count' });
+    const name = h('span', { class: 'ss-name' });
+    const first = btn('first', '처음으로(깎기 전)', () => this.setStep(0));
+    const prev = btn('stepBack', '이전 가공', () => this.stepBy(-1));
+    const next = btn('stepFwd', '다음 가공', () => this.stepBy(1));
+    const all = strip ? btn('close', '하나씩 따라가기 끝내기(모든 가공)', () => this.setStep(null)) : btn('all', '모든 가공 깎기(끝까지)', () => this.setStep(null), '끝까지');
+    const range = h('input', { type: 'range', min: 0, max: 1, step: 1, value: 1, 'aria-label': '깎은 가공 수' });
+    range.addEventListener('input', () => this.setStep(Number(range.value)));
+    const el = h(
+      'div',
+      { class: strip ? 'play-strip sim-steps' : 'sim-steps', role: 'group', 'aria-label': '가공 하나씩 따라가기', ...(strip ? { hidden: true } : {}) },
+      h('div', { class: 'ps-info' }, count, name),
+      h('div', { class: 'ps-acts' }, first, prev, next, all),
+      range,
+    );
+    return { el, count, name, first, prev, next, all, range };
+  }
+
+  /** 단추·막대를 지금 자리로: "k / 걸음 수", 지금 가공(가공 번호 · 이름), 끝에서 막힌 단추 */
+  private fillSteps(s: StepEls): void {
+    const list = this.opSteps();
+    const n = list.length;
+    const k = this.stepAt() ?? n;
+    s.count.textContent = `${k.toLocaleString('ko-KR')} / ${n.toLocaleString('ko-KR')}`;
+    const op = k > 0 ? list[k - 1]?.op : undefined;
+    const row = op !== undefined ? mprOps(this.host.doc?.scene ?? { name: '', units: 'mm', meshes: [], lines: [] }).find((o) => o.index === op) : undefined;
+    if (this.step === null) s.name.replaceChildren(h('span', {}, '모든 가공'));
+    else if (k === 0) s.name.replaceChildren(h('span', {}, '깎기 전'));
+    else s.name.replaceChildren(h('span', {}, `가공 ${(op ?? 0) + 1}`), ...(row ? [' · ', h('span', {}, row.label || MPR_KIND[row.kind] || row.kind)] : []));
+    s.first.disabled = this.step === 0;
+    s.prev.disabled = k === 0;
+    // 모든 가공(따라가기 전)에서 다음 가공은 첫 가공부터 — → 키·G-code 재생 띠의 다음 이동과 같은 차례(stepBy)
+    s.next.disabled = this.step !== null && k >= n;
+    if (s.all.closest('.play-strip') === null) s.all.disabled = this.step === null;
+    s.range.max = String(n);
+    s.range.value = String(k);
+    s.range.setAttribute('aria-valuetext', `${k} / ${n}`);
   }
 
   /** 판재: 시뮬레이션하지 않은 가공(까닭별 수와 가공 — 누르면 그 가공을 고른다), 꺼진 가공 수 */

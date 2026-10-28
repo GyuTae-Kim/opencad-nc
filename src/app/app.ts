@@ -22,7 +22,7 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 import { TouchAim } from './aim';
-import { loadViewerCore } from './core';
+import { loadArcTangents, loadViewerCore } from './core';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -36,6 +36,7 @@ import { MEASURE_INFERENCE, lockHint, measureHint, measureLines } from './measur
 import { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints, snapPair, type ArcCenters } from './snap';
+import type { ArcTangents } from './tangent';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
@@ -221,6 +222,8 @@ export class NcViewerApp implements PanelHost {
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
   private snapKey: { src: object; limit: number | null } | null = null;
+  /** 측정 첫 점에 닿는 원호 끝(첫 점·문서 자료마다 한 번 찾는다 — 원호 접선 잠금). 문서를 열 때 나눠 받는다(core.ts loadArcTangents) */
+  private arcTangents: ArcTangents | null = null;
   /** 최근 문서(이 브라우저의 IndexedDB) */
   readonly recent: RecentStore;
   private recentSeq = 0;
@@ -426,6 +429,7 @@ export class NcViewerApp implements PanelHost {
       touch: () => this.touch,
       layer: this.viewEl,
       changed: () => this.renderStatus(),
+      arcTangent: (a, p) => this.arcTangentAt(a, p),
     });
     this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, h('div', { class: 'mb-acts' }, this.mlock.button, this.measureClear, measureClose), this.mlock.flash);
     // 정밀 조준 십자선 층(캔버스 위, 누르기는 받지 않는다)
@@ -459,16 +463,21 @@ export class NcViewerApp implements PanelHost {
     this.bindDrop();
     window.addEventListener('keydown', (ev) => this.onKey(ev), true);
     // Shift 방향 잠금은 코어가 잠그고 푼다(캔버스 키·onKey가 넘기는 창 키·포인터 이동의 shiftKey). 앱은 누르고 뗄 때 툴팁·상태 줄만 맞춘다
-    // (캡처 단계 — 캔버스의 코어 키 듣기가 전파를 막아도 받는다)
+    // (캡처 단계 — 캔버스의 코어 키 듣기가 전파를 막아도 받는다). 원호 접선은 onKey가 코어보다 먼저 잠그고(shiftDown), 떼면 여기서 푼다
     for (const type of ['keydown', 'keyup'] as const)
       window.addEventListener(
         type,
         (ev) => {
-          if (ev.key === 'Shift' && !ev.repeat) this.mlock.schedule();
+          if (ev.key !== 'Shift' || ev.repeat) return;
+          if (type === 'keyup') this.mlock.shiftUp();
+          this.mlock.schedule();
         },
         true,
       );
-    window.addEventListener('blur', () => this.mlock.schedule());
+    window.addEventListener('blur', () => {
+      this.mlock.shiftUp();
+      this.mlock.schedule();
+    });
     document.addEventListener('pointerdown', (ev) => {
       if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
     });
@@ -1019,6 +1028,12 @@ export class NcViewerApp implements PanelHost {
     this.setBusy('여는 중', 0.02, name);
     // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
     if (!this.viewer) void loadViewerCore().catch(() => undefined);
+    // 원호 접선 잠금도 함께(측정에서만 쓰여 첫 화면 JS에서 뺐다 — 받지 못하면 다음 열기에서 다시)
+    if (!this.arcTangents)
+      void loadArcTangents().then(
+        (m) => (this.arcTangents ??= new m.ArcTangents()),
+        () => undefined,
+      );
     try {
       const res = await this.client.open(
         name,
@@ -1371,7 +1386,8 @@ export class NcViewerApp implements PanelHost {
   private onMeasure(m: MeasureResult | null): void {
     const d = this.doc;
     if (!d) return;
-    d.measure = m;
+    // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함)
+    d.measure = m && this.mlock.tangentResult(m) ? { ...m, tangentB: true } : m;
     this.panel.onMeasure();
     this.renderStatus();
     // 둘째 점을 찍으면 코어가 잠금을 푼다(잠금 단추·툴팁)
@@ -1401,10 +1417,14 @@ export class NcViewerApp implements PanelHost {
     this.renderStatus();
   }
 
-  /** MPR 가공 고르기 */
+  /** MPR 가공 고르기(음수면 고른 것 지우기 — 깎기 탭 가공 하나씩 따라가기의 깎기 전) */
   selectMprOp(i: number, reveal = false): void {
     const d = this.doc;
     if (!d) return;
+    if (i < 0) {
+      this.clearSelection();
+      return;
+    }
     const id = `mpr-op-${i}`;
     const has = d.scene.meshes.some((m) => m.id === id) || d.scene.lines.some((l) => l.id === id);
     this.setHighlight(has ? [id] : []);
@@ -1567,6 +1587,8 @@ export class NcViewerApp implements PanelHost {
         holdScene: () => (this.viewer?.measurePointCount ?? 0) > 0 || !!this.aim?.aiming,
         selectLine: (l, m, r) => this.selectLine(l, m, r),
         selectMprOp: (i, r) => this.selectMprOp(i, r),
+        panelOpen: () => this.panelOpen,
+        measuring: () => this.measuring,
         refreshPanel: () => {
           if (this.doc?.panelTab === 'sim') this.panel.refresh();
         },
@@ -1899,8 +1921,9 @@ export class NcViewerApp implements PanelHost {
     this.refreshPlayStrip();
   }
 
-  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다 */
+  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다. 판재 가공 하나씩 따라가기 띠도 같은 때 맞춘다 */
   private refreshPlayStrip(): void {
+    this.sim?.refreshStrip();
     const s = this.playStrip;
     const d = this.doc;
     const info = this.playbackInfo();
@@ -1966,6 +1989,20 @@ export class NcViewerApp implements PanelHost {
     document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
   }
 
+  /**
+   * 원호 접선 잠금(measure-lock.ts): 첫 측정 점 a에 닿는 G2/G3 원호(첫 점마다 한 번 찾는다) 가운데 커서 아래 점 p가 그 위에 있는 것의 접선.
+   * 재생 중이면 그린 이동까지의 원호만. 판재 문서는 원호 이동이 없어 null
+   */
+  private arcTangentAt(a: [number, number, number], p: [number, number, number]): [number, number, number] | null {
+    const d = this.doc;
+    const nc = d?.nc;
+    if (!d || !nc || !this.arcTangents) return null;
+    const pos = d.playSec === null ? null : playPosition(d);
+    const last = pos ? (pos.move >= 0 ? pos.move : -1) : Infinity;
+    const angle = (d.scene.meta as { arcAngle?: unknown } | undefined)?.arcAngle;
+    return this.arcTangents.at(nc, a, p, typeof angle === 'number' && angle > 0 ? angle : undefined, last);
+  }
+
   /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표 */
   private lockHintNow(): string | null {
     const v = this.viewer;
@@ -2003,6 +2040,8 @@ export class NcViewerApp implements PanelHost {
     const t = ev.target as HTMLElement | null;
     // The language menu owns its keyboard focus, including Escape during loading.
     if (t?.closest?.('.language-control, .language-list')) return;
+    // 원호 접선 Shift 잠금은 코어보다 먼저(아래 viewer 갈래·캔버스 키가 코어에 넘기면 코어는 잠금이 있으면 그대로 둔다)
+    if (ev.key === 'Shift' && !ev.repeat && !isEditableTarget(t as (HTMLElement & { type?: string }) | null)) this.mlock.shiftDown();
     if (this.busy && ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
@@ -2035,6 +2074,7 @@ export class NcViewerApp implements PanelHost {
       hasCode: !!this.doc && (!!this.doc.nc || !!this.doc.mpr),
       measureDirecting: this.mlock.directing && !this.doc?.measure,
       arrowOwner: !!this.openMenu || !!t?.closest?.('[role="menu"], [role="tablist"], [role="listbox"], [role="tree"]'),
+      canStepOps: !!this.sim?.canStepOps,
     });
     if (!a) return;
     if (a.type === 'open') {
@@ -2067,6 +2107,7 @@ export class NcViewerApp implements PanelHost {
     ev.preventDefault();
     ev.stopPropagation();
     if (a.type === 'lock') this.mlock.arrow(a.axis);
+    else if (a.type === 'opStep') this.sim?.stepBy(a.delta);
     else if (a.type === 'grid') this.toggleGrid();
     else if (a.type === 'step') this.stepMove(a.delta);
     else if (a.type === 'line') this.stepLine(a.delta);

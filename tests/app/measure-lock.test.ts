@@ -295,6 +295,8 @@ describe('번역', () => {
   it('새 글은 네 언어 사전에 있다(툴팁·상태 줄·측정 띠·단추)', () => {
     const texts = [
       '나란한 방향',
+      // 13차: 원호 접선 잠금(툴팁·결과 이름)
+      '접선 방향',
       ...Object.values(LOCK_HINTS),
       ...Object.values(SHIFT_LOCK_HINTS),
       ARROW_LOCK_HINT,

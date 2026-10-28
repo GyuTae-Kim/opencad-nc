@@ -7,8 +7,25 @@
  * - 받지 못하면(오프라인에서 새 판 등) 약속을 비워 다음 열기에서 다시 받는다.
  */
 type Core = typeof import('opencad-viewer3d');
+type Tangents = typeof import('./tangent');
 
 let pending: Promise<Core> | null = null;
+let tangents: Promise<Tangents> | null = null;
+
+/**
+ * 측정 원호 접선 잠금(tangent.ts)도 문서를 열 때 나눠 받는다(측정에서만 쓰므로 — 첫 화면 JS의 휴대폰 성능 예산을 지킨다).
+ * 받지 못하면 약속을 비워 다음 열기에서 다시 받는다(그동안 원호 끝에서는 코어 판정만)
+ */
+export function loadArcTangents(): Promise<Tangents> {
+  if (!tangents) {
+    const p = import('./tangent');
+    tangents = p;
+    p.catch(() => {
+      if (tangents === p) tangents = null;
+    });
+  }
+  return tangents;
+}
 
 /** 코어 입구 모듈(한 번만 받는다) */
 export function loadViewerCore(): Promise<Core> {

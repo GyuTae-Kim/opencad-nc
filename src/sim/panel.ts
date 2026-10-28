@@ -298,3 +298,30 @@ export function panelSimMoves(src: PanelSimSource, radiusOf: (tool: number) => n
     area,
   };
 }
+
+/** 가공 하나씩 따라가기의 한 걸음: 가공 번호(scene.meta.operations 차례)와 그 가공의 첫 이동 */
+export interface PanelOpStep {
+  op: number;
+  move: number;
+}
+
+/**
+ * 판재 이동의 가공 차례(가공 하나씩 따라가기): 이동 차례로 처음 나온 가공마다 한 걸음(판 밖 영역 -1은 늘 먼저 하므로 빼고, 같은 가공은 한 번).
+ * k걸음 = 가공 k개를 다 깎은 자리 = k번째 걸음의 첫 이동 앞(k가 걸음 수면 끝)
+ */
+export function panelOpSteps(m: Pick<PanelSimMoves, 'count' | 'op'>): PanelOpStep[] {
+  const out: PanelOpStep[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < m.count; i++) {
+    const op = m.op[i]!;
+    if (op < 0 || seen.has(op)) continue;
+    seen.add(op);
+    out.push({ op, move: i });
+  }
+  return out;
+}
+
+/** k걸음(가공 k개를 다 깎음 — 0이면 깎기 전, 걸음 수 이상이면 끝)의 엔진 자리 */
+export function panelStepTarget(steps: readonly PanelOpStep[], k: number, count: number): { move: number; frac: number } {
+  return { move: k >= 0 && k < steps.length ? steps[k]!.move : count, frac: 0 };
+}

@@ -78,7 +78,7 @@ import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 import { mprOps } from '../../src/app/doc';
 import { SIM_GROUP, composeSimScene, fullSceneCheaper, panelToolLabel, sumBytes } from '../../src/app/sim';
-import { PANEL_SKIP_TEXT } from '../../src/sim/panel';
+import { PANEL_SKIP_TEXT, panelOpSteps, panelStepTarget } from '../../src/sim/panel';
 import type { SimRequest } from '../../src/sim/protocol';
 import { SIM_BLOCK_TEXT } from '../../src/sim/setup';
 import { SimRunner } from '../../src/sim/runner';
@@ -438,6 +438,116 @@ describe('깎기 탭', () => {
   });
 });
 
+describe('판재 가공 하나씩 따라가기', () => {
+  it('가공 차례: 이동 차례로 처음 나온 가공마다 한 걸음(판 밖 영역은 빼고), k걸음 = k번째 걸음의 첫 이동 앞', () => {
+    const op = Int32Array.of(-1, 3, 3, 3, 5, 5, 3, 7);
+    const steps = panelOpSteps({ count: op.length, op });
+    expect(steps).toEqual([
+      { op: 3, move: 1 },
+      { op: 5, move: 4 },
+      { op: 7, move: 7 },
+    ]);
+    expect(panelStepTarget(steps, 0, 8)).toEqual({ move: 1, frac: 0 });
+    expect(panelStepTarget(steps, 2, 8)).toEqual({ move: 7, frac: 0 });
+    expect(panelStepTarget(steps, 3, 8)).toEqual({ move: 8, frac: 0 });
+  });
+
+  it('깎기 탭의 처음·다음·이전·막대·끝까지로 가공 k개까지 깎고 지금 가공을 고르며, 패널을 닫으면 3D 보기 아래 띠(측정 중엔 숨김)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    const end = api.state.sim!.at!.move;
+    expect(api.state.sim!.step).toBeNull();
+    await until(() => !!root.querySelector('.panel-body .sim-steps'));
+    const box = (): Element => root.querySelector('.panel-body .sim-steps')!;
+    const btn = (label: string, scope: Element = box()): HTMLButtonElement => scope.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+    const text = (sel: string, scope: Element = box()): string => scope.querySelector(sel)!.textContent!;
+    expect(text('.ss-count')).toBe('2 / 2');
+    expect(text('.ss-name')).toBe('모든 가공');
+    // 모든 가공에서도 다음 가공은 누를 수 있다(첫 가공부터 — 아래에서 확인)
+    expect(btn('다음 가공').disabled).toBe(false);
+    expect(btn('모든 가공 깎기(끝까지)').disabled).toBe(true);
+    // 단추는 측정 띠와 같은 38px 꼴(mb-btn)
+    expect([...box().querySelectorAll('button')].every((b) => b.classList.contains('mb-btn'))).toBe(true);
+    // 처음: 깎기 전(판 그대로) — 고른 것 지움
+    api.selectLine(0);
+    btn('처음으로(깎기 전)').click();
+    await until(() => settled() && api.state.sim!.at!.move < end);
+    expect(api.state.sim!.step).toEqual({ at: 0, count: 2, op: null, strip: false });
+    expect(app.doc!.selKey).toBeNull();
+    const t0 = api.state.sim!.at!.move;
+    expect(text('.ss-name')).toBe('깎기 전');
+    expect(btn('이전 가공').disabled).toBe(true);
+    expect(root.querySelector('.sim-status')!.textContent).toMatch(/^가공 0 \/ 2개까지 깎았습니다 · /);
+    // 다음: 첫 가공(수직 구멍)까지 — 그 가공을 고른다
+    btn('다음 가공').click();
+    await until(() => settled() && api.state.sim!.at!.move > t0);
+    expect(api.state.sim!.step).toMatchObject({ at: 1, count: 2, op: 0 });
+    expect(app.doc!.selKey).toBe('0');
+    expect(text('.ss-count')).toBe('1 / 2');
+    expect(text('.ss-name')).toMatch(/^가공 1 · /);
+    const t1 = api.state.sim!.at!.move;
+    expect(t1).toBeLessThan(end);
+    // 막대 끝(2): 두 가공 모두 — 지금 가공은 포켓
+    const range = box().querySelector<HTMLInputElement>('input[type=range]')!;
+    expect(range.max).toBe('2');
+    range.value = '2';
+    range.dispatchEvent(new Event('input'));
+    await until(() => settled() && api.state.sim!.at!.move === end);
+    expect(api.state.sim!.step).toMatchObject({ at: 2, op: 1 });
+    expect(app.doc!.selKey).toBe('1');
+    expect(btn('다음 가공').disabled).toBe(true);
+    btn('이전 가공').click();
+    await until(() => settled() && api.state.sim!.at!.move === t1);
+    // 패널을 닫으면 3D 보기 아래 띠(같은 단추), 측정 중에는 숨김
+    api.togglePanel(false);
+    const strip = root.querySelector<HTMLElement>('.play-strip.sim-steps')!;
+    expect(strip.hidden).toBe(false);
+    expect(api.state.sim!.step!.strip).toBe(true);
+    expect(text('.ss-count', strip)).toBe('1 / 2');
+    btn('다음 가공', strip).click();
+    await until(() => settled() && api.state.sim!.at!.move === end);
+    expect(text('.ss-count', strip)).toBe('2 / 2');
+    // (가짜 뷰어는 측정 모드를 스스로 바꾸지 않는다 — 코어처럼 켜고 끈다)
+    FakeViewer().measureMode = true;
+    app.toggleMeasure(true);
+    expect(strip.hidden).toBe(true);
+    FakeViewer().measureMode = false;
+    app.toggleMeasure(false);
+    expect(strip.hidden).toBe(false);
+    // ✕: 따라가기를 끝내고(끝까지) 띠를 거둔다
+    btn('하나씩 따라가기 끝내기(모든 가공)', strip).click();
+    expect(api.state.sim!.step).toBeNull();
+    expect(strip.hidden).toBe(true);
+    // ← →: 끝까지 보고 있으면 뒤로는 마지막 가공 앞(1), 앞으로는 하나씩(재생 막대의 한 이동씩과 같은 차례)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(api.state.sim!.step).toMatchObject({ at: 1, count: 2 });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(api.state.sim!.step).toMatchObject({ at: 2 });
+    btn('하나씩 따라가기 끝내기(모든 가공)', strip).click();
+    // 모든 가공에서 깎기 탭의 다음 가공: 첫 가공부터(→ 키, G-code 재생 띠의 다음 이동과 같은 차례)
+    api.togglePanel(true);
+    await until(() => !!root.querySelector('.panel-body .sim-steps'));
+    expect(text('.ss-name')).toBe('모든 가공');
+    expect(btn('다음 가공').disabled).toBe(false);
+    btn('다음 가공').click();
+    expect(api.state.sim!.step).toMatchObject({ at: 1, count: 2, op: 0 });
+    expect(text('.ss-count')).toBe('1 / 2');
+    await until(() => settled() && api.state.sim!.at!.move === t1);
+    // 자동 확인: setSim(true, { step })
+    await api.setSim(true, { step: 1 });
+    await until(() => settled() && api.state.sim!.at!.move === t1);
+    // 끄면 따라가기도 끝
+    await api.setSim(false);
+    expect(api.state.sim!.step).toBeNull();
+    expect(strip.hidden).toBe(true);
+  });
+});
+
 describe('장면 합치기·번역', () => {
   it('공작물 상자(nc-stock)를 빼고 소재 그물을 더하며 범위를 넓힌다', () => {
     const base = { name: 'a', units: 'mm' as const, meshes: [{ id: 'nc-stock', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }], lines: [{ id: 'nc-cut-1', positions: new Float32Array(6) }], points: [], bounds: { min: [0, 0, -1] as [number, number, number], max: [10, 10, 5] as [number, number, number] } };
@@ -528,6 +638,18 @@ describe('장면 합치기·번역', () => {
       '구멍은 파일의 구멍 지름, 경로는 파일의 공구 폭(PGI·XML)을 씁니다. 공구 번호만 있는 MPR 윤곽처럼 지름을 모르면 기본값(평 엔드밀 Ø6 mm · 0.25 inch)이니 지름을 넣으십시오. 홈·포켓은 공구 없이 파일의 모양 그대로 깎습니다. 바꾼 값은 이 브라우저에 기억합니다.',
       '누르면 그 가공을 고릅니다',
       '경로(지름 모름)',
+      // 판재 가공 하나씩 따라가기(13차)
+      '가공 하나씩 따라가기',
+      '가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 단추가 남습니다.',
+      '처음으로(깎기 전)',
+      '이전 가공',
+      '다음 가공',
+      '하나씩 따라가기 끝내기(모든 가공)',
+      '모든 가공 깎기(끝까지)',
+      '끝까지',
+      '깎은 가공 수',
+      '모든 가공',
+      '깎기 전',
     ];
     const samples = [
       '소재 계산 중 45%',
@@ -568,6 +690,8 @@ describe('장면 합치기·번역', () => {
       '경로(지름 모름) 모서리 R',
       'T101 Ø12 종류',
       '시뮬레이션하지 않음 — 판 윗면에서 위→아래로 깎는 가공이 없어 시뮬레이션할 것이 없습니다.',
+      '가공 3 / 12개까지 깎았습니다 · 0.01초',
+      '가공 0 / 2개까지 깎았습니다 · 0초',
     ];
     for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
       for (const t of texts) {
