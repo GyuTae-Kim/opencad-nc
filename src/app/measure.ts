@@ -6,8 +6,11 @@
 import type { MeasureResult } from 'opencad-viewer3d';
 import { fmtNum } from './format';
 
-/** 잠근 방향(코어 0.10.0 추론 잠금): 축 셋, 선분과 나란히, 첫 점에서 선분에 내린 수직 */
-export type LockName = 'x' | 'y' | 'z' | 'parallel' | 'perpendicular';
+/**
+ * 잠근 방향(코어 0.10.0 추론 잠금): 축 셋, 선분과 나란히, 첫 점에서 선분에 내린 수직,
+ * 첫 점이 원호 끝일 때 그 원호의 접선(앱이 코어에 방향으로 주는 나란함 잠금 — tangent.ts·measure-lock.ts)
+ */
+export type LockName = 'x' | 'y' | 'z' | 'parallel' | 'perpendicular' | 'tangent';
 
 /** 잠갔을 때 상태 줄·측정 띠에 적는 글 */
 export const LOCK_HINTS: Record<LockName, string> = {
@@ -16,6 +19,7 @@ export const LOCK_HINTS: Record<LockName, string> = {
   z: 'Z축 방향으로 잠금',
   parallel: '나란한 방향으로 잠금',
   perpendicular: '수직 방향으로 잠금',
+  tangent: '접선 방향으로 잠금',
 };
 
 /** 잠그지 않았을 때(키보드 기기) 커서 아래에 Shift로 잠글 방향이 있으면(코어 0.12.0 measureHoverLock): 그 방향 */
@@ -25,6 +29,7 @@ export const SHIFT_LOCK_HINTS: Record<LockName, string> = {
   z: 'Shift로 Z축 방향 잠그기',
   parallel: 'Shift로 나란한 방향 잠그기',
   perpendicular: 'Shift로 수직 방향 잠그기',
+  tangent: 'Shift로 접선 방향 잠그기',
 };
 
 /** 잠그지 않았고 Shift로 잠글 방향도 없을 때(키보드 기기): 화살표(→ X · ← Y · ↑ Z, ↓ 지금 방향) */

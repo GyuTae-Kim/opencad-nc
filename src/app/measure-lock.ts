@@ -12,18 +12,26 @@
  * - 화살표(첫 점을 찍은 뒤, 둘째 점 방향을 잡는 동안): → X · ← Y · ↑ Z축, ↓ 지금 방향(없으면 첫 점 뒤 마지막으로 본 방향 — 코어). 같은 키로 푼다.
  * - 측정 띠 잠금 단추(손가락 기기 — 넓은 화면에서는 띠가 숨는다): 방향을 잡는 동안만 보인다. 정밀 조준 중 다른 손가락으로 누르면 click이
  *   오지 않으므로 손가락·펜은 pointerdown에서 받는다. 잠글 방향이 없으면 띠 위에 알림을 띄우고, 잠금이 걸리면(어느 길로든) 그 알림만 거둔다.
+ * - 원호 접선(13차): 첫 점이 원호 이동(G2/G3, 나선 포함)의 시작·끝이고 커서 아래 점이 그 원호 위(다른 끝 포함)면 Shift·↓·잠금 단추가
+ *   그 끝의 접선 방향으로 잠근다(host.arcTangent — tangent.ts, 코어 setMeasureInferenceLock({ direction, kind: 'parallel' })).
+ *   코어는 원호를 나눈 현을 선분으로 보므로 첫 현의 끝을 가리키면 그 현 방향으로 잠그려 한다 — 커서 아래 점이 원호 위면 접선이 먼저다.
+ *   커서 아래가 방향 추론(축·나란함·수직 발 — 툴팁이 그 이름)이면 코어 판정 그대로다. 잠글 것을 지금 못 보면(커서가 떠남) 코어처럼
+ *   첫 점 뒤 마지막으로 본 방향 — 그것이 접선이었으면 접선. Shift는 앱 onKey가 코어보다 먼저 shiftDown을 불러 잠그고(코어는 잠금이 있으면
+ *   Shift를 넘긴다) 떼면 shiftUp이 푼다(코어는 제가 잠근 Shift만 푼다). 툴팁·안내·결과는 "접선 방향"이라 적는다.
  * 둘째 점을 찍거나 측정을 지우거나 측정을 끄면 코어가 잠금을 푼다.
  */
 import type { MeasureHoverSnap, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { h, toast } from './dom';
 import { icon } from './icons';
 import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, lockName, type LockName } from './measure';
-import { snapLabel } from './snap';
+import { TANGENT_LABEL, snapLabel } from './snap';
+
+type V3 = [number, number, number];
 
 /** 이 모듈이 쓰는 뷰어 기능(시험에서 가짜로 바꿀 수 있게) */
 export type LockViewer = Pick<
   Viewer3d,
-  'canvas' | 'measureMode' | 'measurePointCount' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'measureLabelRect' | 'setMeasureInferenceLock' | 'project'
+  'canvas' | 'measureMode' | 'measurePointCount' | 'measurePoints' | 'measureHoverSnap' | 'measureHoverLock' | 'measureInferenceLock' | 'measureLabelRect' | 'setMeasureInferenceLock' | 'project'
 >;
 
 export interface MeasureLockHost {
@@ -34,7 +42,18 @@ export interface MeasureLockHost {
   layer: HTMLElement;
   /** 잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었다(상태 줄·측정 띠 다시 그리기) */
   changed(): void;
+  /**
+   * 첫 측정 점 a가 원호 이동의 시작·끝이고 커서 아래 점 p가 그 원호 위면 그 끝에서 원호 쪽으로 가는 단위 접선(tangent.ts arcTangentAt), 아니면 null.
+   * 원호를 모르는 문서(판재 등)·시험은 두지 않아도 된다
+   */
+  arcTangent?(a: V3, p: V3): V3 | null;
 }
+
+/** 방향 추론 붙잡기(첫 점을 지나는 선 위의 점 — 툴팁이 그 이름): 원호 접선보다 코어 판정이 먼저 */
+const INFERRED = new Set(['axis', 'parallel', 'perpendicular']);
+/** 같은 방향(부호 무시)으로 볼 단위 벡터 내적 */
+const SAME_DIR = 1 - 1e-9;
+const sameLine = (a: readonly number[], b: readonly number[]): boolean => Math.abs(a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!) >= SAME_DIR;
 
 /** 측정 띠 알림 종류: 잠글 방향이 없음(잠금이 걸리면 거둔다) */
 const NO_LOCK = 'no-lock';
@@ -80,6 +99,16 @@ export class MeasureLock {
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private flashKind: string | null = null;
   private lastKey = '';
+  /** 앱이 원호 접선으로 잠근 방향(코어 잠금이 이것과 같은 방향의 'api' 잠금이면 접선 잠금) */
+  private tangent: V3 | null = null;
+  /** 접선 잠금을 Shift로 걸었는지(떼면 푼다) */
+  private shiftTangent = false;
+  /** 첫 점 뒤 마지막으로 본 잠글 것이 원호 접선이었으면 그 방향(코어 방향을 보면 지운다 — 코어의 "마지막으로 본 방향"과 같은 차례) */
+  private seenTangent: V3 | null = null;
+  /** seenTangent·접선 결과를 맞춘 첫 점(바뀌면 잊는다) */
+  private firstKey = '';
+  /** 접선 잠금으로 찍은 둘째 점을 결과에서 알아보려고 남기는 방향(다른 잠금·첫 점이 바뀌면 지운다) */
+  private resultTangent: V3 | null = null;
 
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
@@ -107,16 +136,43 @@ export class MeasureLock {
     parent.addEventListener('pointerup', () => this.schedule());
   }
 
-  /** 지금 잠근 방향 */
+  /** 지금 잠근 방향(원호 접선으로 잠갔으면 'tangent') */
   get lock(): LockName | null {
-    return lockName(this.host.viewer()?.measureInferenceLock);
+    const l = this.host.viewer()?.measureInferenceLock;
+    if (l && this.tangentLocked(l)) return 'tangent';
+    return lockName(l);
   }
 
-  /** 잠그지 않았을 때 Shift(·잠금 단추)가 지금 잠글 방향(코어 measureHoverLock). 방향을 잡는 중이 아니면 null */
+  /** 잠그지 않았을 때 Shift(·잠금 단추)가 지금 잠글 방향(원호 접선, 아니면 코어 measureHoverLock). 방향을 잡는 중이 아니면 null */
   get hoverLock(): LockName | null {
     const v = this.host.viewer();
     if (!v || !this.directing || v.measureInferenceLock) return null;
+    if (this.tangentNow()) return 'tangent';
     return lockName(v.measureHoverLock);
+  }
+
+  /**
+   * 커서 아래에서 잠글 원호 접선: 방향을 잡는 중이고 잠그지 않았으며, 커서 아래 점이 방향 추론(축·나란함·수직 발)이 아니고
+   * 첫 점에 닿는 원호 위에 있으면 그 끝의 접선(host.arcTangent). 아니면 null
+   */
+  tangentNow(): V3 | null {
+    const v = this.host.viewer();
+    const at = this.host.arcTangent;
+    if (!v || !at || !this.directing || v.measureInferenceLock) return null;
+    const hv = v.measureHoverSnap;
+    if (!hv || (hv.snap && INFERRED.has(hv.snap))) return null;
+    const first = v.measurePoints[0];
+    return first ? at.call(this.host, first.point, hv.point) : null;
+  }
+
+  /** 코어 잠금이 앱이 건 원호 접선 잠금인지(같은 방향의 'api' 나란함 잠금) */
+  private tangentLocked(l: { kind: string; direction: readonly number[]; source?: string }): boolean {
+    return !!this.tangent && l.kind === 'parallel' && l.source === 'api' && sameLine(l.direction, this.tangent);
+  }
+
+  /** 측정 결과의 둘째 점을 원호 접선 잠금으로 찍었는지(코어 결과는 나란함 — 이름만 접선 방향으로) */
+  tangentResult(m: { lockedB?: boolean; snapB?: string | null; directionB?: readonly number[] } | null | undefined): boolean {
+    return !!m?.lockedB && m.snapB === 'parallel' && !!m.directionB && !!this.resultTangent && sameLine(m.directionB, this.resultTangent);
   }
 
   /** 둘째 점의 방향을 잡는 중인지(첫 점을 찍었고 결과가 없음) */
@@ -146,7 +202,10 @@ export class MeasureLock {
   update(): void {
     const v = this.host.viewer();
     const on = !!v && v.measureMode;
-    const tip = on ? snapTip(v!.measureHoverSnap) : null;
+    this.track();
+    const snap = on ? snapTip(v!.measureHoverSnap) : null;
+    // 원호 접선으로 잠근 선 위의 점은 코어 종류(나란함) 대신 접선 방향
+    const tip = snap && snap.locked && v!.measureHoverSnap?.snap === 'parallel' && v!.measureInferenceLock && this.tangentLocked(v!.measureInferenceLock) ? { ...snap, name: TANGENT_LABEL } : snap;
     const hv = on ? v!.measureHoverSnap : null;
     const sp = tip && hv ? v!.project(hv.point) : null;
     if (!tip || !sp || !sp.onScreen) this.tip.hidden = true;
@@ -179,13 +238,13 @@ export class MeasureLock {
     }
   }
 
-  /** 잠금 단추: 잠겼으면 풀고, 아니면 코어가 정한 방향(Shift와 같은 판정, 없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
+  /** 잠금 단추: 잠겼으면 풀고, 아니면 지금 방향(원호 접선이나 코어 — Shift와 같은 판정, 없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
   toggle(): boolean {
     const v = this.host.viewer();
     if (!v || !this.directing) return false;
     let ok = true;
-    if (v.measureInferenceLock) v.setMeasureInferenceLock(false);
-    else if (!v.setMeasureInferenceLock(true)) {
+    if (v.measureInferenceLock) this.unlock();
+    else if (!this.lockNow()) {
       ok = false;
       this.noLock();
     }
@@ -199,17 +258,97 @@ export class MeasureLock {
     if (!v || !this.directing) return;
     const cur = v.measureInferenceLock;
     if (axis) {
-      if (cur?.kind === 'axis' && cur.axis === axis) v.setMeasureInferenceLock(false);
-      else v.setMeasureInferenceLock(axis);
-    } else if (cur) v.setMeasureInferenceLock(false);
-    else if (!v.setMeasureInferenceLock(true)) this.noLock();
+      if (cur?.kind === 'axis' && cur.axis === axis) this.unlock();
+      else {
+        this.forgetTangent();
+        v.setMeasureInferenceLock(axis);
+      }
+    } else if (cur) this.unlock();
+    else if (!this.lockNow()) this.noLock();
     this.after();
   }
 
-  /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림을 거둔다 */
+  /**
+   * Shift 누름(앱 onKey가 코어에 넘기기 전에 — 코어는 잠금이 있으면 Shift를 넘긴다): 커서 아래가 원호 위면 그 접선으로 잠근다.
+   * 아니면 아무것도 하지 않는다(코어가 제 판정으로 잠근다)
+   */
+  shiftDown(): void {
+    const t = this.tangentNow();
+    if (!t || !this.lockTangent(t)) return;
+    this.shiftTangent = true;
+    this.after();
+  }
+
+  /** Shift 뗌·창 흐려짐: Shift로 건 접선 잠금이면 푼다(둘째 점을 찍어 코어가 이미 풀었으면 그대로) */
+  shiftUp(): void {
+    if (!this.shiftTangent) return;
+    this.shiftTangent = false;
+    const v = this.host.viewer();
+    const l = v?.measureInferenceLock;
+    if (v && l && this.tangentLocked(l)) {
+      v.setMeasureInferenceLock(false);
+      this.forgetTangent();
+    }
+    this.after();
+  }
+
+  /** 지금 방향 잠그기: 커서 아래 원호 접선, 코어가 볼 방향, 지금 볼 것이 없으면 마지막으로 본 것(접선이었으면 접선, 아니면 코어) */
+  private lockNow(): boolean {
+    const v = this.host.viewer();
+    if (!v) return false;
+    const t = this.tangentNow() ?? (v.measureHoverLock ? null : this.seenTangent);
+    if (t) return this.lockTangent(t);
+    this.forgetTangent();
+    return v.setMeasureInferenceLock(true);
+  }
+
+  /** 원호 접선으로 잠근다(코어 나란함 잠금 — 축과 나란해도 접선 이름으로) */
+  private lockTangent(t: V3): boolean {
+    const v = this.host.viewer();
+    if (!v || !v.setMeasureInferenceLock({ direction: t, kind: 'parallel' })) return false;
+    this.tangent = [...t];
+    this.resultTangent = [...t];
+    return true;
+  }
+
+  private unlock(): void {
+    this.host.viewer()?.setMeasureInferenceLock(false);
+    this.forgetTangent();
+  }
+
+  /** 접선 잠금 기록을 지운다(다른 잠금으로 바꾸거나 풀었다) */
+  private forgetTangent(): void {
+    this.tangent = null;
+    this.resultTangent = null;
+    this.shiftTangent = false;
+  }
+
+  /**
+   * 첫 점 뒤 마지막으로 본 잠글 것(코어 lastLockable과 같은 차례 — 원호 접선을 보면 그것, 코어 방향을 보면 코어)과 첫 점이 바뀌었는지.
+   * 새 첫 점(다시 재기·둘째 점 뒤 새로)이면 접선 기록을 잊는다(결과를 보이는 동안은 남긴다)
+   */
+  private track(): void {
+    const v = this.host.viewer();
+    const pts = (v && v.measureMode ? v.measurePoints : null) ?? [];
+    const key = pts.length ? pts[0]!.point.join(',') : '';
+    if (key !== this.firstKey) {
+      this.firstKey = key;
+      this.seenTangent = null;
+      if (pts.length === 1) this.forgetTangent();
+    }
+    if (!v || !this.directing || v.measureInferenceLock) return;
+    const t = this.tangentNow();
+    if (t) this.seenTangent = t;
+    else if (v.measureHoverLock) this.seenTangent = null;
+  }
+
+  /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림·접선 기록을 거둔다 */
   reset(): void {
     this.tip.hidden = true;
     this.dropFlash(null);
+    this.forgetTangent();
+    this.seenTangent = null;
+    this.firstKey = '';
     this.schedule();
   }
 

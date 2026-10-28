@@ -1040,5 +1040,8 @@
   "B 체계": "System B",
   "C 체계": "System C",
   "Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm": "Fanuc lathe G code system — A: G90, G92, G94 single cycles and U/W incremental; B: G77, G78, G79 single cycles and G90/G91 absolute/incremental; C: G20, G21, G24 single cycles and G70/G71 inch/mm",
-  "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Local named parameter #<{0}> is not defined in this scope — an error in LinuxCNC (read as empty)"
+  "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Local named parameter #<{0}> is not defined in this scope — an error in LinuxCNC (read as empty)",
+  "접선 방향": "Tangent",
+  "접선 방향으로 잠금": "Locked tangent",
+  "Shift로 접선 방향 잠그기": "Shift locks tangent"
 }
