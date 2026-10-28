@@ -1043,5 +1043,17 @@
   "지역 이름 변수 #<{0}>가 이 범위에서 정해지지 않음 — LinuxCNC는 오류(빈 값으로 읽음)": "Local named parameter #<{0}> is not defined in this scope — an error in LinuxCNC (read as empty)",
   "접선 방향": "Tangent",
   "접선 방향으로 잠금": "Locked tangent",
-  "Shift로 접선 방향 잠그기": "Shift locks tangent"
+  "Shift로 접선 방향 잠그기": "Shift locks tangent",
+  "가공 하나씩 따라가기": "Step through operations",
+  "가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 단추가 남습니다.": "Cuts the operations one at a time in list order. The current operation is highlighted in the operation drawing (Show operation drawing too) and in the Operations tab. When you close the panel, the same buttons stay below the 3D view.",
+  "처음으로(깎기 전)": "Go to start (before cutting)",
+  "이전 가공": "Previous operation",
+  "다음 가공": "Next operation",
+  "하나씩 따라가기 끝내기(모든 가공)": "Stop stepping (all operations)",
+  "모든 가공 깎기(끝까지)": "Cut all operations (to the end)",
+  "끝까지": "To the end",
+  "깎은 가공 수": "Operations cut",
+  "모든 가공": "All operations",
+  "깎기 전": "Before cutting",
+  "가공 {0} / {1}개까지 깎았습니다": "Cut {0} of {1} operations"
 }

@@ -1411,10 +1411,14 @@ export class NcViewerApp implements PanelHost {
     this.renderStatus();
   }
 
-  /** MPR 가공 고르기 */
+  /** MPR 가공 고르기(음수면 고른 것 지우기 — 깎기 탭 가공 하나씩 따라가기의 깎기 전) */
   selectMprOp(i: number, reveal = false): void {
     const d = this.doc;
     if (!d) return;
+    if (i < 0) {
+      this.clearSelection();
+      return;
+    }
     const id = `mpr-op-${i}`;
     const has = d.scene.meshes.some((m) => m.id === id) || d.scene.lines.some((l) => l.id === id);
     this.setHighlight(has ? [id] : []);
@@ -1577,6 +1581,8 @@ export class NcViewerApp implements PanelHost {
         holdScene: () => (this.viewer?.measurePointCount ?? 0) > 0 || !!this.aim?.aiming,
         selectLine: (l, m, r) => this.selectLine(l, m, r),
         selectMprOp: (i, r) => this.selectMprOp(i, r),
+        panelOpen: () => this.panelOpen,
+        measuring: () => this.measuring,
         refreshPanel: () => {
           if (this.doc?.panelTab === 'sim') this.panel.refresh();
         },
@@ -1909,8 +1915,9 @@ export class NcViewerApp implements PanelHost {
     this.refreshPlayStrip();
   }
 
-  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다 */
+  /** 재생 띠: 패널이 닫혔고 재생 중이거나 재생 자리가 있으면(측정 중이 아니면) 보인다. 판재 가공 하나씩 따라가기 띠도 같은 때 맞춘다 */
   private refreshPlayStrip(): void {
+    this.sim?.refreshStrip();
     const s = this.playStrip;
     const d = this.doc;
     const info = this.playbackInfo();
@@ -2061,6 +2068,7 @@ export class NcViewerApp implements PanelHost {
       hasCode: !!this.doc && (!!this.doc.nc || !!this.doc.mpr),
       measureDirecting: this.mlock.directing && !this.doc?.measure,
       arrowOwner: !!this.openMenu || !!t?.closest?.('[role="menu"], [role="tablist"], [role="listbox"], [role="tree"]'),
+      canStepOps: !!this.sim?.canStepOps,
     });
     if (!a) return;
     if (a.type === 'open') {
@@ -2093,6 +2101,7 @@ export class NcViewerApp implements PanelHost {
     ev.preventDefault();
     ev.stopPropagation();
     if (a.type === 'lock') this.mlock.arrow(a.axis);
+    else if (a.type === 'opStep') this.sim?.stepBy(a.delta);
     else if (a.type === 'grid') this.toggleGrid();
     else if (a.type === 'step') this.stepMove(a.delta);
     else if (a.type === 'line') this.stepLine(a.delta);

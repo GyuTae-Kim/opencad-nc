@@ -704,6 +704,37 @@ button.linkish {
   width: 100%;
 }
 
+/* 판재 가공 하나씩 따라가기(깎기 탭 — 패널을 닫으면 3D 보기 아래 .play-strip 띠로 같은 단추). 단추는 측정 띠와 같은 38px */
+.sim-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sim-steps .ps-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sim-steps .ss-count {
+  font-weight: 600;
+}
+.sim-steps .ss-name {
+  min-width: 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.sim-steps .ps-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.sim-steps input[type='range'] {
+  width: 100%;
+}
+
 /* 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언): 3D 보기 위 가운데, 행동 단추와 닫기 */
 .notice-bar {
   position: absolute;

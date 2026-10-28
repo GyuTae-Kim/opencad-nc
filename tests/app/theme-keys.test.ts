@@ -75,6 +75,11 @@ describe('키 고르기', () => {
     expect(k('ArrowRight')).toEqual({ type: 'step', delta: 1 });
     expect(k('ArrowLeft', { shift: true })).toEqual({ type: 'step', delta: -10 });
     expect(k('ArrowRight', { canPlay: false })).toEqual({ type: 'viewer' });
+    // 판재 깎기(가공 하나씩 따라가기): ← → 한 가공씩(Shift도 하나씩), 코드 목록·탭·메뉴에서는 그쪽 키
+    expect(k('ArrowRight', { canPlay: false, canStepOps: true })).toEqual({ type: 'opStep', delta: 1 });
+    expect(k('ArrowLeft', { canPlay: false, canStepOps: true, shift: true })).toEqual({ type: 'opStep', delta: -1 });
+    expect(k('ArrowLeft', { canPlay: false, canStepOps: true, arrowOwner: true })).toEqual({ type: 'viewer' });
+    expect(k('ArrowDown', { canPlay: false, canStepOps: true, onCanvas: true })).toEqual({ type: 'line', delta: 1 });
     expect(k('ArrowRight', { editable: true })).toBeNull();
     expect(k('ArrowDown', { onCanvas: true })).toEqual({ type: 'line', delta: 1 });
     expect(k('ArrowUp', { inCode: true })).toEqual({ type: 'line', delta: -1 });

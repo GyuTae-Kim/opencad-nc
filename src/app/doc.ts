@@ -285,6 +285,18 @@ export interface MprOpRow {
   holeCount?: number;
 }
 
+/** 판재 가공 종류 이름(가공 탭·깎기 탭의 가공 하나씩 따라가기) */
+export const MPR_KIND: Record<string, string> = {
+  drillV: '수직 구멍',
+  drillH: '수평 구멍',
+  contour: '윤곽',
+  groove: '홈',
+  pocket: '포켓',
+  edge: '엣지 밴딩',
+  comment: '주석',
+  other: '기타',
+};
+
 export function mprOps(scene: Scene3d): MprOpRow[] {
   const ops = (scene.meta as { operations?: unknown } | undefined)?.operations;
   return Array.isArray(ops) ? (ops as MprOpRow[]) : [];

@@ -26,6 +26,8 @@ export type KeyAction =
   | { type: 'escape'; canvas: boolean }
   /** ← → 한 이동씩(Shift면 10) */
   | { type: 'step'; delta: number }
+  /** ← → 판재 깎기에서 한 가공씩(가공 하나씩 따라가기) */
+  | { type: 'opStep'; delta: number }
   /** ↑ ↓ 고른 줄을 앞·뒤로(캔버스·코드 목록에 초점이 있을 때) */
   | { type: 'line'; delta: number }
   /** Ctrl/⌘+F 코드에서 찾기, Ctrl/⌘+G 다음 찾기 */
@@ -58,6 +60,8 @@ export interface KeyContext {
   measureDirecting?: boolean;
   /** 화살표를 스스로 쓰는 곳(코드 목록·메뉴·탭·목록)에 초점 */
   arrowOwner?: boolean;
+  /** 판재 파일을 깎아 보는 중(가공 하나씩 따라가기를 할 수 있음 — ← → 한 가공씩) */
+  canStepOps?: boolean;
 }
 
 /** 화살표 → 잠글 축(↓는 지금 방향 = null) */
@@ -77,6 +81,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if (c.key === 'Escape') return { type: 'escape', canvas: c.onCanvas };
   if (c.measureDirecting && !c.arrowOwner && !c.inCode && c.key in LOCK_KEYS) return { type: 'lock', axis: LOCK_KEYS[c.key] ?? null };
   if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canPlay) return { type: 'step', delta: (c.key === 'ArrowRight' ? 1 : -1) * (c.shift ? 10 : 1) };
+  if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canStepOps && !c.arrowOwner && !c.inCode) return { type: 'opStep', delta: c.key === 'ArrowRight' ? 1 : -1 };
   if ((c.key === 'ArrowDown' || c.key === 'ArrowUp') && (c.onCanvas || c.inCode)) return { type: 'line', delta: c.key === 'ArrowDown' ? 1 : -1 };
   return c.onCanvas ? null : { type: 'viewer' };
 }
