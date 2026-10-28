@@ -77,6 +77,34 @@ describe('LinuxCNC G5·G5.1 스플라인', () => {
     expect(run('G5.1 X10 Y0 F300\n').warnings.some((w) => w.includes('G5.1: 조정점 I·J가 없음'))).toBe(true);
   });
 
+  it('곡선 정의를 스플라인 표에 남긴다(측정용 — 이동은 그대로): 차수·베지어 매듭·조정점, 조각 끝 매개변수 k/n의 곡선 점 = 이동 끝점', () => {
+    const p = run('G5 X10 Y0 I0 J5 P0 Q5 F300\nG5.1 X20 Y0 I5 J-5\nG1 X30\n');
+    expect(p.warnings).toEqual([]);
+    const t = p.splines!;
+    expect(t.count).toBe(2);
+    expect([...t.degree]).toEqual([3, 2]);
+    expect([...t.knots]).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1]);
+    expect([...t.ctrl]).toEqual([0, 0, 0, 0, 5, 0, 10, 5, 0, 10, 0, 0, 10, 0, 0, 15, -5, 0, 20, 0, 0]);
+    expect([...t.weight]).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    // 첫 곡선의 조각: 이동 0 … moves − 1, 매개변수 0, 1/n, …, 1
+    const n = t.moves[0]!;
+    expect(t.move[0]).toBe(0);
+    const par = [...t.param.subarray(t.paramStart[0]!, t.paramStart[1]!)];
+    expect(par).toHaveLength(n + 1);
+    for (let k = 0; k <= n; k++) expect(par[k]).toBeCloseTo(k / n, 15);
+    const all = pts(p);
+    for (let k = 1; k <= n; k++) {
+      const c = cubic([0, 0], [0, 5], [10, 5], [10, 0], par[k]!);
+      expect(Math.hypot(all[k - 1]![0]! - c[0]!, all[k - 1]![1]! - c[1]!)).toBeLessThan(1e-12);
+    }
+    // 둘째 곡선은 첫 곡선 바로 뒤, 마지막 직선은 표에 없다
+    expect(t.move[1]).toBe(n);
+    expect(t.move[1]! + t.moves[1]!).toBe(p.moves.count - 1);
+    // 직선으로 그린 블록(규칙에 어긋남)은 표에 넣지 않는다
+    expect(run('G5 X10 Y0 I0 J5 F300\n').splines).toBeUndefined();
+    expect(run('G1 X10 F300\n').splines).toBeUndefined();
+  });
+
   it('좌표 없는 Fanuc G05(고속 가공 모드 켜기)는 그대로 무시한다', () => {
     const p = parseGcode('O1\nG21 G90\nG05 P10000\nG0 X0 Y0 Z5\nG1 X10 F100\nG05 P0\nM30\n');
     expect(p.warnings.some((w) => w.includes('G5'))).toBe(false);

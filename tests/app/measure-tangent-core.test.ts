@@ -14,10 +14,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
 import { parseNcFile, ncParsedToScene } from '../../src/index';
 import { MOVE_ARC, type NcProgram } from '../../src/model';
-import { LOCK_HINTS, MEASURE_INFERENCE, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure';
+import { LOCK_HINTS, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
 import { parseForView } from '../../src/app/payload';
-import { arcCenters, moveSnapPoints, movePointAt, panelCenters, panelSnapPoints, snapPair } from '../../src/app/snap';
+import { arcCenters, movePointAt, snapPair } from '../../src/app/snap';
+import { ncSnapOptions, panelSnapOptions } from '../../src/app/refine';
 import { ArcTangents, arcNearest, arcTangentAtF } from '../../src/app/tangent';
 import type { PanelSnapTable } from '../../src/scene';
 import { installCanvasFakes } from './fake-webgl';
@@ -51,11 +52,9 @@ function setup(touch = false, src: Src = { nc, scene }) {
   v.setView('top', false);
   v.fit(false);
   v.setMeasureMode(true);
-  // 앱(app.ts syncMeasureSnap)과 같은 붙잡기(판재는 붙잡기 표의 중심·윤곽 요소)
-  if (src.panel) {
-    const t = src.panel;
-    v.setMeasureSnap({ points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE });
-  } else v.setMeasureSnap({ points: arcCenters(src.nc).points, pointsFor: (p) => moveSnapPoints(p, src.nc), inference: MEASURE_INFERENCE });
+  // 앱(app.ts syncMeasureSnap)과 같은 붙잡기(판재는 붙잡기 표의 중심·윤곽 요소) — 16차부터 곡선 위로 다듬기(refine)도
+  const angle0 = (src.scene.meta as { arcAngle?: number }).arcAngle;
+  v.setMeasureSnap(src.panel ? panelSnapOptions(src.panel) : ncSnapOptions(src.nc, arcCenters(src.nc), null, angle0));
   v.renderNow();
   const tangents = new ArcTangents();
   const angle = (src.scene.meta as { arcAngle?: number }).arcAngle;

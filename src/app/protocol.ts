@@ -9,7 +9,7 @@
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
 import type { PanelFileKind } from '../extensions';
-import type { NcDialect, NcLatheSystem, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
+import type { NcDialect, NcLatheSystem, NcMachineOptions, NcNotice, NcSplines, NcStats, NcTool, NcWarningItem } from '../model';
 import type { PanelSnapTable } from '../scene';
 import type { PanelSimSource } from '../sim/panel';
 import type { NcSource } from '../text';
@@ -109,6 +109,8 @@ export interface NcPayload {
   warnItems: NcWarningItem[];
   /** 반경 보정 경로(공구 중심)를 그렸으면 그 조각(측정 붙잡기 — 선분 묶음 'nc-comp'의 요소 가운데 점·호 중심) */
   comp?: NcCompSnap;
+  /** 스플라인(G5·NURBS) 곡선 정의와 그것을 나눈 이동(있을 때만 — 측정 접선 잠금·붙잡기 다듬기) */
+  splines?: NcSplines;
 }
 
 /** 보정 경로 조각(comp.ts NcCompPath에서 측정 붙잡기에 쓰는 것만) */

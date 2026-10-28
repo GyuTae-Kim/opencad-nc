@@ -2247,6 +2247,8 @@ export class Runner extends NcEmitter {
     const n = Math.max(2, Math.min(2000, Math.ceil(Math.sqrt((deg * (deg - 1) * m) / (8 * tol)))));
     const q = [0, 0, s[2]!];
     const out = [0, 0, 0];
+    // 측정용 곡선 정의(베지어 = 매듭 0·1이 차수 + 1개씩인 B-스플라인, 조정점은 표시 좌표): 조각 끝 매개변수 k/n과 함께 남긴다
+    const rec = this.splineBegin(0);
     for (let k = 1; k < n; k++) {
       const t = k / n;
       const u = 1 - t;
@@ -2259,8 +2261,21 @@ export class Runner extends NcEmitter {
       }
       this.toDisplay(q, out);
       this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, line);
+      this.splineStep(rec, t);
     }
     this.emit(MOVE_FEED, x, y, z, line);
+    this.splineStep(rec, 1);
+    if (rec) {
+      const ctrl: number[] = [];
+      for (const c of pts) {
+        q[0] = c[0]!;
+        q[1] = c[1]!;
+        this.toDisplay(q, out);
+        ctrl.push(out[0]!, out[1]!, out[2]!);
+      }
+      const knots = [...Array<number>(deg + 1).fill(0), ...Array<number>(deg + 1).fill(1)];
+      this.splineEnd(rec, deg, knots, ctrl, Array<number>(deg + 1).fill(1));
+    }
   }
 
   /**
@@ -2331,12 +2346,25 @@ export class Runner extends NcEmitter {
     const tol = this.displayInch ? 0.0002 : 0.005;
     const q = [0, 0, z];
     const out = [0, 0, 0];
-    nurbsSegments(n.x, n.y, n.w, n.order, tol, (x, y, k) => {
+    // 측정용 곡선 정의(조정점은 표시 좌표, 매듭은 LinuxCNC 열린 균일): 조각 끝 매개변수와 함께 남긴다
+    const rec = this.splineBegin(0);
+    nurbsSegments(n.x, n.y, n.w, n.order, tol, (x, y, k, u) => {
       q[0] = x;
       q[1] = y;
       this.toDisplay(q, out);
       this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
+      this.splineStep(rec, u);
     });
+    if (rec) {
+      const ctrl: number[] = [];
+      for (let i = 0; i < cnt; i++) {
+        q[0] = n.x[i]!;
+        q[1] = n.y[i]!;
+        this.toDisplay(q, out);
+        ctrl.push(out[0]!, out[1]!, out[2]!);
+      }
+      this.splineEnd(rec, n.order - 1, nurbsKnots(cnt - 1, n.order), ctrl, n.w);
+    }
     this.known |= 3;
   }
 
@@ -3806,10 +3834,10 @@ export function nurbsKnots(n: number, k: number): number[] {
 /**
  * NURBS 곡선(조정점 xs·ys, 가중치 ws, 계수 order = 차수 + 1, 매듭은 nurbsKnots)을 직선 조각으로 나눈다.
  * 매듭 구간마다 조각의 1/4·1/2·3/4 점이 현에서 tol보다 멀면 반으로 나눈다(12번까지 — 4차 이상은 한 번은 나눔).
- * emit(x, y, k): 조각 끝점과 그 조각 가운데에 가장 가까운 그레빌 점의 조정점 번호(줄 번호를 고르는 데 쓴다 — 같으면 뒤 점).
+ * emit(x, y, k, u): 조각 끝점과 그 조각 가운데에 가장 가까운 그레빌 점의 조정점 번호(줄 번호를 고르는 데 쓴다 — 같으면 뒤 점), 조각 끝 매개변수(측정용 곡선 정의).
  * 마지막 끝점은 마지막 조정점 그대로
  */
-export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number) => void): void {
+export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number, u: number) => void): void {
   const n = xs.length - 1;
   const p = order - 1;
   if (n < 1 || p < 1 || n < p) return;
@@ -3880,7 +3908,7 @@ export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: 
     }
     const mid = (a + b) / 2;
     while (gi < n && Math.abs(grev[gi + 1]! - mid) <= Math.abs(grev[gi]! - mid)) gi++;
-    emit(bx, by, gi);
+    emit(bx, by, gi, b);
   };
   const pa = [xs[0]!, ys[0]!];
   const pb = [0, 0];

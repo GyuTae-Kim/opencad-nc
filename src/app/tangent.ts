@@ -12,12 +12,17 @@
  *   가운데 점·다른 자리면 커서 자리(f)가 앞이면 진행 방향, 뒤면 반대(한 바퀴 원은 가까운 쪽으로 돈다). 잠금은 선이라 부호는 결과 방향에만 든다.
  * - 첫 점에 닿는 원호는 첫 점마다 한 번 모든 이동(판재는 모든 호 요소)에서 찾고(arcEndsAt·arcMidsAt·arcsOnAt·panelArcsAt),
  *   커서가 움직일 때는 그 몇 개만 본다(arcTangentAt).
- * - NURBS(G5.2/G5.3)·스플라인 이동은 장면이 직선 조각으로 그려 원호가 아니므로 해당하지 않는다.
+ * - 스플라인(G5 3차·G5.1 2차 베지어, G5.2/G5.3 NURBS — 16차)도 같은 규칙이다: 해석기가 남긴 곡선 정의(스플라인 표 — spline.ts)로
+ *   첫 점(끝·가운데 점·조각 위 아무 점)의 곡선 위 가장 가까운 매개변수(조각 나눔으로 시작값 → 뉴턴)를 찾아 그 자리의 정확한 접선을 주고,
+ *   방향은 커서 자리 매개변수가 앞이면 진행 방향, 뒤면 반대(닫힌 곡선은 가까운 쪽). 커서 아래 점이 곡선 위인지는 그 조각의 처짐으로 본다
+ *   (splinesAt·splineTangentAt). 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선.
  */
-import { MOVE_ARC, PLANE_AXES } from '../model';
+import { MOVE_ARC, PLANE_AXES, type NcSplines } from '../model';
 import type { PanelSnapTable } from '../scene';
 import { playPosition, type NcDoc } from './doc';
 import type { SnapMoves } from './snap';
+import { unitTangent, type Curve } from './curve';
+import { pieceSag, splineCurve, splineNearest, type SplineCurve } from './spline';
 
 type V3 = [number, number, number];
 const TAU = Math.PI * 2;
@@ -106,7 +111,7 @@ export interface ArcShape {
 }
 
 /** 시작·끝·평면 축·중심·중심각으로 모양을 만든다. 중심각이 없으면(직선) null */
-function shapeOf(s: readonly number[], e: readonly number[], a0: number, a1: number, a2: number, cu: number, cv: number, sweep: number): ArcShape | null {
+export function shapeOf(s: readonly number[], e: readonly number[], a0: number, a1: number, a2: number, cu: number, cv: number, sweep: number): ArcShape | null {
   if (!(Math.abs(sweep) > 1e-12)) return null;
   const r0 = Math.hypot(s[a0]! - cu, s[a1]! - cv);
   const r1 = Math.hypot(e[a0]! - cu, e[a1]! - cv);
@@ -114,7 +119,7 @@ function shapeOf(s: readonly number[], e: readonly number[], a0: number, a1: num
 }
 
 /** 원호 이동 i의 모양. 원호가 아니거나 중심각이 없으면 null */
-function arcShape(nc: SnapMoves, i: number): ArcShape | null {
+export function arcShape(nc: SnapMoves, i: number): ArcShape | null {
   const m = nc.moves;
   if (!(i >= 0 && i < m.count) || m.kind[i] !== MOVE_ARC) return null;
   const ai = m.arc[i]!;
@@ -127,7 +132,7 @@ function arcShape(nc: SnapMoves, i: number): ArcShape | null {
 }
 
 /** 원호 위 f(0~1) 자리(장면이 호를 나눌 때와 같은 식) */
-function shapeAt(g: ArcShape, f: number): V3 {
+export function shapeAt(g: ArcShape, f: number): V3 {
   const t = g.t0 + g.sweep * f;
   const r = g.r0 + (g.r1 - g.r0) * f;
   const q: V3 = [0, 0, 0];
@@ -135,6 +140,38 @@ function shapeAt(g: ArcShape, f: number): V3 {
   q[g.a1] = g.cv + r * Math.sin(t);
   q[g.a2] = g.s[g.a2]! + (g.e[g.a2]! - g.s[g.a2]!) * f;
   return q;
+}
+
+/**
+ * 원호 모양 → 매개변수 곡선(f 0~1 — 장면이 호를 나누는 식과 그 1·2차 도함수: 나선의 높이, 반지름이 조금 바뀌는 호도 같은 식).
+ * 붙잡기 다듬기(refine.ts)가 curve.ts의 뉴턴 찾기에 준다
+ */
+export function arcCurve(g: ArcShape): Curve {
+  const dr = g.r1 - g.r0;
+  const sw = g.sweep;
+  const dz = g.e[g.a2]! - g.s[g.a2]!;
+  return {
+    lo: 0,
+    hi: 1,
+    at: (f) => shapeAt(g, f),
+    d1: (f) => {
+      const t = g.t0 + sw * f;
+      const r = g.r0 + dr * f;
+      const d: V3 = [0, 0, 0];
+      d[g.a0] = dr * Math.cos(t) - r * sw * Math.sin(t);
+      d[g.a1] = dr * Math.sin(t) + r * sw * Math.cos(t);
+      d[g.a2] = dz;
+      return d;
+    },
+    d2: (f) => {
+      const t = g.t0 + sw * f;
+      const r = g.r0 + dr * f;
+      const d: V3 = [0, 0, 0];
+      d[g.a0] = -2 * dr * sw * Math.sin(t) - r * sw * sw * Math.cos(t);
+      d[g.a1] = 2 * dr * sw * Math.cos(t) - r * sw * sw * Math.sin(t);
+      return d;
+    },
+  };
 }
 
 /** 원호 위 f 자리의 진행 방향 단위 접선(장면이 호를 나누는 식을 f로 미분 — 나선은 높이 기울기 포함). 길이가 없으면 null */
@@ -152,7 +189,7 @@ function shapeTangent(g: ArcShape, f: number): V3 | null {
 }
 
 /** 점 p에서 원호까지 가장 가까운 자리(f)와 거리: 각으로 f를 구하되 여러 바퀴(중심각 2π 넘음 — 나선)면 바퀴마다 보고, 두 끝도 본다 */
-function shapeNearest(g: ArcShape, p: ArrayLike<number>): { f: number; dist: number } {
+export function shapeNearest(g: ArcShape, p: ArrayLike<number>): { f: number; dist: number } {
   const sw = Math.abs(g.sweep);
   const ang = Math.atan2(p[g.a1]! - g.cv, p[g.a0]! - g.cu) - g.t0;
   const d = (((g.sweep >= 0 ? ang : -ang) % TAU) + TAU) % TAU;
@@ -247,17 +284,42 @@ export function arcsOnAt(nc: SnapMoves, a: ArrayLike<number>, maxAngle = ARC_ANG
 /** 판재 붙잡기 표의 호 요소 모양(표마다 한 번 — 윤곽 가공·가공 없는 윤곽, XY 평면, 직선 축 Z) */
 const panelCache = new WeakMap<PanelSnapTable, ArcShape[]>();
 
-/** 판재 붙잡기 표(PanelSnapTable.paths — 요소마다 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각)의 호 요소들(차례 = ArcEnd.move) */
+/**
+ * 판재 붙잡기 표(PanelSnapTable.paths — 요소마다 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각)의 호 요소들(차례 = ArcEnd.move).
+ * 16차부터 판 외곽선·포켓 둘레(그물 윤곽선 고리 — PanelSnapTable.outlines)의 호도 잇는다
+ */
 export function panelArcs(t: PanelSnapTable): ArcShape[] {
   let out = panelCache.get(t);
   if (out) return out;
   out = [];
-  for (const el of t.paths.values())
+  for (const el of [...t.paths.values(), ...(t.outlines?.values() ?? [])])
     for (let i = 0; i + 9 <= el.length; i += 9) {
       const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
       if (g && Number.isFinite(g.r0 + g.r1 + g.t0)) out.push(g);
     }
   panelCache.set(t, out);
+  return out;
+}
+
+/**
+ * 판재 붙잡기 표 한 묶음의 호 요소 모양(표·묶음마다 한 번 — 붙잡기 다듬기 refine.ts·붙잡기 점 snap.ts): 선분 묶음은
+ * `${선분 묶음 id}#${segmentIds 값}`(paths), 그물 윤곽선은 `edge:${그물 id}`(outlines — 판 외곽선·포켓 둘레)
+ */
+const panelKeyCache = new WeakMap<PanelSnapTable, Map<string, ArcShape[]>>();
+
+export function panelArcsOf(t: PanelSnapTable, key: string): ArcShape[] {
+  let m = panelKeyCache.get(t);
+  if (!m) panelKeyCache.set(t, (m = new Map()));
+  let out = m.get(key);
+  if (out) return out;
+  out = [];
+  const el = key.startsWith('edge:') ? t.outlines?.get(key.slice(5)) : t.paths.get(key);
+  if (el)
+    for (let i = 0; i + 9 <= el.length; i += 9) {
+      const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
+      if (g && Number.isFinite(g.r0 + g.r1 + g.t0)) out.push(g);
+    }
+  m.set(key, out);
   return out;
 }
 
@@ -283,8 +345,11 @@ export function panelArcsAt(arcs: readonly ArcShape[], a: ArrayLike<number>, max
   return out;
 }
 
-/** 첫 점 a에 닿는 원호(ends) 가운데 커서 아래 점 p가 그 위에 있는 것의 a 쪽 단위 접선 — arcTangentAt의 몸통(shape = 원호 번호 → 모양) */
-function tangentFrom(shape: (i: number) => ArcShape | null, ends: readonly ArcEnd[], a: ArrayLike<number>, p: ArrayLike<number>, maxAngle: number, lastMove: number): V3 | null {
+/** 접선과 커서 아래 점에서 그 곡선까지 거리(원호·스플라인 가운데 가까운 곡선을 고른다) */
+type TangentHit = { d: V3; dist: number };
+
+/** 첫 점 a에 닿는 원호(ends) 가운데 커서 아래 점 p가 그 위에 있는 것의 a 쪽 단위 접선과 p의 거리 — arcTangentAt의 몸통(shape = 원호 번호 → 모양) */
+function tangentFrom(shape: (i: number) => ArcShape | null, ends: readonly ArcEnd[], a: ArrayLike<number>, p: ArrayLike<number>, maxAngle: number, lastMove: number): TangentHit | null {
   if (!ends.length) return null;
   if (Math.hypot(p[0]! - a[0]!, p[1]! - a[1]!, p[2]! - a[2]!) <= 4 * pointTol(a)) return null;
   const tolP = 4 * pointTol(p);
@@ -296,21 +361,19 @@ function tangentFrom(shape: (i: number) => ArcShape | null, ends: readonly ArcEn
     if (n && (!best || n.dist < best.dist)) best = { e, g: g!, ...n };
   }
   if (!best) return null;
-  const { e, g, f } = best;
+  const { e, g, f, dist } = best;
+  const hit = (d: V3 | null, flip: boolean): TangentHit | null => (d ? { d: flip ? [-d[0], -d[1], -d[2]] : d, dist } : null);
   if (e.end === 0 || e.end === 1) {
     // 한 바퀴 원(시작 = 끝 = a)은 커서가 놓인 쪽 끝(반 바퀴로 가른다)
     const both = ends.some((o) => o.move === e.move && (o.end === 0 || o.end === 1) && o.end !== e.end);
     const end = both ? (f <= 0.5 ? 0 : 1) : e.end;
-    const d = shapeTangent(g, end);
-    return d && end ? [-d[0], -d[1], -d[2]] : d;
+    return hit(shapeTangent(g, end), end === 1);
   }
   // 가운데 점·다른 자리: 원호를 따라 커서 쪽(커서 자리가 앞이면 진행 방향). 한 바퀴 원(시작 = 끝)은 가까운 쪽으로 돈다
   const fa = e.end === 0.5 ? 0.5 : (e.f ?? 0.5);
-  const d = shapeTangent(g, fa);
-  if (!d) return null;
   let df = f - fa;
   if (Math.abs(df) > 0.5 && Math.abs(g.sweep) <= TAU + 1e-9 && near(g.s, g.e, pointTol(g.s))) df = -df;
-  return df < 0 ? [-d[0], -d[1], -d[2]] : d;
+  return hit(shapeTangent(g, fa), df < 0);
 }
 
 /**
@@ -320,7 +383,90 @@ function tangentFrom(shape: (i: number) => ArcShape | null, ends: readonly ArcEn
  * maxAngle = 장면의 호 나누기 각(scene.meta.arcAngle), lastMove = 재생 중 그린 마지막 이동(그 뒤 원호는 보지 않는다)
  */
 export function arcTangentAt(nc: SnapMoves, ends: readonly ArcEnd[], a: ArrayLike<number>, p: ArrayLike<number>, maxAngle = ARC_ANGLE, lastMove = Infinity): V3 | null {
-  return tangentFrom((i) => arcShape(nc, i), ends, a, p, maxAngle, lastMove);
+  return tangentFrom((i) => arcShape(nc, i), ends, a, p, maxAngle, lastMove)?.d ?? null;
+}
+
+// ── 스플라인(G5·G5.1·G5.2/G5.3 — 해석기 스플라인 표, spline.ts) ──
+
+/** 첫 점에 닿는 스플라인 곡선과 그 위 자리(매개변수 u — 끝·가운데 점·조각 위 아무 점 모두 곡선 위 가장 가까운 자리) */
+export interface SplineHit {
+  c: SplineCurve;
+  u: number;
+}
+
+/** 표마다 곡선의 조정점 상자(곡선은 조정점의 볼록 껍질 안 — 가중치가 양수) */
+const splineBoxes = new WeakMap<NcSplines, Float64Array>();
+
+function splineBox(t: NcSplines): Float64Array {
+  let b = splineBoxes.get(t);
+  if (b) return b;
+  b = new Float64Array(t.count * 6);
+  for (let k = 0; k < t.count; k++) {
+    const o = k * 6;
+    b.fill(Infinity, o, o + 3);
+    b.fill(-Infinity, o + 3, o + 6);
+    for (let i = t.ctrlStart[k]!; i < t.ctrlStart[k + 1]!; i++)
+      for (let c = 0; c < 3; c++) {
+        const v = t.ctrl[i * 3 + c]!;
+        if (v < b[o + c]!) b[o + c] = v;
+        if (v > b[o + 3 + c]!) b[o + 3 + c] = v;
+      }
+  }
+  splineBoxes.set(t, b);
+  return b;
+}
+
+/**
+ * 첫 점 a가 그 위(끝·가운데 점·조각 위 아무 점 — 곡선까지 그 조각의 처짐 안)에 있는 스플라인 곡선(많아야 limit개)과 곡선 위 가장 가까운 자리.
+ * 조정점 상자로 먼저 거르고 남은 것만 곡선 위 가장 가까운 자리(조각 나눔 + 뉴턴)를 구한다
+ */
+export function splinesAt(nc: SnapMoves, a: ArrayLike<number>, tol = pointTol(a), limit = 16): SplineHit[] {
+  const t = nc.splines;
+  const out: SplineHit[] = [];
+  if (!t) return out;
+  const box = splineBox(t);
+  for (let k = 0; k < t.count && out.length < limit; k++) {
+    const o = k * 6;
+    let inside = true;
+    for (let c = 0; c < 3 && inside; c++) inside = a[c]! >= box[o + c]! - 8 * tol && a[c]! <= box[o + 3 + c]! + 8 * tol;
+    if (!inside) continue;
+    const c = splineCurve(t, k, nc.moves.points);
+    if (!c) continue;
+    const r = splineNearest(c, a, nc.moves.points);
+    if (r.dist <= pieceSag(c, r.j) + 4 * tol) out.push({ c, u: r.u });
+  }
+  return out;
+}
+
+/**
+ * 첫 점 a에 닿는 스플라인(hits) 가운데 커서 아래 점 p가 그 위(곡선까지 그 조각의 처짐 안)에 있는 것의 a 자리 접선과 p의 거리.
+ * 방향은 곡선을 따라 커서 쪽(커서 자리 매개변수가 앞이면 진행 방향 — 시작 끝이면 곡선 쪽, 끝 끝이면 그 반대, 닫힌 곡선은 가까운 쪽).
+ * lastMove = 재생 중 그린 마지막 이동(p가 놓인 조각이 그 뒤면 보지 않는다)
+ */
+function splineTangentFrom(nc: SnapMoves, hits: readonly SplineHit[], a: ArrayLike<number>, p: ArrayLike<number>, lastMove: number): TangentHit | null {
+  if (!hits.length || Math.hypot(p[0]! - a[0]!, p[1]! - a[1]!, p[2]! - a[2]!) <= 4 * pointTol(a)) return null;
+  const tolP = 4 * pointTol(p);
+  let best: { h: SplineHit; u: number; dist: number } | null = null;
+  for (const h of hits) {
+    const c = h.c;
+    if (c.move > lastMove) continue;
+    const r = splineNearest(c, p, nc.moves.points);
+    if (c.move + r.j > lastMove || r.dist > pieceSag(c, r.j) + tolP) continue;
+    if (!best || r.dist < best.dist) best = { h, u: r.u, dist: r.dist };
+  }
+  if (!best) return null;
+  const { h, u, dist } = best;
+  const d = unitTangent(h.c, h.u);
+  if (!d) return null;
+  let du = u - h.u;
+  if (h.c.closed && Math.abs(du) > (h.c.hi - h.c.lo) / 2) du = -du;
+  if (du === 0) return null;
+  return { d: du < 0 ? [-d[0], -d[1], -d[2]] : d, dist };
+}
+
+/** 첫 점 a에 닿는 스플라인(splinesAt) 가운데 커서 아래 점 p가 그 위에 있는 것의 a 자리 단위 접선(커서 쪽). 없으면 null */
+export function splineTangentAt(nc: SnapMoves, hits: readonly SplineHit[], a: ArrayLike<number>, p: ArrayLike<number>, lastMove = Infinity): V3 | null {
+  return splineTangentFrom(nc, hits, a, p, lastMove)?.d ?? null;
 }
 
 /** 원호 접선을 구할 문서 자료(앱 NcDoc의 일부 — NC 이동이나 판재 붙잡기 표, 재생 자리, 장면의 호 나누기 각) */
@@ -334,9 +480,13 @@ export class ArcTangents {
   private src: object | null = null;
   private key = '';
   private ends: ArcEnd[] = [];
+  private splines: SplineHit[] = [];
   private shape: (i: number) => ArcShape | null = () => null;
 
-  /** arcTangentAt과 같다(maxAngle·lastMove도 같은 뜻 — 판재는 재생 한도가 없다) */
+  /**
+   * arcTangentAt과 같다(maxAngle·lastMove도 같은 뜻 — 판재는 재생 한도가 없다). NC면 스플라인(splineTangentAt)도 보고,
+   * 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선
+   */
   at(src: SnapMoves | PanelSnapTable, a: ArrayLike<number>, p: ArrayLike<number>, maxAngle = ARC_ANGLE, lastMove = Infinity): V3 | null {
     const key = `${a[0]},${a[1]},${a[2]}|${maxAngle}`;
     if (this.src !== src || this.key !== key) {
@@ -346,13 +496,17 @@ export class ArcTangents {
         const known = [...arcEndsAt(src, a), ...arcMidsAt(src, a)];
         this.ends = [...known, ...arcsOnAt(src, a, maxAngle, new Set(known.map((e) => e.move)))];
         this.shape = (i) => arcShape(src, i);
+        this.splines = splinesAt(src, a);
       } else {
         const arcs = panelArcs(src);
         this.ends = panelArcsAt(arcs, a, maxAngle);
         this.shape = (i) => arcs[i] ?? null;
+        this.splines = [];
       }
     }
-    return this.ends.length ? tangentFrom(this.shape, this.ends, a, p, maxAngle, lastMove) : null;
+    const arc = this.ends.length ? tangentFrom(this.shape, this.ends, a, p, maxAngle, lastMove) : null;
+    const spl = this.splines.length && 'moves' in src ? splineTangentFrom(src, this.splines, a, p, lastMove) : null;
+    return (arc && spl ? (spl.dist < arc.dist ? spl : arc) : (arc ?? spl))?.d ?? null;
   }
 
   /**

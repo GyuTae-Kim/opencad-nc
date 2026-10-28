@@ -36,7 +36,7 @@ import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
-import { MEASURE_INFERENCE, MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair } from './measure';
+import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair } from './measure';
 import type { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
@@ -1835,7 +1835,9 @@ export class NcViewerApp implements PanelHost {
    * 화살표·잠금 단추는 measure-lock.ts)도 켠다.
    * 중심이 512개 이상이면 코어가 점 범위 나무(BVH)로 커서 둘레만 본다. 반경 보정 경로는 보정 조각의 가운데 점·호 중심.
    * 판재 가공(MPR·PGI·XML)은 워커가 보낸 붙잡기 표로 윤곽·판 외곽선의 원호 중심, 원형 포켓 중심, 고른 윤곽 요소의 가운데 점과 추론 붙잡기.
-   * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점). 붙잡기 점 계산(snap.ts)은 측정 도구 조각에 있다(측정은 그것을 받은 뒤에만 켠다)
+   * 코어가 고른 수직 발·선분 위 점은 원호·스플라인을 나눈 토막 위라 곡선 위로 다듬는다(코어 0.14.0 refine — refine.ts).
+   * 측정 밖에서는 끈다(코어 기본 — 꼭짓점·끝점). 붙잡기 선택(refine.ts ncSnapOptions·panelSnapOptions)과 점 계산(snap.ts)은 측정 도구 조각에 있다
+   * (측정은 그것을 받은 뒤에만 켠다)
    */
   private syncMeasureSnap(): void {
     const v = this.viewer;
@@ -1852,7 +1854,7 @@ export class NcViewerApp implements PanelHost {
     if (panel) {
       if (this.snapKey?.src === panel) return;
       this.snapKey = { src: panel, limit: null };
-      v.setMeasureSnap({ points: m.panelCenters(panel), pointsFor: (p) => m.panelSnapPoints(p, panel), inference: MEASURE_INFERENCE });
+      v.setMeasureSnap(m.panelSnapOptions(panel));
       return;
     }
     if (!nc) return;
@@ -1864,7 +1866,10 @@ export class NcViewerApp implements PanelHost {
     if (this.snapKey?.src === nc) {
       if (this.snapKey.limit === limit) return;
       v.setMeasureSnapLimit(limit);
-    } else v.setMeasureSnap({ points: c.points, pointsFor: (p) => m.moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit });
+    } else {
+      const angle = (d.scene.meta as { arcAngle?: unknown } | undefined)?.arcAngle;
+      v.setMeasureSnap(m.ncSnapOptions(nc, c, limit, typeof angle === 'number' && angle > 0 ? angle : undefined));
+    }
     this.snapKey = { src: nc, limit };
   }
 
