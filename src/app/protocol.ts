@@ -9,7 +9,7 @@
  */
 import type { Scene3d } from 'opencad-viewer3d/types';
 import type { PanelFileKind } from '../extensions';
-import type { NcDialect, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
+import type { NcDialect, NcLatheSystem, NcMachineOptions, NcNotice, NcStats, NcTool, NcWarningItem } from '../model';
 import type { PanelSnapTable } from '../scene';
 import type { PanelSimSource } from '../sim/panel';
 import type { NcSource } from '../text';
@@ -24,6 +24,8 @@ export interface NcOpenOptions {
   comp?: boolean;
   /** 선반 모드로 읽기(G-code). 없으면 글로 판별(선반처럼 보이면 선반 모드 — 화면이 띠로 알린다) */
   lathe?: boolean;
+  /** Fanuc 선반 G 코드 체계(A·B·C). 없으면 글로 판별(정할 수 없으면 A) */
+  latheSystem?: NcLatheSystem;
   /** 소수점 없는 좌표 값을 최소 입력 단위로(G-code, Fanuc DPI = 0 꼴) */
   integerUnits?: boolean;
   /** 회전축 A·B·C 감기(G-code) */
@@ -68,6 +70,8 @@ export interface NcPayload {
   kind: 'gcode' | 'heidenhain';
   dialect: NcDialect;
   units: 'mm' | 'inch';
+  /** Fanuc 계열 선반으로 읽었으면 그 G 코드 체계 */
+  latheSystem?: NcLatheSystem;
   /** 원본 글(줄 글은 sourceLine(source, i)) */
   source: NcSource;
   moves: {

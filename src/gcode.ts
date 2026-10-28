@@ -14,7 +14,8 @@
  * G51.1/G50.1 거울, LinuxCNC G10 L2 R(좌표계 회전). 변환은 프로그램 좌표에 거울 → 배율 → 회전 차례로 건다.
  * 반경 보정: G41/G42(D 번호 → 선택 공구 표·G10 L12/L13(Fanuc)·G10 L1 R(LinuxCNC·Mach3)·공구 주석 지름), G41.1/G42.1 D 지름.
  * 프로그램 경로는 그대로 두고 구간만 기록한다(NcProgram.compRuns → comp.ts가 공구 중심 경로를 계산).
- * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클),
+ * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클,
+ * Fanuc G 코드 체계 B·C는 latheSysCode가 A 체계 코드로 바꿔 읽음),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
 import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
@@ -82,6 +83,12 @@ export interface GcodeOptions {
   lathe?: boolean | 'auto';
   /** 선반 모드에서 처음부터 X를 지름으로 볼지(기본: LinuxCNC·GRBL은 반지름, 그 밖은 지름) */
   latheDiameter?: boolean;
+  /**
+   * Fanuc 계열 선반의 G 코드 체계(기본 'auto' — 글로 판별, 정할 수 없으면 A). A: G90/G92/G94 단순 사이클·U/W 증분·G98/G99 이송 단위,
+   * B: G77/G78/G79 단순 사이클·G90/G91 절대/증분·G94/G95 이송 단위·G98/G99 복귀 높이·G92 좌표 설정,
+   * C: B에 더해 G20/G21/G24 단순 사이클·G70/G71 inch/mm·G72~G78 복합 사이클(A의 G70~G76)
+   */
+  latheSystem?: 'A' | 'B' | 'C' | 'auto';
   /** 회전축 감기(기본 꺼짐 — A·B·C는 무시하고 경고). true면 A→X, B→Y, C→Z 축 둘레 */
   rotary?: boolean | NcRotaryOptions;
   /**
@@ -653,6 +660,57 @@ export function detectLathe(head: string): boolean {
   return score >= 4;
 }
 
+/** detectLatheSystem 결과: 체계와(정하지 못했을 때) B·C 체계일 수 있는 표지 코드 */
+export interface LatheSystemGuess {
+  system: 'A' | 'B' | 'C';
+  /** A로 읽지만 B·C 체계일 수 있는 표지(G91, G77·G78·G79 사이클, G20·G21·G24 사이클, 낱말 없는 G70·G71) */
+  hints: string[];
+}
+
+/**
+ * Fanuc 선반 G 코드 체계(A·B·C — Fanuc 선반 설명서의 G 코드 표)를 글로 판별한다. 단순 사이클이 쓰인 꼴로만 정한다:
+ * B = G79(끝면) 또는 P·Q 없는 G77·G78(바깥지름·나사)이 좌표와 함께, C = G20·G21·G24가 좌표와 함께(같은 블록에 G0~G3·G32·G33 없이).
+ * A 체계 사이클 꼴(G90·G94·G92가 F·좌표와 함께, 다른 이동 G 없이)이 함께 있거나 B·C 꼴이 엇갈리면 정하지 않는다(A + hints)
+ */
+export function detectLatheSystem(head: string): LatheSystemGuess {
+  const code = detectCode(head);
+  const coord = /(?:^|[^A-Z])[XZUW]\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  const pq = /(?:^|[^A-Z])[PQ]\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  const feed = /(?:^|[^A-Z])F\s*[-+]?(?:\d|\.\d|#|\[)/i;
+  let b79 = 0;
+  let b78 = 0;
+  let c = 0;
+  let a = 0;
+  let inc = 0;
+  let cUnits = 0;
+  for (const raw of code.split('\n')) {
+    if (!/G/i.test(raw)) continue;
+    const gs = new Set<number>();
+    const re = /(?<![A-Z_#])G\s*(\d{1,3})(\.\d)?(?![\d.])/gi;
+    for (let m = re.exec(raw); m; m = re.exec(raw)) if (!m[2]) gs.add(+m[1]!);
+    if (!gs.size) continue;
+    const xz = coord.test(raw);
+    const motion = gs.has(0) || gs.has(1) || gs.has(2) || gs.has(3) || gs.has(32) || gs.has(33);
+    if (gs.has(91)) inc++;
+    if (gs.has(79) && xz) b79++;
+    if ((gs.has(77) || gs.has(78)) && xz && !pq.test(raw)) b78++;
+    if ((gs.has(20) || gs.has(21) || gs.has(24)) && xz && !motion) c++;
+    if ((gs.has(90) || gs.has(94) || gs.has(92)) && xz && !motion && feed.test(raw)) a++;
+    // 낱말 없는 G70·G71(C 체계의 inch·mm — A·B 체계의 G70·G71은 P·Q·U·R 낱말이 있는 사이클)
+    if ((gs.has(70) || gs.has(71)) && !/[A-FH-MO-Z]/i.test(raw.replace(/^\s*N\d+/i, ''))) cUnits++;
+  }
+  if (a === 0) {
+    if (c > 0 && b79 === 0) return { system: 'C', hints: [] };
+    if (b79 + b78 > 0 && c === 0) return { system: 'B', hints: [] };
+  }
+  const hints: string[] = [];
+  if (inc) hints.push('G91');
+  if (b79 + b78) hints.push('G77·G78·G79');
+  if (c) hints.push('G20·G21·G24');
+  if (cUnits) hints.push('G70·G71');
+  return { system: 'A', hints };
+}
+
 // ───────────────────────── 실행 ─────────────────────────
 
 interface Frame {
@@ -717,18 +775,20 @@ export function jobFileLines(src: NcSource): Map<number, string> | null {
   return out;
 }
 
-/** 앞쪽 줄에서 처음 나오는 G20/G21로 표시 단위를 정한다(true = inch) */
-function prescanUnits(src: NcSource): boolean | undefined {
+/** 앞쪽 줄에서 처음 나오는 G20/G21(Fanuc 선반 C 체계는 G70/G71)로 표시 단위를 정한다(true = inch) */
+function prescanUnits(src: NcSource, systemC = false): boolean | undefined {
   const b = new Block();
   const n = Math.min(src.lineCount, 5000);
+  const inch = systemC ? 700 : 200;
+  const mm = systemC ? 710 : 210;
   for (let i = 0; i < n; i++) {
     b.reset();
     const [s, e] = lineRange(src, i);
     if (!parseFast(src.bytes, s, e, b, () => {})) continue;
     for (let k = 0; k < b.gCount; k++) {
       const g = b.g[k];
-      if (g === 200) return true;
-      if (g === 210) return false;
+      if (g === inch) return true;
+      if (g === mm) return false;
     }
   }
   return undefined;
@@ -906,6 +966,8 @@ export class Runner extends NcEmitter {
   protected lathe = false;
   /** Fanuc 계열 선반(A 체계): U·W 증분, G90/G92/G94 사이클, G98/G99 이송 단위, G50 좌표 설정 */
   protected fanucLathe = false;
+  /** Fanuc 선반 G 코드 체계(B·C는 latheSysCode가 A 체계 뜻으로 바꾼다) */
+  protected latheSys: 'A' | 'B' | 'C' = 'A';
   protected xMul = 1;
   protected css = false;
   protected cssV = 0;
@@ -961,13 +1023,29 @@ export class Runner extends NcEmitter {
       if (this.fanucLathe) this.feedMode = 95;
       // 선반의 기계 원점은 +X·+Z 쪽(공구대가 멀리 물러난다)
       this.machSafeAxes = 5;
+      // Fanuc 선반 G 코드 체계: 고르지 않았으면 단순 사이클 꼴로 판별(정할 수 없으면 A — B·C 표지가 있으면 띠·경고)
+      if (this.fanucLathe) {
+        const want = opts.latheSystem && opts.latheSystem !== 'auto' ? opts.latheSystem : null;
+        if (want) this.latheSys = want;
+        else if (src.lineCount > 0) {
+          const guess = detectLatheSystem(head());
+          this.latheSys = guess.system;
+          if (guess.system !== 'A') this.notices.push({ kind: 'lathe-system', system: guess.system });
+          else if (guess.hints.length) {
+            this.notices.push({ kind: 'lathe-system', system: 'A', hints: guess.hints });
+            this.w.add(`Fanuc 선반 G 코드 B·C 체계일 수 있음(${guess.hints.join(' · ')}) — A 체계로 읽음`);
+          }
+        }
+      }
     } else if (opts.lathe === undefined && src.lineCount > 0 && detectLathe(head()))
       this.w.add('선반 프로그램으로 보임 — 선반 모드로 읽으면 X를 지름으로 보고 선반 사이클을 그림');
     if (opts.rotary) this.setRotary(opts.rotary === true ? {} : opts.rotary);
-    const pre = dialect === 'siemens' ? prescanSiemensUnits(src) : prescanUnits(src);
+    // C 체계 선반은 G70/G71이 inch/mm(G20/G21은 단순 사이클)
+    const unitsC = dialect === 'siemens' || this.latheSys === 'C';
+    const pre = dialect === 'siemens' ? prescanSiemensUnits(src) : prescanUnits(src, this.latheSys === 'C');
     this.displayInch = pre ?? opts.units === 'inch';
     if (pre === undefined && src.lineCount > 0)
-      this.w.add(dialect === 'siemens' ? `단위 코드(G70/G71)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄` : `단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
+      this.w.add(unitsC ? `단위 코드(G70/G71)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄` : `단위 코드(G20/G21)가 없어 ${this.displayInch ? 'inch' : 'mm'}로 봄`);
     this.blockInch = this.displayInch;
     this.updateScale();
     this.tol = this.displayInch ? 0.0001 : 0.002;
@@ -1407,8 +1485,13 @@ export class Runner extends NcEmitter {
     /** Haas 볼트 구멍 패턴(G70·G71·G72) */
     let boltG = -1;
     for (let k = 0; k < blk.gCount; k++) {
-      const g = blk.g[k]!;
+      let g = blk.g[k]!;
       if (this.lathe) {
+        // Fanuc 선반 B·C 체계: A 체계와 뜻이 다른 코드는 여기서 처리하거나(-1) A 체계 코드로 바꾼다
+        if (this.latheSys !== 'A') {
+          g = this.latheSysCode(g);
+          if (g < 0) continue;
+        }
         const lr = this.latheCode(g, blk, line);
         if (lr >= 0) {
           if (lr > 0) motionG = lr;
@@ -2806,17 +2889,19 @@ export class Runner extends NcEmitter {
       }
       return -1;
     }
+    // B·C 체계에서 바꿔 온 단순 사이클(G77/G78/G79·G20/G21/G24)은 좌표가 없어도 사이클(모달)
+    const sys = this.latheSys !== 'A';
     switch (g) {
       case 900:
         // A 체계: 바깥·안지름 단순 사이클. 좌표가 없으면 절대 지령(B 체계)으로 본다
-        if (xz) return 900;
+        if (xz || sys) return 900;
         this.absolute = true;
         return 0;
       case 920:
         // 나사 단순 사이클(리드 F가 있을 때). 아니면 좌표 설정(G92)으로
-        return xz && blk.has[LF] ? 920 : -1;
+        return (xz && blk.has[LF]) || sys ? 920 : -1;
       case 940:
-        if (xz) return 940;
+        if (xz || sys) return 940;
         this.feedMode = 94;
         return 0;
       case 980:
@@ -2846,6 +2931,53 @@ export class Runner extends NcEmitter {
         return 0;
     }
     return -1;
+  }
+
+  /**
+   * Fanuc 선반 B·C 체계 코드(×10) → A 체계 코드(Fanuc 선반 설명서의 G 코드 표). A와 뜻이 다른 G90/G91(절대·증분)·G94/G95(분당·회전당 이송)·
+   * G98/G99(고정 사이클 복귀 높이)와 C 체계의 G70/G71(inch·mm)은 여기서 처리하고 -1. B: G77→G90·G78→G92·G79→G94·G92→G50,
+   * C: G20→G90·G21→G92·G24→G94·G72~G78→G70~G76·G92→G50. U·W는 A처럼 증분으로도 읽는다
+   */
+  protected latheSysCode(g: number): number {
+    switch (g) {
+      case 900:
+      case 910:
+        this.absolute = g === 900;
+        return -1;
+      case 940:
+      case 950:
+        this.feedMode = g === 940 ? 94 : 95;
+        return -1;
+      case 980:
+      case 990:
+        this.retractR = g === 990;
+        return -1;
+      case 920:
+        return 500;
+    }
+    if (this.latheSys === 'B') return g === 770 ? 900 : g === 780 ? 920 : g === 790 ? 940 : g;
+    switch (g) {
+      case 200:
+        return 900;
+      case 210:
+        return 920;
+      case 240:
+        return 940;
+      case 700:
+      case 710:
+        this.blockInch = g === 700;
+        this.updateScale();
+        return -1;
+      case 720:
+      case 730:
+      case 740:
+      case 750:
+      case 760:
+      case 770:
+      case 780:
+        return g - 20;
+    }
+    return g;
   }
 
   /** 주속 일정(G96): 반지름 r에서의 회전수로 this.speed를 맞춘다(최고 회전수로 자름) */
@@ -3009,7 +3141,7 @@ export class Runner extends NcEmitter {
       for (let k = 0; k < b.gCount; k++) {
         const g = b.g[k]!;
         if (g === 0 || g === 10 || g === 20 || g === 30) mot = g;
-        else if (!this.fanucLathe && (g === 900 || g === 910)) abs = g === 900;
+        else if ((!this.fanucLathe || this.latheSys !== 'A') && (g === 900 || g === 910)) abs = g === 900;
       }
       const hx = b.has[LX] || (this.fanucLathe && b.has[LU]);
       const hz = b.has[LZ] || (this.fanucLathe && b.has[LW]);
@@ -3637,7 +3769,9 @@ export class Runner extends NcEmitter {
       this.w.add(`소수점 없는 큰 좌표가 많음(${this.intBig}개) — Fanuc 최소 입력 단위(0.001)로 쓴 프로그램이면 "소수점 없는 값 = 최소 단위"를 켜십시오`);
       this.notices.push({ kind: 'integer-units' });
     }
-    return this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
+    const prog = this.build({ name: opts.name ?? (this.name || 'G-code'), format: 'gcode', dialect: this.dialect, blocks: Math.min(this.blocks, this.maxBlocks) });
+    if (this.fanucLathe) prog.latheSystem = this.latheSys;
+    return prog;
   }
 }
 

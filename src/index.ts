@@ -16,7 +16,7 @@ import { combineNcJob, type NcJob, type NcJobFile } from './job';
 import { looksLikeKdtXml, looksLikePgi, parseKdtXml, parsePgi, type PanelReadOptions } from './wangs';
 
 export * from './model';
-export { parseGcode, detectGcodeDialect, detectLathe, jobFileLines, looksSiemens, type GcodeOptions } from './gcode';
+export { parseGcode, detectGcodeDialect, detectLathe, detectLatheSystem, jobFileLines, looksSiemens, type GcodeOptions, type LatheSystemGuess } from './gcode';
 export { parseSiemens } from './siemens';
 export { ncCompPath, compPathSegments, type NcCompPath, type CompPathOptions } from './comp';
 export { parseHeidenhain, type HeidenhainOptions } from './heidenhain';

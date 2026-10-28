@@ -6,7 +6,7 @@
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/panel.ts를 이 앱(문서 하나, 리본 없음)에 맞게 옮겼다.
  */
 import { isPanelKind } from '../extensions';
-import { NC_DIALECT_NAMES, type NcDialect } from '../model';
+import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
@@ -869,6 +869,7 @@ export class NcPanel {
     const nc = d.nc!;
     const st = nc.stats;
     const u = unitLabel(d.scene.units);
+    const f = sceneFeatures(d.scene);
     if (nc.kind === 'gcode') {
       const dialect = h('select', { class: 'select', 'aria-label': 'G-code 방언' });
       dialect.append(h('option', { value: 'auto' }, `자동 (${NC_DIALECT_NAMES[nc.dialect]})`));
@@ -884,6 +885,7 @@ export class NcPanel {
         group(
           '해석 설정',
           h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '방언'), dialect),
+          f.lathe && nc.latheSystem ? this.latheSystemRow(d, nc.latheSystem) : null,
           h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
           this.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
           h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
@@ -891,7 +893,6 @@ export class NcPanel {
       );
     }
     // 선택 기능: 반경 보정 경로·선반·회전축
-    const f = sceneFeatures(d.scene);
     const opts: HTMLElement[] = [];
     if (f.compRunCount > 0 || d.ncOptions.comp) {
       opts.push(this.optToggle(d, 'comp', '보정 경로 보기', `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`));
@@ -991,6 +992,24 @@ export class NcPanel {
   }
 
   /** 다시 읽는 켜고 끄기(선택 기능) */
+  /** Fanuc 선반 G 코드 체계 고르기(자동 = 글로 판별, 정할 수 없으면 A) — 바꾸면 다시 읽는다 */
+  private latheSystemRow(d: NcDoc, read: NcLatheSystem): HTMLElement {
+    const sel = h('select', { class: 'select', 'aria-label': '선반 G 코드 체계' });
+    sel.append(h('option', { value: 'auto' }, `자동 (${read} 체계)`));
+    for (const k of ['A', 'B', 'C'] as const) sel.append(h('option', { value: k }, `${k} 체계`));
+    sel.value = d.ncOptions.latheSystem ?? 'auto';
+    sel.addEventListener('change', () => {
+      const { latheSystem: _, ...rest } = d.ncOptions;
+      void this.host.reparse(sel.value === 'auto' ? rest : { ...rest, latheSystem: sel.value as NcLatheSystem });
+    });
+    return h(
+      'label',
+      { class: 'prop-row edit', title: 'Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm' },
+      h('span', { class: 'k' }, '선반 G 코드'),
+      sel,
+    );
+  }
+
   private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled' | 'integerUnits', label: string, hint: string): HTMLElement {
     const cb = h('input', { type: 'checkbox' });
     // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다

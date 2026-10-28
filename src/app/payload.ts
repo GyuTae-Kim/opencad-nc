@@ -57,6 +57,7 @@ export function ncPayload(p: NcProgram): NcPayload {
     kind: p.format,
     dialect: p.dialect,
     units: p.units,
+    ...(p.latheSystem ? { latheSystem: p.latheSystem } : {}),
     source: p.source,
     moves: { count: m.count, kind: m.kind, points: m.points, line: m.line, tool: m.tool, feed: m.feed, spindle: m.spindle, flags: m.flags, wcs: m.wcs, modal: m.modal, hNum: m.hNum, dNum: m.dNum, arc: m.arc },
     arcs: { center: p.arcs.center, plane: p.arcs.plane, sweep: p.arcs.sweep },
@@ -80,6 +81,7 @@ export function parseOptions(kind: NcFileKind | null, o: NcOpenOptions): NcParse
       ...(o.units ? { units: o.units } : {}),
       // 고르지 않았으면 글로 판별(선반처럼 보이면 선반 모드)
       lathe: o.lathe === undefined ? 'auto' : o.lathe,
+      ...(o.latheSystem ? { latheSystem: o.latheSystem } : {}),
       ...(o.rotary ? { rotary: true } : {}),
       ...(o.integerUnits ? { integerUnits: true } : {}),
       ...(o.blockDelete ? { blockDelete: true } : {}),
