@@ -87,6 +87,8 @@ import { ncSampleProgram } from '../../src/view/sample';
 /** 워커 대신: 같은 실행기를 이 스레드에서(메시지는 다음 틱에) */
 class FakeWorker {
   static made = 0;
+  /** 받은 처음 요청(벽 문턱 등) */
+  static inits: Extract<SimRequest, { type: 'init' }>[] = [];
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onerror: unknown = null;
   private dead = false;
@@ -95,6 +97,7 @@ class FakeWorker {
     FakeWorker.made++;
   }
   postMessage(msg: SimRequest): void {
+    if (msg.type === 'init') FakeWorker.inits.push(msg);
     if (!this.dead) this.runner.handle(msg);
   }
   terminate(): void {
@@ -227,6 +230,8 @@ describe('깎기 시뮬레이션 켜고 끄기', () => {
     await until(() => settled() && api.state.sim!.at!.move < app.doc!.nc!.moves.count);
     const at = api.state.sim!.at!;
     expect(at.move).toBeGreaterThan(0);
+    // G-code는 벽 문턱을 주지 않는다(워커 기본 WALL_SLOPE)
+    expect(FakeWorker.inits.at(-1)!.wallSlope).toBeUndefined();
     expect(api.state.sim!.stats!.rewinds).toBe(1);
     api.seek(null);
     await until(() => settled() && api.state.sim!.at!.move === app.doc!.nc!.moves.count);
@@ -369,6 +374,8 @@ describe('깎기 탭', () => {
     const s = api.state.sim!;
     expect(s.blocked).toBeNull();
     expect(s.panel).toEqual({ items: 2, skipped: { side: 1, bottom: 1 }, disabled: 0 });
+    // 판재 구멍은 평 끝 공구라 기울어진 면이 없다 — 벽 문턱 0(칸이 굵어도 얕은 구멍이 매끈한 오목이 되지 않게)
+    expect(FakeWorker.inits.at(-1)!.wallSlope).toBe(0);
     expect(s.at).toEqual({ move: s.target!.move, frac: 0 });
     // 판 그물은 빼고(소재가 대신), 가공 그림(구멍 기둥·포켓 상자)은 함께
     let ids = FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.map((m) => m.id);

@@ -16,7 +16,7 @@ import { h, toast } from './dom';
 import { fmtNum } from './format';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
-import { STOCK_RGB, fanIndices, gridIndices, type SimColorMode, type TileArrays } from '../sim/mesh';
+import { STOCK_RGB, fanIndices, gridIndices, panelWallSlope, type SimColorMode, type TileArrays } from '../sim/mesh';
 import type { SimEvent, SimMoves, SimPosition } from '../sim/engine';
 import { PANEL_SKIP_TEXT, panelSimMoves, panelStock, type PanelSimMoves, type PanelSimSkip, type PanelSimSource, type PanelSimTool, type PanelSkipCode } from '../sim/panel';
 import type { SimRequest, SimResponse, SimStats, SimUpdate } from '../sim/protocol';
@@ -461,6 +461,7 @@ export class SimView {
     const moves = this.simMoves(d, box);
     if (!moves) return;
     const used = new Set(this.rows.map((r) => r.number));
+    const tools = [...used].map((n) => ({ number: n, tool: this.toolOf(n) }));
     const target = this.targetOf(d);
     this.sent = target;
     this.post({
@@ -468,7 +469,9 @@ export class SimView {
       gen: this.gen,
       moves,
       grid: spec,
-      tools: [...used].map((n) => ({ number: n, tool: this.toolOf(n) })),
+      tools,
+      // 판재: 평 끝 공구뿐이면 기울어진 면이 없어 문턱 0(칸이 굵어도 얕은 구멍·홈의 벽이 날카롭게)
+      ...(this.panel ? { wallSlope: panelWallSlope(tools.map((t) => t.tool)) } : {}),
       defaultTool: this.toolOf(-1),
       mode: this.prefs.color,
       rapidTol: (d.nc?.units ?? this.panel?.units) === 'inch' ? 0.0005 : 0.01,

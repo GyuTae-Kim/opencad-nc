@@ -11,8 +11,11 @@
  *   벽(둘레 칸의 높이 차가 칸 크기 × WALL_SLOPE를 넘는 곳)에 닿은 마디는 법선을 0으로 둔다 — 뷰어는 세 꼭짓점 법선이 모두 0인
  *   삼각형을 면 법선으로 그리므로 수직 벽과 그 모서리는 날카롭게 남는다. 평평한 바닥과 벽뿐인 조각(판재·2.5D 가공)은 법선을 넣지 않아
  *   그물이 커지지 않는다(면 법선으로 같은 그림).
+ *   판재(MPR·PGI·XML)는 공구가 만들 수 있는 가장 가파른 경사로 문턱을 정한다(panelWallSlope): 평 끝 공구(구멍 기본값)와 모양 그대로
+ *   내리는 홈·포켓뿐이면 문턱 0 — 기울어진 면이 없으니 칸이 굵어도(휴대폰 자동 해상도) 얕은 구멍·홈이 매끈한 오목이 되지 않는다.
  */
 import { MARK_OUTSIDE, MARK_RAPID, type HeightGrid } from './grid';
+import type { SimTool } from './tool';
 
 export type SimColorMode = 'depth' | 'stock';
 
@@ -24,6 +27,23 @@ const RAPID_RGB: Rgb = [0.9, 0.22, 0.18];
 const FLOOR_RGB: Rgb = [STOCK_RGB[0] * 0.8, STOCK_RGB[1] * 0.8, STOCK_RGB[2] * 0.8];
 /** 벽 문턱: 칸 둘레 높이 차가 칸 크기의 이만큼(약 68°)을 넘으면 벽으로 보고 날카롭게 */
 export const WALL_SLOPE = 2.5;
+
+/**
+ * 판재 벽 문턱(칸 크기에 곱할 값): 쓰는 공구가 만들 수 있는 가장 가파른 경사. 평 끝 공구는 0(바닥은 평평하고 둘레는 수직 벽 —
+ * 홈·포켓 영역도 공구 없이 모양 그대로 내린다), 드릴·V 날은 끝 각의 비탈(118° → 높이/거리 0.6)을 칸 대각선(√2)으로 재고 여유 1.2배,
+ * 볼·불 노즈는 테두리가 수직에 가까워 G-code와 같은 WALL_SLOPE. 0이면 법선을 넣지 않는다(모든 높이 차가 벽)
+ */
+export function panelWallSlope(tools: readonly Pick<SimTool, 'kind' | 'angle'>[]): number {
+  let slope = 0;
+  for (const t of tools) {
+    if (t.kind === 'ball' || t.kind === 'bull') return WALL_SLOPE;
+    if (t.kind === 'drill') {
+      const half = (Math.min(179, Math.max(1, t.angle)) * Math.PI) / 360;
+      slope = Math.max(slope, Math.min(WALL_SLOPE, (Math.SQRT2 * 1.2) / Math.tan(half)));
+    }
+  }
+  return slope;
+}
 /** 깊이 색: 얕음 → 깊음 */
 const DEPTH_RAMP: readonly Rgb[] = [
   [0.62, 0.84, 0.95],
@@ -96,7 +116,7 @@ function tileUntouched(g: HeightGrid, i0: number, i1: number, j0: number, j1: nu
 }
 
 /** 조각 (tx, ty)의 그물 배열 */
-export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonly number[], mode: SimColorMode): TileArrays {
+export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonly number[], mode: SimColorMode, slope = WALL_SLOPE): TileArrays {
   const s = g.spec;
   const T = g.tile;
   const i0 = tx * T;
@@ -146,12 +166,13 @@ export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonl
       v++;
     }
   }
-  const normals = tileNormals(g, i0, i1, j0, j1);
+  const normals = tileNormals(g, i0, i1, j0, j1, slope);
   return { tx, ty, cols, rows, flat: false, positions, colors, ...(normals ? { normals } : {}) };
 }
 
 /**
- * 조각 마디 [i0, i1] × [j0, j1]의 법선(행 우선). 조각 안 칸에 기울어진 면(0 < 높이 차 ≤ 문턱)이 없으면 null(면 법선으로 같은 그림).
+ * 조각 마디 [i0, i1] × [j0, j1]의 법선(행 우선). 조각 안 칸에 기울어진 면(0 < 높이 차 ≤ 문턱)이 없으면 null(면 법선으로 같은 그림 —
+ * 문턱(slope × 칸 크기)이 0이면 늘 null).
  * 둘레 네 칸 가운데 하나라도 벽(높이 차 > 문턱)이면 0, 아니면 이웃 마디 높이 차분 (−∂z/∂x, −∂z/∂y, 1)을 단위 길이로.
  * 칸 높이 차는 온 격자에서 재므로 조각 가장자리 마디의 법선은 이웃 조각과 같다(이음매에 음영 턱이 없다)
  */
@@ -160,6 +181,7 @@ export function tileNormals(g: HeightGrid, i0: number, i1: number, j0: number, j
   const nx = s.nx;
   const h = g.h;
   const thr = slope * Math.max(s.dx, s.dy);
+  if (!(thr > 0)) return null;
   // 칸 (i, j)(왼쪽 아래 마디) 높이 차 — 조각 둘레 한 칸까지: qa = i0 - 1 … i1, qb = j0 - 1 … j1
   const qw = i1 - i0 + 2;
   const qh = j1 - j0 + 2;
@@ -314,14 +336,14 @@ export function buildBottom(g: HeightGrid, origin: readonly number[]): PlainArra
 }
 
 /** 바뀐 조각을 모두 만든다(표시를 지운다) */
-export function takeDirtyTiles(g: HeightGrid, origin: readonly number[], mode: SimColorMode): TileArrays[] {
+export function takeDirtyTiles(g: HeightGrid, origin: readonly number[], mode: SimColorMode, slope = WALL_SLOPE): TileArrays[] {
   const out: TileArrays[] = [];
   for (let ty = 0; ty < g.tilesY; ty++)
     for (let tx = 0; tx < g.tilesX; tx++) {
       const k = ty * g.tilesX + tx;
       if (!g.dirty[k]) continue;
       g.dirty[k] = 0;
-      out.push(buildTile(g, tx, ty, origin, mode));
+      out.push(buildTile(g, tx, ty, origin, mode, slope));
     }
   return out;
 }

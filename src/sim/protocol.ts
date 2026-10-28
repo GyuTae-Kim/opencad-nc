@@ -22,6 +22,8 @@ export interface SimInitRequest {
   /** 저장점에 쓸 메모리(바이트) */
   checkpointBytes: number;
   target: SimPosition;
+  /** 매끈한 음영의 벽 문턱(칸 크기에 곱할 값, 없으면 WALL_SLOPE — 판재는 panelWallSlope) */
+  wallSlope?: number;
 }
 
 export type SimRequest = SimInitRequest | { type: 'target'; gen: number; target: SimPosition } | { type: 'mode'; gen: number; mode: SimColorMode };
