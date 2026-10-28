@@ -612,7 +612,8 @@ export class SimView {
     }
     const changed: Mesh3d[] = [];
     for (const t of msg.tiles as TileArrays[]) {
-      const m = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, this.indices(t.cols, t.rows, t.flat));
+      // 관통한 칸이 있는 조각은 제 삼각형 번호(그 칸을 뺀 것), 아니면 같은 크기 조각끼리 함께 쓰는 번호
+      const m = this.mesh(`sim-tile-${t.tx}-${t.ty}`, t, t.indices ?? this.indices(t.cols, t.rows, t.flat));
       this.tiles[t.ty * this.tilesX + t.tx] = m;
       changed.push(m);
     }

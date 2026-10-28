@@ -13,6 +13,9 @@
  *   그물이 커지지 않는다(면 법선으로 같은 그림).
  *   판재(MPR·PGI·XML)는 공구가 만들 수 있는 가장 가파른 경사로 문턱을 정한다(panelWallSlope): 평 끝 공구(구멍 기본값)와 모양 그대로
  *   내리는 홈·포켓뿐이면 문턱 0 — 기울어진 면이 없으니 칸이 굵어도(휴대폰 자동 해상도) 얕은 구멍·홈이 매끈한 오목이 되지 않는다.
+ * - 관통(13차): 소재 바닥까지 내려간 마디(판 밖 표시는 빼고 — 판 밖은 바닥 색으로 그린다)만으로 된 윗면 삼각형은 그리지 않고,
+ *   바닥은 그 삼각형을 뺀 나머지만 그린다(위·아래 어느 쪽에서도 뚫린 곳 너머가 보인다). 구멍 벽은 둘레 칸의 삼각형(윗면 → 바닥 높이)
+ *   그대로라 닫힌 그물이다. 관통한 칸이 있는 조각만 제 삼각형 번호를 갖고(TileArrays.indices), 없으면 예전과 같은 그물이다.
  */
 import { MARK_OUTSIDE, MARK_RAPID, type HeightGrid } from './grid';
 import type { SimTool } from './tool';
@@ -64,6 +67,10 @@ export interface TileArrays {
   colors: Float32Array;
   /** 마디 법선(기울어진 면이 있는 조각만 — 벽에 닿은 마디는 0) */
   normals?: Float32Array;
+  /** 관통한 칸이 있는 조각만: 그 삼각형을 뺀 번호(없으면 크기마다 같은 gridIndices) */
+  indices?: Uint32Array;
+  /** 뺀 삼각형의 서명(없으면 0) — 바뀌면 바닥을 다시 만든다 */
+  holes: number;
 }
 
 /** 옆면·바닥 그물 배열 */
@@ -102,6 +109,52 @@ function colorAt(out: Float32Array, o: number, z: number, mark: number, top: num
   out[o + 1] = c[1];
   out[o + 2] = c[2];
   out[o + 3] = 1;
+}
+
+/** 관통한 마디: 소재 바닥까지 내려갔고 판 밖(처음부터 소재가 없는 곳 — 바닥 색으로 그린다)이 아니다 */
+function throughAt(g: HeightGrid, k: number, bz: number): boolean {
+  return g.h[k]! <= bz && g.mark[k] !== MARK_OUTSIDE;
+}
+
+/**
+ * 마디 [i0, i1] × [j0, j1] 칸들의 윗면 삼각형(gridIndices와 같은 차례 — 칸마다 (a, b, e)·(a, e, d)) 가운데 세 마디가 모두 관통한 것을 뺀 번호와
+ * 뺀 삼각형의 서명. 뺀 것이 없으면 null(크기마다 같은 gridIndices를 쓴다)
+ */
+function holedIndices(g: HeightGrid, i0: number, i1: number, j0: number, j1: number): { indices: Uint32Array; holes: number } | null {
+  const nx = g.spec.nx;
+  const bz = Math.fround(g.spec.bottom);
+  const cols = i1 - i0 + 1;
+  let any = false;
+  for (let j = j0; j <= j1 && !any; j++) for (let i = i0; i <= i1; i++) if (throughAt(g, j * nx + i, bz)) {
+    any = true;
+    break;
+  }
+  if (!any) return null;
+  const out: number[] = [];
+  let removed = 0;
+  let sig = 0;
+  for (let j = j0; j < j1; j++)
+    for (let i = i0; i < i1; i++) {
+      const k = j * nx + i;
+      const ta = throughAt(g, k, bz);
+      const tb = throughAt(g, k + 1, bz);
+      const td = throughAt(g, k + nx, bz);
+      const te = throughAt(g, k + nx + 1, bz);
+      const a = (j - j0) * cols + (i - i0);
+      const b = a + 1;
+      const d = a + cols;
+      const e = d + 1;
+      if (ta && tb && te) {
+        removed++;
+        sig = (Math.imul(sig, 31) + k * 2 + 1) | 0;
+      } else out.push(a, b, e);
+      if (ta && te && td) {
+        removed++;
+        sig = (Math.imul(sig, 31) + k * 2 + 2) | 0;
+      } else out.push(a, e, d);
+    }
+  if (!removed) return null;
+  return { indices: Uint32Array.from(out), holes: (Math.imul(sig, 31) + removed) | 0 || 1 };
 }
 
 /** 조각이 한 번도 깎이지 않았는지(가장자리 마디 포함) */
@@ -149,7 +202,7 @@ export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonl
     for (let j = j0; j < j1; j++) put(v++, X(i1), Y(j));
     for (let i = i1; i > i0; i--) put(v++, X(i), Y(j1));
     for (let j = j1; j > j0; j--) put(v++, X(i0), Y(j));
-    return { tx, ty, cols, rows, flat: true, positions, colors };
+    return { tx, ty, cols, rows, flat: true, positions, colors, holes: 0 };
   }
   const positions = new Float32Array(cols * rows * 3);
   const colors = new Float32Array(cols * rows * 4);
@@ -167,7 +220,8 @@ export function buildTile(g: HeightGrid, tx: number, ty: number, origin: readonl
     }
   }
   const normals = tileNormals(g, i0, i1, j0, j1, slope);
-  return { tx, ty, cols, rows, flat: false, positions, colors, ...(normals ? { normals } : {}) };
+  const cut = holedIndices(g, i0, i1, j0, j1);
+  return { tx, ty, cols, rows, flat: false, positions, colors, ...(normals ? { normals } : {}), ...(cut ? { indices: cut.indices } : {}), holes: cut?.holes ?? 0 };
 }
 
 /**
@@ -321,7 +375,10 @@ export function buildWalls(g: HeightGrid, origin: readonly number[], mode: SimCo
   return { positions, colors, indices };
 }
 
-/** 바닥(아래에서 보아 반시계) */
+/**
+ * 바닥(아래에서 보아 반시계). 관통한 곳이 없으면 사각형 하나. 있으면 윗면에서 뺀 삼각형(holedIndices — 세 마디가 모두 관통)의 나머지만:
+ * 줄마다 두 삼각형이 모두 남는 칸이 이어지면 사각형 하나로 묶고, 하나만 남는 칸은 그 삼각형 하나
+ */
 export function buildBottom(g: HeightGrid, origin: readonly number[]): PlainArrays {
   const s = g.spec;
   const x0 = s.x0 - origin[0]!;
@@ -329,10 +386,76 @@ export function buildBottom(g: HeightGrid, origin: readonly number[]): PlainArra
   const y0 = s.y0 - origin[1]!;
   const y1 = s.y0 + (s.ny - 1) * s.dy - origin[1]!;
   const z = s.bottom - origin[2]!;
-  const positions = new Float32Array([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]);
-  const colors = new Float32Array(16);
-  for (let v = 0; v < 4; v++) colors.set([FLOOR_RGB[0], FLOOR_RGB[1], FLOOR_RGB[2], 1], v * 4);
-  return { positions, colors, indices: new Uint32Array([0, 3, 2, 0, 2, 1]) };
+  const nx = s.nx;
+  const bz = Math.fround(s.bottom);
+  const quad = (): PlainArrays => {
+    const positions = new Float32Array([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]);
+    const colors = new Float32Array(16);
+    for (let v = 0; v < 4; v++) colors.set([FLOOR_RGB[0], FLOOR_RGB[1], FLOOR_RGB[2], 1], v * 4);
+    return { positions, colors, indices: new Uint32Array([0, 3, 2, 0, 2, 1]) };
+  };
+  let any = false;
+  for (let k = 0; k < g.h.length; k++)
+    if (throughAt(g, k, bz)) {
+      any = true;
+      break;
+    }
+  if (!any) return quad();
+  let removed = false;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const X = (i: number): number => s.x0 + i * s.dx - origin[0]!;
+  const Y = (j: number): number => s.y0 + j * s.dy - origin[1]!;
+  const vert = (i: number, j: number): number => {
+    pos.push(X(i), Y(j), z);
+    return pos.length / 3 - 1;
+  };
+  for (let j = 0; j + 1 < s.ny; j++) {
+    let run = -1;
+    const flush = (end: number): void => {
+      if (run < 0) return;
+      // 칸 run … end-1을 사각형 하나로(아래에서 보아 반시계 — 위에서 본 (a, b, e)·(a, e, d)를 뒤집은 차례)
+      const a = vert(run, j);
+      const b = vert(end, j);
+      const e = vert(end, j + 1);
+      const d = vert(run, j + 1);
+      idx.push(a, e, b, a, d, e);
+      run = -1;
+    };
+    for (let i = 0; i + 1 < nx; i++) {
+      const k = j * nx + i;
+      const ta = throughAt(g, k, bz);
+      const tb = throughAt(g, k + 1, bz);
+      const td = throughAt(g, k + nx, bz);
+      const te = throughAt(g, k + nx + 1, bz);
+      const keep1 = !(ta && tb && te);
+      const keep2 = !(ta && te && td);
+      if (keep1 && keep2) {
+        if (run < 0) run = i;
+        continue;
+      }
+      removed = true;
+      flush(i);
+      if (keep1) {
+        const a = vert(i, j);
+        const b = vert(i + 1, j);
+        const e = vert(i + 1, j + 1);
+        idx.push(a, e, b);
+      } else if (keep2) {
+        const a = vert(i, j);
+        const e = vert(i + 1, j + 1);
+        const d = vert(i, j + 1);
+        idx.push(a, d, e);
+      }
+    }
+    flush(nx - 1);
+  }
+  // 바닥까지 내려간 마디는 있어도 세 마디가 모두 관통한 삼각형이 없으면(윗면에서 뺀 것이 없으면) 사각형 하나 그대로
+  if (!removed) return quad();
+  const positions = Float32Array.from(pos);
+  const colors = new Float32Array((pos.length / 3) * 4);
+  for (let v = 0; v < pos.length / 3; v++) colors.set([FLOOR_RGB[0], FLOOR_RGB[1], FLOOR_RGB[2], 1], v * 4);
+  return { positions, colors, indices: Uint32Array.from(idx) };
 }
 
 /** 바뀐 조각을 모두 만든다(표시를 지운다) */

@@ -21,6 +21,8 @@ interface State {
   computeMs: number;
   meshMs: number;
   sentBottom: boolean;
+  /** 조각마다 관통해 뺀 삼각형의 서명(바뀌면 바닥을 다시 만든다 — TileArrays.holes) */
+  holes: Int32Array;
   sentEvents: number;
   lastPost: number;
   /** 지금 목표에 닿았다고 이미 알렸는지 */
@@ -48,7 +50,7 @@ export class SimRunner {
         const nodes = req.grid.nx * req.grid.ny;
         const maxCheckpoints = Math.max(2, Math.min(48, Math.floor(req.checkpointBytes / Math.max(1, nodes * 5))));
         const engine = new SimEngine(req.moves, grid, (n) => prepared.get(n) ?? fallback, { rapidTol: req.rapidTol, maxCheckpoints });
-        this.st = { gen: req.gen, grid, engine, origin: gridOrigin(grid), mode: req.mode, slope: req.wallSlope ?? WALL_SLOPE, target: req.target, computeMs: 0, meshMs: 0, sentBottom: false, sentEvents: -1, lastPost: 0, told: false };
+        this.st = { gen: req.gen, grid, engine, origin: gridOrigin(grid), mode: req.mode, slope: req.wallSlope ?? WALL_SLOPE, target: req.target, computeMs: 0, meshMs: 0, sentBottom: false, holes: new Int32Array(grid.tilesX * grid.tilesY), sentEvents: -1, lastPost: 0, told: false };
         this.schedule();
       } catch (e) {
         this.st = null;
@@ -100,7 +102,16 @@ export class SimRunner {
     const t0 = performance.now();
     const tiles = takeDirtyTiles(s.grid, s.origin, s.mode, s.slope);
     const walls = s.grid.wallDirty ? buildWalls(s.grid, s.origin, s.mode) : undefined;
-    const bottom = s.sentBottom ? undefined : buildBottom(s.grid, s.origin);
+    // 관통해 뺀 윗면 삼각형이 바뀐 조각이 있으면 바닥도 그 나머지로 다시(관통이 없으면 처음 한 번 — 사각형 하나)
+    let holed = false;
+    for (const t of tiles) {
+      const k = t.ty * s.grid.tilesX + t.tx;
+      if (s.holes[k] !== t.holes) {
+        s.holes[k] = t.holes;
+        holed = true;
+      }
+    }
+    const bottom = s.sentBottom && !holed ? undefined : buildBottom(s.grid, s.origin);
     s.sentBottom = true;
     s.meshMs += performance.now() - t0;
     const cp = s.engine.checkpointInfo;
@@ -120,7 +131,7 @@ export class SimRunner {
     s.lastPost = performance.now();
     s.told = reached;
     const transfer: Transferable[] = [];
-    for (const t of tiles) transfer.push(t.positions.buffer, t.colors.buffer, ...(t.normals ? [t.normals.buffer] : []));
+    for (const t of tiles) transfer.push(t.positions.buffer, t.colors.buffer, ...(t.normals ? [t.normals.buffer] : []), ...(t.indices ? [t.indices.buffer] : []));
     for (const p of [walls, bottom]) if (p) transfer.push(p.positions.buffer, p.colors.buffer, p.indices.buffer);
     this.post(msg, transfer);
   }

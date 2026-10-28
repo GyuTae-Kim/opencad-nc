@@ -4,10 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseGcode } from '../src/gcode';
 import type { NcProgram } from '../src/model';
-import { SimEngine, normalizePosition, type SimMoves } from '../src/sim/engine';
-import { HeightGrid, gridFor, heightAt, type GridSpec } from '../src/sim/grid';
+import { SIM_MOVE_REGION, SimEngine, normalizePosition, type SimMoves } from '../src/sim/engine';
+import { HeightGrid, MARK_OUTSIDE, gridFor, heightAt, type GridSpec } from '../src/sim/grid';
 import { buildBottom, buildTile, buildWalls, fanIndices, gridIndices, gridOrigin, takeDirtyTiles } from '../src/sim/mesh';
 import { prepareTool, profileAt, resolveTool, type SimTool } from '../src/sim/tool';
+import { SimRunner } from '../src/sim/runner';
+import type { SimUpdate } from '../src/sim/protocol';
 
 const G = (body: string): NcProgram => parseGcode(`G21 G17 G90 G54\n${body}`, { initialPosition: [0, 0, 50] });
 
@@ -332,5 +334,97 @@ describe('그물', () => {
     g.stampSegment(64, 50, -1, 64, 50, -1, prepareTool(flat(0.5)));
     expect(takeDirtyTiles(g, o, 'stock').map((x) => x.tx).sort()).toEqual([0, 1]);
     expect(buildTile(g, 0, 0, o, 'stock').cols).toBe(65);
+  });
+});
+
+describe('관통한 곳은 구멍으로(13차)', () => {
+  // 200 × 100 × 5 소재(윗면 0, 바닥 −5), 칸 1 — 지름 10 평 엔드밀로 (30,30) → (60,30)을 바닥 아래까지
+  const spec = gridFor(box(0, 0, -5, 200, 100, 0), 200);
+  const cell = spec.dx * spec.dy;
+  /** 바닥 그물 삼각형 넓이 합(위에서 본) */
+  const area = (pos: Float32Array, idx: Uint32Array): number => {
+    let a = 0;
+    for (let k = 0; k < idx.length; k += 3) {
+      const [p, q, r] = [idx[k]! * 3, idx[k + 1]! * 3, idx[k + 2]! * 3];
+      a += Math.abs((pos[q]! - pos[p]!) * (pos[r + 1]! - pos[p + 1]!) - (pos[r]! - pos[p]!) * (pos[q + 1]! - pos[p + 1]!)) / 2;
+    }
+    return a;
+  };
+
+  it('세 마디가 모두 바닥까지 내려간 윗면 삼각형은 빼고, 바닥은 그 나머지(넓이 합 = 소재 넓이)', () => {
+    const g = new HeightGrid(spec);
+    const o = gridOrigin(g);
+    g.stampSegment(30, 30, -10, 60, 30, -10, prepareTool(flat(10)));
+    const bz = Math.fround(spec.bottom);
+    expect(heightAt(g, 45, 30)).toBe(bz);
+    const tiles = takeDirtyTiles(g, o, 'depth');
+    const t = tiles.find((x) => x.tx === 0 && x.ty === 0)!;
+    expect(t.indices).toBeDefined();
+    expect(t.holes).not.toBe(0);
+    // 뺀 삼각형(홈 끝 x 65는 이웃 조각까지)
+    const removed = tiles.reduce((n, x) => n + (x.indices ? gridIndices(x.cols, x.rows).length / 3 - x.indices.length / 3 : 0), 0);
+    expect(removed).toBeGreaterThan(30 * 9 * 2);
+    // 남은 삼각형은 세 마디가 모두 바닥이 아니다(구멍 벽 칸은 남는다)
+    const z = (v: number): number => t.positions[v * 3 + 2]! + o[2]!;
+    for (let k = 0; k < t.indices!.length; k += 3) expect([t.indices![k]!, t.indices![k + 1]!, t.indices![k + 2]!].every((v) => z(v) <= bz)).toBe(false);
+    // 바닥은 뺀 삼각형 자리만 비운다
+    const b = buildBottom(g, o);
+    expect(b.indices.length).toBeGreaterThan(6);
+    expect(area(b.positions, b.indices) + removed * (cell / 2)).toBeCloseTo(200 * 100, 6);
+    // 바닥 삼각형은 아래를 본다(위에서 보아 시계 방향)
+    const [p, q, r] = [b.indices[0]! * 3, b.indices[1]! * 3, b.indices[2]! * 3];
+    expect((b.positions[q]! - b.positions[p]!) * (b.positions[r + 1]! - b.positions[p + 1]!) - (b.positions[r]! - b.positions[p]!) * (b.positions[q + 1]! - b.positions[p + 1]!)).toBeLessThan(0);
+    // 바닥에 닿지 않은 조각은 예전과 같다(번호 없음)
+    const other = buildTile(g, 2, 1, o, 'depth');
+    expect(other.indices).toBeUndefined();
+    expect(other.holes).toBe(0);
+  });
+
+  it('바닥까지 가지 않은 홈·판 밖(바닥 색으로 그림)은 예전 그물 그대로', () => {
+    const g = new HeightGrid(spec);
+    const o = gridOrigin(g);
+    g.stampSegment(30, 30, -4.99, 60, 30, -4.99, prepareTool(flat(10)));
+    const t = takeDirtyTiles(g, o, 'depth').find((x) => x.tx === 0 && x.ty === 0)!;
+    expect(t.indices).toBeUndefined();
+    expect(t.holes).toBe(0);
+    expect(Array.from(buildBottom(g, o).indices)).toEqual([0, 3, 2, 0, 2, 1]);
+    // 판 외곽선 밖(왼쪽 아래 모서리를 따낸 판): 바닥까지 내리지만 구멍이 아니다
+    const regions = { ringStart: Uint32Array.of(0, 1), pointStart: Uint32Array.of(0, 6), xy: Float64Array.of(0, 40, 0, 100, 200, 100, 200, 0, 50, 0, 50, 40), z: Float64Array.of(spec.bottom), outside: Uint8Array.of(1) };
+    g.stampRegion(regions, 0);
+    expect(g.mark[10 * spec.nx + 10]).toBe(MARK_OUTSIDE);
+    expect(heightAt(g, 10, 10)).toBe(Math.fround(spec.bottom));
+    expect(takeDirtyTiles(g, o, 'depth').every((x) => !x.indices && x.holes === 0)).toBe(true);
+    expect(buildBottom(g, o).indices.length).toBe(6);
+  });
+
+  it('실행기는 관통해 뺀 삼각형이 바뀔 때만 바닥을 다시 보낸다(되감으면 사각형 하나로)', () => {
+    const p = G('T1 M6\nG0 X30 Y30 Z5\nG1 Z-1 F100\nG1 X60\nG1 Z-10\nG1 X30\nG0 Z5\n');
+    const sent: SimUpdate[] = [];
+    const runs: (() => void)[] = [];
+    const r = new SimRunner((m) => sent.push(m as SimUpdate), (run) => runs.push(run), 1e9);
+    const drain = (): void => {
+      while (runs.length) runs.shift()!();
+    };
+    const tool = { kind: 'flat', diameter: 10, corner: 0, angle: 118 } as const;
+    r.handle({ type: 'init', gen: 1, moves: simMoves(p), grid: spec, tools: [{ number: 1, tool }], defaultTool: tool, mode: 'depth', rapidTol: 0.01, checkpointBytes: 1 << 26, target: { move: 3, frac: 0 } });
+    drain();
+    // 바닥에 닿기 전: 처음 바닥(사각형)
+    expect(sent.at(-1)!.bottom!.indices.length).toBe(6);
+    r.handle({ type: 'target', gen: 1, target: { move: p.moves.count, frac: 0 } });
+    drain();
+    const holed = sent.at(-1)!;
+    expect(holed.tiles.some((t) => t.indices)).toBe(true);
+    expect(holed.bottom!.indices.length).toBeGreaterThan(6);
+    // 되감기: 관통 전 자리 — 조각이 다시 번호 없이, 바닥도 사각형으로
+    r.handle({ type: 'target', gen: 1, target: { move: 3, frac: 0 } });
+    drain();
+    const back = sent.at(-1)!;
+    expect(back.tiles.every((t) => !t.indices)).toBe(true);
+    expect(back.bottom!.indices.length).toBe(6);
+    // 색만 바꾸면(관통은 그대로) 바닥을 다시 보내지 않는다
+    r.handle({ type: 'mode', gen: 1, mode: 'stock' });
+    drain();
+    expect(sent.at(-1)!.bottom).toBeUndefined();
+    expect(SIM_MOVE_REGION).toBe(4);
   });
 });
