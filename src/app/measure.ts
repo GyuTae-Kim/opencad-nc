@@ -2,9 +2,58 @@
  * 측정 안내·결과 글(순수 함수, DOM 없음): 측정 띠(휴대폰·터치, 3D 보기 아래 가운데)·패널 아래 띠·상태 막대가 함께 쓴다.
  * touch(손가락이 주인 기기)면 안내에서 키(Esc) 설명을 빼고 길게 누르기(정밀 조준, aim.ts)를 알린다.
  * 키 설명이 있는 원래 글(넓은 화면·마우스)은 그대로 둔다.
+ *
+ * 측정 도구 자체(measure-lock.ts 잠금·툴팁, snap.ts 붙잡기 점, aim.ts 정밀 조준, tangent.ts 원호 접선)는 문서를 열 때 나눠 받는다
+ * (core.ts loadMeasureTools). 앱·패널이 받기 전에도 쓰는 글(붙잡은 종류 이름 snapLabel·snapPair)은 여기 둔다 — snap.ts가 다시 내보낸다.
  */
 import type { MeasureResult } from 'opencad-viewer3d';
+import type { SnapAxis } from 'opencad-viewer3d/inference';
+import type { SnapKind } from 'opencad-viewer3d/types';
 import { fmtNum } from './format';
+
+/** 측정 도구 조각을 받기 전에 측정을 켰을 때(받는 동안) 상태 줄 글 */
+export const MEASURE_LOADING = '측정 도구를 받는 중…';
+
+/** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼 */
+export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null): string {
+  switch (kind) {
+    case 'vertex':
+      return '꼭짓점';
+    case 'endpoint':
+      return '끝점';
+    case 'midpoint':
+      return '가운데 점';
+    case 'center':
+      return '중심';
+    case 'point':
+      return '붙잡은 점';
+    case 'intersection':
+      return '교차점';
+    case 'perpendicular':
+      return '수직 발';
+    case 'axis':
+      return axis === 'x' ? 'X축 방향' : axis === 'y' ? 'Y축 방향' : axis === 'z' ? 'Z축 방향' : '축 방향';
+    case 'parallel':
+      return '나란한 방향';
+    default:
+      return '붙잡지 않은 점';
+  }
+}
+
+/** 원호 접선으로 잠근 선 위의 점 이름(측정 툴팁·결과 — 코어 종류는 나란함) */
+export const TANGENT_LABEL = '접선 방향';
+
+/**
+ * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
+ * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
+ * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추).
+ * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로)
+ */
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean }): [string, string, boolean] | null {
+  if (m.snapA === undefined && m.snapB === undefined) return null;
+  if (!m.snapA && !m.snapB) return null;
+  return [snapLabel(m.snapA, m.axisA), m.tangentB && m.lockedB ? TANGENT_LABEL : snapLabel(m.snapB, m.axisB), !!m.lockedB];
+}
 
 /**
  * 잠근 방향(코어 0.10.0 추론 잠금): 축 셋, 선분과 나란히, 첫 점에서 선분에 내린 수직,

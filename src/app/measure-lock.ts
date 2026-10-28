@@ -23,8 +23,7 @@
 import type { MeasureHoverSnap, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, lockName, type LockName } from './measure';
-import { TANGENT_LABEL, snapLabel } from './snap';
+import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, type LockName } from './measure';
 
 type V3 = [number, number, number];
 

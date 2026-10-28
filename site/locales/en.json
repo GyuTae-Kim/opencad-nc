@@ -1055,5 +1055,9 @@
   "깎은 가공 수": "Operations cut",
   "모든 가공": "All operations",
   "깎기 전": "Before cutting",
-  "가공 {0} / {1}개까지 깎았습니다": "Cut {0} of {1} operations"
+  "가공 {0} / {1}개까지 깎았습니다": "Cut {0} of {1} operations",
+  "측정 도구를 받는 중…": "Loading the measuring tools…",
+  "측정 도구를 받지 못했습니다. 앱의 새 버전이 나왔을 수 있으니 새로 고친 뒤 파일을 최근 문서에서 다시 여십시오.": "Could not load the measuring tools. A new version of the app may have been released, so reload the page and open the file again from recent documents.",
+  "인터넷 연결이 끊겨 측정 도구를 받지 못했습니다. 연결되면 측정 단추를 다시 누르십시오.": "Could not load the measuring tools because the internet connection is down. Press the Measure button again once you are back online.",
+  "측정 도구를 열 수 없습니다: {0}": "Cannot open the measuring tools: {0}"
 }

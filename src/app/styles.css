@@ -226,6 +226,11 @@ select {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+/* 측정을 켰는데 측정 도구 조각을 받는 중(누르면 거둔다) */
+.tbtn[aria-busy='true'] {
+  cursor: progress;
+  opacity: 0.75;
+}
 .tbtn .caret {
   display: inline-flex;
   margin-left: -3px;
