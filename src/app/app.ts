@@ -1344,9 +1344,9 @@ export class NcViewerApp implements PanelHost {
     this.startError.hidden = true;
     this.startEl.hidden = true;
     this.viewEl.hidden = false;
-    this.applyDoc(d, null);
     this.panel.show(d);
     this.panel.setOpen(this.panelOpen);
+    this.applyDoc(d, null);
     this.docNameEl.textContent = d.name;
     this.docNameEl.title = d.name;
     document.title = `${d.name} - ${APP_TITLE}`;
@@ -1361,6 +1361,12 @@ export class NcViewerApp implements PanelHost {
     const prev = document.activeElement;
     const keyboard = !!prev && prev !== document.body && matchesFocusVisible(prev);
     this.viewer?.canvas.focus({ preventScroll: true, focusVisible: keyboard } as FocusOptions);
+    // The first scene may fit while the start screen still has the old canvas
+    // size. Let the panel layout and ResizeObserver settle before fitting it.
+    const viewer = this.viewer;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (this.doc === d && this.viewer === viewer) viewer?.fit(false);
+    }));
   }
 
   /** 문서의 장면과 보기 상태를 뷰어에 올린다(cam을 주면 그 카메라를 지킨다) */
