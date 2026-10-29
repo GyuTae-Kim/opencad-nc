@@ -18,7 +18,7 @@
  *   (splinesAt·splineTangentAt). 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선.
  */
 import { MOVE_ARC, PLANE_AXES, type NcSplines } from '../model';
-import type { PanelSnapTable } from '../scene';
+import type { OutlineForm, PanelSnapTable } from '../scene';
 import { playPosition, type NcDoc } from './doc';
 import type { SnapMoves } from './snap';
 import { unitTangent, type Curve } from './curve';
@@ -108,6 +108,8 @@ export interface ArcShape {
   r1: number;
   t0: number;
   sweep: number;
+  /** 장면이 이 호를 나눈 각(라디안 — 토막 하나가 도는 각). 없으면 문서의 나누기 각(판재 구멍 테두리·둥근 사각 포켓 모서리처럼 다를 때 — 17차) */
+  step?: number;
 }
 
 /** 시작·끝·평면 축·중심·중심각으로 모양을 만든다. 중심각이 없으면(직선) null */
@@ -211,8 +213,13 @@ export function shapeNearest(g: ArcShape, p: ArrayLike<number>): { f: number; di
 
 /** 장면이 원호를 현으로 나눴을 때 현이 원호에서 가장 멀리 떨어지는 거리(처짐). 나누기 수는 scene.ts arcSegCount·tessellatePath(허용치 없이)와 같다 */
 function shapeSag(g: ArcShape, maxAngle: number): number {
-  const n = Math.max(1, Math.min(4096, Math.ceil(Math.abs(g.sweep) / Math.max(1e-4, maxAngle) - 1e-9)));
+  const n = shapeChords(g, maxAngle);
   return Math.max(g.r0, g.r1) * (1 - Math.cos(Math.min(Math.PI, Math.abs(g.sweep) / n) / 2));
+}
+
+/** 장면이 원호를 나눈 토막 수(나누기 각 — 모양에 적힌 각이 있으면 그것). scene.ts arcSegCount·tessellatePath와 같은 셈 */
+export function shapeChords(g: ArcShape, maxAngle: number): number {
+  return Math.max(1, Math.min(4096, Math.ceil(Math.abs(g.sweep) / Math.max(1e-4, g.step ?? maxAngle) - 1e-9)));
 }
 
 /** 점 p가 원호 위(가장 가까운 자리까지 현의 처짐과 허용치 tol 안)면 그 자리, 아니면 null */
@@ -281,29 +288,39 @@ export function arcsOnAt(nc: SnapMoves, a: ArrayLike<number>, maxAngle = ARC_ANG
   return out;
 }
 
-/** 판재 붙잡기 표의 호 요소 모양(표마다 한 번 — 윤곽 가공·가공 없는 윤곽, XY 평면, 직선 축 Z) */
+/** 판재 붙잡기 표의 호 요소 모양(표마다 한 번 — 윤곽 가공·가공 없는 윤곽은 XY 평면·직선 축 Z, 둘레 호는 outlineForms의 평면·나눈 각) */
 const panelCache = new WeakMap<PanelSnapTable, ArcShape[]>();
+
+/** 호 요소 배열(9개씩 — 시작 xyz, 끝 xyz, 평면 두 축의 중심, 중심각)의 호 모양. 직선(중심각 0)은 뺀다. form = 둘레 호의 평면·나눈 각 */
+function elementArcs(el: Float64Array, form?: OutlineForm): ArcShape[] {
+  const [a0, a1, a2] = PLANE_AXES[form?.plane ?? 0] ?? PLANE_AXES[0]!;
+  const out: ArcShape[] = [];
+  for (let i = 0; i + 9 <= el.length; i += 9) {
+    const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], a0, a1, a2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
+    if (!g || !Number.isFinite(g.r0 + g.r1 + g.t0)) continue;
+    if (form) g.step = form.step;
+    out.push(g);
+  }
+  return out;
+}
 
 /**
  * 판재 붙잡기 표(PanelSnapTable.paths — 요소마다 시작 xyz, 끝 xyz, 호 중심 x·y, 중심각)의 호 요소들(차례 = ArcEnd.move).
- * 16차부터 판 외곽선·포켓 둘레(그물 윤곽선 고리 — PanelSnapTable.outlines)의 호도 잇는다
+ * 16차부터 판 외곽선·포켓 둘레(그물 윤곽선 고리 — PanelSnapTable.outlines)의 호도, 17차부터 구멍 테두리·옆면 포켓 둘레(평면·나눈 각 — outlineForms)도 잇는다
  */
 export function panelArcs(t: PanelSnapTable): ArcShape[] {
   let out = panelCache.get(t);
   if (out) return out;
   out = [];
-  for (const el of [...t.paths.values(), ...(t.outlines?.values() ?? [])])
-    for (let i = 0; i + 9 <= el.length; i += 9) {
-      const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
-      if (g && Number.isFinite(g.r0 + g.r1 + g.t0)) out.push(g);
-    }
+  for (const el of t.paths.values()) out.push(...elementArcs(el));
+  for (const [id, el] of t.outlines ?? []) out.push(...elementArcs(el, t.outlineForms?.get(id)));
   panelCache.set(t, out);
   return out;
 }
 
 /**
  * 판재 붙잡기 표 한 묶음의 호 요소 모양(표·묶음마다 한 번 — 붙잡기 다듬기 refine.ts·붙잡기 점 snap.ts): 선분 묶음은
- * `${선분 묶음 id}#${segmentIds 값}`(paths), 그물 윤곽선은 `edge:${그물 id}`(outlines — 판 외곽선·포켓 둘레)
+ * `${선분 묶음 id}#${segmentIds 값}`(paths), 그물 윤곽선은 `edge:${그물 id}`(outlines — 판 외곽선·포켓 둘레·구멍 테두리)
  */
 const panelKeyCache = new WeakMap<PanelSnapTable, Map<string, ArcShape[]>>();
 
@@ -312,13 +329,9 @@ export function panelArcsOf(t: PanelSnapTable, key: string): ArcShape[] {
   if (!m) panelKeyCache.set(t, (m = new Map()));
   let out = m.get(key);
   if (out) return out;
-  out = [];
-  const el = key.startsWith('edge:') ? t.outlines?.get(key.slice(5)) : t.paths.get(key);
-  if (el)
-    for (let i = 0; i + 9 <= el.length; i += 9) {
-      const g = shapeOf([el[i]!, el[i + 1]!, el[i + 2]!], [el[i + 3]!, el[i + 4]!, el[i + 5]!], 0, 1, 2, el[i + 6]!, el[i + 7]!, el[i + 8]!);
-      if (g && Number.isFinite(g.r0 + g.r1 + g.t0)) out.push(g);
-    }
+  const edge = key.startsWith('edge:');
+  const el = edge ? t.outlines?.get(key.slice(5)) : t.paths.get(key);
+  out = el ? elementArcs(el, edge ? t.outlineForms?.get(key.slice(5)) : undefined) : [];
   m.set(key, out);
   return out;
 }

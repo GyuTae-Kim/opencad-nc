@@ -34,7 +34,7 @@
  */
 import { ExprError, evalMprExpr } from './expr';
 import { NcWarnings, type PathPoint } from './model';
-import type { MprBoxOp, MprContourOp, MprDrillOp, MprHole, MprOperation, MprOtherOp, MprPart, MprVariable, MprWorkpiece, PanelFace } from './mpr';
+import type { MprBoxOp, MprContourOp, MprDrillOp, MprHole, MprOperation, MprOtherOp, MprPart, MprVariable, MprWorkpiece, PanelFace, PrismArcs } from './mpr';
 import { decodeXmlBytes, parseXml, xmlAttr, xmlChild, xmlChildren, xmlField, xmlRootName, XmlError, type XmlElement } from './xml';
 
 export interface PanelReadOptions {
@@ -62,6 +62,9 @@ interface FacePoint {
   arc?: ArcHint;
 }
 
+/** 면 평면 좌표의 호: 시작, 끝, 중심, 중심각(반시계 +) — 기둥 둘레 호(PrismArcs)로 */
+type PlaneArc = [Vec2, Vec2, Vec2, number];
+
 /** 면 평면 좌표(p, q)의 변: 끝점과 호면 중심·중심각(반시계 +) */
 interface PlaneSeg {
   p: number;
@@ -70,6 +73,8 @@ interface PlaneSeg {
 }
 
 const FACE_DIR: Record<PanelFace, Vec3> = { top: [0, 0, -1], bottom: [0, 0, 1], left: [1, 0, 0], right: [-1, 0, 0], front: [0, 1, 0], back: [0, -1, 0] };
+/** 면 평면 좌표(toPlane·fromPlane)의 두 축 = PLANE_AXES 번호(0 XY, 1 ZX, 2 YZ — 측정 붙잡기의 기둥 둘레 호 PrismArcs.plane) */
+const FACE_PLANE: Record<PanelFace, number> = { top: 0, bottom: 0, front: 1, back: 1, left: 2, right: 2 };
 const FACE_SUFFIX: Record<PanelFace, string> = { top: '', bottom: ' (아랫면)', left: ' (왼쪽면)', right: ' (오른쪽면)', front: ' (앞면)', back: ' (뒷면)' };
 const PGI_FACES: Record<string, PanelFace> = { 'z-': 'top', 'z+': 'bottom', 'x+': 'left', 'x-': 'right', 'y+': 'front', 'y-': 'back' };
 const QUADRANT_FACES: Record<string, PanelFace> = { '1': 'right', '2': 'left', '3': 'back', '4': 'front' };
@@ -513,6 +518,8 @@ class PanelBuilder {
     const q1 = Math.max(lo[1], hi[1]);
     const r = Math.max(0, Math.min(radius, (p1 - p0) / 2, (q1 - q0) / 2));
     const pts: Vec2[] = [];
+    // 둥근 모서리(1/4 원을 8토막): 시작·끝 꼭짓점 번호와 중심
+    const corners: [number, number, Vec2][] = [];
     if (r <= EPS) pts.push([p0, q0], [p1, q0], [p1, q1], [p0, q1]);
     else
       for (const [cp, cq, t0] of [
@@ -520,17 +527,21 @@ class PanelBuilder {
         [p1 - r, q1 - r, 0],
         [p0 + r, q1 - r, 90],
         [p0 + r, q0 + r, 180],
-      ] as const)
+      ] as const) {
+        corners.push([pts.length, pts.length + 8, [cp, cq]]);
         for (let k = 0; k <= 8; k++) {
           const t = ((t0 + (90 * k) / 8) * Math.PI) / 180;
           pts.push([cp + r * Math.cos(t), cq + r * Math.sin(t)]);
         }
+      }
     const pc = (p0 + p1) / 2;
     const qc = (q0 + q1) / 2;
     const th = (angle * Math.PI) / 180;
     const cs = Math.cos(th);
     const sn = Math.sin(th);
-    const rot = pts.map(([p, q]): Vec2 => [pc + (p - pc) * cs - (q - qc) * sn, qc + (p - pc) * sn + (q - qc) * cs]);
+    const turn = ([p, q]: Vec2): Vec2 => [pc + (p - pc) * cs - (q - qc) * sn, qc + (p - pc) * sn + (q - qc) * cs];
+    const rot = pts.map(turn);
+    const arcs = corners.map(([i0, i1, c]): PlaneArc => [rot[i0]!, rot[i1]!, turn(c), Math.PI / 2]);
     const rotation = angle ? ` (회전 ${fmt(angle)}°)` : '';
     const op: MprBoxOp = {
       ...base,
@@ -540,12 +551,15 @@ class PanelBuilder {
       depth,
       length: size[0],
       width: size[1],
-      prism: this.prism(face, rot, lo[2], depth),
+      prism: this.prism(face, rot, lo[2], depth, arcs, Math.PI / 16),
     };
     this.push(op);
   }
 
-  private prism(face: PanelFace, poly: Vec2[], n: number, depth: number): NonNullable<MprBoxOp['prism']> {
+  /**
+   * 면 평면 좌표의 닫힌 다각형 → 기둥. arcs = 다각형이 step(라디안)씩 나눈 호(측정 붙잡기 — PrismArcs, 면 평면 좌표를 그대로 평면 축으로)
+   */
+  private prism(face: PanelFace, poly: Vec2[], n: number, depth: number, arcs: readonly PlaneArc[] = [], step = ARC_STEP): NonNullable<MprBoxOp['prism']> {
     const outline: number[] = [];
     let reach = Infinity;
     for (const [p, q] of poly) {
@@ -553,7 +567,26 @@ class PanelBuilder {
       outline.push(v[0], v[1], v[2]);
       reach = Math.min(reach, this.reach(face, v));
     }
-    return { outline, dir: [...FACE_DIR[face]], depth: Math.max(0, Math.min(depth, reach)) };
+    const out: NonNullable<MprBoxOp['prism']> = { outline, dir: [...FACE_DIR[face]], depth: Math.max(0, Math.min(depth, reach)) };
+    if (arcs.length) {
+      const elements: number[] = [];
+      for (const [s, e, c, sweep] of arcs) elements.push(...fromPlane(face, s[0], s[1], n), ...fromPlane(face, e[0], e[1], n), c[0], c[1], sweep);
+      const a: PrismArcs = { plane: FACE_PLANE[face], step, elements };
+      out.arcs = a;
+    }
+    return out;
+  }
+
+  /** 평면 좌표 변 → 기둥 둘레 호(시작 = 앞 변의 끝) */
+  private static planeArcs(start: Vec2, segs: readonly PlaneSeg[]): PlaneArc[] {
+    const out: PlaneArc[] = [];
+    let prev = start;
+    for (const sg of segs) {
+      const e: Vec2 = [sg.p, sg.q];
+      if (sg.arc && sg.arc.sweep) out.push([prev, e, [sg.arc.cp, sg.arc.cq], sg.arc.sweep]);
+      prev = e;
+    }
+    return out;
   }
 
   /** 면 평면 좌표의 꼭짓점들 → 평면 좌표 변(호 중심 포함) */
@@ -644,7 +677,7 @@ class PanelBuilder {
         label: circle ? `원형 포켓 Ø${fmt(2 * circle.r)} × ${fmt(o.depth)}${suffix}` : `포켓 경로 × ${fmt(o.depth)}${suffix}`,
         kind: 'pocket',
         depth: o.depth,
-        prism: this.prism(face, poly, n, o.depth),
+        prism: this.prism(face, poly, n, o.depth, PanelBuilder.planeArcs(start, segs)),
       };
       if (circle) op.diameter = 2 * circle.r;
       this.push(op);
@@ -675,7 +708,10 @@ class PanelBuilder {
     if (o.empty) {
       const poly: Vec2[] = [];
       for (let k = 0; k < 48; k++) poly.push([c[0] + radius * Math.cos((k / 48) * Math.PI * 2), c[1] + radius * Math.sin((k / 48) * Math.PI * 2)]);
-      const op: MprBoxOp = { ...base, face, label: `원형 포켓 Ø${fmt(d)} × ${fmt(o.depth)}${FACE_SUFFIX[face]}`, kind: 'pocket', depth: o.depth, diameter: d, prism: this.prism(face, poly, c[2], o.depth) };
+      // 둘레 호: 48각의 첫 꼭짓점에서 한 바퀴(반시계)
+      const s0: Vec2 = [c[0] + radius, c[1]];
+      const ring: PlaneArc = [s0, s0, [c[0], c[1]], 2 * Math.PI];
+      const op: MprBoxOp = { ...base, face, label: `원형 포켓 Ø${fmt(d)} × ${fmt(o.depth)}${FACE_SUFFIX[face]}`, kind: 'pocket', depth: o.depth, diameter: d, prism: this.prism(face, poly, c[2], o.depth, [ring], Math.PI / 24) };
       this.push(op);
       return;
     }

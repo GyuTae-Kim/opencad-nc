@@ -108,9 +108,20 @@ export interface MprBoxOp extends OpBase {
   /** 방향 있는 상자: 모서리 origin과 세 변 u·v·w */
   box?: { origin: number[]; u: number[]; v: number[]; w: number[] };
   /** 기둥: 면 위의 닫힌 다각형(xyz 이어 붙임, 첫 점을 되풀이하지 않음)을 dir(단위 벡터)로 depth만큼 민 것 */
-  prism?: { outline: number[]; dir: [number, number, number]; depth: number };
+  prism?: { outline: number[]; dir: [number, number, number]; depth: number; arcs?: PrismArcs };
   /** 기둥 외곽으로 쓴 윤곽 번호(MPR FreiFormTasche) */
   contour?: number;
+}
+
+/**
+ * 기둥 둘레(다각형 outline)를 이루는 호(측정 붙잡기가 둘레 위 점을 호 위로 다듬고 접선으로 잠근다 — PGI·XML 둥근 사각·원형·경로 포켓).
+ * 다각형 꼭짓점은 이 호를 step(라디안)씩 나눈 점이다. elements는 호마다 9개(시작 xyz, 끝 xyz — 들어가는 면 위, 평면 두 축의 중심, 부호 있는 중심각),
+ * plane은 PLANE_AXES 번호(0 XY 윗·아랫면, 1 ZX 앞·뒷면, 2 YZ 왼·오른쪽면 — 중심 두 값은 그 평면의 두 축)
+ */
+export interface PrismArcs {
+  plane: number;
+  step: number;
+  elements: number[];
 }
 
 /**
