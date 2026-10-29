@@ -1306,8 +1306,8 @@ export class NcViewerApp implements PanelHost {
     const m = await loadMeasureTools();
     if (this.mlock) return;
     this.measureTools = m;
-    // 원호 접선 잠금: 첫 측정 점에 닿는 원호(G2/G3·판재 윤곽 호 — 첫 점마다 한 번 찾는다) 가운데 커서 아래 점이 그 위에 있는 것의 접선
-    // (재생 중이면 그린 이동까지 — tangent.ts ArcTangents.ofDoc)
+    // 원호 접선 잠금: 첫 측정 점에 닿는 원호(G2/G3·판재 윤곽 호 — 첫 점마다 한 번, 코어가 실은 선분 식별자로) 가운데 커서 아래 점이
+    // 그 위에 있는 것의 접선(재생 중이면 그린 이동까지 — tangent.ts ArcTangents.ofDoc)
     const tangents = new m.ArcTangents();
     // 방향 잠금(Shift가 없는 손가락 기기): 둘째 점 방향을 잡는 동안만 보이는 잠금 단추, 띠 위 알림, 커서 옆 붙잡기 툴팁
     const lock = new m.MeasureLock({
@@ -1316,6 +1316,7 @@ export class NcViewerApp implements PanelHost {
       layer: this.viewEl,
       changed: () => this.renderStatus(),
       arcTangent: (a, p) => (this.doc ? tangents.ofDoc(this.doc, a, p) : null),
+      tangentBy: () => tangents.by,
     });
     this.mlock = lock;
     this.measureActs.prepend(lock.button);

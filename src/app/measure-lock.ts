@@ -17,6 +17,8 @@
  *   첫 점이 원호의 가운데 점(앱의 원호 가운데 점 붙잡기)이어도 그 점의 접선으로(14차), 원호 위 다른 자리(현 위 — 코어 모서리 붙잡기)면
  *   원호 위 가장 가까운 자리의 접선으로(15차 — 점은 코어 점 그대로). 판재 윤곽의 호도 같다(15차, 붙잡기 표의 호 요소).
  *   방향은 첫 점에서 원호를 따라 커서 쪽(잠금은 선이라 결과 방향에만 든다).
+ *   첫 점이 놓인 원호는 코어 0.16.0이 찍은 점에 싣는 선분 식별자(measurePoints[0].segment·other)로 그 이동·윤곽에서 바로 찾고(18차),
+ *   식별자가 없는 점(앱의 가운데 점·중심)이나 이동이 바뀌는 꼭짓점은 예전처럼 좌표로 찾는다(tangent.ts ArcTangents).
  *   코어는 원호를 나눈 현을 선분으로 보므로 첫 현의 끝을 가리키면 그 현 방향으로 잠그려 한다 — 커서 아래 점이 원호 위면 접선이 먼저다.
  *   커서 아래가 방향 추론(축·나란함·수직 발 — 툴팁이 그 이름)이면 코어 판정 그대로다. 잠글 것을 지금 못 보면(커서가 떠남) 코어처럼
  *   첫 점 뒤 마지막으로 본 방향 — 그것이 접선이었으면 접선. Shift는 앱 onKey가 코어보다 먼저 shiftDown을 불러 잠그고(코어는 잠금이 있으면
@@ -32,6 +34,7 @@ import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
 import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, type LockName } from './measure';
+import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
 
@@ -60,10 +63,13 @@ export interface MeasureLockHost {
   /** 잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었다(상태 줄·측정 띠 다시 그리기) */
   changed(): void;
   /**
-   * 첫 측정 점 a가 원호(G2/G3 이동·판재 윤곽 호)의 시작·끝·가운데 점이나 그 밖의 원호 위 자리이고 커서 아래 점 p가 그 원호 위면
-   * 그 자리의 단위 접선(tangent.ts ArcTangents), 아니면 null. 원호를 모르는 문서·시험은 두지 않아도 된다
+   * 첫 측정 점(코어 measurePoints[0] — 0.16.0부터 그 점이 놓인 선분 식별자 segment·other)이 원호(G2/G3 이동·판재 윤곽 호)의
+   * 시작·끝·가운데 점이나 그 밖의 원호 위 자리이고 커서 아래 점 p가 그 원호 위면 그 자리의 단위 접선(tangent.ts ArcTangents — 식별자가 있으면
+   * 그 이동·윤곽만, 없으면 좌표로), 아니면 null. 원호를 모르는 문서·시험은 두지 않아도 된다
    */
-  arcTangent?(a: V3, p: V3): V3 | null;
+  arcTangent?(first: FirstPoint, p: V3): V3 | null;
+  /** 첫 점의 곡선을 찾은 길(자동 확인용 — ArcTangents.by) */
+  tangentBy?(): string | null;
 }
 
 /** 방향 추론 붙잡기(첫 점을 지나는 선 위의 점 — 툴팁이 그 이름): 원호 접선보다 코어 판정이 먼저 */
@@ -185,7 +191,7 @@ export class MeasureLock {
     const hv = v.measureHoverSnap;
     if (!hv || (hv.snap && INFERRED.has(hv.snap))) return null;
     const first = v.measurePoints[0];
-    return first ? at.call(this.host, first.point, hv.point) : null;
+    return first ? at.call(this.host, first, hv.point) : null;
   }
 
   /** 코어 잠금이 앱이 건 원호 접선 잠금인지(같은 방향의 'api' 나란함 잠금) */
@@ -449,8 +455,8 @@ export class MeasureLock {
     this.flashTimer = null;
   }
 
-  /** 자동 확인용: 툴팁 글(숨었으면 null)·자리, 알림, 잠금, Shift로 잠글 방향, 단추 */
-  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; hoverLock: LockName | null; button: boolean; tipRect: { x: number; y: number } | null } {
+  /** 자동 확인용: 툴팁 글(숨었으면 null)·자리, 알림, 잠금, Shift로 잠글 방향, 단추, 첫 점 곡선을 찾은 길(식별자·좌표) */
+  snapshot(): { tip: string | null; flash: string | null; lock: LockName | null; hoverLock: LockName | null; button: boolean; tipRect: { x: number; y: number } | null; tangentBy: string | null } {
     const hidden = this.tip.hidden;
     return {
       tip: hidden ? null : this.tip.textContent,
@@ -459,6 +465,7 @@ export class MeasureLock {
       hoverLock: this.hoverLock,
       button: !this.button.hidden,
       tipRect: hidden ? null : { x: parseFloat(this.tip.style.left), y: parseFloat(this.tip.style.top) },
+      tangentBy: this.host.tangentBy?.() ?? null,
     };
   }
 }

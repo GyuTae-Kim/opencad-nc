@@ -58,7 +58,8 @@ function setup(touch = false, src: Src = { nc, scene }) {
   v.renderNow();
   const tangents = new ArcTangents();
   const angle = (src.scene.meta as { arcAngle?: number }).arcAngle;
-  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed: vi.fn(), arcTangent: (a, p) => tangents.at(src.panel ?? src.nc, a, p, angle) });
+  // 앱(app.ts ensureMeasureTools)과 같이 코어 측정 점(선분 식별자 포함 — 18차)을 그대로 넘긴다
+  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed: vi.fn(), arcTangent: (a, p) => tangents.at(src.panel ?? src.nc, a, p, angle), tangentBy: () => tangents.by });
   bar.append(lock.button, lock.flash);
   const at = (p: readonly number[]): { x: number; y: number } => {
     const s = v.project(p)!;
@@ -128,7 +129,8 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     const l = v.measureInferenceLock!;
     expect(l).toMatchObject({ kind: 'parallel', source: 'api' });
     expect(dot(l.direction, [H, H, 0])).toBeCloseTo(1, 12);
-    expect(lock.snapshot()).toMatchObject({ tip: '접선 방향 · 잠금', lock: 'tangent', hoverLock: null });
+    // 원호 시작은 이동이 바뀌는 꼭짓점(급속 끝 = 원호 시작)이라 식별자가 한쪽 이동만 가리킨다 — 좌표로 찾는다(18차)
+    expect(lock.snapshot()).toMatchObject({ tip: '접선 방향 · 잠금', lock: 'tangent', hoverLock: null, tangentBy: 'coords' });
     expect(w.hint()).toBe(LOCK_HINTS.tangent);
     // 잠근 채 다른 곳을 가리키면 접선(첫 점에서 오른쪽 위 45°) 위
     w.hover([10, 44, 0]);
@@ -246,7 +248,9 @@ describe('원호 가운데 점에서 접선 방향 잠금(14차, 실제 코어 �
     const l = v.measureInferenceLock!;
     expect(l).toMatchObject({ kind: 'parallel', source: 'api' });
     expect(Math.abs(dot(l.direction, T))).toBeCloseTo(1, 12);
-    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', hoverLock: null });
+    // 앱의 가운데 점 붙잡기(pointsFor)는 코어가 식별자를 싣지 않는다 — 좌표로 찾는다(18차)
+    expect(v.measurePoints[0]!.segment).toBeUndefined();
+    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', hoverLock: null, tangentBy: 'coords' });
     expect(w.hint()).toBe(LOCK_HINTS.tangent);
     // 잠근 채 접선 가까이에 찍는다(원호에서 벗어난 곳)
     w.click([6, 22.5, 0]);
@@ -314,7 +318,9 @@ describe('원호 위 아무 점에서 접선 방향 잠금(15차, 실제 코어 
     expect(l).toMatchObject({ kind: 'parallel', source: 'api' });
     // 원호를 따라 커서 쪽(진행 방향)
     expect(dot(l.direction, T)).toBeCloseTo(1, 9);
-    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', hoverLock: null, tip: '접선 방향 · 잠금' });
+    // 현 위 첫 점은 코어가 그 현(원호 이동 번호)의 식별자를 싣는다 — 모든 이동을 좌표로 견주지 않고 그 원호만 본다(18차)
+    expect(a.segment).toMatchObject({ kind: 'line', id: 'nc-cut-none', index: ARC, raw: 3 });
+    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', hoverLock: null, tip: '접선 방향 · 잠금', tangentBy: 'segment' });
     expect(w.hint()).toBe(LOCK_HINTS.tangent);
     // 잠근 채 접선 가까이에 찍는다 — 둘째 점은 첫 점을 지나는 접선 위
     w.click([a.point[0] + 12 * T[0]!, a.point[1] + 12 * T[1]! + 0.6, 0]);
@@ -360,6 +366,9 @@ describe('원호 위 아무 점에서 접선 방향 잠금(15차, 실제 코어 
     lock.arrow(null);
     expect(dot(v.measureInferenceLock!.direction, arcTangentAtF(nc, ARC, 6 / 18)!)).toBeCloseTo(1, 6);
     expect(lock.lock).toBe('tangent');
+    // 현의 끝은 두 현이 함께 쓰지만 같은 원호 이동 안이라 식별자로 찾는다(18차)
+    expect(v.measurePoints[0]!.segment).toMatchObject({ id: 'nc-cut-none', index: ARC });
+    expect(lock.snapshot().tangentBy).toBe('segment');
   });
 });
 
@@ -429,7 +438,8 @@ describe('판재 윤곽 호의 접선 방향 잠금(15차, 실제 코어 판정)
     w.shiftDown();
     expect(v.measureInferenceLock).toMatchObject({ kind: 'parallel', source: 'api' });
     expect(dot(v.measureInferenceLock!.direction, [1, 0, 0])).toBeCloseTo(1, 9);
-    expect(lock.snapshot()).toMatchObject({ lock: 'tangent' });
+    // 직선 요소와 호 요소가 바뀌는 꼭짓점 — 좌표로(18차)
+    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', tangentBy: 'coords' });
     w.shiftUp();
     // 앞 직선의 다른 끝 (20,20): 코어가 그 모서리 방향(X축)
     w.hover([20, 20, z]);
@@ -467,6 +477,8 @@ describe('판재 윤곽 호의 접선 방향 잠금(15차, 실제 코어 판정)
     expect(lock.hoverLock).toBe('tangent');
     w.press();
     expect(dot(v.measureInferenceLock!.direction, fwd(deg))).toBeCloseTo(-1, 9);
-    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', tip: expect.stringContaining('접선 방향') });
+    // 현 위 첫 점은 윤곽 가공 선분 묶음의 식별자(가공 번호)로 그 윤곽의 호만 본다(18차)
+    expect(a.segment).toMatchObject({ kind: 'line', id: route.id });
+    expect(lock.snapshot()).toMatchObject({ lock: 'tangent', tip: expect.stringContaining('접선 방향'), tangentBy: 'segment' });
   });
 });

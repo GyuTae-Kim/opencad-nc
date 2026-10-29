@@ -78,8 +78,11 @@ export interface ArcCenters {
   moves: Uint32Array;
 }
 
-/** 장면 묶음 가운데 이동 가운데 점을 주는 것(보정 경로 'nc-comp'는 이동 번호가 같아도 모양이 달라 보정 조각으로 따로 — compSnapPoints) */
-const PATH_SET = /^nc-(?:cut|drill)-|^nc-(?:rapid|machine)$/;
+/**
+ * 장면 묶음 가운데 선분 번호(segmentIds)가 프로그램 이동 번호인 공구 경로 — 이동 가운데 점을 주고(pointsFor), 측정 첫 점의 선분 식별자로
+ * 그 이동을 바로 찾는다(tangent.ts). 보정 경로 'nc-comp'는 이동 번호가 같아도 모양이 달라 보정 조각으로 따로(compSnapPoints)
+ */
+export const PATH_SET = /^nc-(?:cut|drill)-|^nc-(?:rapid|machine)$/;
 
 /**
  * 모든 원호 이동의 중심 → 붙잡기 점(kind 'center', id = 그 호의 선분 묶음, order = 처음 그린 이동 번호). 같은 묶음 안 같은 자리 중심(여러 바퀴 나선·나눈 원 등)은
