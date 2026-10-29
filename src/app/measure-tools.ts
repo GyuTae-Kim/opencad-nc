@@ -4,6 +4,7 @@
  * - measure-lock.ts: 방향 잠금(Shift·화살표·잠금 단추)·붙잡기 툴팁
  * - snap.ts: 붙잡기 점(원호 중심·이동 가운데 점·보정 경로·판재 윤곽)
  * - aim.ts: 터치 길게 누르기 정밀 조준
+ * - measure-track.ts: 측정 띠의 끌어온 점 단추(정밀 조준 중 지금 붙잡은 점을 끌어온 점으로 — 24차)
  * - tangent.ts: 원호(G2/G3·판재 윤곽 호)·스플라인(G5·NURBS) 끝·가운데 점·곡선 위 아무 점의 접선 잠금
  * - refine.ts: 코어 수직 발·선분 위 점을 원호·스플라인 위로, 교차점을 두 곡선의 교차점으로, 축과 선분의 교차를 축 직선과 곡선의 교차점으로
  *   다듬기(코어 0.14.0·0.15.0·0.18.0 refine)와
@@ -15,5 +16,6 @@
 export { MeasureLock } from './measure-lock';
 export { arcCenters, moveSnapPoints, panelCenters, panelSnapPoints } from './snap';
 export { TouchAim } from './aim';
+export { TrackPick } from './measure-track';
 export { ArcTangents } from './tangent';
 export { ncSnapOptions, panelSnapOptions } from './refine';

@@ -38,6 +38,7 @@ import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
+import type { TrackPick } from './measure-track';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
@@ -294,6 +295,8 @@ export class NcViewerApp implements PanelHost {
   private readonly measureActs: HTMLDivElement;
   /** 측정 방향 잠금·붙잡기 툴팁(measure-lock.ts — 측정 도구 조각을 받으면 만든다) */
   private mlock: MeasureLock | null = null;
+  /** 측정 띠의 끌어온 점 단추(measure-track.ts — 측정 도구 조각을 받으면 잠금 단추 다음에 넣는다) */
+  private mtrack: TrackPick | null = null;
   private readonly aimLayer: HTMLDivElement;
   private readonly noticeBar: HTMLDivElement;
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
@@ -1326,7 +1329,17 @@ export class NcViewerApp implements PanelHost {
       overlays: () => [this.measureBar, this.noticeBar, this.playStrip.el],
     });
     this.mlock = lock;
-    this.measureActs.prepend(lock.button);
+    // 끌어온 점 단추(손가락은 머무르기가 없다 — 정밀 조준 중 다른 손가락으로 누르면 십자선 아래 붙잡은 점을 코어 setMeasureTrackPoints로).
+    // 조준 중이거나 기억한 점이 있을 때만 보인다(조준을 시작하고 마칠 때 attachMeasure의 onChange가 맞춘다)
+    const track = new m.TrackPick({
+      viewer: () => this.viewer,
+      touch: () => this.touch,
+      aiming: () => !!this.aim?.aiming,
+      flash: (text, ms, kind) => lock.showFlash(text, ms, kind),
+      changed: () => this.refreshBar(),
+    });
+    this.mtrack = track;
+    this.measureActs.prepend(lock.button, track.button);
     this.measureBar.append(lock.flash);
     this.attachMeasure();
   }
@@ -1338,7 +1351,13 @@ export class NcViewerApp implements PanelHost {
     const lock = this.mlock;
     if (!v || !m || !lock || this.aim) return;
     // 십자선·손가락 자리는 코어 거리 글상자가 비키게 잠금 손잡이가 코어에 넘긴다(코어 0.13.0 setMeasureLabelAvoid)
-    this.aim = new m.TouchAim(v.canvas, { enabled: () => !!this.doc && v.measureMode && !this.busy, layer: this.aimLayer, onMove: (_at, finger) => lock.setAim(finger) });
+    // 조준을 시작하고 마칠 때 측정 띠의 끌어온 점 단추를 보이고 숨긴다(measure-track.ts)
+    this.aim = new m.TouchAim(v.canvas, {
+      enabled: () => !!this.doc && v.measureMode && !this.busy,
+      layer: this.aimLayer,
+      onMove: (_at, finger) => lock.setAim(finger),
+      onChange: () => this.mtrack?.update(),
+    });
     lock.attach(v.canvas);
   }
 
@@ -2105,7 +2124,7 @@ export class NcViewerApp implements PanelHost {
     return lockHint(v.measurePointCount, !!this.doc?.measure, lock.lock, this.touch, lock.hoverLock);
   }
 
-  /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz). 보이는 곳은 CSS가 정한다(좁은 화면·터치) */
+  /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz), 끌어온 점 단추의 점 수. 보이는 곳은 CSS가 정한다(좁은 화면·터치) */
   private refreshBar(): void {
     const d = this.doc;
     const v = this.viewer;
@@ -2125,7 +2144,9 @@ export class NcViewerApp implements PanelHost {
       const lock = this.lockHintNow();
       if (lock) t.append(h('span', { class: 'mb-sub mb-lock-hint' }, lock));
     }
-    this.measureClear.disabled = !d.measure && !v.measurePointCount;
+    // 다시 재기는 끌어온 점만 있어도(첫 점 전) 지운다 — 코어 clearMeasure가 끌어온 점도 지운다
+    this.measureClear.disabled = !d.measure && !v.measurePointCount && !v.measureTrackPoints.length;
+    this.mtrack?.update();
     this.mlock?.update();
   }
 

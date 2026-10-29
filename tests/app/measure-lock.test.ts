@@ -31,6 +31,8 @@ class FakeViewer {
   lastLockable: Lock | null = null;
   lock: (Lock & { source: 'shift' | 'api' }) | null = null;
   labelRect: MeasureLabelRect | null = null;
+  /** 끌어온 점(코어 0.16.0 — 이 시험에서는 늘 빈 목록) */
+  measureTrackPoints: number[][] = [];
   get measureHoverSnap(): MeasureHoverSnap | null {
     return this.hover;
   }

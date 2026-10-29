@@ -479,6 +479,31 @@ kbd {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+/* 끌어온 점 단추(정밀 조준 중 다른 손가락으로 — 십자선 아래 점을 끌어온 점으로): 기억한 점이 있으면 강조 테두리와 오른쪽 위 점 수 */
+.mb-btn.mb-track {
+  position: relative;
+}
+.mb-btn.mb-track.on {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.mb-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 /* 측정 띠 위 알림(잠글 방향이 없을 때 맞추는 법) — 휴대폰 폭 안에서 줄을 바꾼다 */
 .measure-flash {
   position: absolute;

@@ -27,6 +27,16 @@ const fake = vi.hoisted(() => {
     measureInferenceLock = null;
     measureHoverLock = null;
     measureLabelRect = null;
+    /** 끌어온 점(코어 0.16.0 — 앱이 setMeasureTrackPoints로 준 것, 측정을 지우면 지운다) */
+    trackPts: number[][] = [];
+    get measureTrackPoints(): number[][] {
+      return this.trackPts.map((p) => [...p]);
+    }
+    setMeasureTrackPoints(points: number[][] | null): number {
+      if (!this.measureMode) return 0;
+      this.trackPts = (points ?? []).slice(0, 3).map((p) => [...p]);
+      return this.trackPts.length;
+    }
     constructor(host: HTMLElement, opts?: { viewCubeSize?: number }) {
       if (opts?.viewCubeSize) this.viewCubeSize = opts.viewCubeSize;
       const wrap = document.createElement('div');
@@ -48,6 +58,7 @@ const fake = vi.hoisted(() => {
     clearMeasure(): void {
       const had = this.measurePts > 0;
       this.measurePts = 0;
+      this.trackPts = [];
       if (had) for (const cb of this.measureCbs) cb(null);
     }
     /** 코어가 두 점을 찍은 것처럼 결과를 알린다 */
@@ -118,6 +129,7 @@ import { NcViewerApp } from '../../src/app/app';
 import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
 import { ARROW_LOCK_HINT, SHIFT_LOCK_HINTS, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { AIM_HOLD_MS, touchPointerEvent } from '../../src/app/aim';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 import { translate } from '../../site/i18n.mjs';
@@ -258,7 +270,7 @@ describe('측정 띠(휴대폰·터치)', () => {
     await app.openSample();
     const bar = root.querySelector<HTMLElement>('.measure-bar')!;
     const text = (): string => bar.querySelector('.mb-text')!.textContent ?? '';
-    const [clear, close] = [...bar.querySelectorAll<HTMLButtonElement>('.mb-btn:not(.mb-lock)')];
+    const [clear, close] = [...bar.querySelectorAll<HTMLButtonElement>('.mb-btn:not(.mb-lock):not(.mb-track)')];
     expect(bar.hidden).toBe(true);
 
     menuButton(root, '측정').click();
@@ -300,6 +312,57 @@ describe('측정 띠(휴대폰·터치)', () => {
     expect(bar.hidden).toBe(true);
     expect(menuButton(root, '측정').getAttribute('aria-pressed')).toBe('false');
     expect(app.state().aiming).toBe(false);
+  });
+
+  it('24차: 측정 띠의 끌어온 점 단추 — 잠금 단추 다음, 정밀 조준 중 나타나 누르면 십자선 아래 점을 코어에 주고 점 수를 적으며, 다시 재기가 지운다', async () => {
+    const { app, root } = makeApp(true, true);
+    await app.openSample();
+    menuButton(root, '측정').click();
+    const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    const acts = [...bar.querySelectorAll<HTMLButtonElement>('.mb-acts > .mb-btn')];
+    // 잠금 · 끌어온 점 · 다시 재기 · 끝내기
+    expect(acts.map((b) => (b.classList.contains('mb-lock') ? 'lock' : b.classList.contains('mb-track') ? 'track' : (label(b) || b.textContent)))).toEqual(['lock', 'track', '다시 재기', '측정 끝내기']);
+    const track = bar.querySelector<HTMLButtonElement>('.mb-track')!;
+    const clear = acts[2]!;
+    // 조준하지 않고 기억한 점도 없으면 숨는다(측정 띠는 예전 그대로)
+    expect(track.hidden).toBe(true);
+    expect(label(track)).toBe('끌어온 점 기억');
+    expect(clear.disabled).toBe(true);
+    const v = fake.FakeViewer.last!;
+    // 한 손가락으로 길게 눌러 정밀 조준(시간으로 기다린다) — 단추가 나타난다
+    v.canvas.dispatchEvent(touchPointerEvent('pointerdown', 5, 100, 200));
+    const t0 = performance.now();
+    while (!app.state().aiming && performance.now() - t0 < AIM_HOLD_MS + 2000) await new Promise((r) => setTimeout(r, 50));
+    expect(app.state().aiming).toBe(true);
+    expect(track.hidden).toBe(false);
+    const press = (): void => {
+      const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+      Object.defineProperty(down, 'pointerType', { value: 'touch' });
+      track.dispatchEvent(down);
+    };
+    // 점 붙잡기가 없으면 기억하지 않고 띠 위에 알린다
+    press();
+    expect(v.trackPts).toEqual([]);
+    expect(bar.querySelector('.measure-flash')!.textContent).toContain('기억할 점이 없습니다');
+    // 정밀 조준 십자선이 끝점 위(코어 미리 보기)
+    (v as unknown as { measureHoverSnap: unknown }).measureHoverSnap = { point: [20, 10, -1], snap: 'endpoint' };
+    press();
+    expect(v.trackPts).toEqual([[20, 10, -1]]);
+    expect(track.querySelector('.mb-badge')!.textContent).toBe('1');
+    expect(track.classList.contains('on')).toBe(true);
+    expect(bar.querySelector('.measure-flash')!.textContent).toContain('끌어온 점으로 기억했습니다');
+    // 조준 손가락을 떼도 기억한 점이 있으니 단추(점 수)는 남는다
+    (v as unknown as { measureHoverSnap: unknown }).measureHoverSnap = null;
+    v.canvas.dispatchEvent(touchPointerEvent('pointerup', 5, 100, 200));
+    expect(app.state().aiming).toBe(false);
+    expect(track.hidden).toBe(false);
+    // 끌어온 점만 있어도 다시 재기로 지운다
+    expect(clear.disabled).toBe(false);
+    clear.click();
+    expect(v.trackPts).toEqual([]);
+    expect(track.querySelector<HTMLElement>('.mb-badge')!.hidden).toBe(true);
+    expect(track.hidden).toBe(true);
+    expect(clear.disabled).toBe(true);
   });
 
   it('손가락 기기: 띠·패널·상태 막대 안내에서 Esc 설명을 빼고 길게 누르기(정밀 조준)를 알린다', async () => {
