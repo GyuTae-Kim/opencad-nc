@@ -19,6 +19,8 @@ const fake = vi.hoisted(() => {
     viewCubeVisible = true;
     axesVisible = true;
     viewCubeSize = 112;
+    fitCalls = 0;
+    fit(): void { this.fitCalls++; }
     section = null;
     /** 코어 측정 읽기(시험이 바꾼다): 미리 보기·잠금(0.10.0), Shift로 잠글 방향·거리 글상자 자리(0.12.0) */
     measureHoverSnap = null;
@@ -166,6 +168,21 @@ afterEach(() => {
 });
 
 describe('좁은 화면 도구 막대', () => {
+  it('새 문서는 패널 배치 뒤 맞추고, 뒤늦게 온 이전 문서의 맞춤은 건너뛴다', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+    const { app } = makeApp(false, true);
+    expect(await app.openSample()).toBe(true);
+    expect(await app.openSample()).toBe(true);
+    const viewer = fake.FakeViewer.last!;
+    expect(app.state().panelOpen).toBe(true);
+    expect(viewer.fitCalls).toBe(0);
+    for (let round = 0; round < 3; round++) {
+      const ready = frames.splice(0);
+      ready.forEach(cb => cb(round * 16));
+    }
+    expect(viewer.fitCalls).toBe(1);
+  });
   it('휴대폰 한 줄에는 보기·측정 단추만 남기고, 나머지는 넓은 화면 전용(보기 설정 메뉴로 모음)', () => {
     const { root } = makeApp();
     const bar = root.querySelector('.toolbar')!;
