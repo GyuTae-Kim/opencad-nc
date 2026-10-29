@@ -116,7 +116,8 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     const w = setup();
     const { v, lock } = w;
     w.click(A);
-    expect(v.measurePoints).toEqual([{ point: A, snap: 'endpoint' }]);
+    // 코어 0.16.0: 찍은 끝점에 그 점이 놓인 토막(원호 이동을 나눈 첫 현 — 이동 번호)의 식별자가 실린다
+    expect(v.measurePoints).toMatchObject([{ point: A, snap: 'endpoint', segment: { kind: 'line', id: 'nc-cut-none', index: ARC, raw: 0 } }]);
     w.hover(MID);
     expect(v.measureHoverSnap).toMatchObject({ snap: 'midpoint' });
     // 코어 혼자서는 원호 위 점에서 잠글 방향이 없다

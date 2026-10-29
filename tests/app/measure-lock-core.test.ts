@@ -91,7 +91,8 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     const w = setup();
     const { v, lock } = w;
     w.click([0, 0, 0]);
-    expect(v.measurePoints).toEqual([{ point: [0, 0, 0], snap: 'endpoint' }]);
+    // 코어 0.16.0: 찍은 끝점에 고르기가 고른 선분의 식별자가 실린다
+    expect(v.measurePoints).toEqual([{ point: [0, 0, 0], snap: 'endpoint', segment: { kind: 'line', id: 'path', index: 0, raw: 0, ends: [[0, 0, 0], [40, 0, 0]] } }]);
     expect(w.hint()).toBe(ARROW_LOCK_HINT);
     // 선분 몸통을 지나지 않고 (40,0,0) 끝점으로 바로: 점 붙잡기라 방향 추론은 없지만 코어가 잠글 방향(X축)을 준다
     w.hover([40, 0, 0]);
