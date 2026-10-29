@@ -98,6 +98,24 @@ describe('축과 원호 이동의 교차(평면 원호 — 식)', () => {
   });
 });
 
+describe('G18(ZX 평면) 원호', () => {
+  it('Z축 x = 6이 반지름 10 원호와 만나는 점(그 원호가 지나는 쪽 하나): (6, 0, ±8), 남은 X·Y가 지나는 점 그대로', () => {
+    const p = parseForView('l.nc', enc(['G21 G90 G18', 'G0 X0 Y0 Z10', 'G2 X10 Z0 I0 K-10 F300'].join('\n')));
+    const ln = p.nc!;
+    const i = [...ln.moves.kind].indexOf(MOVE_ARC);
+    const lid = p.scene.lines.find((l) => /^nc-cut-/.test(l.id))!.id;
+    const C = (deg: number): V3 => [10 * Math.cos(deg * D), 0, 10 * Math.sin(deg * D)];
+    const first = [6, 0, -20];
+    const deg = Math.atan2(8, 6) / D;
+    const got = [deg, -deg].map((a) => refineSnap(axisInput(lid, i, [C(a - 2.5), C(a + 2.5)], first, 'z'), ln));
+    // 원호는 한쪽(53.13° 또는 −53.13°)만 지난다 — 다른 쪽 현은 원호 위가 아니라 null
+    expect(got.filter(Boolean)).toHaveLength(1);
+    const q = got.find(Boolean)!;
+    expect(onAxis(q, first, 'z')).toBe(true);
+    expect(Math.abs(Math.abs(q[2]) - 8)).toBeLessThan(1e-9);
+  });
+});
+
 describe('축과 나선·스플라인의 교차(두 매개변수 뉴턴)', () => {
   it('나선: X축이 나선 위 한 점을 지나면 그 점(높이도)', () => {
     const h = parseForView('h.nc', enc(['G21 G90 G17', 'G0 X10 Y0 Z0', 'G3 X10 Y0 Z-6 I-10 J0 P2 F300'].join('\n')));
