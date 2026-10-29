@@ -150,7 +150,9 @@ export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
  * 0.18.0 axisEdges: 첫 점 X·Y·Z축이 공구 경로·판재 윤곽·모서리선과 만나는 점(원호·스플라인이면 refine.ts가 곡선 위로 — 'axisEdge').
  * axisFaces: 첫 점 축·끌어온 축이 소재(Heidenhain BLK FORM 공작물·판·포켓·홈·구멍·깎기 시뮬레이션 소재) 그물 면을 뚫는 점
  * (판재 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리 같은 원기둥 벽은 refine.ts가 원기둥 위로 — refineFace 'axisFace', 그 밖의 곡면은 나눈 삼각형 위 점).
- * 0.19.0 lockEdges·lockFaces: 잠근 동안(Shift·화살표·잠금 단추) 잠근 선이 공구 경로·윤곽선과 만나는 점·소재 면을 뚫는 점(잠근 축이면 같은 다듬기로 곡선·원기둥 위)
+ * 0.19.0 lockEdges·lockFaces: 잠근 동안(Shift·화살표·잠금 단추) 잠근 선이 공구 경로·윤곽선과 만나는 점·소재 면을 뚫는 점(잠근 축이면 같은 다듬기로 곡선·원기둥 위).
+ * 0.20.0: 나란함·수직·접선으로 잠근 선도 같은 다듬기로 곡선·원기둥 위, 축·잠근 선이 꺾은선 토막과 만나지 않고 그 활꼴만 지나면(다른 깊이의 원호·나선·스플라인을
+ * 뚫는 축 등) 열린 후보로 곡선 위 교차(refine.ts — 새 선택 없이 refine을 준 앱이면 코어가 부른다)
  */
 export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true } as const;
 
