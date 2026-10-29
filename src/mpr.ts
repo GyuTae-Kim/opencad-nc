@@ -8,7 +8,8 @@
  * - `]n` 윤곽 n: `$Em` 요소 머리 + 종류 줄(KP 점·KL 선·KA 호·KR 둥글리기·KF 모따기·KSL/KSA 나눔) + `X=…` 값.
  *   `.X=` 처럼 점으로 시작하는 값은 woodWOP가 계산해 둔 값(외부 프로그램이 쓴 파일은 틀릴 수 있어 검산에만 쓴다)
  * - `<번호 \이름\` 가공 매크로: 100 WerkStck(LA·BR·DI), 101 Kommentar, 102 BohrVert, 103 BohrHoriz,
- *   105 Konturfraesen, 109 Nuten, 112 Tasche, 131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로),
+ *   105 Konturfraesen, 109 Nuten, 112 Tasche(사각 포켓 — XA·YA 중심, LA·BR 크기, WI 각, RD 모서리 반지름: 실제 파일로 확인),
+ *   131 UfluBohr(아래쪽 드릴 장치 — 아랫면에서 위로),
  *   181 FreiFormTasche(자유 형상 포켓 — EA가 가리키는 닫힌 윤곽 안을 깊이 |TI|로. TI가 음수면 아랫면에서 위로: 실제 파일로 추정),
  *   188 Easyedge(엣지 밴딩 — 공개 명세가 없어 실제 파일로 추정: 윤곽 구간 EA..EE의 판 옆면에 두께 DK의 띠) …
  *   값 "STANDARD"(F_·S_·TNO 등)는 기계·공구 자료의 기본값이라는 뜻이라 식으로 계산하지 않는다.
@@ -679,6 +680,9 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
             v: [-s * br, c * br, 0],
             w: [0, 0, depth],
           };
+          // RD = 모서리 반지름(짧은 변의 반까지): 둥근 사각 기둥으로 그린다(장면·시뮬레이션은 상자보다 기둥이 먼저)
+          const r = Math.min(Math.max(0, num('RD', 0)!), la / 2, br / 2);
+          if (r > 1e-9 && depth > 0) op.prism = roundedPocket(xa, ya, la, br, r, wi, thick, depth);
         } else w.add('Tasche 크기(LA·BR)가 없음', m.line);
         operations.push(op);
         if (enabled) stats.pockets++;
@@ -973,6 +977,39 @@ function edgeOp(
   op.path = sectionPath(c, i0, i1);
   op.side = bandSide(op.path, c, wp);
   return op;
+}
+
+/** 둥근 사각 포켓 모서리 1/4 원을 나누는 토막 수(PGI·XML 둥근 사각 포켓과 같다 — 11.25°씩) */
+const CORNER_SEG = 8;
+
+/**
+ * 112 Tasche의 모서리 반지름(RD) r인 사각 포켓 → 윗면(z = top)의 둥근 사각 다각형을 아래로 depth만큼 민 기둥과 그 둘레 호(측정 붙잡기).
+ * 중심 (xa, ya), 길이 la(WI만큼 돌린 X 쪽)·폭 br, 모서리 1/4 원은 반시계로 CORNER_SEG 토막(PGI·XML 둥근 사각 포켓 wangs.ts rectPocket과 같은 모양).
+ * r이 짧은 변의 반이면 그 변이 반원이 된다(겹친 꼭짓점은 기둥을 만들 때 하나로 — MeshAccum.prism)
+ */
+function roundedPocket(xa: number, ya: number, la: number, br: number, r: number, wi: number, top: number, depth: number): NonNullable<MprBoxOp['prism']> {
+  const c = Math.cos(wi);
+  const s = Math.sin(wi);
+  const at = (u: number, v: number): [number, number] => [xa + u * c - v * s, ya + u * s + v * c];
+  const hu = la / 2 - r;
+  const hv = br / 2 - r;
+  const outline: number[] = [];
+  const elements: number[] = [];
+  for (const [cu, cv, t0] of [
+    [hu, -hv, -Math.PI / 2],
+    [hu, hv, 0],
+    [-hu, hv, Math.PI / 2],
+    [-hu, -hv, Math.PI],
+  ] as const) {
+    for (let k = 0; k <= CORNER_SEG; k++) {
+      const t = t0 + ((Math.PI / 2) * k) / CORNER_SEG;
+      outline.push(...at(cu + r * Math.cos(t), cv + r * Math.sin(t)), top);
+    }
+    const a = at(cu + r * Math.cos(t0), cv + r * Math.sin(t0));
+    const b = at(cu - r * Math.sin(t0), cv + r * Math.cos(t0));
+    elements.push(a[0], a[1], top, b[0], b[1], top, ...at(cu, cv), Math.PI / 2);
+  }
+  return { outline, dir: [0, 0, -1], depth, arcs: { plane: 0, step: Math.PI / (2 * CORNER_SEG), elements } };
 }
 
 /**
