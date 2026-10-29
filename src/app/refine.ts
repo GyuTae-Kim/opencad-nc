@@ -320,14 +320,16 @@ function inWall(w: PanelWall, a: number, tol: number): boolean {
 
 /**
  * 축이 면을 뚫는 점 다듬기(코어 0.19.0 refineFace 'axisFace' — 첫 점 축·끌어온 축 axisFaces, 잠근 축 lockFaces): 코어 점(축 직선과 삼각형 평면의 교차)이
- * 판재 그물의 원기둥 벽(panelWalls)을 나눈 삼각형 위면, 축 직선과 그 원기둥의 정확한 교차점 가운데 코어 점에 가까운 것.
+ * 판재 그물의 원기둥 벽(panelWalls)을 나눈 삼각형 위면, 축 직선과 그 원기둥의 정확한 교차점 가운데 그 현 바깥쪽(활꼴 쪽)의 것.
  * - 벽 찾기: 면 법선이 기둥 방향(a2)에 수직이고(옆면), 코어 점의 높이가 벽 범위 안, 중심에서 거리가 현(r·cos 반각)과 호(r) 사이, 각이 호 안,
  *   면 법선이 그 자리 반지름 방향에서 반각 안(삼각형이 그 호를 나눈 현의 것). 윗면·아랫면(법선이 a2), 곧은 옆면, 모르는 그물(공작물·깎기 시뮬레이션 소재·
  *   기울어진 구멍)은 null — 평면이면 코어 점이 이미 정확하다
  * - 교차: 축이 세계 축이라 기둥 방향과 나란하거나(그 벽을 따라가는 선 — 한 점으로 뚫지 않는다, null) 수직이다. 수직이면 축 직선은 높이 a2가 지나는 점 그대로인
  *   평면 안의 직선이라 원과 직선의 교차(이차식 — 판별식은 r² − (중심에서 직선까지 거리)²로 셈 오차 없이). 남은 두 좌표는 지나는 점 그대로다
- * - 받는 것: 그 자리 각이 호 안이고 코어 점에서 그 현의 길이(2r·sin 반각) + 허용치 안. 직선이 현은 지나고 원은 비켜 가면(처짐 사이) null
- * 허용치는 좌표 크기의 1e-6 × 4(장면 float32 반올림 — pointTol). 여러 벽에 맞으면(구멍 여럿) 코어 점에 가장 가까운 답
+ * - 고르는 것: 현은 원 안쪽이라 코어 점은 원 안이고 두 근은 그 양쪽이다. 축은 원과 현 사이 활꼴을 지나 현에 닿으므로 참 점은 코어 점에서 바깥(그 자리
+ *   반지름 방향)으로 간 근 — 다른 근은 원을 가로지른 맞은편 벽이다. 그 자리 각이 호 안(둥근 모서리 끝을 넘으면 곧은 옆면 쪽이라 null)이고 코어 점에서 반지름 안
+ * 허용치는 좌표 크기의 1e-6 × 4(장면 float32 반올림 — pointTol). 여러 벽에 맞으면(구멍 여럿) 코어 점에 가장 가까운 답.
+ * 코어는 받은 점이 코어 점에서 붙잡기 거리(화면) 밖이면 버린다(벽을 거의 스치는 축)
  */
 export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | null {
   if (c.kind !== 'axisFace') return null;
@@ -363,13 +365,14 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     if (!(A > 0.5) || disc < 0) continue;
     const B = ou * du + ov * dv;
     const sq = Math.sqrt(disc);
-    const reach = 2 * r * Math.sin(w.half) + tol;
     for (const s of [(-B - sq) / A, (-B + sq) / A]) {
       const q: V3 = [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
       q[a2] = o[a2];
+      // 코어 점에서 바깥쪽(반지름 방향)으로 간 근만
+      if (((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
       if (!inWall(w, Math.atan2(q[a1] - w.cv, q[a0] - w.cu), tol / r)) continue;
       const e = dist3(q, p);
-      if (e <= reach && e < bestD) {
+      if (e <= r && e < bestD) {
         bestD = e;
         best = q;
       }
