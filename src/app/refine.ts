@@ -20,12 +20,12 @@
  * 결과는 넘긴 값(종류·점·토막·첫 점·광선)과 문서 자료로만 정해진다(코어가 같은 입력이면 다시 부르지 않는다).
  */
 import type { MeasureSnapOptions, SnapRefineInput, SnapSegment } from 'opencad-viewer3d';
-import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
+import { MOVE_ARC, ncPathSetId } from '../model';
 import type { PanelSnapTable } from '../scene';
 import { MEASURE_INFERENCE } from './measure';
 import { closestToRay, footsFrom, nearestOn, type Curve, type V3 } from './curve';
 import { dist3, intersectSides, lineSide, type Side } from './intersect';
-import { arcCurve, arcShape, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
+import { arcCurve, arcShape, compArcs, compPiecesOf, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
 import { splineCurve, splineNearest, splineOfMove } from './spline';
 import { moveSnapPoints, panelCenters, panelSnapPoints, type ArcCenters, type SnapMoves } from './snap';
 
@@ -103,24 +103,14 @@ function ncSide(nc: SnapMoves, s: SnapSegment, point: readonly number[], maxAngl
 function compSide(nc: SnapMoves, s: SnapSegment, point: readonly number[], maxAngle: number, lines: boolean): Side | null {
   const c = nc.comp;
   if (!c) return null;
-  const i = s.index;
-  let lo = 0;
-  let hi = c.count;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (c.move[mid]! < i) lo = mid + 1;
-    else hi = mid;
-  }
-  for (let k = lo; k < c.count && c.move[k] === i; k++) {
+  const [lo, hi] = compPiecesOf(c, s.index);
+  const arcs = compArcs(c);
+  for (let k = lo; k < hi; k++) {
     const o = k * 6;
-    const a: V3 = [c.points[o]!, c.points[o + 1]!, c.points[o + 2]!];
-    const b: V3 = [c.points[o + 3]!, c.points[o + 4]!, c.points[o + 5]!];
+    const g = arcs[k];
     let side: Side | null = null;
-    if (c.kind[k] === 1 && c.sweep[k]) {
-      const [a0, a1, a2] = PLANE_AXES[c.plane[k]!] ?? PLANE_AXES[0]!;
-      const g = shapeOf(a, b, a0, a1, a2, c.center[k * 3 + a0]!, c.center[k * 3 + a1]!, c.sweep[k]!);
-      side = g && arcSide(g, s.ends, point, maxAngle, `c${k}`);
-    } else if (lines && c.kind[k] !== 1) side = straightSide(a, b, s.ends, `c${k}`);
+    if (g) side = arcSide(g, s.ends, point, maxAngle, `c${k}`);
+    else if (lines && c.kind[k] !== 1) side = straightSide([c.points[o]!, c.points[o + 1]!, c.points[o + 2]!], [c.points[o + 3]!, c.points[o + 4]!, c.points[o + 5]!], s.ends, `c${k}`);
     if (side) return side;
   }
   return null;

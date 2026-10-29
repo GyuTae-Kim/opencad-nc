@@ -3,6 +3,7 @@
  * 잠글 접선 방향. 해석기로 읽은 합성 G-code와 손으로 만든 여러 바퀴 나선으로 접선 방향·원호 위 판정(현의 처짐 안)·끝 고르기를 보고,
  * 판재(MPR) 윤곽 호(워커 길의 붙잡기 표)도 같은 규칙인지 본다(15차).
  * 첫 점을 코어 측정 점(선분 식별자 segment·other — 코어 0.16.0)으로 주면 그 이동·윤곽만 보고, 꼭짓점·식별자 없는 점은 좌표로 찾는지(18차).
+ * 반경 보정 경로(공구 중심 — 보정 조각)의 호도 식별자(nc-comp, 이동 번호)로 그 이동의 보정 호를 찾아 같은 규칙으로 접선을 주는지(19차).
  */
 import { describe, expect, it } from 'vitest';
 import type { SnapSegment } from 'opencad-viewer3d';
@@ -22,6 +23,9 @@ import {
   arcTangentAt,
   arcTangentAtF,
   arcsOnAt,
+  compArcs,
+  compPiecesOf,
+  compShape,
   panelArcs,
   panelArcsAt,
   type TangentDoc,
@@ -513,5 +517,93 @@ describe('첫 점의 곡선을 선분 식별자로(18차 — 코어 0.16.0 measu
       expect(d.at(t, { point: first, segment: sg }, at(-45))).toEqual(new ArcTangents().at(t, first, at(-45)));
       expect(d.by).toBe('coords');
     }
+  });
+});
+
+describe('반경 보정 경로(공구 중심) 호의 접선(19차)', () => {
+  // G42(오른쪽) 공구 지름 6: 반시계 반원 R10(중심 (0,0)) → 보정 호 R13, 직선 둘, 시계 1/4 원 R20(중심 (0,30)) → 보정 호 R17
+  const text = ['G21 G90 G17', 'T1 M6 (D=6)', 'G0 X-20 Y-20 Z0', 'G42 D1 G1 X0 Y-10 F300', 'G3 X0 Y10 I0 J10', 'G1 X-20 Y10', 'G1 X-20 Y30', 'G2 X0 Y50 I20 J0', 'G40 G1 X20 Y50', 'M2'].join('\n');
+  const r = parseForView('comp.nc', new TextEncoder().encode(text), { comp: true });
+  const nc = r.nc!;
+  const comp = nc.comp!;
+  const [q, q2] = arcMoves(nc) as [number, number];
+  /** 보정 호 조각(이동 q의 호 R13·이동 q2의 호 R17) */
+  const k1 = [...comp.kind.subarray(0, comp.count)].findIndex((k, i) => k === 1 && comp.move[i] === q);
+  const k2 = [...comp.kind.subarray(0, comp.count)].findIndex((k, i) => k === 1 && comp.move[i] === q2);
+  const D = Math.PI / 180;
+  const c13 = (deg: number, rr = 13): number[] => [rr * Math.cos(deg * D), rr * Math.sin(deg * D), 0];
+  const c17 = (deg: number): number[] => [17 * Math.cos(deg * D), 30 + 17 * Math.sin(deg * D), 0];
+  /** 반시계 원 위 deg 자리의 진행 방향 */
+  const ccw = (deg: number): number[] => [-Math.sin(deg * D), Math.cos(deg * D), 0];
+  const compSeg = (move: number, raw = 0): SnapSegment => ({ kind: 'line', id: 'nc-comp', index: move, raw, ends: [[0, 0, 0], [0, 0, 0]] });
+  // 넷째 현(−75° ~ −70°)의 가운데를 보정 호 위로 다듬은 첫 점(코어 다듬기 뒤)
+  const on = c13(-72.5);
+
+  it('해석 결과(보정 조각)에 호 중심·중심각·시작·끝이 있어 반지름과 장면 나누기를 다시 셀 수 있다', () => {
+    expect(k1).toBeGreaterThanOrEqual(0);
+    expect(k2).toBeGreaterThan(k1);
+    const g = compShape(comp, k1)!;
+    expect([g.cu, g.cv, g.r0, g.r1, g.sweep]).toEqual([0, 0, 13, 13, Math.PI]);
+    const g2 = compShape(comp, k2)!;
+    expect(g2.r0).toBeCloseTo(17, 12);
+    expect(g2.sweep).toBeCloseTo(-Math.PI / 2, 12);
+    // 직선 조각은 모양이 없고, 조각 표(compArcs)는 조각 번호 차례
+    expect(compShape(comp, 0)).toBeNull();
+    expect(compArcs(comp)[k1]).toEqual(g);
+    expect(compPiecesOf(comp, q)).toEqual([k1, k1 + 1]);
+    expect(compPiecesOf(comp, nc.moves.count + 5)).toEqual([comp.count, comp.count]);
+    // 장면의 보정 경로 선분 묶음(선분 번호 = 원래 이동 번호)은 호를 장면 나누기 각(5°)으로 나눈다 — 호 R13은 36토막
+    const ids = r.scene.lines.find((l) => l.id === 'nc-comp')!.segmentIds!;
+    expect([...ids].filter((m) => m === q)).toHaveLength(36);
+  });
+
+  it('첫 점이 보정 호 안쪽(식별자 nc-comp — 이동 번호)이면 그 보정 호의 접선을 원호를 따라 커서 쪽으로 — 좌표로 찾은 것과 같다', () => {
+    const bySeg = new ArcTangents();
+    const byXY = new ArcTangents();
+    close(bySeg.at(nc, { point: on, segment: compSeg(q, 3) }, c13(30)), ccw(-72.5));
+    expect(bySeg.by).toBe('segment');
+    close(bySeg.at(nc, { point: on, segment: compSeg(q, 3) }, c13(-85)), ccw(-72.5).map((v) => -v));
+    // 현 위 점(다듬기 전 — 처짐만큼 안쪽)도 호 위 가장 가까운 자리의 접선
+    close(bySeg.at(nc, { point: c13(-72.5, 13 * Math.cos(2.5 * D)), segment: compSeg(q, 3) }, c13(30)), ccw(-72.5));
+    for (const p of [c13(30), c13(-85), c13(90), c13(-90), [-10, 13, 0], c13(30, 10), c17(135)]) expect(bySeg.at(nc, { point: on, segment: compSeg(q, 3) }, p)).toEqual(byXY.at(nc, on, p));
+    expect(byXY.by).toBe('coords');
+    // 프로그램 원호(R10)·다른 보정 호(R17) 위를 가리키면 없다
+    expect(bySeg.at(nc, { point: on, segment: compSeg(q, 3) }, c13(30, 10))).toBeNull();
+    expect(bySeg.at(nc, { point: on, segment: compSeg(q, 3) }, c17(135))).toBeNull();
+    // 시계 방향 보정 호 R17(180° → 90°): 진행 방향은 시계, 커서가 뒤(170°)면 반대
+    const on2 = c17(150);
+    const cw = [Math.sin(150 * D), -Math.cos(150 * D), 0];
+    close(new ArcTangents().at(nc, { point: on2, segment: compSeg(q2, 2) }, c17(120)), cw);
+    close(new ArcTangents().at(nc, { point: on2, segment: compSeg(q2, 2) }, c17(170)), cw.map((v) => -v));
+  });
+
+  it('보정 호의 가운데 점(앱 점 — 식별자 없음)·보정 조각이 바뀌는 꼭짓점은 좌표로, 직선 조각 위는 없다', () => {
+    const c = new ArcTangents();
+    close(c.at(nc, { point: c13(0) }, c13(40)), [0, 1, 0]);
+    expect(c.by).toBe('coords');
+    // 보정 호 끝 (0,13) = 직선 조각 시작: 식별자가 직선 조각을 가리켜도 호 쪽(+X)으로
+    const d = new ArcTangents();
+    close(d.at(nc, { point: [0, 13, 0], segment: compSeg(q + 1, 0) }, c13(60)), [1, 0, 0]);
+    expect(d.by).toBe('coords');
+    // 보정 호 시작 (0,−13) = 들어가기 직선 끝
+    close(new ArcTangents().at(nc, { point: [0, -13, 0], segment: compSeg(q, 0) }, c13(-30)), [1, 0, 0]);
+    // 직선 조각 안쪽은 식별자로 찾되 곡선이 없다
+    const e = new ArcTangents();
+    expect(e.at(nc, { point: [-8, 13, 0], segment: compSeg(q + 1, 0) }, c13(60))).toBeNull();
+    expect(e.by).toBe('segment');
+    // 보정 경로를 그리지 않은 문서(보정 조각 없음)는 예전처럼 좌표로(찾을 곡선 없음)
+    const plain = parseForView('comp.nc', new TextEncoder().encode(text)).nc!;
+    expect(plain.comp).toBeUndefined();
+    const f = new ArcTangents();
+    expect(f.at(plain, { point: on, segment: compSeg(q, 3) }, c13(30))).toBeNull();
+    expect(f.by).toBe('coords');
+  });
+
+  it('ofDoc: 재생 중이면 그 보정 호의 원래 이동까지 그렸을 때만', () => {
+    const d: TangentDoc = { nc, mpr: null, playSec: null, playMove: -1, scene: r.scene };
+    close(new ArcTangents().ofDoc(d, { point: on, segment: compSeg(q, 3) }, c13(30)), ccw(-72.5));
+    expect(new ArcTangents().ofDoc({ ...d, playSec: moveEndTime(nc.timeline, q - 1), playMove: q - 1 }, { point: on, segment: compSeg(q, 3) }, c13(30))).toBeNull();
+    close(new ArcTangents().ofDoc({ ...d, playSec: moveEndTime(nc.timeline, q), playMove: q }, { point: on, segment: compSeg(q, 3) }, c13(30)), ccw(-72.5));
+    expect(new ArcTangents().ofDoc({ ...d, playSec: moveEndTime(nc.timeline, q - 1), playMove: q - 1 }, c13(0), c13(40))).toBeNull();
   });
 });
