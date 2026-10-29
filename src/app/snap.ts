@@ -197,11 +197,10 @@ export function panelCenters(t: PanelSnapTable): SnapPoint[] {
   return out;
 }
 
-const XY = [0, 1, 2] as const;
-
 /**
  * 판재에서 고른 윤곽 선분 → 그 요소(고른 점에 가장 가까운 직선·호)의 가운데 점(호는 호 위)과 호 중심. 그물 윤곽선(판 외곽선·포켓 둘레의
- * 위·아래 고리 — 16차)은 고른 점이 둘레 호 위일 때 그 호의 가운데 점과 중심. 표에 없는 것(구멍·홈·띠·곧은 모서리 등)은 null
+ * 위·아래 고리 — 16차, 구멍 테두리·옆면 포켓 둘레 — 17차)은 고른 점이 둘레 호 위일 때 그 호의 가운데 점과 중심(호의 평면은 outlineForms).
+ * 표에 없는 것(홈·띠·곧은 모서리 등)은 null
  */
 export function panelSnapPoints(pick: Pick3d, t: PanelSnapTable): SnapPoint[] | null {
   if (pick.kind !== 'line' && pick.kind !== 'edge') return null;
@@ -209,10 +208,13 @@ export function panelSnapPoints(pick: Pick3d, t: PanelSnapTable): SnapPoint[] | 
   const edge = pick.kind === 'edge';
   const el = edge ? t.outlines?.get(pick.id) : t.paths.get(`${pick.id}#${pick.index}`);
   if (!el) return null;
+  const form = edge ? t.outlineForms?.get(pick.id) : undefined;
+  const pl = PLANE_AXES[form?.plane ?? 0] ?? PLANE_AXES[0]!;
+  const [a0, a1, a2] = pl;
   let best = -1;
   let bestD = Infinity;
   for (let i = 0; i + 9 <= el.length; i += 9) {
-    const d = elementDistance(pick.point, el.subarray(i, i + 3), el.subarray(i + 3, i + 6), el[i + 6]!, el[i + 7]!, el[i + 8]!, XY);
+    const d = elementDistance(pick.point, el.subarray(i, i + 3), el.subarray(i + 3, i + 6), el[i + 6]!, el[i + 7]!, el[i + 8]!, pl);
     if (d < bestD) {
       bestD = d;
       best = i;
@@ -220,17 +222,25 @@ export function panelSnapPoints(pick: Pick3d, t: PanelSnapTable): SnapPoint[] | 
   }
   if (best < 0) return null;
   if (edge) {
-    // 현은 호 안쪽으로 많아야 반지름 × (1 − cos(나누기 각 / 2)) — 판 장면은 5°, 원형 포켓 다각형은 7.5°(넉넉히 10°로 본다)
-    const r = Math.hypot(el[best]! - el[best + 6]!, el[best + 1]! - el[best + 7]!);
+    // 현은 호 안쪽으로 많아야 반지름 × (1 − cos(나누기 각 / 2)) — 판 장면은 5°, 원형 포켓 다각형은 7.5°(넉넉히 10°로 본다),
+    // 나눈 각을 적은 둘레(구멍 테두리·둥근 사각 모서리)는 그 각
+    const r = Math.hypot(el[best + a0]! - el[best + 6]!, el[best + a1]! - el[best + 7]!);
+    const half = Math.max(Math.PI / 36, (form?.step ?? 0) / 2);
     const p = pick.point;
-    if (bestD > r * (1 - Math.cos(Math.PI / 36)) * 1.05 + 1e-6 * (1 + Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) return null;
+    if (bestD > r * (1 - Math.cos(half)) * 1.05 + 1e-6 * (1 + Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) return null;
   }
   const s = el.subarray(best, best + 3);
   const e = el.subarray(best + 3, best + 6);
   const sweep = el[best + 8]!;
   if (!sweep && Math.hypot(e[0]! - s[0]!, e[1]! - s[1]!, e[2]! - s[2]!) <= 1e-9) return null;
-  const out: SnapPoint[] = [{ point: elementAt(s, e, el[best + 6]!, el[best + 7]!, sweep, XY, 0.5), kind: 'midpoint' }];
-  if (sweep) out.push({ point: [el[best + 6]!, el[best + 7]!, (s[2]! + e[2]!) / 2], kind: 'center' });
+  const out: SnapPoint[] = [{ point: elementAt(s, e, el[best + 6]!, el[best + 7]!, sweep, pl, 0.5), kind: 'midpoint' }];
+  if (sweep) {
+    const c: V3 = [0, 0, 0];
+    c[a0] = el[best + 6]!;
+    c[a1] = el[best + 7]!;
+    c[a2] = (s[a2]! + e[a2]!) / 2;
+    out.push({ point: c, kind: 'center' });
+  }
   return out;
 }
 

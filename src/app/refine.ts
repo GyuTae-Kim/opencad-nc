@@ -7,7 +7,7 @@
  * 여기서 그 토막이 놓인 곡선을 찾아 정확한 곡선 위 점으로 옮긴다(받을지는 코어가 화면 붙잡기 거리로 정한다).
  * - 곡선 찾기: NC 공구 경로 토막(선분 묶음 nc-cut-…)은 이동 번호(segmentIds)로 원호 이동이나 스플라인 조각(해석기 스플라인 표),
  *   보정 경로(nc-comp)는 그 이동의 보정 조각 가운데 토막 두 끝이 놓인 호, 판재는 붙잡기 표(`${묶음 id}#${번호}`)의 요소 가운데 토막 두 끝이
- *   놓인 호. 판 외곽선·포켓 둘레는 그물 윤곽선(위·아래 고리)이라 그물 id로 붙잡기 표의 둘레 호(outlines)에서 찾는다.
+ *   놓인 호. 판 외곽선·포켓 둘레·구멍 테두리는 그물 윤곽선(위·아래 고리)이라 그물 id로 붙잡기 표의 둘레 호(outlines — 평면·나눈 각은 outlineForms)에서 찾는다.
  *   토막 두 끝이 곡선 위(장면 float32 반올림 안)가 아니면 다듬지 않는다(직선·다른 모양)
  * - 찾는 범위: 코어 점의 곡선 위 자리 둘레(원호는 양옆 토막 둘씩, 스플라인은 그 조각과 양옆 조각) — 구간 나눔으로 시작값을 고르고 뉴턴(curve.ts)
  * - 수직 발: 첫 점에서 곡선에 내린 발 가운데 코어 발에 가장 가까운 것(첫 점이 원의 축 위 — 원 중심 등 — 이면 어디나 발이라 코어 점에 가장 가까운 곡선 위 점).
@@ -22,7 +22,7 @@ import { MOVE_ARC, PLANE_AXES } from '../model';
 import type { PanelSnapTable } from '../scene';
 import { MEASURE_INFERENCE } from './measure';
 import { closestToRay, footsFrom, nearestOn, type Curve, type V3 } from './curve';
-import { arcCurve, arcShape, panelArcsOf, pointTol, shapeNearest, shapeOf, type ArcShape } from './tangent';
+import { arcCurve, arcShape, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
 import { splineCurve, splineOfMove } from './spline';
 import { moveSnapPoints, panelCenters, panelSnapPoints, type ArcCenters, type SnapMoves } from './snap';
 
@@ -36,10 +36,10 @@ interface Target {
   hi: number;
 }
 
-/** 원호 모양 g 위에 토막 두 끝이 있으면(장면 반올림 안) 코어 점 둘레(양옆 토막 둘씩)의 범위 */
+/** 원호 모양 g 위에 토막 두 끝이 있으면(장면 반올림 안) 코어 점 둘레(양옆 토막 둘씩 — 나눈 각은 모양에 적힌 각, 없으면 maxAngle)의 범위 */
 function arcTarget(g: ArcShape, ends: readonly (readonly number[])[], point: readonly number[], maxAngle: number): Target | null {
   for (const e of ends) if (shapeNearest(g, e).dist > 4 * pointTol(e)) return null;
-  const n = Math.max(1, Math.min(4096, Math.ceil(Math.abs(g.sweep) / Math.max(1e-4, maxAngle) - 1e-9)));
+  const n = shapeChords(g, maxAngle);
   const f0 = shapeNearest(g, point).f;
   return { c: arcCurve(g), lo: Math.max(0, f0 - 2 / n), hi: Math.min(1, f0 + 2 / n) };
 }

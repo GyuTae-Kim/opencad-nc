@@ -61,12 +61,7 @@ export class MeshAccum {
    * 둘레 나누기 수 seg. 원 테두리 두 개를 edges에 넣는다.
    */
   cylinder(a: readonly number[], d: readonly number[], len: number, r: number, seg = 16, withEdges = true): void {
-    // d에 수직인 두 축
-    const t = Math.abs(d[2]!) < 0.9 ? [0, 0, 1] : [1, 0, 0];
-    let e1 = [d[1]! * t[2]! - d[2]! * t[1]!, d[2]! * t[0]! - d[0]! * t[2]!, d[0]! * t[1]! - d[1]! * t[0]!];
-    const l1 = Math.hypot(e1[0]!, e1[1]!, e1[2]!) || 1;
-    e1 = e1.map((x) => x / l1);
-    const e2 = [d[1]! * e1[2]! - d[2]! * e1[1]!, d[2]! * e1[0]! - d[0]! * e1[2]!, d[0]! * e1[1]! - d[1]! * e1[0]!];
+    const [e1, e2] = cylinderAxes(d);
     const b = [a[0]! + d[0]! * len, a[1]! + d[1]! * len, a[2]! + d[2]! * len];
     const ring = (c: readonly number[], k: number): number[] => {
       const th = (k / seg) * Math.PI * 2;
@@ -200,6 +195,19 @@ export class MeshAccum {
     if (this.edges.length) out.edges = new Float32Array(this.edges);
     return out;
   }
+}
+
+/**
+ * 원기둥(MeshAccum.cylinder) 둘레의 두 축: 방향 d에 수직인 단위 벡터 e1, e2(= d × e1). 둘레 k번째 점은 중심 + r(cos θ e1 + sin θ e2),
+ * θ = 2πk / 나누기 수 — 측정 붙잡기 표(scene.ts 구멍 테두리)가 같은 점을 쓴다
+ */
+export function cylinderAxes(d: readonly number[]): [number[], number[]] {
+  const t = Math.abs(d[2]!) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  let e1 = [d[1]! * t[2]! - d[2]! * t[1]!, d[2]! * t[0]! - d[0]! * t[2]!, d[0]! * t[1]! - d[1]! * t[0]!];
+  const l1 = Math.hypot(e1[0]!, e1[1]!, e1[2]!) || 1;
+  e1 = e1.map((x) => x / l1);
+  const e2 = [d[1]! * e1[2]! - d[2]! * e1[1]!, d[2]! * e1[0]! - d[0]! * e1[2]!, d[0]! * e1[1]! - d[1]! * e1[0]!];
+  return [e1, e2];
 }
 
 /**

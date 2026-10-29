@@ -12,8 +12,8 @@
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions, type NcCompPath } from './comp';
-import { MeshAccum, TOOL_COLORS, rampColor } from './mesh';
-import { pathPolyline, type MprEdgeOp, type MprPart, type MprWorkpiece, type PanelFace } from './mpr';
+import { MeshAccum, TOOL_COLORS, cylinderAxes, rampColor } from './mesh';
+import { pathPolyline, type MprEdgeOp, type MprHole, type MprPart, type MprWorkpiece, type PanelFace, type PrismArcs } from './mpr';
 
 export interface NcSceneOptions {
   /** 원호를 나눌 최대 각도(라디안, 기본 5도). 선분 예산을 넘으면 자동으로 키운다 */
@@ -392,10 +392,22 @@ export interface PanelSnapTable {
    */
   paths: Map<string, Float64Array>;
   /**
-   * 그물 id → 그 기둥 둘레(그물 윤곽선 Mesh3d.edges로 그린 위·아래 고리)의 호 요소(paths와 같은 9개씩, XY 평면 — 한 바퀴 원은 시작 = 끝,
-   * 중심각 ±2π). 판 외곽선(mpr-board — PGI·XML), MPR 자유 형상 포켓의 윤곽, 지름을 아는 원형 포켓(윗면·아랫면에서 판 것). 호가 있을 때만
+   * 그물 id → 그 기둥 둘레(그물 윤곽선 Mesh3d.edges로 그린 위·아래 고리)의 호 요소(paths와 같은 9개씩 — 한 바퀴 원은 시작 = 끝,
+   * 중심각 ±2π). 판 외곽선(mpr-board — PGI·XML), MPR 자유 형상 포켓의 윤곽, PGI·XML 둥근 사각·원형·경로 포켓(옆면 포함 — 17차),
+   * 구멍 테두리(원기둥 위·아래 원 — 17차). 호가 있을 때만. 여기 둔 그물은 둘레의 호를 모두 둔다(나머지 윤곽선은 곧은 모서리)
    */
   outlines?: Map<string, Float64Array>;
+  /**
+   * 17차: 그물 id → 그 둘레 호의 평면(PLANE_AXES 번호 — 0 XY, 1 ZX, 2 YZ. 호 요소의 중심 두 값은 그 평면의 두 축)과 장면이 그 호를
+   * 나눈 각(라디안 — 토막 하나가 도는 각). 없으면 XY 평면·판 장면의 나누기 각(5°)
+   */
+  outlineForms?: Map<string, OutlineForm>;
+}
+
+/** 둘레 호의 평면과 나눈 각(PanelSnapTable.outlineForms) */
+export interface OutlineForm {
+  plane: number;
+  step: number;
 }
 
 /** 붙잡기 표 모으기(mprToScene 안에서 장면과 같은 조건으로 부른다) */
@@ -457,29 +469,57 @@ class SnapTableBuilder {
     this.addOutline(id, out);
   }
 
-  /** 원형 포켓 둘레(윗면·아랫면에서 판 기둥 — 외곽선 꼭짓점이 모두 원 위면 위·아래 고리마다 한 바퀴 원) */
-  circleOutline(id: string, outline: readonly number[], diameter: number, dir: readonly number[], depth: number): void {
-    const n = Math.floor(outline.length / 3);
-    if (n < 6 || !(diameter > 0) || dir[0] || dir[1] || !dir[2]) return;
-    let x = 0;
-    let y = 0;
-    let area = 0;
-    for (let i = 0; i < n; i++) {
-      x += outline[i * 3]!;
-      y += outline[i * 3 + 1]!;
-      const j = (i + 1) % n;
-      area += outline[i * 3]! * outline[j * 3 + 1]! - outline[j * 3]! * outline[i * 3 + 1]!;
-    }
-    x /= n;
-    y /= n;
-    const r = diameter / 2;
-    for (let i = 0; i < n; i++) if (Math.abs(Math.hypot(outline[i * 3]! - x, outline[i * 3 + 1]! - y) - r) > r * 0.01) return;
-    const sweep = area >= 0 ? 2 * Math.PI : -2 * Math.PI;
-    const sx = outline[0]!;
-    const sy = outline[1]!;
+  readonly forms = new Map<string, OutlineForm>();
+
+  /** 둘레 호의 평면·나눈 각을 적는다(XY·5°면 적지 않는다). 그물마다 하나 — 이미 다른 것이 있으면 false(그 호는 넣지 않는다) */
+  private form(id: string, plane: number, step: number): boolean {
+    const f = this.forms.get(id);
+    if (f) return f.plane === plane && f.step === step;
+    if (this.outlines.has(id)) return plane === 0 && step === Math.PI / 36;
+    if (plane !== 0 || step !== Math.PI / 36) this.forms.set(id, { plane, step });
+    return true;
+  }
+
+  /**
+   * 해석기가 준 기둥 둘레 호(PrismArcs — PGI·XML 둥근 사각·원형·경로 포켓, 옆면 포함): 들어가는 면의 고리와 깊이만큼 민 고리.
+   * 미는 방향은 그 평면의 법선 축이어야 한다(호 중심이 두 고리에서 같다)
+   */
+  prismArcs(id: string, arcs: PrismArcs, dir: readonly number[], depth: number): void {
+    const [a0, a1] = PLANE_AXES[arcs.plane] ?? PLANE_AXES[0]!;
+    const e = arcs.elements;
+    if (!e.length || dir[a0] || dir[a1] || !(arcs.step > 0) || !this.form(id, arcs.plane, arcs.step)) return;
     const out: number[] = [];
-    for (const z of [outline[2]!, outline[2]! + dir[2]! * depth]) out.push(sx, sy, z, sx, sy, z, x, y, sweep);
+    for (const k of [0, depth])
+      for (let i = 0; i + 9 <= e.length; i += 9)
+        out.push(e[i]! + dir[0]! * k, e[i + 1]! + dir[1]! * k, e[i + 2]! + dir[2]! * k, e[i + 3]! + dir[0]! * k, e[i + 4]! + dir[1]! * k, e[i + 5]! + dir[2]! * k, e[i + 6]!, e[i + 7]!, e[i + 8]!);
     this.addOutline(id, out);
+  }
+
+  /**
+   * 구멍 테두리(MeshAccum.cylinder가 그린 위·아래 원 — 둘레를 seg개 토막으로): 원마다 첫 꼭짓점(중심 + r·e1)에서 한 바퀴.
+   * 축 방향 구멍만(수직 구멍은 XY, 옆면 구멍은 ZX·YZ 평면). 중심각의 부호는 꼭짓점이 도는 쪽(그 평면의 두 축으로 본 e1 × e2)
+   */
+  holeRims(id: string, holes: readonly MprHole[], r: number, seg: number): void {
+    const out: number[] = [];
+    let plane = -1;
+    for (const h of holes) {
+      const d = h.dir;
+      const k = [0, 1, 2].find((i) => Math.abs(d[i]!) === 1 && !d[(i + 1) % 3] && !d[(i + 2) % 3]);
+      if (k === undefined || !(r > 0)) continue;
+      const pl = k === 2 ? 0 : k === 1 ? 1 : 2;
+      if (plane < 0) plane = pl;
+      if (pl !== plane) continue;
+      const [a0, a1] = PLANE_AXES[pl]!;
+      const [e1, e2] = cylinderAxes(d);
+      const sweep = e1[a0]! * e2[a1]! - e1[a1]! * e2[a0]! > 0 ? 2 * Math.PI : -2 * Math.PI;
+      const a = h.start;
+      const b = [a[0] + d[0] * h.depth, a[1] + d[1] * h.depth, a[2] + d[2] * h.depth];
+      for (const c of [a, b]) {
+        const s = [c[0]! + r * e1[0]!, c[1]! + r * e1[1]!, c[2]! + r * e1[2]!];
+        out.push(s[0]!, s[1]!, s[2]!, s[0]!, s[1]!, s[2]!, c[a0]!, c[a1]!, sweep);
+      }
+    }
+    if (out.length && this.form(id, plane, (2 * Math.PI) / seg)) this.addOutline(id, out);
   }
 
   /** 원형 포켓(지름을 아는 기둥): 외곽선 꼭짓점의 가운데가 모두 반지름 안팎 1%면 그 자리(들어가는 면 위) */
@@ -503,7 +543,14 @@ class SnapTableBuilder {
   }
 
   table(): PanelSnapTable {
-    return { centers: Float64Array.from(this.centers), centerIds: this.centerIds.slice(), paths: this.paths, ...(this.outlines.size ? { outlines: this.outlines } : {}) };
+    const forms = new Map([...this.forms].filter(([id]) => this.outlines.has(id)));
+    return {
+      centers: Float64Array.from(this.centers),
+      centerIds: this.centerIds.slice(),
+      paths: this.paths,
+      ...(this.outlines.size ? { outlines: this.outlines } : {}),
+      ...(forms.size ? { outlineForms: forms } : {}),
+    };
   }
 }
 
@@ -570,6 +617,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         const acc = new MeshAccum();
         const r = op.diameter / 2;
         const seg = Math.max(12, Math.min(32, Math.round(op.diameter * 2)));
+        // 구멍 테두리(위·아래 원) — 측정이 그 위 점을 원 위로 다듬고 접선으로 잠근다
+        snap?.holeRims(`mpr-op-${oi}`, op.holes, r, seg);
         for (const hole of op.holes) {
           acc.cylinder(hole.start, hole.dir, hole.depth, r, seg, true);
           centers.push(hole.start[0]!, hole.start[1]!, hole.start[2]!);
@@ -600,9 +649,9 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
             const c = op.contour !== undefined ? part.contours.find((k) => k.id === op.contour) : undefined;
             if (c) snap.arcCenters(`mpr-op-${oi}`, c.elements, pr.outline[2]);
             else if (op.kind === 'pocket' && op.diameter) snap.circlePocket(`mpr-op-${oi}`, pr.outline, op.diameter);
-            // 둘레 위·아래 고리(그물 윤곽선)의 호: 윤곽이 있으면 그 호, 없으면 지름을 아는 원(윗면·아랫면에서 판 것만)
-            if (c && !pr.dir[0] && !pr.dir[1]) snap.outline(`mpr-op-${oi}`, c.elements, [pr.outline[2]!, pr.outline[2]! + pr.dir[2] * pr.depth]);
-            else if (!c && op.kind === 'pocket' && op.diameter) snap.circleOutline(`mpr-op-${oi}`, pr.outline, op.diameter, pr.dir, pr.depth);
+            // 둘레 위·아래 고리(그물 윤곽선)의 호: 해석기가 준 호(PGI·XML 둥근 사각·원형·경로 포켓 — 옆면도), 아니면 윤곽의 호(윗면·아랫면에서 판 것만)
+            if (pr.arcs) snap.prismArcs(`mpr-op-${oi}`, pr.arcs, pr.dir, pr.depth);
+            else if (c && !pr.dir[0] && !pr.dir[1]) snap.outline(`mpr-op-${oi}`, c.elements, [pr.outline[2]!, pr.outline[2]! + pr.dir[2] * pr.depth]);
           }
           meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
           for (let i = 0; i + 2 < pr.outline.length; i += 3)

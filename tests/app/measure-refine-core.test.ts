@@ -7,6 +7,7 @@
  * - 판재 윤곽 호의 현 위 점도 원 위
  * - 스플라인(G5): 조각 위 점·수직 발이 곡선 위, 가운데 점은 곡선 전체의 호 길이 가운데, 시작 끝·조각 위 첫 점에서 Shift가 정확한 접선
  * - 직선 위 점은 다듬지 않는다(refined 없음)
+ * - 17차: 판재 구멍 테두리(32토막 원기둥 윗면 원)·둥근 사각 포켓 모서리(1/4 원을 8토막) 현 위 점도 원 위, 테두리 꼭짓점 첫 점에서 Shift는 원의 접선
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
@@ -361,5 +362,63 @@ describe('판 외곽선·포켓 둘레(그물 윤곽선)의 호도 측정에서 
     w.shiftDown();
     expect(dot(v.measureInferenceLock!.direction, [-Math.sin(deg * D), Math.cos(deg * D), 0])).toBeCloseTo(1, 9);
     expect(lock.lock).toBe('tangent');
+  });
+});
+
+describe('판재 구멍 테두리·둥근 사각 포켓 모서리도 원 위로 다듬고 접선으로(17차, 실제 코어)', () => {
+  // 판 400 × 300 × 18: 윗면 구멍 Ø20(중심 (200,150) — 32토막), 모서리 R10 사각 포켓 80 × 60(중심 (100,100), 윗면에서 6)
+  const PGI = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <circle centerX="200" centerY="150" centerZ="0" radius="10" width="20" depth="12" direction="z-" empty="1" enable="1" order="1"/>
+  <pocket length="80" width="60" depth="6" direction="z-" cornerRadius="10" angle="0" centerX="100" centerY="100" centerZ="0" enable="1" order="2"/>
+ </panel>
+</pgi>`;
+  const r = parseForView('h.pgi', enc(PGI));
+  const src = { panel: r.mpr!.snap!, scene: r.scene };
+  const D = Math.PI / 180;
+  /** 구멍 윗면 원 위 deg 자리 */
+  const H = (deg: number): number[] => [200 + 10 * Math.cos(deg * D), 150 + 10 * Math.sin(deg * D), 18];
+
+  it('구멍 테두리 현 위 점은 원 위(refined), 테두리 꼭짓점 첫 점에서 Shift는 원의 접선', () => {
+    const w = setup(src);
+    const { v, lock } = w;
+    w.zoomTo([186, 136], [214, 164], 18);
+    // 32토막의 꼭짓점 자리: 원기둥 둘레 축(e1 = (0,−1,0), e2 = (−1,0,0))에서 −90°부터 시계 방향 11.25°씩
+    const vtx = (k: number): number[] => H(-90 - 11.25 * k);
+    const p = vtx(3).map((x, i) => x + (vtx(4)[i]! - x) * 0.4);
+    w.hover(p);
+    const h = v.measureHoverSnap!;
+    expect(h.refined).toBe(true);
+    expect(Math.abs(Math.hypot(h.point[0] - 200, h.point[1] - 150) - 10)).toBeLessThan(1e-9);
+    expect(h.point[2]).toBeCloseTo(18, 9);
+    // 다듬기 전 현의 처짐: 10(1 − cos 5.625°) ≈ 0.048 mm
+    expect(10 * (1 - Math.cos(5.625 * D))).toBeGreaterThan(0.04);
+    // 꼭짓점 첫 점 → 커서는 테두리 위 몇 토막 앞
+    w.click(vtx(2));
+    expect(v.measurePoints[0]!.snap).toBe('endpoint');
+    w.hover(vtx(6).map((x, i) => x + (vtx(7)[i]! - x) * 0.5));
+    expect(lock.hoverLock).toBe('tangent');
+    w.shiftDown();
+    const a = (-90 - 22.5) * D;
+    // 시계 방향으로 돈다 — 접선 (sin, −cos)
+    expect(Math.abs(dot(v.measureInferenceLock!.direction, [Math.sin(a), -Math.cos(a), 0]))).toBeCloseTo(1, 9);
+    expect(lock.lock).toBe('tangent');
+  });
+
+  it('둥근 사각 포켓 모서리(1/4 원 8토막) 현 위 점은 원 위, 모서리 가운데 점·중심도', () => {
+    const w = setup(src);
+    const { v } = w;
+    // 오른쪽 위 모서리: 중심 (130,120), 0° → 90°
+    const C = (deg: number): number[] => [130 + 10 * Math.cos(deg * D), 120 + 10 * Math.sin(deg * D), 18];
+    w.zoomTo([122, 112], [143, 133], 18);
+    w.hover(C(22.5).map((x, i) => x + (C(33.75)[i]! - x) * 0.3));
+    const h = v.measureHoverSnap!;
+    expect(h.refined).toBe(true);
+    expect(Math.abs(Math.hypot(h.point[0] - 130, h.point[1] - 120) - 10)).toBeLessThan(1e-9);
+    // 모서리 호의 가운데 점(앱 점)
+    w.hover(C(45));
+    expect(v.measureHoverSnap).toMatchObject({ snap: 'midpoint' });
+    expect(dist(v.measureHoverSnap!.point, C(45))).toBeLessThan(1e-9);
   });
 });
