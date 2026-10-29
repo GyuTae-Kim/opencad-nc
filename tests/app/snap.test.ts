@@ -294,8 +294,8 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
     expect(s!.points.length).toBe(5);
-    // 추론 붙잡기(교차점·수직 발·축 방향)와 코어 0.10.0 나란함·Shift 잠금도 켠다
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true });
+    // 추론 붙잡기(교차점·수직 발·축 방향)와 코어 0.10.0 나란함·Shift 잠금, 0.16.0 끌어온 축(18차)도 켠다
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true });
     expect(s!.points[0]).toMatchObject({ point: [40, 20, -1], kind: 'center', id: 'nc-cut-1' });
     const nc = app.doc!.nc!;
     const arc = [...Array(nc.moves.count).keys()].find((i) => nc.moves.kind[i] === MOVE_ARC)!;
@@ -385,7 +385,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true });
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true });
     // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
     expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
     expect(s!.pointsFor({ ...linePick('mpr-contours', 1), point: [20, 0.2, 19] })!.map((p) => [p.kind, ...p.point.map((x) => Math.round(x * 1000) / 1000 + 0)])).toEqual([

@@ -1059,5 +1059,8 @@
   "측정 도구를 받는 중…": "Messwerkzeuge werden geladen …",
   "측정 도구를 받지 못했습니다. 앱의 새 버전이 나왔을 수 있으니 새로 고친 뒤 파일을 최근 문서에서 다시 여십시오.": "Die Messwerkzeuge konnten nicht geladen werden. Möglicherweise ist eine neue Version der App erschienen. Laden Sie die Seite neu und öffnen Sie die Datei erneut über „Zuletzt geöffnet“.",
   "인터넷 연결이 끊겨 측정 도구를 받지 못했습니다. 연결되면 측정 단추를 다시 누르십시오.": "Die Messwerkzeuge konnten nicht geladen werden, weil keine Internetverbindung besteht. Drücken Sie die Schaltfläche „Messen“ erneut, sobald die Verbindung wieder steht.",
-  "측정 도구를 열 수 없습니다: {0}": "Messwerkzeuge können nicht geöffnet werden: {0}"
+  "측정 도구를 열 수 없습니다: {0}": "Messwerkzeuge können nicht geöffnet werden: {0}",
+  "끌어온 점에서 X축": "X-Achse vom gemerkten Punkt",
+  "끌어온 점에서 Y축": "Y-Achse vom gemerkten Punkt",
+  "끌어온 점에서 Z축": "Z-Achse vom gemerkten Punkt"
 }

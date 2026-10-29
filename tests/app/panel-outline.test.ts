@@ -130,6 +130,13 @@ describe('둘레 호 위 측정(다듬기·가운데 점·중심·접선)', () =
     expect(Math.abs(dot(d, [0, a[1] - 150, a[2] - 9]))).toBeLessThan(1e-9);
     // 커서 쪽(f가 커지는 쪽)
     expect(dot(d, [p[0] - a[0], p[1] - a[1], p[2] - a[2]])).toBeGreaterThan(0);
+    // 18차: 코어가 그물 윤곽선 식별자(edge — 그물 id)를 실은 첫 점은 그 그물의 둘레 호만 보고 같은 접선을 준다
+    const c = new ArcTangents();
+    expect(c.at(t, { point: a, segment: { kind: 'edge', id: 'mpr-op-1', index: 3, raw: 3, ends: [a as V3, p as V3] } }, p)).toEqual(d);
+    expect(c.by).toBe('segment');
+    // 표에 둘레 호가 없는 그물(각진 포켓)의 식별자는 좌표로
+    expect(c.at(t, { point: a, segment: { kind: 'edge', id: 'mpr-op-5', index: 0, raw: 0, ends: [a as V3, p as V3] } }, p)).toEqual(d);
+    expect(c.by).toBe('coords');
   });
 
   it('둥근 사각 포켓 모서리·뒷면 원형 포켓(ZX 평면)·경로 포켓 반원 현 위 점은 원 위', () => {

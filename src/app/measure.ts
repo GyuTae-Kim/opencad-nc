@@ -14,8 +14,12 @@ import { fmtNum } from './format';
 /** 측정 도구 조각을 받기 전에 측정을 켰을 때(받는 동안) 상태 줄 글 */
 export const MEASURE_LOADING = '측정 도구를 받는 중…';
 
-/** 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼 */
-export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null): string {
+/**
+ * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
+ * tracked(다른 점에서 끌어온 축 — 코어 0.16.0 inference.track, trackFrom이 있고 첫 점에서 그 축 방향이 아님)면 '끌어온 점에서 X축'
+ */
+export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked = false): string {
+  if (kind === 'axis' && tracked && axis) return axis === 'x' ? '끌어온 점에서 X축' : axis === 'y' ? '끌어온 점에서 Y축' : '끌어온 점에서 Z축';
   switch (kind) {
     case 'vertex':
       return '꼭짓점';
@@ -40,6 +44,15 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
   }
 }
 
+/**
+ * 측정 결과에 붙일 끌어온 축 표시(app.ts onMeasure — 코어 결과 MeasureResult에는 끌어온 점이 없어 찍은 점 measurePoints로 가른다):
+ * 그 점에 끌어온 점(trackFrom)이 있고 첫 점에서 그 축 방향(direction)이 아니면 trackA·trackB
+ */
+export function trackMarks(points: readonly { trackFrom?: readonly number[]; direction?: readonly number[] }[]): { trackA?: true; trackB?: true } {
+  const on = (i: number): boolean => !!points[i]?.trackFrom && !points[i]!.direction;
+  return { ...(on(0) ? { trackA: true } : {}), ...(on(1) ? { trackB: true } : {}) };
+}
+
 /** 원호 접선으로 잠근 선 위의 점 이름(측정 툴팁·결과 — 코어 종류는 나란함) */
 export const TANGENT_LABEL = '접선 방향';
 
@@ -47,12 +60,13 @@ export const TANGENT_LABEL = '접선 방향';
  * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
  * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
  * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추).
- * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로)
+ * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로).
+ * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍었다고 표시한 결과(app.ts — 코어 결과는 축 붙잡기라 이름만 '끌어온 점에서 X축'으로)
  */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean }): [string, string, boolean] | null {
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: boolean; trackB?: boolean }): [string, string, boolean] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
-  return [snapLabel(m.snapA, m.axisA), m.tangentB && m.lockedB ? TANGENT_LABEL : snapLabel(m.snapB, m.axisB), !!m.lockedB];
+  return [snapLabel(m.snapA, m.axisA, m.trackA), m.tangentB && m.lockedB ? TANGENT_LABEL : snapLabel(m.snapB, m.axisB, m.trackB), !!m.lockedB];
 }
 
 /**
@@ -86,9 +100,11 @@ export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
 
 /**
  * 측정 추론 붙잡기(코어 setMeasureSnap({ inference })): 교차점·수직 발·축 방향(0.9.0), 나란함·Shift 잠금(0.10.0).
- * Shift는 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점 붙잡기도 그 모서리 방향으로 잠근다
+ * Shift는 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점 붙잡기도 그 모서리 방향으로 잠근다.
+ * 0.16.0 끌어온 축(track): 마우스·펜이 점 붙잡기 위에 0.5초 머문 점(최근 셋)을 지나는 X·Y·Z축과, 첫 점 축 위에서 그 점과 나란한 자리에도 붙는다.
+ * 손가락은 머무르지 않는다 — 길게 누르기는 정밀 조준(aim.ts)이 쓰므로 따로 주지 않고, 조준 십자선(펜 포인터)을 점 위에 멈추면 마우스처럼 기억한다
  */
-export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true } as const;
+export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true } as const;
 
 /** 잠금 단추를 눌렀는데 잠글 방향이 없을 때(손가락 기기·마우스) */
 export const NO_LOCK_TOUCH = '잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요';

@@ -2,9 +2,12 @@
  * 원호 접선(tangent.ts): 측정 첫 점이 원호 이동의 시작·끝·가운데 점이나 그 밖의 원호 위 자리(15차)이고 커서 아래 점이 그 원호 위일 때
  * 잠글 접선 방향. 해석기로 읽은 합성 G-code와 손으로 만든 여러 바퀴 나선으로 접선 방향·원호 위 판정(현의 처짐 안)·끝 고르기를 보고,
  * 판재(MPR) 윤곽 호(워커 길의 붙잡기 표)도 같은 규칙인지 본다(15차).
+ * 첫 점을 코어 측정 점(선분 식별자 segment·other — 코어 0.16.0)으로 주면 그 이동·윤곽만 보고, 꼭짓점·식별자 없는 점은 좌표로 찾는지(18차).
  */
 import { describe, expect, it } from 'vitest';
-import { MOVE_ARC } from '../../src/model';
+import type { SnapSegment } from 'opencad-viewer3d';
+import { MOVE_ARC, ncPathSetId } from '../../src/model';
+import { splineCurve, splineOfMove } from '../../src/app/spline';
 import { parseNcFile } from '../../src/index';
 import { parseForView } from '../../src/app/payload';
 import { movePointAt, type SnapMoves } from '../../src/app/snap';
@@ -414,5 +417,101 @@ describe('판재 윤곽 호의 접선(15차)', () => {
     expect(new ArcTangents().ofDoc({ ...d, playSec: moveEndTime(nc.timeline, q - 1), playMove: q - 1 }, [0, 40, 0], mid)).toBeNull();
     expect(new ArcTangents().ofDoc({ ...d, playSec: moveEndTime(nc.timeline, q), playMove: q }, [0, 40, 0], mid)).not.toBeNull();
     expect(new ArcTangents().ofDoc({ ...d, nc: null }, [0, 40, 0], mid)).toBeNull();
+  });
+});
+
+describe('첫 점의 곡선을 선분 식별자로(18차 — 코어 0.16.0 measurePoints[0].segment·other)', () => {
+  // 1/4 원(시계, 중심 (20,20))과 이어지는 직선, 떨어진 곳에 (500,10)에서 만나는 두 반원 A(중심 (500,0) 반시계)·B(중심 (500,20) 시계),
+  // 3차 베지어 스플라인(G5)
+  const text = ['G21 G90 G17', 'G0 X0 Y40 Z0', 'G2 X40 Y40 I20 J-20 F500', 'G1 X60 Y40', 'G0 X510 Y0', 'G3 X490 Y0 I-10 J0', 'G0 X510 Y20', 'G2 X490 Y20 I-10 J0', 'G0 X600 Y0', 'G5 X610 Y0 I0 J5 P0 Q5', 'G1 X620 Y0'].join('\n');
+  const r = parseForView('seg.nc', new TextEncoder().encode(text));
+  const nc = r.nc!;
+  const [q, arcA, arcB] = arcMoves(nc) as [number, number, number];
+  /** 이동 i가 그려진 선분 묶음의 토막 식별자(끝점은 이 찾기에 쓰지 않는다) */
+  const seg = (i: number, raw = 0): SnapSegment => ({ kind: 'line', id: ncPathSetId(nc.moves.kind[i]!, nc.moves.flags[i]!, nc.moves.tool[i]!), index: i, raw, ends: [[0, 0, 0], [0, 0, 0]] });
+  // 넷째 현의 가운데를 원호 위로(코어 다듬기 뒤 첫 점)
+  const on = movePointAt(nc, q, 3.5 / 18)!;
+  const hovers = [movePointAt(nc, q, 0.6)!, movePointAt(nc, q, 0.05)!, [40, 40, 0], [0, 40, 0], [60, 40, 0]];
+
+  it('원호 안쪽 첫 점: 식별자로 그 원호만 보고 좌표로 찾은 것과 같은 접선(앞·뒤·다른 끝·시작 끝, 직선 위는 없음)', () => {
+    const bySeg = new ArcTangents();
+    const byXY = new ArcTangents();
+    for (const p of hovers) {
+      const a = bySeg.at(nc, { point: on, segment: seg(q, 3) }, p);
+      const b = byXY.at(nc, on, p);
+      expect(a).toEqual(b);
+    }
+    expect(bySeg.by).toBe('segment');
+    expect(byXY.by).toBe('coords');
+    close(bySeg.at(nc, { point: on, segment: seg(q, 3) }, movePointAt(nc, q, 0.6)!), arcTangentAtF(nc, q, 3.5 / 18)!);
+  });
+
+  it('이동이 바뀌는 꼭짓점(원호 시작 = 급속 끝, 원호 끝 = 직선 시작)·모르는 묶음·번호 밖은 좌표로 — 결과는 같다', () => {
+    const mid = movePointAt(nc, q, 0.5)!;
+    for (const [first, s] of [
+      [[0, 40, 0], seg(q - 1)],
+      [[0, 40, 0], seg(q)],
+      [[40, 40, 0], seg(q + 1)],
+      [on, { ...seg(q), id: 'nc-comp' }],
+      [on, { ...seg(q), index: nc.moves.count }],
+    ] as const) {
+      const c = new ArcTangents();
+      expect(c.at(nc, { point: first, segment: s }, mid)).toEqual(new ArcTangents().at(nc, first, mid));
+      expect(c.by).toBe('coords');
+    }
+    // 식별자가 없는 점(앱의 가운데 점 붙잡기)도 좌표로
+    const c = new ArcTangents();
+    close(c.at(nc, { point: mid }, movePointAt(nc, q, 0.8)!), arcTangentAtF(nc, q, 0.5)!);
+    expect(c.by).toBe('coords');
+  });
+
+  it('두 반원이 지나는 점: 식별자는 고른 원호만(다른 원호 위를 가리키면 없음), 교차점(other)은 둘 다 — 좌표는 예전처럼 둘 다', () => {
+    const X = [500, 10, 0];
+    const onA = movePointAt(nc, arcA, 0.75)!;
+    const onB = movePointAt(nc, arcB, 0.75)!;
+    const c = new ArcTangents();
+    close(c.at(nc, { point: X, segment: seg(arcA, 18) }, onA), arcTangentAtF(nc, arcA, 0.5)!);
+    expect(c.at(nc, { point: X, segment: seg(arcA, 18) }, onB)).toBeNull();
+    expect(c.by).toBe('segment');
+    close(c.at(nc, { point: X, segment: seg(arcA, 18), other: seg(arcB, 18) }, onB), arcTangentAtF(nc, arcB, 0.5)!);
+    close(new ArcTangents().at(nc, X, onB), arcTangentAtF(nc, arcB, 0.5)!);
+  });
+
+  it('스플라인 조각 안쪽 첫 점: 식별자로 그 곡선만 보고 좌표로 찾은 것과 같은 접선', () => {
+    const g5 = [...nc.moves.kind].findIndex((_, i) => splineOfMove(nc.splines, i) >= 0);
+    const k = splineOfMove(nc.splines, g5);
+    const sc = splineCurve(nc.splines!, k, nc.moves.points)!;
+    const [u0, u1] = sc.piece(1);
+    const a = sc.at((u0 + u1) / 2);
+    const bySeg = new ArcTangents();
+    for (const u of [sc.lo + 0.02 * (sc.hi - sc.lo), sc.lo + 0.8 * (sc.hi - sc.lo)]) {
+      const p = sc.at(u);
+      const d = bySeg.at(nc, { point: a, segment: seg(sc.move + 1) }, p);
+      expect(d).not.toBeNull();
+      expect(d).toEqual(new ArcTangents().at(nc, a, p));
+    }
+    expect(bySeg.by).toBe('segment');
+  });
+
+  it('판재: 윤곽 가공 선분 묶음의 식별자(가공 번호)로 그 윤곽의 호만 — 호 안쪽은 식별자, 요소가 바뀌는 꼭짓점·표에 없는 열쇠는 좌표', () => {
+    const m = parseForView('tan.mpr', new TextEncoder().encode(MPR));
+    const t = m.mpr!.snap!;
+    const key = [...t.paths.keys()].find((k) => k.startsWith('mpr-op-'))!;
+    const [id, index] = [key.slice(0, key.indexOf('#')), Number(key.slice(key.indexOf('#') + 1))];
+    const s: SnapSegment = { kind: 'line', id, index, raw: 0, ends: [[0, 0, 0], [0, 0, 0]] };
+    const z = t.paths.get(key)![2]!;
+    const at = (deg: number): number[] => [80 + 20 * Math.cos((deg * Math.PI) / 180), 40 + 20 * Math.sin((deg * Math.PI) / 180), z];
+    const c = new ArcTangents();
+    for (const p of [at(-20), at(-70), [100, 40, z], [100, 60, z]]) expect(c.at(t, { point: at(-80), segment: s }, p)).toEqual(new ArcTangents().at(t, at(-80), p));
+    expect(c.by).toBe('segment');
+    close(c.at(t, { point: at(-80), segment: s }, at(-20)), [-Math.sin((-80 * Math.PI) / 180), Math.cos((-80 * Math.PI) / 180), 0]);
+    for (const [first, sg] of [
+      [[80, 20, z], s],
+      [at(-80), { ...s, index: index + 99 }],
+    ] as const) {
+      const d = new ArcTangents();
+      expect(d.at(t, { point: first, segment: sg }, at(-45))).toEqual(new ArcTangents().at(t, first, at(-45)));
+      expect(d.by).toBe('coords');
+    }
   });
 });

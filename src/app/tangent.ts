@@ -10,19 +10,24 @@
  * - 접선은 장면이 호를 나누는 식(평면 축의 각·반지름과 직선 축을 f만큼 — snap.ts movePointAt)을 f로 미분한 것이라 나선의 높이 기울기와
  *   반지름이 조금 바뀌는 호도 맞다. 방향(부호)은 첫 점에서 원호를 따라 커서 쪽으로 나가는 쪽이다: 시작이면 진행 방향, 끝이면 그 반대,
  *   가운데 점·다른 자리면 커서 자리(f)가 앞이면 진행 방향, 뒤면 반대(한 바퀴 원은 가까운 쪽으로 돈다). 잠금은 선이라 부호는 결과 방향에만 든다.
- * - 첫 점에 닿는 원호는 첫 점마다 한 번 모든 이동(판재는 모든 호 요소)에서 찾고(arcEndsAt·arcMidsAt·arcsOnAt·panelArcsAt),
- *   커서가 움직일 때는 그 몇 개만 본다(arcTangentAt).
+ * - 첫 점에 닿는 원호는 첫 점마다 한 번 찾고 커서가 움직일 때는 그 몇 개만 본다(arcTangentAt). 18차부터 코어 0.16.0이 찍은 점에 싣는
+ *   선분 식별자(segment, 교차점이면 둘째 other)로 그 이동(판재는 그 윤곽·둘레 호)만 본다(ncFirstCurves·panelFirstCurves).
+ *   식별자가 없는 점(앱의 원호 가운데 점·중심, 축 위 점), 모르는 묶음(보정 경로 등), 이동·요소가 바뀌는 꼭짓점은 예전처럼 모든 이동
+ *   (판재는 모든 호 요소)에서 좌표로 찾는다(arcEndsAt·arcMidsAt·arcsOnAt·panelArcsAt) — 꼭짓점의 식별자는 고른 쪽 토막 하나뿐이고
+ *   닫힌 윤곽·들어가기 호처럼 차례가 떨어진 이동이 같은 꼭짓점을 다시 지나기도 한다(실제 판재 파일의 호 끝 꼭짓점 36,759곳 가운데 2,489곳에서
+ *   다른 윤곽의 호 끝이 만났다). 커서 아래 점이 그 곡선 위인지는 식별자 없이 거리로 본다(앱의 가운데 점 붙잡기는 식별자가 없고, 방향에 그 자리 f가 든다).
  * - 스플라인(G5 3차·G5.1 2차 베지어, G5.2/G5.3 NURBS — 16차)도 같은 규칙이다: 해석기가 남긴 곡선 정의(스플라인 표 — spline.ts)로
  *   첫 점(끝·가운데 점·조각 위 아무 점)의 곡선 위 가장 가까운 매개변수(조각 나눔으로 시작값 → 뉴턴)를 찾아 그 자리의 정확한 접선을 주고,
  *   방향은 커서 자리 매개변수가 앞이면 진행 방향, 뒤면 반대(닫힌 곡선은 가까운 쪽). 커서 아래 점이 곡선 위인지는 그 조각의 처짐으로 본다
  *   (splinesAt·splineTangentAt). 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선.
  */
+import type { SnapSegment } from 'opencad-viewer3d';
 import { MOVE_ARC, PLANE_AXES, type NcSplines } from '../model';
 import type { OutlineForm, PanelSnapTable } from '../scene';
 import { playPosition, type NcDoc } from './doc';
-import type { SnapMoves } from './snap';
+import { PATH_SET, type SnapMoves } from './snap';
 import { unitTangent, type Curve } from './curve';
-import { pieceSag, splineCurve, splineNearest, type SplineCurve } from './spline';
+import { pieceSag, splineCurve, splineNearest, splineOfMove, type SplineCurve } from './spline';
 
 type V3 = [number, number, number];
 const TAU = Math.PI * 2;
@@ -482,43 +487,168 @@ export function splineTangentAt(nc: SnapMoves, hits: readonly SplineHit[], a: Ar
   return splineTangentFrom(nc, hits, a, p, lastMove)?.d ?? null;
 }
 
+// ── 첫 점이 놓인 곡선을 선분 식별자로(코어 0.16.0 measurePoints[0].segment·other — 18차) ──
+
+/**
+ * 측정 첫 점: 코어 measurePoints[0](0.16.0부터 그 점이 놓인 선분 식별자 segment, 교차점이면 둘째 선분 other). 좌표만 주면(식별자 없음) 예전처럼 좌표로 찾는다
+ */
+export interface FirstPoint {
+  point: ArrayLike<number>;
+  segment?: SnapSegment;
+  other?: SnapSegment;
+}
+
+/** 첫 점에 닿는 곡선(원호 자리와 그 모양, 스플라인 자리)과 그것을 찾은 길 */
+interface FirstCurves {
+  ends: ArcEnd[];
+  shape: (i: number) => ArcShape | null;
+  splines: SplineHit[];
+  by: 'segment' | 'coords';
+}
+
+const isFirst = (a: ArrayLike<number> | FirstPoint): a is FirstPoint => 'point' in a;
+
+/** NC: 식별자가 가리키는 이동 번호(선분 번호가 이동 번호인 공구 경로 묶음 — snap.ts PATH_SET). 모르는 묶음·번호면 −1 */
+function segmentMove(nc: SnapMoves, s: SnapSegment): number {
+  return s.kind === 'line' && PATH_SET.test(s.id) && s.index >= 0 && s.index < nc.moves.count ? s.index : -1;
+}
+
+/** NC 이동 i의 시작이나 끝이 a인지(축마다 tol 안) */
+function atMoveEnd(nc: SnapMoves, i: number, a: ArrayLike<number>, tol: number): boolean {
+  const p = nc.moves.points;
+  const o = i * 3;
+  return near(p.subarray(o, o + 3), a, tol) || near(p.subarray(o + 3, o + 6), a, tol);
+}
+
+/** 원호 모양 g(번호 i)가 첫 점 a를 끝이 아닌 자리로 지나면 그 자리(가운데 점 0.5, 그 밖 'on'과 가장 가까운 f), 아니면 null */
+function innerEnd(g: ArcShape | null, i: number, a: ArrayLike<number>, maxAngle: number, tol: number): ArcEnd | null {
+  if (!g) return null;
+  if (near(shapeAt(g, 0.5), a, tol)) return { move: i, end: 0.5 };
+  const n = onShape(g, a, maxAngle, 4 * tol);
+  return n ? { move: i, end: 'on', f: n.f } : null;
+}
+
+/**
+ * NC 첫 점의 곡선을 식별자로: 첫 점이 놓인 이동(교차점이면 둘째 이동도)이 원호면 그 위 자리, 스플라인 조각이면 그 곡선 위 자리.
+ * 식별자가 없거나 모르는 묶음(보정 경로·회전축 등)이면 null(좌표로). 첫 점이 그 이동의 시작·끝(이동이 바뀌는 꼭짓점)이어도 null —
+ * 끝점 식별자는 고르기가 고른 쪽 토막 하나뿐이고, 공구 경로는 한 꼭짓점을 차례가 떨어진 이동이 다시 지나기도 해서
+ * (닫힌 윤곽의 시작·끝, 들어가기·나오기 호) 이웃 이동(번호 ± 1)만으로는 모자란다 — 그 꼭짓점의 이동은 예전처럼 좌표(끝 견주기)로 모은다
+ */
+function ncFirstCurves(nc: SnapMoves, f: FirstPoint, maxAngle: number): FirstCurves | null {
+  if (!f.segment) return null;
+  const segs = f.other ? [f.segment, f.other] : [f.segment];
+  const a = f.point;
+  const tol = pointTol(a);
+  const moves = new Set<number>();
+  for (const s of segs) {
+    const i = segmentMove(nc, s);
+    if (i < 0 || atMoveEnd(nc, i, a, tol)) return null;
+    moves.add(i);
+  }
+  const ends: ArcEnd[] = [];
+  const splines: SplineHit[] = [];
+  for (const i of moves) {
+    if (nc.moves.kind[i] === MOVE_ARC) {
+      const e = innerEnd(arcShape(nc, i), i, a, maxAngle, tol);
+      if (e) ends.push(e);
+      continue;
+    }
+    const k = splineOfMove(nc.splines, i);
+    const c = k >= 0 ? splineCurve(nc.splines!, k, nc.moves.points) : null;
+    if (!c || splines.some((h) => h.c.move === c.move)) continue;
+    const r = splineNearest(c, a, nc.moves.points);
+    if (r.dist <= pieceSag(c, r.j) + 4 * tol) splines.push({ c, u: r.u });
+  }
+  return { ends, shape: (i) => arcShape(nc, i), splines, by: 'segment' };
+}
+
+/** 판재: 식별자가 가리키는 붙잡기 표 열쇠(선분 묶음은 `${id}#${번호}`, 그물 윤곽선은 `edge:${그물 id}`)와 그 요소들. 표에 없으면 null */
+function panelElements(t: PanelSnapTable, s: SnapSegment): { key: string; el: Float64Array } | null {
+  const key = s.kind === 'edge' ? `edge:${s.id}` : `${s.id}#${s.index}`;
+  const el = s.kind === 'edge' ? t.outlines?.get(s.id) : t.paths.get(key);
+  return el ? { key, el } : null;
+}
+
+/**
+ * 판재 첫 점의 곡선을 식별자로: 첫 점이 놓인 윤곽(선분 묶음의 윤곽 요소들, 그물 윤곽선이면 그 둘레 호)의 호 가운데 그 점을 지나는 것.
+ * 표에 없는 식별자이거나 첫 점이 그 윤곽 요소의 시작·끝(요소가 바뀌는 꼭짓점)이면 null(좌표로 — NC와 같은 까닭)
+ */
+function panelFirstCurves(t: PanelSnapTable, f: FirstPoint, maxAngle: number): FirstCurves | null {
+  if (!f.segment) return null;
+  const a = f.point;
+  const tol = pointTol(a);
+  const arcs: ArcShape[] = [];
+  const keys = new Set<string>();
+  for (const s of f.other ? [f.segment, f.other] : [f.segment]) {
+    const r = panelElements(t, s);
+    if (!r) return null;
+    const { key, el } = r;
+    for (let i = 0; i + 9 <= el.length; i += 9) if (near(el.subarray(i, i + 3), a, tol) || near(el.subarray(i + 3, i + 6), a, tol)) return null;
+    if (!keys.has(key)) arcs.push(...panelArcsOf(t, key));
+    keys.add(key);
+  }
+  const ends: ArcEnd[] = [];
+  arcs.forEach((g, i) => {
+    const e = innerEnd(g, i, a, maxAngle, tol);
+    if (e) ends.push(e);
+  });
+  return { ends, shape: (i) => arcs[i] ?? null, splines: [], by: 'segment' };
+}
+
+/** 첫 점에 닿는 곡선: 식별자로 찾을 수 있으면 그것(ncFirstCurves·panelFirstCurves), 아니면 예전처럼 좌표로(모든 이동·호 요소에서) */
+function firstCurves(src: SnapMoves | PanelSnapTable, first: ArrayLike<number> | FirstPoint, maxAngle: number): FirstCurves {
+  const f = isFirst(first) ? first : null;
+  const a = f ? f.point : (first as ArrayLike<number>);
+  if ('moves' in src) {
+    const bySeg = f && ncFirstCurves(src, f, maxAngle);
+    if (bySeg) return bySeg;
+    const known = [...arcEndsAt(src, a), ...arcMidsAt(src, a)];
+    return { ends: [...known, ...arcsOnAt(src, a, maxAngle, new Set(known.map((e) => e.move)))], shape: (i) => arcShape(src, i), splines: splinesAt(src, a), by: 'coords' };
+  }
+  const bySeg = f && panelFirstCurves(src, f, maxAngle);
+  if (bySeg) return bySeg;
+  const arcs = panelArcs(src);
+  return { ends: panelArcsAt(arcs, a, maxAngle), shape: (i) => arcs[i] ?? null, splines: [], by: 'coords' };
+}
+
+/** 식별자의 열쇠(같은 첫 점이라도 고른 선분이 다르면 다시 찾는다) */
+const segKey = (s: SnapSegment | undefined): string => (s ? `${s.kind}:${s.id}#${s.index}/${s.raw}` : '');
+
 /** 원호 접선을 구할 문서 자료(앱 NcDoc의 일부 — NC 이동이나 판재 붙잡기 표, 재생 자리, 장면의 호 나누기 각) */
 export type TangentDoc = Pick<NcDoc, 'nc' | 'mpr' | 'playSec' | 'playMove' | 'scene'>;
 
 /**
- * 첫 점마다 그 점에 닿는 원호 끝·가운데 점·다른 자리를 한 번 찾아 두고(문서 자료·첫 점·나누기 각이 바뀌면 다시) 커서마다 접선을 구한다
- * (앱과 시험이 함께 쓴다). NC 이동과 판재 붙잡기 표를 모두 받는다
+ * 첫 점마다 그 점에 닿는 원호 끝·가운데 점·다른 자리를 한 번 찾아 두고(문서 자료·첫 점·그 식별자·나누기 각이 바뀌면 다시) 커서마다 접선을 구한다
+ * (앱과 시험이 함께 쓴다). NC 이동과 판재 붙잡기 표를 모두 받는다.
+ * 첫 점을 코어 측정 점(FirstPoint — 선분 식별자 segment·other)으로 주면 식별자로 그 이동·윤곽만 보고(18차), 식별자가 없거나
+ * (앱 점 — 원호 가운데 점·중심, 그물 꼭짓점, 축 위 점) 모르는 묶음이거나 이동·요소가 바뀌는 꼭짓점이면 예전처럼 좌표로 모든 이동·호 요소에서 찾는다
  */
 export class ArcTangents {
   private src: object | null = null;
   private key = '';
-  private ends: ArcEnd[] = [];
-  private splines: SplineHit[] = [];
-  private shape: (i: number) => ArcShape | null = () => null;
+  private found: FirstCurves = { ends: [], shape: () => null, splines: [], by: 'coords' };
+
+  /** 지금 첫 점의 곡선을 찾은 길(식별자 'segment'·좌표 'coords' — 자동 확인용). 아직 찾지 않았으면 null */
+  get by(): 'segment' | 'coords' | null {
+    return this.src ? this.found.by : null;
+  }
 
   /**
    * arcTangentAt과 같다(maxAngle·lastMove도 같은 뜻 — 판재는 재생 한도가 없다). NC면 스플라인(splineTangentAt)도 보고,
-   * 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선
+   * 커서 아래 점이 원호와 스플라인 둘 다의 위면 더 가까운 곡선. first = 첫 점 좌표나 코어 측정 점(식별자 포함)
    */
-  at(src: SnapMoves | PanelSnapTable, a: ArrayLike<number>, p: ArrayLike<number>, maxAngle = ARC_ANGLE, lastMove = Infinity): V3 | null {
-    const key = `${a[0]},${a[1]},${a[2]}|${maxAngle}`;
+  at(src: SnapMoves | PanelSnapTable, first: ArrayLike<number> | FirstPoint, p: ArrayLike<number>, maxAngle = ARC_ANGLE, lastMove = Infinity): V3 | null {
+    const f = isFirst(first) ? first : null;
+    const a = f ? f.point : (first as ArrayLike<number>);
+    const key = `${a[0]},${a[1]},${a[2]}|${maxAngle}|${segKey(f?.segment)}|${segKey(f?.other)}`;
     if (this.src !== src || this.key !== key) {
       this.src = src;
       this.key = key;
-      if ('moves' in src) {
-        const known = [...arcEndsAt(src, a), ...arcMidsAt(src, a)];
-        this.ends = [...known, ...arcsOnAt(src, a, maxAngle, new Set(known.map((e) => e.move)))];
-        this.shape = (i) => arcShape(src, i);
-        this.splines = splinesAt(src, a);
-      } else {
-        const arcs = panelArcs(src);
-        this.ends = panelArcsAt(arcs, a, maxAngle);
-        this.shape = (i) => arcs[i] ?? null;
-        this.splines = [];
-      }
+      this.found = firstCurves(src, first, maxAngle);
     }
-    const arc = this.ends.length ? tangentFrom(this.shape, this.ends, a, p, maxAngle, lastMove) : null;
-    const spl = this.splines.length && 'moves' in src ? splineTangentFrom(src, this.splines, a, p, lastMove) : null;
+    const { ends, shape, splines } = this.found;
+    const arc = ends.length ? tangentFrom(shape, ends, a, p, maxAngle, lastMove) : null;
+    const spl = splines.length && 'moves' in src ? splineTangentFrom(src, splines, a, p, lastMove) : null;
     return (arc && spl ? (spl.dist < arc.dist ? spl : arc) : (arc ?? spl))?.d ?? null;
   }
 
@@ -526,7 +656,7 @@ export class ArcTangents {
    * 앱 문서에서(measure-lock.ts host.arcTangent): NC면 이동(재생 중이면 그린 이동까지, 장면이 쓴 나누기 각), 판재면 붙잡기 표의 호 요소.
    * 원호를 모르는 문서면 null
    */
-  ofDoc(d: TangentDoc, a: ArrayLike<number>, p: ArrayLike<number>): V3 | null {
+  ofDoc(d: TangentDoc, a: ArrayLike<number> | FirstPoint, p: ArrayLike<number>): V3 | null {
     const src = d.nc ?? d.mpr?.snap;
     if (!src) return null;
     const pos = playPosition(d);
