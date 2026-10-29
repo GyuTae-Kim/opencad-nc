@@ -1080,5 +1080,19 @@
   "Z축 · 모서리 위": "On Z axis · On edge",
   "X축 · 면 위": "On X axis · On face",
   "Y축 · 면 위": "On Y axis · On face",
-  "Z축 · 면 위": "On Z axis · On face"
+  "Z축 · 면 위": "On Z axis · On face",
+  "잠근 X축 · 모서리 위": "Locked X axis · On edge",
+  "잠근 Y축 · 모서리 위": "Locked Y axis · On edge",
+  "잠근 Z축 · 모서리 위": "Locked Z axis · On edge",
+  "잠근 X축 · 면 위": "Locked X axis · On face",
+  "잠근 Y축 · 면 위": "Locked Y axis · On face",
+  "잠근 Z축 · 면 위": "Locked Z axis · On face",
+  "잠근 나란한 방향 · 모서리 위": "Locked parallel · On edge",
+  "잠근 나란한 방향 · 면 위": "Locked parallel · On face",
+  "잠근 수직 방향 · 모서리 위": "Locked perpendicular · On edge",
+  "잠근 수직 방향 · 면 위": "Locked perpendicular · On face",
+  "잠근 접선 방향 · 모서리 위": "Locked tangent · On edge",
+  "잠근 접선 방향 · 면 위": "Locked tangent · On face",
+  "잠근 방향 · 모서리 위": "Locked direction · On edge",
+  "잠근 방향 · 면 위": "Locked direction · On face"
 }
