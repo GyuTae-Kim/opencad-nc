@@ -234,19 +234,24 @@ describe('판재 구멍 테두리 × 각진 포켓 모서리(19차 — 윤곽선
     expect(src.panel.straight?.has('mpr-op-1')).toBe(true);
     const w = setup(src);
     const X = [200 - Math.sqrt(84), 146, 18];
-    // 교차점 바로 위가 아니라 조금 옆(붙잡기 거리 안)을 가리킨다
-    w.zoomTo([X[0]! - 0.6, X[1]! - 0.45], [X[0]! + 0.6, X[1]! + 0.45], 18);
-    w.hover([X[0]! + 0.03, X[1]! + 0.02, 18]);
+    // 구멍 둘레로 한 번, 교차점 둘레 6 × 4.5 mm로 한 번 확대하고(판 전체에서 작은 사각형은 2화소가 안 되어 코어가 확대하지 않는다)
+    // 그려 둔 토막끼리의 교차(원 안쪽 약 0.02 mm — 몇 화소) 둘레를 가리킨다. 테두리 꼭짓점(0.19 mm)은 붙잡기 거리 밖
+    const near = (q: ReturnType<typeof setup>): void => {
+      q.zoomTo([185, 135], [215, 165], 18);
+      q.zoomTo([X[0]! - 3, X[1]! - 2.25], [X[0]! + 3, X[1]! + 2.25], 18);
+      q.hover([X[0]! + 0.02, X[1]! + 0.004, 18]);
+    };
+    near(w);
     const h = w.v.measureHoverSnap!;
     expect(h).toMatchObject({ snap: 'intersection', refined: true });
     expect(dist(h.point, X)).toBeLessThan(1e-9);
-    // 곧은 그물을 모르면(18차까지) 코어가 넘긴 교차점을 다듬지 못해 그 점에 붙지 않는다(토막끼리의 교차점이나 테두리 꼭짓점)
+    // 곧은 그물을 모르면(18차까지) 토막끼리의 교차점 그대로 — 원 안쪽(현 위)
     const old = setup({ ...src, panel: { ...src.panel, straight: new Set<string>() } });
-    old.zoomTo([X[0]! - 0.6, X[1]! - 0.45], [X[0]! + 0.6, X[1]! + 0.45], 18);
-    old.hover([X[0]! + 0.03, X[1]! + 0.02, 18]);
+    near(old);
     const o = old.v.measureHoverSnap!;
-    expect(old.calls.some((c) => c.kind === 'intersection')).toBe(true);
+    expect(o.snap).toBe('intersection');
     expect(o.refined).toBeFalsy();
     expect(dist(o.point, X)).toBeGreaterThan(1e-3);
+    expect(Math.hypot(o.point[0] - 200, o.point[1] - 150)).toBeLessThan(10 - 1e-4);
   });
 });
