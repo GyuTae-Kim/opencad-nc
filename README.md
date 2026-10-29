@@ -455,7 +455,7 @@ npm run preview    # 빌드 결과 보기
 앱·패널이 받기 전에도 쓰는 글(안내, 붙잡은 종류 이름)은 `measure.ts`에 둡니다. `tests/app/core-split.test.ts`가 `main.ts`에서 정적 가져오기로
 닿는 모듈을 훑어 코어 입구·측정 도구가 첫 화면에 다시 들어오지 않는지 지킵니다.
 첫 화면 JS는 끌어오기 요청의 휴대폰 성능 예산(`tools/performance-budget.json` — 전송 61,440바이트)에 걸리므로, 측정·깎기처럼 문서를 연 뒤에만 쓰는
-코드는 이렇게 나눕니다. 지금 첫 화면 JS는 158 KB(gzip 56.8 KB, CI와 같은 `opencad-site serve-performance` 전송 57,123바이트 — 여유 약 4.3 KB)이고,
+코드는 이렇게 나눕니다. 지금 첫 화면 JS는 158 KB(gzip 56.8 KB, CI와 같은 `opencad-site serve-performance` 전송 57,129바이트 — 여유 약 4.3 KB)이고,
 측정 도구 조각 42 KB(gzip 15.9 KB)와 코어 조각 232 KB(gzip 76 KB)는 파일을 열 때 받습니다(측정 도구를 나누기 전 첫 화면은 169 KB, gzip 60.7 KB, 전송 60,856바이트).
 측정 방향 잠금 시험(`tests/app/measure-lock-core.test.ts`)은 jsdom에 가짜 WebGL2(`tests/app/fake-webgl.ts`)를 깔고 진짜 코어 뷰어에
 포인터·키를 넣어, 앱의 툴팁·안내·잠금 단추가 코어 판정을 그대로 따르고 코어 거리 글상자가 툴팁·십자선을 비키는지 봅니다(그림은 그리지 않습니다).
