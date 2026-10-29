@@ -36,7 +36,7 @@ import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
-import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair } from './measure';
+import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
@@ -1441,8 +1441,9 @@ export class NcViewerApp implements PanelHost {
   private onMeasure(m: MeasureResult | null): void {
     const d = this.doc;
     if (!d) return;
-    // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함)
-    d.measure = m && this.mlock?.tangentResult(m) ? { ...m, tangentB: true } : m;
+    // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함), 끌어온 축 위에 찍은 점은 "끌어온 점에서 X축"으로(코어 0.16.0)
+    const marks = m ? { ...(this.mlock?.tangentResult(m) ? { tangentB: true } : {}), ...trackMarks(this.viewer?.measurePoints ?? []) } : {};
+    d.measure = m && Object.keys(marks).length ? { ...m, ...marks } : m;
     this.panel.onMeasure();
     this.renderStatus();
     // 둘째 점을 찍으면 코어가 잠금을 푼다(잠금 단추·툴팁)
