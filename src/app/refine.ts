@@ -1,5 +1,5 @@
 /**
- * 측정 붙잡기 다듬기(3D 뷰어 코어 0.14.0·0.15.0 setMeasureSnap({ refine }) — 측정 도구 조각, 순수 함수).
+ * 측정 붙잡기 다듬기(3D 뷰어 코어 0.14.0·0.15.0·0.18.0 setMeasureSnap({ refine }) — 측정 도구 조각, 순수 함수).
  *
  * 장면은 원호(G2/G3·나선, 판재 윤곽 호, 반경 보정 경로의 호, 구멍 테두리)와 스플라인(G5·G5.1·G5.2/G5.3)을 짧은 직선 토막으로 그리므로
  * 코어가 고른 수직 발('perpendicular' — 첫 점에서 커서 둘레 토막으로 내린 발), 붙잡지 않은 토막 위 점('onEdge'),
@@ -17,6 +17,8 @@
  * - 교차점(17차): 두 토막이 놓인 요소(원호·스플라인과 곧은 요소 — 직선 이동·보정 경로의 직선 조각·판재 윤곽의 직선 요소, 둘레 호를 적은 그물의 곧은 모서리,
  *   19차부터 윤곽선이 모두 곧은 그물 — 직사각형 판·홈·각진 포켓 — 의 모서리)의
  *   정확한 3D 교차점(intersect.ts). 허용치 tol = 1e-6 × (1 + 좌표 크기 + 두 토막 길이 합) — 그보다 떨어져 지나가면 null
+ * - 축과 선분의 교차(20차 — 코어 0.18.0 'axisEdge', 첫 점 축과 끌어온 축): 축 직선(c.line)과 토막이 놓인 곡선(원호·스플라인 — 곧은 요소는 null)의
+ *   정확한 교차점을 축 직선 위로 내린 자리(코어 acceptOnLine이 축에서 화면 반 화소 넘게 벗어난 점은 버린다). 허용치는 교차점과 같은 꼴(토막 하나)
  * - 모르는 종류는 null — 코어 점 그대로
  * 결과는 넘긴 값(종류·점·토막·첫 점·광선)과 문서 자료로만 정해진다(코어가 같은 입력이면 다시 부르지 않는다).
  */
@@ -173,13 +175,43 @@ function refineIntersection(c: SnapRefineInput, src: SnapMoves | PanelSnapTable,
 }
 
 /**
+ * 코어 축과 선분의 교차('axisEdge' — 0.18.0, 첫 점 축 axisEdges·끌어온 축 track) → 축 직선(c.line)과 토막이 놓인 곡선(원호·나선·보정 경로 호·
+ * 판재 윤곽 호·판 외곽선·포켓 둘레·구멍 테두리의 호·스플라인)의 정확한 교차점을 축 직선 위로 내린 자리(세계 축이면 지나는 점과 남은 두 좌표가 같다).
+ * 축 직선은 코어 점 둘레 ±2 × (토막 길이 + tol)의 곧은 요소로 두고 교차점(intersect.ts — 직선과 원은 식, 나선·스플라인은 두 매개변수 뉴턴)과 같은 허용치로 푼다.
+ * 꺾은선이 축과 만나는 토막의 곡선 조각(현과 호가 두르는 활꼴)을 축이 지나므로 곡선 교차점은 코어 점에서 토막 길이 안이다 — 그보다 멀면 null.
+ * 곧은 요소(직선 이동·곧은 모서리 — 코어 점이 정확하다)·모르는 묶음·만나지 않으면(축이 곡선 평면 밖으로 tol 넘게 지나감) null
+ */
+function refineAxisEdge(c: SnapRefineInput, src: SnapMoves | PanelSnapTable, arcAngle: number): V3 | null {
+  const l = c.line;
+  if (!l) return null;
+  const o = l.origin;
+  const n = Math.hypot(l.dir[0], l.dir[1], l.dir[2]);
+  if (!(n > 0) || !o.every(Number.isFinite)) return null;
+  const e: V3 = [l.dir[0] / n, l.dir[1] / n, l.dir[2] / n];
+  const B = sideOf(c.segment, src, c.point, arcAngle, false);
+  if (!B) return null;
+  let mag = 0;
+  for (const p of [c.point, o, ...c.segment.ends]) mag = Math.max(mag, Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2]));
+  const len = dist3(c.segment.ends[0], c.segment.ends[1]);
+  const tol = 1e-6 * (1 + mag + len);
+  // 축 직선 위 자리 t(지나는 점 기준)와 그 점 — 세계 축이면 남은 두 좌표는 o 그대로(0 × t)
+  const along = (t: number): V3 => [o[0] + e[0] * t, o[1] + e[1] * t, o[2] + e[2] * t];
+  const t0 = (c.point[0] - o[0]) * e[0] + (c.point[1] - o[1]) * e[1] + (c.point[2] - o[2]) * e[2];
+  const h = 2 * (len + tol);
+  const A = lineSide(along(t0 - h), along(t0 + h), 'axis');
+  const X = A && intersectSides(A, B, c.point, tol, tol, len + tol);
+  return X && along((X[0] - o[0]) * e[0] + (X[1] - o[1]) * e[1] + (X[2] - o[2]) * e[2]);
+}
+
+/**
  * 코어가 고른 점(c)을 곡선 위로 다듬은 세계 점. 다듬을 곡선이 없으면(직선·모르는 묶음·발이 곡선 밖·만나지 않는 교차) null — 코어 점 그대로.
  * src = NC 이동(원호·스플라인·보정 경로)이나 판재 붙잡기 표, arcAngle = 장면이 쓴 호 나누기 각(scene.meta.arcAngle)
  */
 export function refineSnap(c: SnapRefineInput, src: SnapMoves | PanelSnapTable, arcAngle = ARC_ANGLE): V3 | null {
-  // 아는 종류만 푼다 — 교차점은 두 요소를 함께, 코어가 뒤에 더하는 종류는 코어 점 그대로(모서리 위 점처럼 풀지 않는다)
+  // 아는 종류만 푼다 — 교차점은 두 요소를 함께, 축과 선분의 교차는 축 직선과 곡선을, 코어가 뒤에 더하는 종류는 코어 점 그대로(모서리 위 점처럼 풀지 않는다)
   const kind = c.kind as string;
   if (kind === 'intersection') return refineIntersection(c, src, arcAngle);
+  if (kind === 'axisEdge') return refineAxisEdge(c, src, arcAngle);
   if (kind !== 'onEdge' && kind !== 'midpoint' && kind !== 'perpendicular') return null;
   const s = c.segment;
   const ends = s.ends;

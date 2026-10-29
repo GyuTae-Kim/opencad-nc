@@ -15,19 +15,21 @@ import { fmtNum } from './format';
 export const MEASURE_LOADING = '측정 도구를 받는 중…';
 
 /**
- * 끌어온 축 위 점의 종류(trackMark — 코어가 'axis'·axis·trackFrom으로만 주는 것을 가른다): true = 끌어온 축(0.16.0),
- * 'edge' = 끌어온 축이 선분·윤곽선과 만나는 점(0.17.0 — segment가 그 선분), 'x'·'y'·'z' = 끌어온 축끼리의 교차(0.17.0 — 둘째 끌어온 축 trackOther의 축)
+ * 축 위 점의 종류(trackMark — 코어가 'axis'·axis에 trackFrom·trackOther·segment·face를 실어 주는 것을 가른다): true = 끌어온 축(0.16.0),
+ * 'edge' = 끌어온 축이 선분·윤곽선과 만나는 점(0.17.0 — segment가 그 선분), 'x'·'y'·'z' = 끌어온 축끼리의 교차(0.17.0 — 둘째 끌어온 축 trackOther의 축).
+ * 0.18.0: 'face' = 끌어온 축이 그물 면을 뚫는 점, 'axisEdge'·'axisFace' = 첫 점 축이 선분·윤곽선과 만나는 점·그물 면을 뚫는 점
  */
-export type TrackMark = true | 'edge' | SnapAxis;
+export type TrackMark = true | 'edge' | 'face' | 'axisEdge' | 'axisFace' | SnapAxis;
 
 /**
- * 측정 점·미리 보기(measurePoints·measureHoverSnap)의 끌어온 축 종류(코어 0.17.0 README의 가르는 법): trackOther가 있으면 축끼리의 교차,
- * trackFrom과 segment면 모서리 위, trackFrom과 direction뿐이면 첫 점 축 위 나란한 자리(첫 점에서 그 축 방향 — false),
- * 그 밖의 trackFrom은 끌어온 축. 끌어온 점이 없으면 false
+ * 측정 점·미리 보기(measurePoints·measureHoverSnap)의 축 위 점 종류(코어 0.17.0·0.18.0 README의 가르는 법): trackOther가 있으면 축끼리의 교차,
+ * trackFrom과 face면 면 위, trackFrom과 segment면 모서리 위, trackFrom과 direction뿐이면 첫 점 축 위 나란한 자리(첫 점에서 그 축 방향 — false),
+ * 그 밖의 trackFrom은 끌어온 축. 끌어온 점이 없는 축 붙잡기(snap 'axis')는 face면 첫 점 축 · 면 위, segment면 첫 점 축 · 모서리 위, 아니면 false
  */
-export function trackMark(p: { trackFrom?: readonly number[]; trackOther?: { axis: SnapAxis }; segment?: unknown; direction?: readonly number[] } | null | undefined): TrackMark | false {
-  if (!p?.trackFrom) return false;
+export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly number[]; trackOther?: { axis: SnapAxis }; segment?: unknown; face?: unknown; direction?: readonly number[] } | null | undefined): TrackMark | false {
+  if (!p?.trackFrom) return p?.snap !== 'axis' ? false : p.face ? 'axisFace' : p.segment ? 'axisEdge' : false;
   if (p.trackOther) return p.trackOther.axis;
+  if (p.face) return 'face';
   if (p.segment) return 'edge';
   return !p.direction;
 }
@@ -35,12 +37,14 @@ export function trackMark(p: { trackFrom?: readonly number[]; trackOther?: { axi
 /**
  * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
  * tracked(trackMark — 다른 점에서 끌어온 축, 코어 0.16.0·0.17.0 inference.track)면 '끌어온 점에서 X축', 모서리와 만나면
- * '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차면 '끌어온 X축과 Y축의 교차'(사전에 9개 모두 있다)
+ * '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차면 '끌어온 X축과 Y축의 교차'(사전에 9개 모두 있다).
+ * 0.18.0: 면을 뚫으면 '끌어온 점에서 X축 · 면 위', 첫 점 축이 모서리·면과 만나면 'X축 · 모서리 위'·'X축 · 면 위'(사전에 9개 더)
  */
 export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked: TrackMark | boolean = false): string {
   if (kind === 'axis' && tracked && axis) {
-    const a = axis.toUpperCase();
-    return tracked === true ? `끌어온 점에서 ${a}축` : tracked === 'edge' ? `끌어온 점에서 ${a}축 · 모서리 위` : `끌어온 ${a}축과 ${tracked.toUpperCase()}축의 교차`;
+    const a = `${axis.toUpperCase()}축`;
+    if (tracked === 'axisEdge' || tracked === 'axisFace') return `${a} · ${tracked === 'axisEdge' ? '모서리' : '면'} 위`;
+    return tracked === true ? `끌어온 점에서 ${a}` : tracked === 'edge' || tracked === 'face' ? `끌어온 점에서 ${a} · ${tracked === 'edge' ? '모서리' : '면'} 위` : `끌어온 ${a}과 ${tracked.toUpperCase()}축의 교차`;
   }
   switch (kind) {
     case 'vertex':
@@ -67,8 +71,8 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
 }
 
 /**
- * 측정 결과에 붙일 끌어온 축 표시(app.ts onMeasure — 코어 결과 MeasureResult에는 끌어온 점이 없어 찍은 점 measurePoints로 가른다):
- * 그 점의 trackMark(끌어온 축·모서리 위·축끼리의 교차 — 0.17.0 trackOther도)가 있으면 trackA·trackB
+ * 측정 결과에 붙일 축 위 점 표시(app.ts onMeasure — 코어 결과 MeasureResult에는 끌어온 점·선분·면이 없어 찍은 점 measurePoints로 가른다):
+ * 그 점의 trackMark(끌어온 축·모서리 위·축끼리의 교차 — 0.17.0 trackOther도, 0.18.0 면 위·첫 점 축의 모서리 위·면 위)가 있으면 trackA·trackB
  */
 export function trackMarks(points: readonly Parameters<typeof trackMark>[0][]): { trackA?: TrackMark; trackB?: TrackMark } {
   const a = trackMark(points[0]);
@@ -84,8 +88,8 @@ export const TANGENT_LABEL = '접선 방향';
  * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
  * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추).
  * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로).
- * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍었다고 표시한 결과(app.ts trackMarks — 코어 결과는 축 붙잡기라 이름만
- * '끌어온 점에서 X축'·'… · 모서리 위'·'끌어온 X축과 Y축의 교차'로)
+ * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위나 첫 점 축이 모서리·면과 만나는 점에 찍었다고 표시한 결과(app.ts trackMarks —
+ * 코어 결과는 축 붙잡기라 이름만 '끌어온 점에서 X축'·'… · 모서리 위'·'… · 면 위'·'끌어온 X축과 Y축의 교차'·'X축 · 모서리 위'·'X축 · 면 위'로)
  */
 export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: TrackMark | boolean; trackB?: TrackMark | boolean }): [string, string, boolean] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
@@ -126,9 +130,11 @@ export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
  * 측정 추론 붙잡기(코어 setMeasureSnap({ inference })): 교차점·수직 발·축 방향(0.9.0), 나란함·Shift 잠금(0.10.0).
  * Shift는 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점 붙잡기도 그 모서리 방향으로 잠근다.
  * 0.16.0 끌어온 축(track): 마우스·펜이 점 붙잡기 위에 0.5초 머문 점(최근 셋)을 지나는 X·Y·Z축과, 첫 점 축 위에서 그 점과 나란한 자리에도 붙는다.
- * 손가락은 머무르지 않는다 — 길게 누르기는 정밀 조준(aim.ts)이 쓰므로 따로 주지 않고, 조준 십자선(펜 포인터)을 점 위에 멈추면 마우스처럼 기억한다
+ * 손가락은 머무르지 않는다 — 길게 누르기는 정밀 조준(aim.ts)이 쓰므로 따로 주지 않고, 조준 십자선(펜 포인터)을 점 위에 멈추면 마우스처럼 기억한다.
+ * 0.18.0 axisEdges: 첫 점 X·Y·Z축이 공구 경로·판재 윤곽·모서리선과 만나는 점(원호·스플라인이면 refine.ts가 곡선 위로 — 'axisEdge').
+ * axisFaces: 첫 점 축·끌어온 축이 소재(Heidenhain BLK FORM 공작물·판·포켓·홈·구멍·깎기 시뮬레이션 소재) 그물 면을 뚫는 점(곡면은 나눈 삼각형 위 점)
  */
-export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true } as const;
+export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true } as const;
 
 /** 잠금 단추를 눌렀는데 잠글 방향이 없을 때(손가락 기기·마우스) */
 export const NO_LOCK_TOUCH = '잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요';

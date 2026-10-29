@@ -1071,5 +1071,14 @@
   "끌어온 Y축과 X축의 교차": "Intersection of tracked Y and X axes",
   "끌어온 Y축과 Z축의 교차": "Intersection of tracked Y and Z axes",
   "끌어온 Z축과 X축의 교차": "Intersection of tracked Z and X axes",
-  "끌어온 Z축과 Y축의 교차": "Intersection of tracked Z and Y axes"
+  "끌어온 Z축과 Y축의 교차": "Intersection of tracked Z and Y axes",
+  "끌어온 점에서 X축 · 면 위": "On X axis from tracked point · On face",
+  "끌어온 점에서 Y축 · 면 위": "On Y axis from tracked point · On face",
+  "끌어온 점에서 Z축 · 면 위": "On Z axis from tracked point · On face",
+  "X축 · 모서리 위": "On X axis · On edge",
+  "Y축 · 모서리 위": "On Y axis · On edge",
+  "Z축 · 모서리 위": "On Z axis · On edge",
+  "X축 · 면 위": "On X axis · On face",
+  "Y축 · 면 위": "On Y axis · On face",
+  "Z축 · 면 위": "On Z axis · On face"
 }
