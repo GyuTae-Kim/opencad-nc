@@ -6,6 +6,7 @@
  *   두 곡선의 정확한 교차점(refined)
  * - 원호에서 멀리 떨어진 첫 점: 꺾은선 토막마다 발이 토막 밖이라 보통 수직 발이 없지만, 열린 수직 발(open)을 원 위 정확한 발로 다듬어 붙는다
  *   (0.14.0 'perpendicular' 계산 그대로 — 코어 점이 토막 끝일 뿐)
+ * - 19차: 판재 구멍 테두리 × 각진 포켓 모서리(윤곽선이 모두 곧은 그물 — PanelSnapTable.straight)의 교차점도 원 위 정확한 교차점
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type SnapRefineInput } from 'opencad-viewer3d';
@@ -214,5 +215,38 @@ describe('원호에서 멀리 떨어진 첫 점의 수직 발(코어 0.15.0 열�
     w.hover([FOOT[0]! + 0.004, FOOT[1]! - 0.003, 0]);
     expect(v.measureHoverSnap).toMatchObject({ snap: 'perpendicular', refined: true });
     expect(dist(v.measureHoverSnap!.point, p0)).toBe(0);
+  });
+});
+
+describe('판재 구멍 테두리 × 각진 포켓 모서리(19차 — 윤곽선이 모두 곧은 그물)', () => {
+  // 판 400 × 300 × 18, 윗면에서 판 구멍 Ø20(중심 (200,150), 32토막 원기둥)과 그 아래쪽을 가로지르는 각진 포켓(x 170~230, y 138~146, 깊이 3)
+  const PGI = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <circle centerX="200" centerY="150" centerZ="0" radius="10" width="20" depth="12" direction="z-" empty="1" enable="1" order="1"/>
+  <pocket length="60" width="8" depth="3" direction="z-" cornerRadius="0" angle="0" centerX="200" centerY="142" centerZ="0" enable="1" order="2"/>
+ </panel>
+</pgi>`;
+  const r = parseForView('b.pgi', enc(PGI));
+  const src = { panel: r.mpr!.snap! as PanelSnapTable, scene: r.scene };
+
+  it('포켓 윗변(y = 146)이 구멍 테두리를 지나는 점: 토막끼리의 교차점이 아니라 원 위 정확한 교차점(refined)', () => {
+    expect(src.panel.straight?.has('mpr-op-1')).toBe(true);
+    const w = setup(src);
+    const X = [200 - Math.sqrt(84), 146, 18];
+    // 교차점 바로 위가 아니라 조금 옆(붙잡기 거리 안)을 가리킨다
+    w.zoomTo([X[0]! - 0.6, X[1]! - 0.45], [X[0]! + 0.6, X[1]! + 0.45], 18);
+    w.hover([X[0]! + 0.03, X[1]! + 0.02, 18]);
+    const h = w.v.measureHoverSnap!;
+    expect(h).toMatchObject({ snap: 'intersection', refined: true });
+    expect(dist(h.point, X)).toBeLessThan(1e-9);
+    // 곧은 그물을 모르면(18차까지) 코어가 넘긴 교차점을 다듬지 못해 그 점에 붙지 않는다(토막끼리의 교차점이나 테두리 꼭짓점)
+    const old = setup({ ...src, panel: { ...src.panel, straight: new Set<string>() } });
+    old.zoomTo([X[0]! - 0.6, X[1]! - 0.45], [X[0]! + 0.6, X[1]! + 0.45], 18);
+    old.hover([X[0]! + 0.03, X[1]! + 0.02, 18]);
+    const o = old.v.measureHoverSnap!;
+    expect(old.calls.some((c) => c.kind === 'intersection')).toBe(true);
+    expect(o.refined).toBeFalsy();
+    expect(dist(o.point, X)).toBeGreaterThan(1e-3);
   });
 });

@@ -5,7 +5,7 @@
  * - 원호 × 직선, 원호 × 원호(같은 평면·다른 평면 — 식), 스플라인 × 직선·나선 × 직선(두 매개변수 가우스-뉴턴)
  * - 넓힌 교차(열린 후보 — 두 토막 사이 가운데)도 같은 답, 3D로 비켜 지나가면 null
  * - 같은 이동, 둘 다 직선, 이어진 두 이동의 공유 끝점, 둘째 토막 없음은 null
- * - 판재 윤곽 경로의 호 × 직선, 구멍 테두리 × 곧은 모서리
+ * - 판재 윤곽 경로의 호 × 직선, 구멍 테두리 × 곧은 모서리(둥근 사각 포켓, 19차부터 호 없는 각진 포켓도)
  */
 import { describe, expect, it } from 'vitest';
 import type { SnapRefineInput } from 'opencad-viewer3d';
@@ -248,7 +248,7 @@ describe('판재 윤곽 경로·구멍 테두리의 교차점', () => {
     expect(dist(refineSnap(inter(c.a, c.b, c.p), t)!, X)).toBeLessThan(1e-12);
   });
 
-  it('구멍 테두리(원) × 둥근 사각 포켓의 곧은 모서리: 원 위 정확한 교차점, 둘레 표가 없는 각진 포켓 모서리는 null', () => {
+  it('구멍 테두리(원) × 둥근 사각 포켓·각진 포켓의 곧은 모서리: 원 위 정확한 교차점, 둘레 표에도 곧은 그물에도 없는 모서리는 null', () => {
     expect(t.outlines?.has('mpr-op-2')).toBe(true);
     const top = (s: Seg): boolean => Math.abs(s.ends[0][2] - 18) < 1e-6 && Math.abs(s.ends[1][2] - 18) < 1e-6;
     const rim = edgesOf(r.scene, 'mpr-op-2').filter(top);
@@ -257,9 +257,22 @@ describe('판재 윤곽 경로·구멍 테두리의 교차점', () => {
     const c = crossing(rim, edgesOf(r.scene, 'mpr-op-3').filter(top), X);
     expect(dist(c.p, X)).toBeGreaterThan(1e-3);
     expect(dist(refineSnap(inter(c.a, c.b, c.p, c.gap > 1e-6), t)!, X)).toBeLessThan(1e-12);
-    // 각진 포켓(호가 없어 둘레 표에 없다 — 윤곽선이 곧은지 모른다)
-    const c2 = crossing(rim, edgesOf(r.scene, 'mpr-op-4').filter(top), [194, 142, 18]);
-    expect(refineSnap(inter(c2.a, c2.b, c2.p, c2.gap > 1e-6), t)).toBeNull();
+    // 각진 포켓(호가 없어 둘레 표에 없다): 19차부터 윤곽선이 모두 곧은 그물(straight — 호 없는 기둥)이라 직선으로 보고 원 위 정확한 교차점
+    expect(t.straight?.has('mpr-op-4')).toBe(true);
+    expect(t.straight?.has('mpr-op-3')).toBeFalsy();
+    expect(t.straight?.has('mpr-op-2')).toBeFalsy();
+    // 각진 포켓(x 170~230, y 138~146)의 윗변 y = 146이 원을 지나는 왼쪽 점
+    const X2: V3 = [200 - Math.sqrt(84), 146, 18];
+    const c2 = crossing(rim, edgesOf(r.scene, 'mpr-op-4').filter(top), X2);
+    expect(c2.b.ends.every((e) => e[1] === 146)).toBe(true);
+    expect(dist(c2.p, X2)).toBeGreaterThan(1e-3);
+    const q2 = refineSnap(inter(c2.a, c2.b, c2.p, c2.gap > 1e-6), t)!;
+    expect(dist(q2, X2)).toBeLessThan(1e-12);
+    // 두 토막을 바꿔 넣어도 같은 점
+    expect(dist(refineSnap(inter(c2.b, c2.a, c2.p, c2.gap > 1e-6), t)!, X2)).toBeLessThan(1e-12);
+    // 둘레 표에도 곧은 그물에도 없는 그물 윤곽선(곡면일 수 있다)은 예전처럼 null
+    const unknown = { ...t, straight: new Set<string>() };
+    expect(refineSnap(inter(c2.a, c2.b, c2.p, c2.gap > 1e-6), unknown)).toBeNull();
     // 같은 원의 두 테두리 토막도 null
     expect(refineSnap(inter(rim[2]!, rim[3]!, rim[2]!.ends[1]), t)).toBeNull();
   });
