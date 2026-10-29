@@ -25,7 +25,7 @@ import {
 import { sourceLine } from '../text';
 import { idRange, moveEndTime, playbackAt } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
-import { statusMeasureHint } from './measure';
+import { statusMeasureHint, type TrackMark } from './measure';
 import type { MprPayload, NcJobInfo, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
 export type PanelTab = 'code' | 'tools' | 'info' | 'ops' | 'vars' | 'sim';
@@ -51,8 +51,11 @@ export interface NcDoc {
   /** 뷰어 강조(항목 id) */
   highlight: string[];
   pick: Pick3d | null;
-  /** 두 점 측정 결과(tangentB = 둘째 점을 원호 접선 잠금으로 찍음, trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍음 — 앱이 붙인다) */
-  measure: (MeasureResult & { tangentB?: boolean; trackA?: boolean; trackB?: boolean }) | null;
+  /**
+   * 두 점 측정 결과(tangentB = 둘째 점을 원호 접선 잠금으로 찍음, trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍음 —
+   * 끌어온 축·모서리 위·축끼리의 교차(measure.ts trackMark), 앱이 붙인다)
+   */
+  measure: (MeasureResult & { tangentB?: boolean; trackA?: TrackMark; trackB?: TrackMark }) | null;
   /** 코드 보기에서 고른 줄(-1 없음)과 덧그림으로 강조할 이동 */
   selLine: number;
   selMoves: number[];

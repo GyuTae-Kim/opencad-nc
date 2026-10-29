@@ -14,18 +14,19 @@
  *   발이 그 범위에 없으면(곡선 끝 밖) null. 종류·토막·코어 점·첫 점으로만 정하고 커서 광선은 쓰지 않는다
  *   (코어 0.15.0의 열린 수직 발 — 첫 점에서 토막에 내린 발이 토막 밖이라 코어 점이 토막 끝 — 도 같은 식으로 풀린다)
  * - 토막 위 점: 커서 광선에 가장 가까운 곡선 위 점. 토막 가운데 점: 토막 두 끝 매개변수 가운데의 곡선 위 점
- * - 교차점(17차): 두 토막이 놓인 요소(원호·스플라인과 곧은 요소 — 직선 이동·보정 경로의 직선 조각·판재 윤곽의 직선 요소, 둘레 호를 적은 그물의 곧은 모서리)의
+ * - 교차점(17차): 두 토막이 놓인 요소(원호·스플라인과 곧은 요소 — 직선 이동·보정 경로의 직선 조각·판재 윤곽의 직선 요소, 둘레 호를 적은 그물의 곧은 모서리,
+ *   19차부터 윤곽선이 모두 곧은 그물 — 직사각형 판·홈·각진 포켓 — 의 모서리)의
  *   정확한 3D 교차점(intersect.ts). 허용치 tol = 1e-6 × (1 + 좌표 크기 + 두 토막 길이 합) — 그보다 떨어져 지나가면 null
  * - 모르는 종류는 null — 코어 점 그대로
  * 결과는 넘긴 값(종류·점·토막·첫 점·광선)과 문서 자료로만 정해진다(코어가 같은 입력이면 다시 부르지 않는다).
  */
 import type { MeasureSnapOptions, SnapRefineInput, SnapSegment } from 'opencad-viewer3d';
-import { MOVE_ARC, PLANE_AXES, ncPathSetId } from '../model';
+import { MOVE_ARC, ncPathSetId } from '../model';
 import type { PanelSnapTable } from '../scene';
 import { MEASURE_INFERENCE } from './measure';
 import { closestToRay, footsFrom, nearestOn, type Curve, type V3 } from './curve';
 import { dist3, intersectSides, lineSide, type Side } from './intersect';
-import { arcCurve, arcShape, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
+import { arcCurve, arcShape, compArcs, compPiecesOf, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
 import { splineCurve, splineNearest, splineOfMove } from './spline';
 import { moveSnapPoints, panelCenters, panelSnapPoints, type ArcCenters, type SnapMoves } from './snap';
 
@@ -103,24 +104,14 @@ function ncSide(nc: SnapMoves, s: SnapSegment, point: readonly number[], maxAngl
 function compSide(nc: SnapMoves, s: SnapSegment, point: readonly number[], maxAngle: number, lines: boolean): Side | null {
   const c = nc.comp;
   if (!c) return null;
-  const i = s.index;
-  let lo = 0;
-  let hi = c.count;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (c.move[mid]! < i) lo = mid + 1;
-    else hi = mid;
-  }
-  for (let k = lo; k < c.count && c.move[k] === i; k++) {
+  const [lo, hi] = compPiecesOf(c, s.index);
+  const arcs = compArcs(c);
+  for (let k = lo; k < hi; k++) {
     const o = k * 6;
-    const a: V3 = [c.points[o]!, c.points[o + 1]!, c.points[o + 2]!];
-    const b: V3 = [c.points[o + 3]!, c.points[o + 4]!, c.points[o + 5]!];
+    const g = arcs[k];
     let side: Side | null = null;
-    if (c.kind[k] === 1 && c.sweep[k]) {
-      const [a0, a1, a2] = PLANE_AXES[c.plane[k]!] ?? PLANE_AXES[0]!;
-      const g = shapeOf(a, b, a0, a1, a2, c.center[k * 3 + a0]!, c.center[k * 3 + a1]!, c.sweep[k]!);
-      side = g && arcSide(g, s.ends, point, maxAngle, `c${k}`);
-    } else if (lines && c.kind[k] !== 1) side = straightSide(a, b, s.ends, `c${k}`);
+    if (g) side = arcSide(g, s.ends, point, maxAngle, `c${k}`);
+    else if (lines && c.kind[k] !== 1) side = straightSide([c.points[o]!, c.points[o + 1]!, c.points[o + 2]!], [c.points[o + 3]!, c.points[o + 4]!, c.points[o + 5]!], s.ends, `c${k}`);
     if (side) return side;
   }
   return null;
@@ -128,7 +119,8 @@ function compSide(nc: SnapMoves, s: SnapSegment, point: readonly number[], maxAn
 
 /**
  * 판재 윤곽 토막이 놓인 요소: 선분 묶음은 붙잡기 표의 요소(paths — 호, lines면 직선 요소도) 가운데 토막 두 끝이 놓인 것,
- * 그물 윤곽선(판 외곽선·포켓 둘레·구멍 테두리)은 둘레 호(outlines). 둘레 호를 적은 그물의 다른 윤곽선은 곧은 모서리라 lines면 토막 그대로
+ * 그물 윤곽선(판 외곽선·포켓 둘레·구멍 테두리)은 둘레 호(outlines). 둘레 호를 적은 그물의 다른 윤곽선과 윤곽선이 모두 곧은 그물
+ * (straight — 직사각형 판, 홈·각진 포켓, 19차)의 윤곽선은 곧은 모서리라 lines면 토막 그대로. 그 밖의 그물(기울어진 구멍 등 — 곡면일 수 있다)은 null
  */
 function panelSide(t: PanelSnapTable, s: SnapSegment, point: readonly number[], lines: boolean): Side | null {
   const ends = s.ends;
@@ -138,7 +130,7 @@ function panelSide(t: PanelSnapTable, s: SnapSegment, point: readonly number[], 
       const r = arcSide(arcs[k]!, ends, point, ARC_ANGLE, `e:${s.id}:${k}`);
       if (r) return r;
     }
-    return lines && t.outlines?.has(s.id) ? lineSide([...ends[0]] as V3, [...ends[1]] as V3, `e:${s.id}#${s.raw}`) : null;
+    return lines && (t.outlines?.has(s.id) || t.straight?.has(s.id)) ? lineSide([...ends[0]] as V3, [...ends[1]] as V3, `e:${s.id}#${s.raw}`) : null;
   }
   const key = `${s.id}#${s.index}`;
   const el = t.paths.get(key);

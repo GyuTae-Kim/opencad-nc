@@ -16,6 +16,7 @@
  *   그 끝의 접선 방향으로 잠근다(host.arcTangent — tangent.ts, 코어 setMeasureInferenceLock({ direction, kind: 'parallel' })).
  *   첫 점이 원호의 가운데 점(앱의 원호 가운데 점 붙잡기)이어도 그 점의 접선으로(14차), 원호 위 다른 자리(현 위 — 코어 모서리 붙잡기)면
  *   원호 위 가장 가까운 자리의 접선으로(15차 — 점은 코어 점 그대로). 판재 윤곽의 호도 같다(15차, 붙잡기 표의 호 요소).
+ *   반경 보정 경로(공구 중심)의 호도 같다(19차, 워커가 보낸 보정 조각의 호 — 첫 점 식별자 nc-comp로 그 이동의 보정 조각).
  *   방향은 첫 점에서 원호를 따라 커서 쪽(잠금은 선이라 결과 방향에만 든다).
  *   첫 점이 놓인 원호는 코어 0.16.0이 찍은 점에 싣는 선분 식별자(measurePoints[0].segment·other)로 그 이동·윤곽에서 바로 찾고(18차),
  *   식별자가 없는 점(앱의 가운데 점·중심)이나 이동이 바뀌는 꼭짓점은 예전처럼 좌표로 찾는다(tangent.ts ArcTangents).
@@ -33,7 +34,7 @@ import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } 
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, type LockName } from './measure';
+import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, trackMark, type LockName } from './measure';
 import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
@@ -86,11 +87,12 @@ const TIP_EDGE = 4;
 
 /**
  * 툴팁 글(붙잡은 종류 이름, 잠갔는지). 붙잡지 않은 점·미리 보기가 없으면 null. 다른 점에서 끌어온 축(코어 0.16.0 — trackFrom이 있고
- * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로
+ * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로.
+ * 0.17.0: 끌어온 축이 선분과 만나는 점(segment)은 '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차(trackOther)는 '끌어온 X축과 Y축의 교차'
  */
-export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
+export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
-  return { name: snapLabel(hv.snap, hv.axis, !!hv.trackFrom && !hv.direction), locked: !!hv.locked };
+  return { name: snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
 }
 
 /**

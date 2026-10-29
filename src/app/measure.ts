@@ -15,11 +15,33 @@ import { fmtNum } from './format';
 export const MEASURE_LOADING = '측정 도구를 받는 중…';
 
 /**
- * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
- * tracked(다른 점에서 끌어온 축 — 코어 0.16.0 inference.track, trackFrom이 있고 첫 점에서 그 축 방향이 아님)면 '끌어온 점에서 X축'
+ * 끌어온 축 위 점의 종류(trackMark — 코어가 'axis'·axis·trackFrom으로만 주는 것을 가른다): true = 끌어온 축(0.16.0),
+ * 'edge' = 끌어온 축이 선분·윤곽선과 만나는 점(0.17.0 — segment가 그 선분), 'x'·'y'·'z' = 끌어온 축끼리의 교차(0.17.0 — 둘째 끌어온 축 trackOther의 축)
  */
-export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked = false): string {
-  if (kind === 'axis' && tracked && axis) return axis === 'x' ? '끌어온 점에서 X축' : axis === 'y' ? '끌어온 점에서 Y축' : '끌어온 점에서 Z축';
+export type TrackMark = true | 'edge' | SnapAxis;
+
+/**
+ * 측정 점·미리 보기(measurePoints·measureHoverSnap)의 끌어온 축 종류(코어 0.17.0 README의 가르는 법): trackOther가 있으면 축끼리의 교차,
+ * trackFrom과 segment면 모서리 위, trackFrom과 direction뿐이면 첫 점 축 위 나란한 자리(첫 점에서 그 축 방향 — false),
+ * 그 밖의 trackFrom은 끌어온 축. 끌어온 점이 없으면 false
+ */
+export function trackMark(p: { trackFrom?: readonly number[]; trackOther?: { axis: SnapAxis }; segment?: unknown; direction?: readonly number[] } | null | undefined): TrackMark | false {
+  if (!p?.trackFrom) return false;
+  if (p.trackOther) return p.trackOther.axis;
+  if (p.segment) return 'edge';
+  return !p.direction;
+}
+
+/**
+ * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
+ * tracked(trackMark — 다른 점에서 끌어온 축, 코어 0.16.0·0.17.0 inference.track)면 '끌어온 점에서 X축', 모서리와 만나면
+ * '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차면 '끌어온 X축과 Y축의 교차'(사전에 9개 모두 있다)
+ */
+export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked: TrackMark | boolean = false): string {
+  if (kind === 'axis' && tracked && axis) {
+    const a = axis.toUpperCase();
+    return tracked === true ? `끌어온 점에서 ${a}축` : tracked === 'edge' ? `끌어온 점에서 ${a}축 · 모서리 위` : `끌어온 ${a}축과 ${tracked.toUpperCase()}축의 교차`;
+  }
   switch (kind) {
     case 'vertex':
       return '꼭짓점';
@@ -46,11 +68,12 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
 
 /**
  * 측정 결과에 붙일 끌어온 축 표시(app.ts onMeasure — 코어 결과 MeasureResult에는 끌어온 점이 없어 찍은 점 measurePoints로 가른다):
- * 그 점에 끌어온 점(trackFrom)이 있고 첫 점에서 그 축 방향(direction)이 아니면 trackA·trackB
+ * 그 점의 trackMark(끌어온 축·모서리 위·축끼리의 교차 — 0.17.0 trackOther도)가 있으면 trackA·trackB
  */
-export function trackMarks(points: readonly { trackFrom?: readonly number[]; direction?: readonly number[] }[]): { trackA?: true; trackB?: true } {
-  const on = (i: number): boolean => !!points[i]?.trackFrom && !points[i]!.direction;
-  return { ...(on(0) ? { trackA: true } : {}), ...(on(1) ? { trackB: true } : {}) };
+export function trackMarks(points: readonly Parameters<typeof trackMark>[0][]): { trackA?: TrackMark; trackB?: TrackMark } {
+  const a = trackMark(points[0]);
+  const b = trackMark(points[1]);
+  return { ...(a ? { trackA: a } : {}), ...(b ? { trackB: b } : {}) };
 }
 
 /** 원호 접선으로 잠근 선 위의 점 이름(측정 툴팁·결과 — 코어 종류는 나란함) */
@@ -61,9 +84,10 @@ export const TANGENT_LABEL = '접선 방향';
  * 축 방향은 코어가 준 축(axisA·axisB, 코어 0.9.1 — 축 붙잡기는 첫 점을 찍은 뒤에만이라 지금은 둘째 점만)으로 'Y축 방향'처럼.
  * 셋째 값은 둘째 점을 잠근 선 위에 찍었는지(코어 0.10.0 lockedB — Shift·화살표·잠금 단추).
  * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로).
- * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍었다고 표시한 결과(app.ts — 코어 결과는 축 붙잡기라 이름만 '끌어온 점에서 X축'으로)
+ * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍었다고 표시한 결과(app.ts trackMarks — 코어 결과는 축 붙잡기라 이름만
+ * '끌어온 점에서 X축'·'… · 모서리 위'·'끌어온 X축과 Y축의 교차'로)
  */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: boolean; trackB?: boolean }): [string, string, boolean] | null {
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: TrackMark | boolean; trackB?: TrackMark | boolean }): [string, string, boolean] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
   return [snapLabel(m.snapA, m.axisA, m.trackA), m.tangentB && m.lockedB ? TANGENT_LABEL : snapLabel(m.snapB, m.axisB, m.trackB), !!m.lockedB];

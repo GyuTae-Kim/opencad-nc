@@ -6,6 +6,7 @@
  *   두 곡선의 정확한 교차점(refined)
  * - 원호에서 멀리 떨어진 첫 점: 꺾은선 토막마다 발이 토막 밖이라 보통 수직 발이 없지만, 열린 수직 발(open)을 원 위 정확한 발로 다듬어 붙는다
  *   (0.14.0 'perpendicular' 계산 그대로 — 코어 점이 토막 끝일 뿐)
+ * - 19차: 판재 구멍 테두리 × 각진 포켓 모서리(윤곽선이 모두 곧은 그물 — PanelSnapTable.straight)의 교차점도 원 위 정확한 교차점
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type SnapRefineInput } from 'opencad-viewer3d';
@@ -214,5 +215,43 @@ describe('원호에서 멀리 떨어진 첫 점의 수직 발(코어 0.15.0 열�
     w.hover([FOOT[0]! + 0.004, FOOT[1]! - 0.003, 0]);
     expect(v.measureHoverSnap).toMatchObject({ snap: 'perpendicular', refined: true });
     expect(dist(v.measureHoverSnap!.point, p0)).toBe(0);
+  });
+});
+
+describe('판재 구멍 테두리 × 각진 포켓 모서리(19차 — 윤곽선이 모두 곧은 그물)', () => {
+  // 판 400 × 300 × 18, 윗면에서 판 구멍 Ø20(중심 (200,150), 32토막 원기둥)과 그 아래쪽을 가로지르는 각진 포켓(x 170~230, y 138~146, 깊이 3)
+  const PGI = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <circle centerX="200" centerY="150" centerZ="0" radius="10" width="20" depth="12" direction="z-" empty="1" enable="1" order="1"/>
+  <pocket length="60" width="8" depth="3" direction="z-" cornerRadius="0" angle="0" centerX="200" centerY="142" centerZ="0" enable="1" order="2"/>
+ </panel>
+</pgi>`;
+  const r = parseForView('b.pgi', enc(PGI));
+  const src = { panel: r.mpr!.snap! as PanelSnapTable, scene: r.scene };
+
+  it('포켓 윗변(y = 146)이 구멍 테두리를 지나는 점: 토막끼리의 교차점이 아니라 원 위 정확한 교차점(refined)', () => {
+    expect(src.panel.straight?.has('mpr-op-1')).toBe(true);
+    const w = setup(src);
+    const X = [200 - Math.sqrt(84), 146, 18];
+    // 구멍 둘레로 한 번, 교차점 둘레 6 × 4.5 mm로 한 번 확대하고(판 전체에서 작은 사각형은 2화소가 안 되어 코어가 확대하지 않는다)
+    // 그려 둔 토막끼리의 교차(원 안쪽 약 0.02 mm — 몇 화소) 둘레를 가리킨다. 테두리 꼭짓점(0.19 mm)은 붙잡기 거리 밖
+    const near = (q: ReturnType<typeof setup>): void => {
+      q.zoomTo([185, 135], [215, 165], 18);
+      q.zoomTo([X[0]! - 3, X[1]! - 2.25], [X[0]! + 3, X[1]! + 2.25], 18);
+      q.hover([X[0]! + 0.02, X[1]! + 0.004, 18]);
+    };
+    near(w);
+    const h = w.v.measureHoverSnap!;
+    expect(h).toMatchObject({ snap: 'intersection', refined: true });
+    expect(dist(h.point, X)).toBeLessThan(1e-9);
+    // 곧은 그물을 모르면(18차까지) 토막끼리의 교차점 그대로 — 원 안쪽(현 위)
+    const old = setup({ ...src, panel: { ...src.panel, straight: new Set<string>() } });
+    near(old);
+    const o = old.v.measureHoverSnap!;
+    expect(o.snap).toBe('intersection');
+    expect(o.refined).toBeFalsy();
+    expect(dist(o.point, X)).toBeGreaterThan(1e-3);
+    expect(Math.hypot(o.point[0] - 200, o.point[1] - 150)).toBeLessThan(10 - 1e-4);
   });
 });

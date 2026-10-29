@@ -402,6 +402,12 @@ export interface PanelSnapTable {
    * 나눈 각(라디안 — 토막 하나가 도는 각). 없으면 XY 평면·판 장면의 나누기 각(5°)
    */
   outlineForms?: Map<string, OutlineForm>;
+  /**
+   * 19차: 윤곽선이 모두 곧은 그물 id — 직사각형 판(mpr-board), 상자 가공(홈·RD 없는 사각 포켓 — MeshAccum.aabb·box),
+   * 호가 없는 기둥(각진 포켓·곧은 경로 포켓·호 없는 자유 형상 포켓). 측정 교차점 다듬기가 이 그물 윤곽선을 직선으로 보아,
+   * 호(윤곽 경로·구멍 테두리·둥근 모서리)와 만나는 점을 원 위로 옮긴다. outlines에 둔 그물의 나머지 윤곽선도 곧다(따로 두지 않는다)
+   */
+  straight?: Set<string>;
 }
 
 /** 둘레 호의 평면과 나눈 각(PanelSnapTable.outlineForms) */
@@ -542,6 +548,13 @@ class SnapTableBuilder {
     this.center(id, x, y, z);
   }
 
+  /** 윤곽선이 모두 곧은 그물(PanelSnapTable.straight) */
+  private readonly straightIds = new Set<string>();
+
+  straight(id: string): void {
+    this.straightIds.add(id);
+  }
+
   table(): PanelSnapTable {
     const forms = new Map([...this.forms].filter(([id]) => this.outlines.has(id)));
     return {
@@ -550,6 +563,7 @@ class SnapTableBuilder {
       paths: this.paths,
       ...(this.outlines.size ? { outlines: this.outlines } : {}),
       ...(forms.size ? { outlineForms: forms } : {}),
+      ...(this.straightIds.size ? { straight: this.straightIds } : {}),
     };
   }
 }
@@ -587,7 +601,10 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       acc.prism(ring, [0, 0, -1], wp.thickness);
       for (let i = 0; i < ring.length; i += 3) extendBox(box, ring[i]!, ring[i + 1]!, 0);
     }
-    if (acc.isEmpty()) acc.aabb([0, 0, 0], [wp.length, wp.width, wp.thickness]);
+    if (acc.isEmpty()) {
+      acc.aabb([0, 0, 0], [wp.length, wp.width, wp.thickness]);
+      snap?.straight('mpr-board');
+    }
     meshes.push({ id: 'mpr-board', name: `판 ${fmt(wp.length)}×${fmt(wp.width)}×${fmt(wp.thickness)}`, ...acc.arrays(), color: BOARD_COLOR, group: '공작물', doubleSided: true });
     extendBox(box, 0, 0, 0);
     extendBox(box, wp.length, wp.width, wp.thickness);
@@ -652,6 +669,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
             // 둘레 위·아래 고리(그물 윤곽선)의 호: 해석기가 준 호(PGI·XML 둥근 사각·원형·경로 포켓 — 옆면도), 아니면 윤곽의 호(윗면·아랫면에서 판 것만)
             if (pr.arcs) snap.prismArcs(`mpr-op-${oi}`, pr.arcs, pr.dir, pr.depth);
             else if (c && !pr.dir[0] && !pr.dir[1]) snap.outline(`mpr-op-${oi}`, c.elements, [pr.outline[2]!, pr.outline[2]! + pr.dir[2] * pr.depth]);
+            // 호가 하나도 없는 기둥(각진 포켓·곧은 경로 포켓·호 없는 자유 형상 포켓)은 윤곽선이 모두 곧다
+            if (!pr.arcs?.elements.length && !c?.elements.some((e) => e.arc?.sweep)) snap.straight(`mpr-op-${oi}`);
           }
           meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
           for (let i = 0; i + 2 < pr.outline.length; i += 3)
@@ -662,6 +681,7 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
         if (!op.box) return;
         const acc = new MeshAccum();
         acc.box(op.box.origin, op.box.u, op.box.v, op.box.w);
+        snap?.straight(`mpr-op-${oi}`);
         meshes.push({
           id: `mpr-op-${oi}`,
           name: op.label,

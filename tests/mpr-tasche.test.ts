@@ -127,6 +127,14 @@ describe('MPR 112 Tasche 모서리 반지름(RD)', () => {
     expect(scene.meshes.find((m) => m.id === id(2))!.positions.length / 3).toBe(24);
   });
 
+  it('윤곽선이 모두 곧은 그물(19차 — 측정 교차점 다듬기가 직선으로 본다): 직사각형 판과 RD 없는 각진 상자, 둥근 기둥은 빼고', () => {
+    const r = parseForView('t.mpr', new TextEncoder().encode(MPR));
+    const t = r.mpr!.snap!;
+    const id = (k: number): string => `mpr-op-${part.operations.indexOf(ops[k]!)}`;
+    expect([...t.straight!].sort()).toEqual(['mpr-board', id(2), id(3)].sort());
+    for (const k of [0, 1, 4, 5]) expect(t.outlines!.has(id(k))).toBe(true);
+  });
+
   it('둥근 모서리 위 측정: 현 위 점은 원 위로, 가운데 점·중심, 그 위 첫 점의 접선은 반지름에 수직(선분 식별자로)', () => {
     const r = parseForView('t.mpr', new TextEncoder().encode(MPR));
     const t = r.mpr!.snap!;
