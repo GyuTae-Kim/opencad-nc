@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MeasureHoverSnap, MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint, lockName } from '../../src/app/measure';
-import { MeasureLock, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { MeasureLock, coverRects, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 
 type Dir = [number, number, number];
 interface Lock {
@@ -186,6 +186,61 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     lock.update();
     expect(v.avoids.at(-1)).toEqual({ rects: [tip] });
     lock.reset();
+    expect(v.avoids.at(-1)).toBeNull();
+  });
+
+  it('23차 coverRects: 떠 있는 요소 자리를 캔버스 기준으로 바깥쪽 정수에 맞추고, 캔버스 밖은 자르고, 크기 0·캔버스 밖은 뺀다', () => {
+    const canvas = { left: 10, top: 50, width: 375, height: 600 };
+    // 뷰 큐브(캔버스 오른쪽 위 8화소, 76) — 소수 자리는 바깥으로
+    expect(coverRects(canvas, [{ left: 10 + 291.4, top: 58, width: 76, height: 76.2 }])).toEqual([{ x: 291, y: 8, width: 77, height: 77 }]);
+    // 캔버스 아래로 삐져나간 띠는 잘리고, 숨긴 띠(크기 0)·캔버스 밖은 빠진다
+    expect(
+      coverRects(canvas, [
+        { left: 60, top: 600, width: 274, height: 66 },
+        { left: 0, top: 0, width: 0, height: 0 },
+        { left: 500, top: 60, width: 40, height: 40 },
+        { left: 10, top: 0, width: 50, height: 50 },
+      ]),
+    ).toEqual([{ x: 50, y: 550, width: 274, height: 50 }]);
+  });
+
+  it('23차: 측정 중이면 뷰 큐브(캔버스 옆 canvas.v3d-cube — 보일 때만)와 앱이 띄운 띠(숨긴 것은 빼고)를 툴팁 첫 자리 뒤에 넘기고, 측정을 끄면 거둔다', () => {
+    const { v, layer } = setup(true);
+    const wrap = document.createElement('div');
+    const cube = document.createElement('canvas');
+    cube.className = 'v3d-cube';
+    wrap.append(v.canvas, cube);
+    layer.append(wrap);
+    const rect = (x: number, y: number, w: number, ht: number) => () => ({ left: x, top: y, width: w, height: ht, right: x + w, bottom: y + ht, x, y, toJSON() {} }) as DOMRect;
+    v.canvas.getBoundingClientRect = rect(0, 0, 375, 600);
+    cube.getBoundingClientRect = rect(291, 8, 76, 76);
+    const bar = document.createElement('div');
+    bar.getBoundingClientRect = rect(50, 520, 274, 66);
+    const strip = document.createElement('div');
+    strip.hidden = true;
+    strip.getBoundingClientRect = rect(8, 400, 359, 120);
+    const fake = v as unknown as { viewCubeVisible: boolean };
+    fake.viewCubeVisible = true;
+    const lock = new MeasureLock({ viewer: () => v as unknown as LockViewer, touch: () => true, layer, changed: vi.fn(), overlays: () => [bar, strip] });
+    v.hover = { point: [1, 2, 3], snap: 'endpoint' };
+    lock.update();
+    const tip = { x: 112, y: 62, width: 80, height: 20 };
+    const CUBE = { x: 291, y: 8, width: 76, height: 76 };
+    const BAR = { x: 50, y: 520, width: 274, height: 66 };
+    expect(lock.labelAvoid).toEqual({ rects: [tip, CUBE, BAR] });
+    // 붙잡지 않은 점(툴팁 없음)에서도 떠 있는 것은 넘긴다
+    v.hover = { point: [1, 2, 3], snap: null };
+    lock.update();
+    expect(lock.labelAvoid).toEqual({ rects: [CUBE, BAR] });
+    // 큐브를 숨기면(뷰 큐브 끔) 빼고, 재생 띠가 나타나면 더한다
+    fake.viewCubeVisible = false;
+    strip.hidden = false;
+    lock.update();
+    expect(lock.labelAvoid).toEqual({ rects: [BAR, { x: 8, y: 400, width: 359, height: 120 }] });
+    // 측정을 끄면(update만으로도) 거둔다
+    v.measureMode = false;
+    lock.update();
+    expect(lock.labelAvoid).toBeNull();
     expect(v.avoids.at(-1)).toBeNull();
   });
 });

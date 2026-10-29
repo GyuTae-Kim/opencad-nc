@@ -28,7 +28,9 @@
  * - 코어 거리 글상자 비키기(코어 0.13.0 setMeasureLabelAvoid): 툴팁이 먼저 서려는 자리(placeTip의 첫 자리 — 점 오른쪽 아래, 코어 글상자와
  *   상관없이 정해진다)를 캔버스 기준으로 넘겨 코어 글상자가 먼저 비키게 하고, 그래도 겹치면 placeTip이 예전처럼 툴팁을 옮긴다(둘이 서로 쫓지 않는다).
  *   휴대폰 정밀 조준 중에는 십자선(커서 둘레 반지름)과 손가락 자리도 넘긴다(setAim — 십자선을 옮기는 같은 처리 안에서, 같은 프레임에).
- *   툴팁을 숨기고 조준도 하지 않으면 null.
+ *   23차: 측정 중에는 3D 보기 위에 떠서 캔버스 덧그림을 가리는 것(코어 뷰 큐브, 측정 띠·해석 판단 띠·재생 띠 — host.overlays)의 자리도 넘긴다(coverRects).
+ *   휴대폰은 거리 글상자가 화면 폭의 절반을 넘어 두 점이 오른쪽 위면 뷰 큐브 밑에, 아래면 측정 띠 밑에 그려졌다. 코어는 기본 자리가 넘긴 자리와
+ *   겹칠 때만 옮기므로 겹치지 않는 측정의 글상자 자리는 그대로다. 측정을 끄거나 툴팁을 숨기고 조준도 하지 않으며 떠 있는 것도 없으면 null.
  */
 import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
@@ -53,6 +55,7 @@ export type LockViewer = Pick<
   | 'setMeasureInferenceLock'
   | 'setMeasureLabelAvoid'
   | 'project'
+  | 'viewCubeVisible'
 >;
 
 export interface MeasureLockHost {
@@ -71,6 +74,34 @@ export interface MeasureLockHost {
   arcTangent?(first: FirstPoint, p: V3): V3 | null;
   /** 첫 점의 곡선을 찾은 길(자동 확인용 — ArcTangents.by) */
   tangentBy?(): string | null;
+  /**
+   * 3D 보기 위에 떠서 코어 거리 글상자를 가리는 앱 요소(측정 띠·해석 판단 띠·재생 띠). 숨었거나 크기가 0이면 뺀다.
+   * 코어 뷰 큐브는 이 모듈이 캔버스 옆에서 찾는다(CUBE_SELECTOR). 없으면 뷰 큐브만
+   */
+  overlays?(): readonly Element[];
+}
+
+/** 코어가 캔버스 옆(같은 부모)에 두는 뷰 큐브 캔버스 */
+const CUBE_SELECTOR = 'canvas.v3d-cube';
+
+type Box = { left: number; top: number; width: number; height: number };
+
+/**
+ * 캔버스 위에 떠 있는 요소 자리(화면 좌표 getBoundingClientRect)를 코어 거리 글상자가 비킬 캔버스 기준 사각형으로(23차).
+ * 바깥쪽으로 정수에 맞추고(왼쪽·위는 내림, 오른쪽·아래는 올림 — 같은 자리면 같은 값이라 코어에 다시 주지 않는다) 캔버스 밖은 잘라 낸다.
+ * 크기가 0인 것(숨긴 요소 — display: none)과 캔버스와 겹치지 않는 것은 뺀다
+ */
+export function coverRects(canvas: Box, boxes: readonly Box[]): MeasureLabelRect[] {
+  const out: MeasureLabelRect[] = [];
+  for (const b of boxes) {
+    if (!(b.width > 0 && b.height > 0)) continue;
+    const x0 = Math.max(0, Math.floor(b.left - canvas.left));
+    const y0 = Math.max(0, Math.floor(b.top - canvas.top));
+    const x1 = Math.min(Math.ceil(canvas.width), Math.ceil(b.left - canvas.left + b.width));
+    const y1 = Math.min(Math.ceil(canvas.height), Math.ceil(b.top - canvas.top + b.height));
+    if (x1 > x0 && y1 > y0) out.push({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
+  }
+  return out;
 }
 
 /** 방향 추론 붙잡기(첫 점을 지나는 선 위의 점 — 툴팁이 그 이름): 원호 접선보다 코어 판정이 먼저 */
@@ -143,6 +174,8 @@ export class MeasureLock {
   private tipAvoid: MeasureLabelRect | null = null;
   /** 코어 글상자가 비킬 손가락 자리(캔버스 기준, 정밀 조준 중이 아니면 null) */
   private aimAvoid: MeasureLabelRect | null = null;
+  /** 코어 글상자가 비킬 떠 있는 것(뷰 큐브·띠 — 캔버스 기준, 측정 중일 때만) */
+  private coverAvoid: MeasureLabelRect[] = [];
   /** 코어에 마지막으로 준 비킬 자리(같으면 다시 주지 않는다) */
   private avoidKey = 'null';
 
@@ -269,6 +302,7 @@ export class MeasureLock {
       this.tip.style.left = `${Math.round(at.x)}px`;
       this.tip.style.top = `${Math.round(at.y)}px`;
     }
+    this.coverAvoid = on ? this.covers(v!) : [];
     this.pushAvoid();
     const lock = this.lock;
     if (lock) this.dropFlash(NO_LOCK);
@@ -393,6 +427,7 @@ export class MeasureLock {
     this.tip.hidden = true;
     this.tipAvoid = null;
     this.aimAvoid = null;
+    this.coverAvoid = [];
     this.pushAvoid();
     this.dropFlash(null);
     this.forgetTangent();
@@ -416,11 +451,21 @@ export class MeasureLock {
     this.pushAvoid();
   }
 
-  /** 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리, 조준 중이면 커서 둘레)를 코어에 준다 — 바뀌었을 때만, 둘 다 없으면 null */
+  /** 측정 중 캔버스 위에 떠 있는 것(코어 뷰 큐브, host.overlays — 측정 띠·해석 판단 띠·재생 띠)의 캔버스 기준 자리(coverRects) */
+  private covers(v: LockViewer): MeasureLabelRect[] {
+    const els: Element[] = [];
+    const cube = v.viewCubeVisible ? v.canvas.parentElement?.querySelector(CUBE_SELECTOR) : null;
+    if (cube) els.push(cube);
+    for (const e of this.host.overlays?.() ?? []) if (!(e as HTMLElement).hidden) els.push(e);
+    if (!els.length) return [];
+    return coverRects(v.canvas.getBoundingClientRect(), els.map((e) => e.getBoundingClientRect()));
+  }
+
+  /** 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리·떠 있는 것, 조준 중이면 커서 둘레)를 코어에 준다 — 바뀌었을 때만, 모두 없으면 null */
   private pushAvoid(): void {
     const v = this.host.viewer();
     if (!v) return;
-    const rects = [this.aimAvoid, this.tipAvoid].filter((r): r is MeasureLabelRect => !!r);
+    const rects = [this.aimAvoid, this.tipAvoid, ...this.coverAvoid].filter((r): r is MeasureLabelRect => !!r);
     const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid ? { rects, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
     const key = JSON.stringify(avoid);
     if (key === this.avoidKey) return;
