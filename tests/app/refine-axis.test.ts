@@ -233,3 +233,78 @@ describe('보정 경로 호·판재 둘레 호·구멍 테두리', () => {
     expect(Math.abs(qh[1] - 208)).toBeLessThan(1e-9);
   });
 });
+
+describe('코어 0.20.0 입력: 열린 후보(open)·축이 아닌 직선(line.axis 없음)도 같은 계산(22차)', () => {
+  // 위와 같은 1/4 원(중심 (20,20), R = 20√2, 135° → 45°, 5°씩 현)
+  const parsed = parseForView('arc.nc', enc(['G21 G90 G17', 'G0 X0 Y40 Z0', 'G2 X40 Y40 I20 J-20 F500', 'G1 X60 Y40'].join('\n')));
+  const nc = parsed.nc!;
+  const arc = [...nc.moves.kind].indexOf(MOVE_ARC);
+  const id = parsed.scene.lines.find((l) => /^nc-cut-/.test(l.id))!.id;
+  const R = 20 * Math.SQRT2;
+  const at = (deg: number): V3 => [20 + R * Math.cos(deg * D), 20 + R * Math.sin(deg * D), 0];
+  const onCircle = (q: readonly number[]): number => Math.abs(Math.hypot(q[0]! - 20, q[1]! - 20) - R) + Math.abs(q[2]!);
+  /** 점 q에서 직선(o, 방향 d)까지 거리 */
+  const offLine = (q: readonly number[], o: readonly number[], d: readonly number[]): number => {
+    const l = Math.hypot(d[0]!, d[1]!, d[2]!);
+    const w = [q[0]! - o[0]!, q[1]! - o[1]!, q[2]! - o[2]!];
+    return Math.hypot(w[1]! * d[2]! - w[2]! * d[1]!, w[2]! * d[0]! - w[0]! * d[2]!, w[0]! * d[1]! - w[1]! * d[0]!) / l;
+  };
+  /** 0.20.0 'axisEdge' 입력(토막은 float32 끝점, point는 코어가 준 점 — 열린 후보면 직선 위에서 토막에 가장 가까운 점) */
+  const input = (ends: readonly V3[], origin: readonly number[], dir: readonly number[], point: readonly number[], open: boolean, axis?: 'x' | 'y' | 'z'): SnapRefineInput => ({
+    kind: 'axisEdge',
+    point: [point[0]!, point[1]!, point[2]!],
+    segment: { kind: 'line', id, index: arc, raw: 0, ends: [f32(ends[0]!), f32(ends[1]!)] },
+    first: [origin[0]!, origin[1]!, origin[2]!],
+    ray: { origin: [point[0]!, point[1]!, point[2]! + 100], dir: [0, 0, -1] },
+    line: { origin: [origin[0]!, origin[1]!, origin[2]!], dir: [dir[0]!, dir[1]!, dir[2]!], ...(axis ? { axis } : {}) },
+    ...(open ? { open: true } : {}),
+  });
+
+  it('원 평면을 뚫는 열린 후보: Z축(코어 점이 곧 교차)·기운 직선(축 이름 없음) 모두 원 위 점', () => {
+    const P = at(102.5);
+    const chord = [at(105), at(100)];
+    const first = [P[0], P[1], 7];
+    const q = refineSnap(input(chord, first, [0, 0, 1], [P[0], P[1], 0], true, 'z'), nc)!;
+    expect(onAxis(q, first, 'z')).toBe(true);
+    expect(Math.abs(q[2])).toBeLessThan(1e-12);
+    const F = [P[0] + 6, P[1] - 3, 9];
+    const d = [P[0] - F[0]!, P[1] - F[1]!, -9];
+    const q2 = refineSnap(input(chord, F, d, P, true), nc)!;
+    expect(dist(q2, P)).toBeLessThan(1e-9);
+    expect(offLine(q2, F, d)).toBeLessThan(1e-12);
+  });
+
+  it('원 평면 안에서 기울어 원호와 만나는 직선(나란함·수직·접선 잠금): 원 위 교차, 직선 위', () => {
+    // (60,45)에서 (−1, −0.1) 방향 선이 원과 처음 만나는 점: 1.01 s² − 85 s + 1425 = 0의 작은 근
+    const o = [60, 45, 0];
+    const d = [-1, -0.1, 0];
+    const s = (85 - Math.sqrt(85 * 85 - 4 * 1.01 * 1425)) / (2 * 1.01);
+    const X: V3 = [60 - s, 45 - 0.1 * s, 0];
+    const deg = Math.atan2(X[1] - 20, X[0] - 20) / D;
+    const lo = 5 * Math.floor(deg / 5);
+    const q = refineSnap(input([at(lo + 5), at(lo)], o, d, X, false), nc)!;
+    expect(dist(q, X)).toBeLessThan(1e-9);
+    expect(onCircle(q)).toBeLessThan(1e-9);
+    expect(offLine(q, o, d)).toBeLessThan(1e-12);
+  });
+
+  it('평면 안에서 한 토막의 활꼴을 두 번 지나는 선(현과 만나지 않음): 코어 점(토막 끝 쪽)에 가까운 근', () => {
+    // 현 90° → 85° 안의 두 원 위 점 86°·88.5°를 지나는 선 — 현과 나란하지 않아 코어 점은 선에 가까운 현 끝 쪽이다
+    const A = at(86);
+    const B = at(88.5);
+    const d = [B[0] - A[0], B[1] - A[1], 0];
+    const o = [A[0] - 3 * d[0]!, A[1] - 3 * d[1]!, 0];
+    const ends = [at(90), at(85)];
+    const l2 = d[0]! ** 2 + d[1]! ** 2;
+    const foot = (p: readonly number[]): V3 => {
+      const k = ((p[0]! - o[0]!) * d[0]! + (p[1]! - o[1]!) * d[1]!) / l2;
+      return [o[0]! + d[0]! * k, o[1]! + d[1]! * k, 0];
+    };
+    const near = ends.map((e) => dist(foot(e), e));
+    const core = foot(ends[near[0]! <= near[1]! ? 0 : 1]!);
+    const want = dist(A, core) <= dist(B, core) ? A : B;
+    const q = refineSnap(input(ends, o, d, core, true), nc)!;
+    expect(dist(q, want)).toBeLessThan(1e-9);
+    expect(offLine(q, o, d)).toBeLessThan(1e-12);
+  });
+});
