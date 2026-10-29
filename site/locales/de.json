@@ -1062,5 +1062,14 @@
   "측정 도구를 열 수 없습니다: {0}": "Messwerkzeuge können nicht geöffnet werden: {0}",
   "끌어온 점에서 X축": "X-Achse vom gemerkten Punkt",
   "끌어온 점에서 Y축": "Y-Achse vom gemerkten Punkt",
-  "끌어온 점에서 Z축": "Z-Achse vom gemerkten Punkt"
+  "끌어온 점에서 Z축": "Z-Achse vom gemerkten Punkt",
+  "끌어온 점에서 X축 · 모서리 위": "X-Achse vom gemerkten Punkt · Auf Kante",
+  "끌어온 점에서 Y축 · 모서리 위": "Y-Achse vom gemerkten Punkt · Auf Kante",
+  "끌어온 점에서 Z축 · 모서리 위": "Z-Achse vom gemerkten Punkt · Auf Kante",
+  "끌어온 X축과 Y축의 교차": "Schnittpunkt der gemerkten X- und Y-Achse",
+  "끌어온 X축과 Z축의 교차": "Schnittpunkt der gemerkten X- und Z-Achse",
+  "끌어온 Y축과 X축의 교차": "Schnittpunkt der gemerkten Y- und X-Achse",
+  "끌어온 Y축과 Z축의 교차": "Schnittpunkt der gemerkten Y- und Z-Achse",
+  "끌어온 Z축과 X축의 교차": "Schnittpunkt der gemerkten Z- und X-Achse",
+  "끌어온 Z축과 Y축의 교차": "Schnittpunkt der gemerkten Z- und Y-Achse"
 }

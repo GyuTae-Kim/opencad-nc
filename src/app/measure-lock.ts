@@ -33,7 +33,7 @@ import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } 
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, type LockName } from './measure';
+import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, trackMark, type LockName } from './measure';
 import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
@@ -86,11 +86,12 @@ const TIP_EDGE = 4;
 
 /**
  * 툴팁 글(붙잡은 종류 이름, 잠갔는지). 붙잡지 않은 점·미리 보기가 없으면 null. 다른 점에서 끌어온 축(코어 0.16.0 — trackFrom이 있고
- * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로
+ * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로.
+ * 0.17.0: 끌어온 축이 선분과 만나는 점(segment)은 '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차(trackOther)는 '끌어온 X축과 Y축의 교차'
  */
-export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
+export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
-  return { name: snapLabel(hv.snap, hv.axis, !!hv.trackFrom && !hv.direction), locked: !!hv.locked };
+  return { name: snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
 }
 
 /**

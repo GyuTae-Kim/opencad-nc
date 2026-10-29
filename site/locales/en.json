@@ -1062,5 +1062,14 @@
   "측정 도구를 열 수 없습니다: {0}": "Cannot open the measuring tools: {0}",
   "끌어온 점에서 X축": "On X axis from tracked point",
   "끌어온 점에서 Y축": "On Y axis from tracked point",
-  "끌어온 점에서 Z축": "On Z axis from tracked point"
+  "끌어온 점에서 Z축": "On Z axis from tracked point",
+  "끌어온 점에서 X축 · 모서리 위": "On X axis from tracked point · On edge",
+  "끌어온 점에서 Y축 · 모서리 위": "On Y axis from tracked point · On edge",
+  "끌어온 점에서 Z축 · 모서리 위": "On Z axis from tracked point · On edge",
+  "끌어온 X축과 Y축의 교차": "Intersection of tracked X and Y axes",
+  "끌어온 X축과 Z축의 교차": "Intersection of tracked X and Z axes",
+  "끌어온 Y축과 X축의 교차": "Intersection of tracked Y and X axes",
+  "끌어온 Y축과 Z축의 교차": "Intersection of tracked Y and Z axes",
+  "끌어온 Z축과 X축의 교차": "Intersection of tracked Z and X axes",
+  "끌어온 Z축과 Y축의 교차": "Intersection of tracked Z and Y axes"
 }
