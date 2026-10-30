@@ -295,8 +295,9 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
     expect(s!.points.length).toBe(5);
     // 추론 붙잡기(교차점·수직 발·축 방향)와 코어 0.10.0 나란함·Shift 잠금, 0.16.0 끌어온 축(18차), 0.18.0 축과 모서리·면의 교차(20차),
-    // 0.19.0 잠근 선과 모서리·면의 교차(21차)도 켠다
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true });
+    // 0.19.0 잠근 선과 모서리·면의 교차(21차), 0.21.0 잠근 선과 끌어온 축의 교차(25차)도 켠다. 0.23.0 반투명 공작물 너머 고르기(25차)
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true });
+    expect((s as { throughTranslucent?: boolean }).throughTranslucent).toBe(true);
     expect(s!.points[0]).toMatchObject({ point: [40, 20, -1], kind: 'center', id: 'nc-cut-1' });
     const nc = app.doc!.nc!;
     const arc = [...Array(nc.moves.count).keys()].find((i) => nc.moves.kind[i] === MOVE_ARC)!;
@@ -386,7 +387,8 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true });
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true });
+    expect((s as { throughTranslucent?: boolean }).throughTranslucent).toBe(true);
     // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
     expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
     expect(s!.pointsFor({ ...linePick('mpr-contours', 1), point: [20, 0.2, 19] })!.map((p) => [p.kind, ...p.point.map((x) => Math.round(x * 1000) / 1000 + 0)])).toEqual([
