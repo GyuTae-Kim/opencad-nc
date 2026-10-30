@@ -76,7 +76,7 @@
   "G-code·Heidenhain·woodWOP MPR·WangShi PGI·XML 프로그램을 3D 공구 경로로 보는 무료 NC 뷰어": "Kostenloser NC-Viewer, der G-Code-, Heidenhain-, woodWOP-MPR-, WangShi-PGI- und XML-Programme als 3D-Werkzeugbahnen zeigt",
   "G10 L{0}은 무시함": "Ignore G10 L{0}",
   "G10 {0} 반지름": "G10 {0} Radius",
-  "G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.": "Read in G18 plane,",
+  "G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.": "Liest in der G18-Ebene, X als Durchmesser (LinuxCNC ab G7), U · W inkrementell, G90/G94 · G70–G76 als Drehzyklen, und zeichnet den XZ-Schnitt (Drehachse Z).",
   "G20/G21이 없을 때 쓰는 단위": "Wird verwendet, wenn G20/G21 nicht vorhanden ist",
   "G24(모따기)에 R이 없어 모서리 그대로 그림": "G24 (Fase) hat kein R, die Ecke wird unverändert gezeichnet",
   "G25(둥글리기)에 R이 없어 모서리 그대로 그림": "G25 (Verrundung) hat kein R, die Ecke wird unverändert gezeichnet",
