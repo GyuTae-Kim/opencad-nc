@@ -323,6 +323,14 @@ function inWall(w: PanelWall, a: number, tol: number): boolean {
   return d >= -tol && d <= span + tol;
 }
 
+/** 두 각 사이(0~π) */
+function angleGap(a: number, b: number): number {
+  const TAU = 2 * Math.PI;
+  const d = (((a - b) % TAU) + TAU) % TAU;
+  return d > Math.PI ? TAU - d : d;
+}
+
+
 /**
  * 축·잠근 선이 면을 뚫는 점 다듬기(코어 0.19.0 refineFace 'axisFace' — 첫 점 축·끌어온 축 axisFaces, 잠근 선 lockFaces — 0.20.0부터 축이 아닌 잠근 선도):
  * 코어 점(직선 c.line과 삼각형 평면의 교차)이 판재 그물의 원기둥 벽(panelWalls)을 나눈 삼각형 위면, 그 직선과 원기둥의 정확한 교차점 가운데 그 현 바깥쪽(활꼴 쪽)의 것.
@@ -337,9 +345,28 @@ function inWall(w: PanelWall, a: number, tol: number): boolean {
  *   반지름 방향)으로 간 근 — 다른 근은 원을 가로지른 맞은편 벽이다. 그 자리 각이 호 안(둥근 모서리 끝을 넘으면 곧은 옆면 쪽이라 null)이고 코어 점에서 반지름 안
  * 허용치는 좌표 크기의 1e-6 × 4(장면 float32 반올림 — pointTol). 여러 벽에 맞으면(구멍 여럿) 코어 점에 가장 가까운 답.
  * 코어는 받은 점이 코어 점에서 붙잡기 거리(화면) 밖이면 버린다(벽을 거의 스치는 직선)
+ *
+ * 25차(23차 준비분 — 코어 0.21.0 'onFace', 붙잡지 않은 그물 면 위 점, c.line = 커서 광선): 커서 광선이 원기둥 벽을 나눈 삼각형을 맞은 점(c.point)을 같은 벽 찾기·같은 교차식으로
+ * 광선과 원기둥의 교차점으로 옮긴다. 고르는 근도 같다(코어 점에서 바깥쪽 — 볼록한 둥근 모서리는 광선이 먼저 닿는 앞쪽 근, 구멍·포켓처럼 오목한 벽은 맞은편 벽을 지나
+ * 광선이 나가는 근이 그쪽이다). 바깥쪽 근이 둘이면(벽을 거의 스치는 광선) 광선을 따라 먼저 닿는 근, 여러 벽이면 광선 쪽 첫 근.
+ * 받을지(광선 위 자리가 맞은 삼각형 가장 긴 변의 0.1배 안, 눈 뒤·가까운 면 앞이 아님)는 코어 acceptOnFace가 정한다. 평면 면·모르는 그물은 null
+ *
+ * 25차(코어 0.22.0 면의 열린 교차 — 'axisFace'의 open): 축·잠근 선이 벽 삼각형을 비켜 가며 그 현과 호 사이(활꼴)만 지나 원기둥을 뚫는 자리. c.point는 코어 점이 아니라
+ * 선 위에서 그 삼각형 무게중심에 가장 가까운 점(힌트)이라 원기둥 밖일 수 있고(선이 호 꼭대기를 아주 얕게 스치면 무게중심 쪽 힌트가 두 근 바깥), 두 근이
+ * 모두 그 현 위일 수 있다. 그래서 열린 후보만 따로 본다(그 밖의 길은 위 그대로):
+ * - 벽 찾기: 현은 면 법선(반지름 방향 — 눈 쪽이면 뒤집는다)으로 찾는다. 법선 방향이 호 안이고, 힌트가 벽 높이 안·중심에서 현(r·cos 반각)과 r ÷ cos(반각 × 2) 사이·
+ *   법선 방향에서 반각 × 2 안이어야 한다(무게중심은 현의 각 범위 안이고 힌트는 거기서 선을 따라 조금 비켜 있다)
+ * - 고르는 것: 그 현의 각 범위(법선 방향 ± 반각) 안의 근 가운데 힌트에 가까운 것. 22차까지의 길(코어 점에서 바깥쪽 근)로는 힌트가 원기둥 밖이면 null이었다.
+ *   커서 광선은 보지 않는다 — 코어가 결과를 커서 광선 없는 열쇠(종류·힌트·면·선·첫 점)로 기억하므로 같은 입력에는 늘 같은 답이어야 한다.
+ *   그래서 두 근이 한 삼각형 위면 힌트 쪽 근 하나만 붙는다(코어 README 0.22.0과 같은 한계)
+ * 받을지(그 삼각형 위 곡면 조각 자리·커서 붙잡기 거리 안·가림)는 코어가 정한다
  */
 export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | null {
-  if (c.kind !== 'axisFace') return null;
+  // 코어가 뒤에 더하는 종류는 문자열로 견줘 null(코어 점 그대로)
+  const kind: string = c.kind;
+  if (kind !== 'axisFace' && kind !== 'onFace') return null;
+  const ray = kind === 'onFace';
+  const open = !ray && !!c.open;
   const walls = panelWalls(t, c.face.id);
   if (!walls.length) return null;
   const p = c.point;
@@ -350,6 +377,7 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
   const d: V3 = [c.line.dir[0] / dl, c.line.dir[1] / dl, c.line.dir[2] / dl];
   const tol = 4 * pointTol(p);
   let best: V3 | null = null;
+  // 축·잠근 선은 코어 점(열린 후보는 힌트)에 가까운 근, 커서 광선은 광선을 따라 먼저 닿는 근(광선 매개변수)
   let bestD = Infinity;
   for (const w of walls) {
     const { a0, a1, a2, r } = w;
@@ -358,9 +386,17 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     const pu = p[a0] - w.cu;
     const pv = p[a1] - w.cv;
     const rho = Math.hypot(pu, pv);
-    if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
     const nl = Math.hypot(n[a0], n[a1]);
-    if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
+    // 열린 후보: 그 현의 가운데 각(면 법선 — 바깥쪽으로)
+    let mid = 0;
+    if (open) {
+      if (!(nl > 0.5) || rho > r / Math.cos(2 * w.half) + tol || rho < r * Math.cos(w.half) - tol) continue;
+      mid = Math.atan2(n[a1], n[a0]) + (n[a0] * pu + n[a1] * pv < 0 ? Math.PI : 0);
+      if (!inWall(w, mid, tol / r) || angleGap(Math.atan2(pv, pu), mid) > 2 * w.half + tol / r) continue;
+    } else {
+      if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
+      if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
+    }
     // 단면 평면에 비춘 직선 (ou, ov) + s(du, dv): |·|² = r² — 높이는 o[a2] + s·d[a2](세계 축이 기둥에 수직이면 d[a2] = 0이라 지나는 점 그대로)
     const ou = o[a0] - w.cu;
     const ov = o[a1] - w.cv;
@@ -374,13 +410,24 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     const sq = Math.sqrt(disc);
     for (const s of [(-B - sq) / A, (-B + sq) / A]) {
       const q: V3 = [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
-      // 뚫는 점이 벽 높이 안, 코어 점에서 바깥쪽(반지름 방향)으로 간 근만
+      // 뚫는 점이 벽 높이 안, 코어 점에서 바깥쪽(반지름 방향)으로 간 근만(열린 후보는 그 현의 각 범위 안 근)
       if (q[a2] < w.lo - tol || q[a2] > w.hi + tol) continue;
+      const qa = Math.atan2(q[a1] - w.cv, q[a0] - w.cu);
+      if (open) {
+        if (angleGap(qa, mid) > w.half + tol / r || !inWall(w, qa, tol / r)) continue;
+        const k = dist3(q, p);
+        if (k < bestD) {
+          bestD = k;
+          best = q;
+        }
+        continue;
+      }
       if (((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
-      if (!inWall(w, Math.atan2(q[a1] - w.cv, q[a0] - w.cu), tol / r)) continue;
+      if (!inWall(w, qa, tol / r)) continue;
       const e = dist3(q, p);
-      if (e <= r && e < bestD) {
-        bestD = e;
+      const key = ray ? s : e;
+      if (e <= r && key < bestD) {
+        bestD = key;
         best = q;
       }
     }
@@ -390,17 +437,22 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
 
 /**
  * 앱(app.ts syncMeasureSnap)이 NC 문서를 재는 동안 코어에 주는 붙잡기 선택: 원호 중심(늘 후보 — 재생 중 한도), 고른 이동의 가운데 점·중심
- * (snap.ts moveSnapPoints), 추론 붙잡기, 곡선 위로 다듬기(refineSnap). 시험도 같은 것을 쓴다
+ * (snap.ts moveSnapPoints), 추론 붙잡기, 곡선 위로 다듬기(refineSnap). 시험도 같은 것을 쓴다.
+ * 25차(코어 0.23.0 throughTranslucent): 측정 점 고르기가 반투명 그물(공작물 상자 — 투명도 0.22)의 면을 지나 그 뒤 불투명 그물 면을 고른다.
+ * 뒤에 불투명 그물이 없으면 예전처럼 공작물 면이다(깎기 시뮬레이션은 공작물 상자를 빼고 불투명 소재를 그린다)
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
-  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit, refine: (c) => refineSnap(c, nc, arcAngle) };
+  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
 }
 
 /**
  * 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소(판 외곽선·포켓 둘레·구멍 테두리의 호 포함)의
  * 가운데 점·중심, 추론 붙잡기, 호 위로 다듬기. 측정 중에는 그물 윤곽선(판·포켓·홈·구멍의 모서리 — 이미 그려 둔 선)도 고른다(edges).
- * 21차: 축이 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리를 뚫는 점은 원기둥 위로(refineFace — refineFaceSnap). 22차: 기운 잠근 선(코어 0.20.0)도
+ * 21차: 축이 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리를 뚫는 점은 원기둥 위로(refineFace — refineFaceSnap). 22차: 기운 잠근 선(코어 0.20.0)도.
+ * 25차: 붙잡지 않은 커서가 원기둥 벽을 맞은 점도 원기둥 위로(코어 0.21.0 'onFace'), 측정 점 고르기가 반투명 판(투명도 0.35)을 지나
+ * 그 뒤 불투명 그물(수직·수평 구멍 — 투명도 1)의 면을 고른다(코어 0.23.0 throughTranslucent — 판을 숨기지 않아도 판 너머 구멍 벽·바닥을 잰다).
+ * 포켓·홈 그물은 반투명(0.75·0.85)이라 함께 지나간다 — 뒤에 불투명 그물이 없으면 예전처럼 가장 앞의 반투명 면(판)이다
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t) };
+  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
 }
