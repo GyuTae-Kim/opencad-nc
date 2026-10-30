@@ -1120,5 +1120,16 @@
   "잠근 방향 · 끌어온 점에서 Z축": "Locked direction · On Z axis from tracked point",
   "잠근 X축 · 끌어온 점과 나란히": "Locked X axis · In line with tracked point",
   "잠근 Y축 · 끌어온 점과 나란히": "Locked Y axis · In line with tracked point",
-  "잠근 Z축 · 끌어온 점과 나란히": "Locked Z axis · In line with tracked point"
+  "잠근 Z축 · 끌어온 점과 나란히": "Locked Z axis · In line with tracked point",
+  "{0}: LinuxCNC 설명서에 없는 낱말 {1} — 읽지 않음": "{0}: words {1} are not in the LinuxCNC manual — not read",
+  "{0}에 윤곽 서브루틴 번호 Q가 없음 — LinuxCNC는 오류": "{0} has no contour subroutine number Q — an error in LinuxCNC",
+  "{0}: 윤곽 서브루틴 o{1} sub를 찾지 못함 — LinuxCNC는 오류": "{0}: contour subroutine o{1} sub not found — an error in LinuxCNC",
+  "{0}: G18(ZX) 평면이 아님 — LinuxCNC는 오류(ZX 단면으로 그림)": "{0}: not in the G18 (ZX) plane — an error in LinuxCNC (drawn in the ZX section)",
+  "{0}: 반경 보정(G41/G42) 중 — LinuxCNC는 오류": "{0}: cutter radius compensation (G41/G42) is active — an error in LinuxCNC",
+  "{0}: 모서리 둥글리기·모따기(A·C)를 넣을 수 없음 — 모서리 그대로 그림": "{0}: corner rounding/chamfer (A · C) cannot be inserted — corner drawn unchanged",
+  "{0}: 윤곽의 {1}가 한 방향으로만 바뀌지 않음 — LinuxCNC는 오류(사이클을 그리지 않음)": "{0}: the contour's {1} does not change in one direction only — an error in LinuxCNC (cycle not drawn)",
+  "{0}: 지름 모드(G7)에서 {1}는 반지름 거리로 봄(설명서에 정해지지 않음)": "{0}: in diameter mode (G7), {1} are taken as radial distances (not specified in the manual)",
+  "{0}: 절입 I가 0임 — 다듬질 윤곽만 그림": "{0}: cutting increment I is 0 — only the finishing contour is drawn",
+  "{0}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림": "{0}: the order for entering recesses (pockets) is not in the manual — drawn going down along the layer above",
+  "{0}: 멈추고 이어 깎는 자리는 설명서에 자세히 없어 윤곽이 처음 다시 깊어지는 꼭짓점으로 봄": "{0}: where the cycle stops and resumes is not detailed in the manual — taken as the vertex where the contour first gets deeper again"
 }
