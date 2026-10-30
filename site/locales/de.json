@@ -76,7 +76,7 @@
   "G-code·Heidenhain·woodWOP MPR·WangShi PGI·XML 프로그램을 3D 공구 경로로 보는 무료 NC 뷰어": "Kostenloser NC-Viewer, der G-Code-, Heidenhain-, woodWOP-MPR-, WangShi-PGI- und XML-Programme als 3D-Werkzeugbahnen zeigt",
   "G10 L{0}은 무시함": "Ignore G10 L{0}",
   "G10 {0} 반지름": "G10 {0} Radius",
-  "G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.": "Read in G18 plane,",
+  "G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.": "Liest in der G18-Ebene, X als Durchmesser (LinuxCNC ab G7), U · W inkrementell, G90/G94 · G70–G76 als Drehzyklen, und zeichnet den XZ-Schnitt (Drehachse Z).",
   "G20/G21이 없을 때 쓰는 단위": "Wird verwendet, wenn G20/G21 nicht vorhanden ist",
   "G24(모따기)에 R이 없어 모서리 그대로 그림": "G24 (Fase) hat kein R, die Ecke wird unverändert gezeichnet",
   "G25(둥글리기)에 R이 없어 모서리 그대로 그림": "G25 (Verrundung) hat kein R, die Ecke wird unverändert gezeichnet",
@@ -1120,5 +1120,16 @@
   "잠근 방향 · 끌어온 점에서 Z축": "Gesperrte Richtung · Z-Achse vom gemerkten Punkt",
   "잠근 X축 · 끌어온 점과 나란히": "Gesperrte X-Achse · In Flucht mit gemerktem Punkt",
   "잠근 Y축 · 끌어온 점과 나란히": "Gesperrte Y-Achse · In Flucht mit gemerktem Punkt",
-  "잠근 Z축 · 끌어온 점과 나란히": "Gesperrte Z-Achse · In Flucht mit gemerktem Punkt"
+  "잠근 Z축 · 끌어온 점과 나란히": "Gesperrte Z-Achse · In Flucht mit gemerktem Punkt",
+  "{0}: LinuxCNC 설명서에 없는 낱말 {1} — 읽지 않음": "{0}: Wörter {1} stehen nicht im LinuxCNC-Handbuch — nicht gelesen",
+  "{0}에 윤곽 서브루틴 번호 Q가 없음 — LinuxCNC는 오류": "{0} ohne Konturunterprogrammnummer Q — in LinuxCNC ein Fehler",
+  "{0}: 윤곽 서브루틴 o{1} sub를 찾지 못함 — LinuxCNC는 오류": "{0}: Konturunterprogramm o{1} sub nicht gefunden — in LinuxCNC ein Fehler",
+  "{0}: G18(ZX) 평면이 아님 — LinuxCNC는 오류(ZX 단면으로 그림)": "{0}: nicht in der G18-Ebene (ZX) — in LinuxCNC ein Fehler (im ZX-Schnitt gezeichnet)",
+  "{0}: 반경 보정(G41/G42) 중 — LinuxCNC는 오류": "{0}: Werkzeugradiuskorrektur (G41/G42) aktiv — in LinuxCNC ein Fehler",
+  "{0}: 모서리 둥글리기·모따기(A·C)를 넣을 수 없음 — 모서리 그대로 그림": "{0}: Eckenverrundung · Fase (A · C) nicht einfügbar — Ecke unverändert gezeichnet",
+  "{0}: 윤곽의 {1}가 한 방향으로만 바뀌지 않음 — LinuxCNC는 오류(사이클을 그리지 않음)": "{0}: {1} der Kontur ändert sich nicht nur in eine Richtung — in LinuxCNC ein Fehler (Zyklus nicht gezeichnet)",
+  "{0}: 지름 모드(G7)에서 {1}는 반지름 거리로 봄(설명서에 정해지지 않음)": "{0}: im Durchmessermodus (G7) gelten {1} als Radialabstände (im Handbuch nicht festgelegt)",
+  "{0}: 절입 I가 0임 — 다듬질 윤곽만 그림": "{0}: Zustellung I ist 0 — nur die Schlichtkontur wird gezeichnet",
+  "{0}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림": "{0}: Reihenfolge beim Einfahren in Vertiefungen (Taschen) steht nicht im Handbuch — entlang der Schicht darüber absteigend gezeichnet",
+  "{0}: 멈추고 이어 깎는 자리는 설명서에 자세히 없어 윤곽이 처음 다시 깊어지는 꼭짓점으로 봄": "{0}: Wo der Zyklus anhält und fortsetzt, beschreibt das Handbuch nicht näher — als der Eckpunkt angenommen, an dem die Kontur erstmals wieder tiefer wird"
 }

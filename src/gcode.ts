@@ -15,7 +15,7 @@
  * 반경 보정: G41/G42(D 번호 → 선택 공구 표·G10 L12/L13(Fanuc)·G10 L1 R(LinuxCNC·Mach3)·공구 주석 지름), G41.1/G42.1 D 지름.
  * 프로그램 경로는 그대로 두고 구간만 기록한다(NcProgram.compRuns → comp.ts가 공구 중심 경로를 계산).
  * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클,
- * Fanuc G 코드 체계 B·C는 latheSysCode가 A 체계 코드로 바꿔 읽음),
+ * Fanuc G 코드 체계 B·C는 latheSysCode가 A 체계 코드로 바꿔 읽음, LinuxCNC G70·G71·G72(.1·.2)는 o-코드 윤곽 Q — lathe-g7x.ts),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
 import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
@@ -40,6 +40,7 @@ import {
   type NcProgram,
   type NcRotaryOptions,
 } from './model';
+import { g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
@@ -130,7 +131,9 @@ const LX = 23,
   LU = 20,
   LW = 22,
   LA = 0,
-  LB = 1;
+  LB = 1,
+  LC = 2,
+  LE = 4;
 const AXIS_LETTER = [LX, LY, LZ];
 const OFFSET_LETTER = [LI, LJ, LK];
 
@@ -979,6 +982,8 @@ export class Runner extends NcEmitter {
   protected boxZ = NaN;
   protected roughD = 0;
   protected roughE = 0;
+  /** LinuxCNC G70~G72 블록의 D(보정 번호로 읽기 전에 떼어 둔 값, 없으면 NaN) */
+  protected g7xD = NaN;
   protected g73: [number, number, number] = [0, 0, 1];
   protected peckE = 0;
   protected thread: { m: number; dmin: number; d: number } = { m: 1, dmin: 0, d: 0 };
@@ -2927,6 +2932,13 @@ export class Runner extends NcEmitter {
         this.lcmd = 760;
         return 0;
       }
+      if (this.dialect === 'linuxcnc' && (g === 700 || g === 710 || g === 711 || g === 712 || g === 720 || g === 721 || g === 722)) {
+        // LinuxCNC G70·G71·G72(.1·.2): D는 윤곽까지 남길 거리(보정 번호가 아니다)
+        this.lcmd = g;
+        this.g7xD = blk.has[LD] ? blk.val[LD]! : NaN;
+        blk.has[LD] = 0;
+        return 0;
+      }
       if (g === 700 || g === 710 || g === 720 || g === 730) {
         this.w.add(`G${g / 10}(LinuxCNC 선반 사이클)은 지원하지 않음`, line);
         return 0;
@@ -3075,6 +3087,7 @@ export class Runner extends NcEmitter {
 
   /** 선반 복합 사이클·좌표 설정 */
   protected latheCmd(c: number, blk: Block, line: number): void {
+    if (!this.fanucLathe && c >= 700 && c < 730) return this.linuxG7x(c, blk, line);
     switch (c) {
       case 500: {
         // G50 X Z: 지금 위치의 좌표를 주어진 값으로(G92와 같음)
@@ -3101,6 +3114,198 @@ export class Runner extends NcEmitter {
         return this.peckCycle(c, blk, line);
       case 760:
         return this.threadCycle(blk, line);
+    }
+  }
+
+  /** o-코드 서브루틴 label의 몸통 줄 범위(sub 다음 줄 ~ endsub 앞 줄). 없으면 null */
+  protected oSubBody(label: string): [number, number] | null {
+    const list = this.buildOCodes().get(label);
+    const def = list?.find((x) => x.kw === 'SUB');
+    const end = def && list!.find((x) => x.line > def.line && x.kw === 'ENDSUB');
+    return def && end ? [def.line + 1, end.line - 1] : null;
+  }
+
+  /**
+   * LinuxCNC G70·G71·G72 윤곽: 서브루틴 몸통(줄 s~e)의 G0(G1로 봄)·G1·G2·G3을 상태를 건드리지 않고 요소로(u = Z, v = X 반지름).
+   * 첫 이동의 끝이 윤곽 시작이다(사이클은 그 점까지 급속으로 간다). U·W는 증분, A·C는 그 이동 끝 모서리의 둥글리기·모따기 크기.
+   * 그 밖의 낱말(이송·주축 등)과 o-코드 흐름 줄은 읽지 않는다
+   */
+  protected linuxProfile(s: number, e: number): { els: G7xEl[]; corners: G7xCorner[] } {
+    const b = new Block();
+    const bytes = this.src.bytes;
+    let u = this.pos[2]!;
+    let v = this.pos[0]!;
+    let mot = 10;
+    let abs = this.absolute;
+    let first = true;
+    const els: G7xEl[] = [];
+    const corners: G7xCorner[] = [];
+    for (let i = s; i <= e; i++) {
+      b.reset();
+      const [s0, e0] = lineRange(this.src, i);
+      if (!parseFast(bytes, s0, e0, b, () => {})) {
+        b.reset();
+        try {
+          parseSlow(decodeRange(this.src, s0, e0), b, this);
+        } catch {
+          continue;
+        }
+      }
+      if (b.ctrl) continue;
+      if (this.o.integerUnits) this.integerWords(b);
+      for (let k = 0; k < b.gCount; k++) {
+        const g = b.g[k]!;
+        if (g === 0 || g === 10) mot = 10;
+        else if (g === 20 || g === 30) mot = g;
+        else if (g === 900 || g === 910) abs = g === 900;
+      }
+      if (!b.has[LX] && !b.has[LU] && !b.has[LZ] && !b.has[LW]) continue;
+      let nv = v;
+      let nu = u;
+      if (b.has[LX]) nv = abs ? b.val[LX]! * this.axScale[0]! + this.off[0]! : v + b.val[LX]! * this.axScale[0]!;
+      else if (b.has[LU]) nv = v + b.val[LU]! * this.axScale[0]!;
+      if (b.has[LZ]) nu = abs ? b.val[LZ]! * this.axScale[2]! + this.off[2]! : u + b.val[LZ]! * this.axScale[2]!;
+      else if (b.has[LW]) nu = u + b.val[LW]! * this.axScale[2]!;
+      if (!first && Math.hypot(nu - u, nv - v) > 1e-9) {
+        if (mot === 20 || mot === 30) {
+          // G18 원호(I = X, K = Z 증분 중심, 또는 R)
+          const ccw = mot === 30;
+          let cu: number;
+          let cv: number;
+          if (b.has[LR]) {
+            const R = b.val[LR]! * this.scale;
+            const du = nu - u;
+            const dv = nv - v;
+            const d = Math.hypot(du, dv);
+            const r = Math.max(Math.abs(R), d / 2);
+            const h = Math.sqrt(Math.max(0, r * r - (d * d) / 4));
+            const side = (ccw ? 1 : -1) * (R < 0 ? -1 : 1);
+            cu = u + du / 2 - (side * h * dv) / d;
+            cv = v + dv / 2 + (side * h * du) / d;
+          } else {
+            cu = u + (b.has[LK] ? b.val[LK]! * this.scale : 0);
+            cv = v + (b.has[LI] ? b.val[LI]! * this.scale : 0);
+          }
+          let sw = Math.atan2(nv - cv, nu - cu) - Math.atan2(v - cv, u - cu);
+          if (ccw) while (sw <= 0) sw += Math.PI * 2;
+          else while (sw >= 0) sw -= Math.PI * 2;
+          els.push({ arc: true, su: u, sv: v, eu: nu, ev: nv, cu, cv, sweep: sw });
+        } else els.push(g7xLine(u, v, nu, nv));
+        const fa = b.has[LA] ? b.val[LA]! : 0;
+        const fc = b.has[LC] ? b.val[LC]! : 0;
+        if (fa > 0 || fc > 0) corners.push({ at: els.length - 1, kind: fa > 0 ? 'round' : 'chamfer', size: (fa > 0 ? fa : fc) * this.scale });
+      }
+      first = false;
+      u = nu;
+      v = nv;
+    }
+    return { els, corners };
+  }
+
+  /**
+   * LinuxCNC 선반 G70(다듬질)·G71/G72(거친 깎기 — G7x.1은 포켓을 빼고, G7x.2는 포켓만): 윤곽은 o-코드 서브루틴 Q
+   * (LinuxCNC 설명서 G-code 절 "G70 Lathe finishing cycle"·"G71 G72 Lathe roughing cycles"). X·Z가 있으면 먼저 그 자리로 급속(시작점).
+   * G71·G72는 윤곽에서 시작점 쪽으로 D(기본 0)만큼 떨어진 곡선까지 I(절입, 기본 1)씩 층으로 깎고 R(물러남, 기본 0.5)만큼 물러나며,
+   * 끝나면 떨어진 윤곽을 따라가 그 끝에 선다. G70은 P(횟수, 기본 1)번, 차례마다 윤곽에서 (차례 - 1)(D - E)/P + E 떨어진 곡선을 따라가고
+   * (마지막 차례가 E), 차례 사이에 시작점으로 급속. 그리는 꼴과 설명서가 정하지 않은 자리는 lathe-g7x.ts
+   */
+  protected linuxG7x(c: number, blk: Block, line: number): void {
+    const name = `G${(c / 10).toFixed(c % 10 ? 1 : 0)}`;
+    const finish = c === 700;
+    const facing = c >= 720;
+    const part = (c % 10) as 0 | 1 | 2;
+    const D = Number.isNaN(this.g7xD) ? 0 : this.g7xD * this.scale;
+    this.g7xD = NaN;
+    const known = finish ? 'QXZDEP' : 'QXZDIR';
+    const extra: string[] = [];
+    for (const ch of 'ABCEHIJKLPRUVWY') if (blk.has[ch.charCodeAt(0) - A] && !known.includes(ch)) extra.push(ch);
+    if (extra.length) this.w.add(`${name}: LinuxCNC 설명서에 없는 낱말 ${extra.join('·')} — 읽지 않음`, line);
+    if (!blk.has[LQ]) {
+      this.w.add(`${name}에 윤곽 서브루틴 번호 Q가 없음 — LinuxCNC는 오류`, line);
+      return;
+    }
+    const q = Math.round(blk.val[LQ]!);
+    const body = this.oSubBody(String(q));
+    if (!body) {
+      this.w.add(`${name}: 윤곽 서브루틴 o${q} sub를 찾지 못함 — LinuxCNC는 오류`, line);
+      return;
+    }
+    if (this.plane !== 1) this.w.add(`${name}: G18(ZX) 평면이 아님 — LinuxCNC는 오류(ZX 단면으로 그림)`, line);
+    if (!finish && this.comp) this.w.add(`${name}: 반경 보정(G41/G42) 중 — LinuxCNC는 오류`, line);
+    if (blk.has[LX] || blk.has[LZ]) this.lgo(MOVE_RAPID, this.target(blk, 0, false), this.target(blk, 2, false), line);
+    const S: [number, number] = [this.pos[2]!, this.pos[0]!];
+    const prof = this.linuxProfile(body[0], body[1]);
+    const cut = g7xCorners(prof.els, prof.corners);
+    if (cut.failed) this.w.add(`${name}: 모서리 둥글리기·모따기(A·C)를 넣을 수 없음 — 모서리 그대로 그림`, line);
+    const els = cut.els;
+    if (!els.length) {
+      this.w.add(`${name}: 윤곽 점이 모자람`, line);
+      return;
+    }
+    let ext = Math.max(1, Math.abs(S[0]), Math.abs(S[1]));
+    for (const e of els) ext = Math.max(ext, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    const tol = 1e-7 * ext;
+    // 한 방향으로만 바뀌어야 하는 축: G71 = Z(u), G72 = X(v), G70 = 둘 가운데 하나
+    let m: 0 | 1 = facing ? 1 : 0;
+    let sg = g7xMonotonic(els, m, tol);
+    if (!sg && finish) {
+      m = 1;
+      sg = g7xMonotonic(els, 1, tol);
+    }
+    if (!sg) {
+      this.w.add(`${name}: 윤곽의 ${finish ? 'Z·X' : facing ? 'X' : 'Z'}가 한 방향으로만 바뀌지 않음 — LinuxCNC는 오류(사이클을 그리지 않음)`, line);
+      return;
+    }
+    const { side, k } = g7xSide(els, S, m);
+    const dia = this.xMul !== 1;
+    if (finish) {
+      const E = blk.has[LE] ? blk.val[LE]! * this.scale : 0;
+      const P = Math.max(1, Math.round(blk.has[LP] ? blk.val[LP]! : 1));
+      if (dia && (D !== 0 || E !== 0)) this.w.add(`${name}: 지름 모드(G7)에서 D·E는 반지름 거리로 봄(설명서에 정해지지 않음)`, line);
+      const mid = [this.pos[0]!, this.pos[2]!];
+      for (let pass = P; pass >= 1; pass--) {
+        if (pass < P) this.lgo(MOVE_RAPID, mid[0]!, mid[1]!, line);
+        this.followG7x(g7xOffset(els, ((pass - 1) * (D - E)) / P + E, k), line);
+      }
+    } else {
+      const I = blk.has[LI] ? Math.abs(blk.val[LI]!) * this.scale : this.scale;
+      const R = blk.has[LR] ? Math.abs(blk.val[LR]!) * this.scale : 0.5 * this.scale;
+      if (dia) this.w.add(`${name}: 지름 모드(G7)에서 D·I·R는 반지름 거리로 봄(설명서에 정해지지 않음)`, line);
+      if (!(I > 0)) this.w.add(`${name}: 절입 I가 0임 — 다듬질 윤곽만 그림`, line);
+      const off = g7xOffset(els, D, k);
+      const poly = g7xPolyline(off, Math.PI / 90);
+      const s = (1 - m) as 0 | 1;
+      const dir = -side;
+      const plan = g7xRough(poly.pts, S, s, dir, I, R, part);
+      for (const mv of plan.moves) this.lgo(mv.rapid ? MOVE_RAPID : MOVE_FEED, mv.v, mv.u, line);
+      if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
+      let path = off;
+      if (part) {
+        // G7x.1은 윤곽이 처음 다시 깊어지는 꼭짓점에서 멈추고, G7x.2는 거기서 이어 끝까지
+        const ridge = g7xRidge(poly.pts, s, dir, tol);
+        if (ridge >= 0) {
+          this.w.add(`${name}: 멈추고 이어 깎는 자리는 설명서에 자세히 없어 윤곽이 처음 다시 깊어지는 꼭짓점으로 봄`, line);
+          const el = poly.el[ridge]!;
+          const [a, b] = el < 0 ? [[], off] : g7xSplit(off, el, poly.frac[ridge]!);
+          path = part === 1 ? a : b;
+        } else if (part === 2) path = [];
+      }
+      this.followG7x(path, line);
+    }
+    this.known = 7;
+  }
+
+  /** G70·G71·G72 윤곽 따라가기: 시작까지 급속, 직선은 이송, 원호는 G18 원호로 */
+  protected followG7x(els: readonly G7xEl[], line: number): void {
+    if (!els.length) return;
+    this.lgo(MOVE_RAPID, els[0]!.sv, els[0]!.su, line);
+    for (const e of els) {
+      if (!e.arc) {
+        this.lgo(MOVE_FEED, e.ev, e.eu, line);
+        continue;
+      }
+      if (this.css) this.cssSpeed((Math.abs(this.pos[0]!) + Math.abs(e.ev)) / 2);
+      this.emitArc(1, [e.cv, this.pos[1]!, e.cu], e.sweep, e.ev, this.pos[1]!, e.eu, line, FLAG_CYCLE);
     }
   }
 
