@@ -34,7 +34,7 @@ import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } 
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockName, snapLabel, trackMark, type LockName } from './measure';
+import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
 import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
@@ -89,7 +89,8 @@ const TIP_EDGE = 4;
  * 툴팁 글(붙잡은 종류 이름, 잠갔는지). 붙잡지 않은 점·미리 보기가 없으면 null. 다른 점에서 끌어온 축(코어 0.16.0 — trackFrom이 있고
  * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로.
  * 0.17.0: 끌어온 축이 선분과 만나는 점(segment)은 '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차(trackOther)는 '끌어온 X축과 Y축의 교차'.
- * 0.18.0: 축이 면을 뚫는 점(face)은 '끌어온 점에서 X축 · 면 위'·'X축 · 면 위', 첫 점 축이 선분과 만나는 점(trackFrom 없이 segment)은 'X축 · 모서리 위'
+ * 0.18.0: 축이 면을 뚫는 점(face)은 '끌어온 점에서 X축 · 면 위'·'X축 · 면 위', 첫 점 축이 선분과 만나는 점(trackFrom 없이 segment)은 'X축 · 모서리 위'.
+ * 0.19.0: 잠근 선이 선분과 만나는 점·면을 뚫는 점(locked에 segment·face)은 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'
  */
 export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
@@ -238,16 +239,19 @@ export class MeasureLock {
     const v = this.host.viewer();
     const on = !!v && v.measureMode;
     this.track();
-    const snap = on ? snapTip(v!.measureHoverSnap) : null;
-    // 원호 접선으로 잠근 선 위의 점은 코어 종류(나란함) 대신 접선 방향
-    const tip = snap && snap.locked && v!.measureHoverSnap?.snap === 'parallel' && v!.measureInferenceLock && this.tangentLocked(v!.measureInferenceLock) ? { ...snap, name: TANGENT_LABEL } : snap;
     const hv = on ? v!.measureHoverSnap : null;
+    const snap = on ? snapTip(hv) : null;
+    // 잠근 선이 모서리·면과 만나는 점(0.19.0)은 이름이 '잠근 X축 · 모서리 위'라 "잠금"을 다시 붙이지 않는다
+    const meet = trackMark(hv);
+    // 원호 접선으로 잠근 선 위의 점은 코어 종류(나란함) 대신 접선 방향(모서리·면과 만나면 '잠근 접선 방향 · 모서리 위')
+    const tan = !!snap && snap.locked && hv?.snap === 'parallel' && !!v!.measureInferenceLock && this.tangentLocked(v!.measureInferenceLock);
+    const tip = tan ? { ...snap!, name: lockMeet(meet) ? lockMeetLabel(TANGENT_LABEL, meet) : TANGENT_LABEL } : snap;
     const sp = tip && hv ? v!.project(hv.point) : null;
     if (!tip || !sp || !sp.onScreen) {
       this.tip.hidden = true;
       this.tipAvoid = null;
     } else {
-      this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
+      this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked && !lockMeet(meet) ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
       this.tip.classList.toggle('locked', tip.locked);
       this.tip.hidden = false;
       const c = v!.canvas.getBoundingClientRect();
