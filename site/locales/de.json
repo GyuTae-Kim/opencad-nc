@@ -1138,6 +1138,8 @@
   "잠근 X축 · 끌어온 점과 나란히": "Gesperrte X-Achse · In Flucht mit gemerktem Punkt",
   "잠근 Y축 · 끌어온 점과 나란히": "Gesperrte Y-Achse · In Flucht mit gemerktem Punkt",
   "잠근 Z축 · 끌어온 점과 나란히": "Gesperrte Z-Achse · In Flucht mit gemerktem Punkt",
+  "끌어온 점에서 모서리와 나란히": "Parallel zur Kante vom gemerkten Punkt",
+  "끌어온 점에서 모서리에 수직": "Senkrecht zur Kante vom gemerkten Punkt",
   "{0}: LinuxCNC 설명서에 없는 낱말 {1} — 읽지 않음": "{0}: Wörter {1} stehen nicht im LinuxCNC-Handbuch — nicht gelesen",
   "{0}에 윤곽 서브루틴 번호 Q가 없음 — LinuxCNC는 오류": "{0} ohne Konturunterprogrammnummer Q — in LinuxCNC ein Fehler",
   "{0}: 윤곽 서브루틴 o{1} sub를 찾지 못함 — LinuxCNC는 오류": "{0}: Konturunterprogramm o{1} sub nicht gefunden — in LinuxCNC ein Fehler",

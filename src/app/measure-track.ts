@@ -56,10 +56,12 @@ const ICON =
 
 /**
  * 끌어올 수 있는 점(코어 머무르기와 같은 판정 — 꼭짓점·끝점·가운데 점·중심·앱 점·교차점·수직 발이고 잠근 선 위 점이 아님): 그 점의 복사본, 아니면 null.
- * 축 위 점(첫 점 축·끌어온 축 — 축과 모서리·면이 만나는 점도 'axis')·나란한 방향·붙잡지 않은 점은 끌어오지 않는다
+ * 축 위 점(첫 점 축·끌어온 축 — 축과 모서리·면이 만나는 점도 'axis')·나란한 방향·붙잡지 않은 점은 끌어오지 않는다.
+ * 30차(코어 0.27.0 trackDirs): 끌어온 점에서 모서리에 수직인 선 위 점('perpendicular'에 trackFrom)도 선 위 점이라 끌어오지 않는다(코어 머무르기와 같다 —
+ * 끌어온 점이 실린 것은 모두 선 위 점)
  */
-export function trackPointOf(hv: Pick<MeasureHoverSnap, 'point' | 'snap' | 'locked'> | null | undefined): V3 | null {
-  if (!hv || hv.locked || !hv.snap || hv.snap === 'axis' || hv.snap === 'parallel') return null;
+export function trackPointOf(hv: Pick<MeasureHoverSnap, 'point' | 'snap' | 'locked' | 'trackFrom'> | null | undefined): V3 | null {
+  if (!hv || hv.locked || !hv.snap || hv.snap === 'axis' || hv.snap === 'parallel' || hv.trackFrom) return null;
   const [x, y, z] = hv.point;
   return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? [x!, y!, z!] : null;
 }
