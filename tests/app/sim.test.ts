@@ -34,6 +34,14 @@ const fake = vi.hoisted(() => {
       this.scenes.push(s);
       this.current = s;
       this.keepView.push(!!o.keepView);
+      // 코어처럼 장면을 바꾸면 겉모습(고르기 불투명 포함)을 비운다
+      this.pickOpaque = new Set();
+    }
+    /** 코어 0.24.0 setItemPickOpaque로 켠 그물(지금 장면에서) */
+    pickOpaque = new Set<string>();
+    setItemPickOpaque(id: string, on: boolean): void {
+      if (on) this.pickOpaque.add(id);
+      else this.pickOpaque.delete(id);
     }
     setMesh(m: { id: string }): boolean {
       const s = this.current;
@@ -435,6 +443,34 @@ describe('깎기 탭', () => {
     expect(api.state.sim!.blocked).toBe(SIM_BLOCK_TEXT.tilt);
     expect(simMeshes()).toEqual([]);
     expect(FakeWorker.made).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 0.24.0 setItemPickOpaque)', () => {
+  it('판재 문서 장면을 올릴 때마다 반투명 포켓 그물만 켜고(판·구멍은 아님), 판을 뺀 소재 장면에서는 켜지 않는다', async () => {
+    const { app } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    const pocket = app.doc!.scene.meshes.filter((m) => m.id.startsWith('mpr-op-') && m.color[3] < 1).map((m) => m.id);
+    expect(pocket).toEqual(['mpr-op-1']);
+    expect(app.doc!.scene.meshes.find((m) => m.id === 'mpr-board')!.color[3]).toBeLessThan(1);
+    expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    const n = FakeViewer().scenes.length;
+    await api.setSim(true);
+    await until(settled);
+    expect(FakeViewer().scenes.length).toBeGreaterThan(n);
+    // 소재 장면: 판을 빼고 소재(불투명) 위에 가공 그물을 겹친다 — 측정은 예전처럼 겹친 그물을 지나 소재를 고른다
+    expect(FakeViewer().scenes.at(-1)!.meshes.map((m) => m.id)).toContain('mpr-op-1');
+    expect([...FakeViewer().pickOpaque]).toEqual([]);
+    await api.setSim(false);
+    await until(() => simMeshes().length === 0);
+    // 문서 장면을 다시 올리면(setScene이 겉모습을 비운다) 다시 켠다
+    expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
+    expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    // G-code 문서(공작물 상자 — 반투명)는 켜지 않는다
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
+    expect([...FakeViewer().pickOpaque]).toEqual([]);
   });
 });
 

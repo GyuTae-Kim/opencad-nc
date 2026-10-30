@@ -31,7 +31,7 @@ import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
-import { createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
+import { boardThrough, createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
@@ -1400,7 +1400,10 @@ export class NcViewerApp implements PanelHost {
     const v = this.viewer;
     if (!v) return;
     // 깎기 시뮬레이션이 켜져 있으면 문서 장면 + 소재 그물(sim.ts)
-    v.setScene(this.sim?.sceneFor(d) ?? d.scene, { keepView: !!cam });
+    const scene = this.sim?.sceneFor(d) ?? d.scene;
+    v.setScene(scene, { keepView: !!cam });
+    // 판재: 반투명 판 너머 고르기(측정)가 판 안 포켓·홈 그물에서 멈추게(코어 0.24.0 — 그림은 그대로, setScene이 겉모습을 비우므로 장면마다)
+    for (const id of boardThrough(scene) ?? []) v.setItemPickOpaque(id, true);
     if (cam) v.setCamera(cam);
     // 선반: XZ 단면이 보이게 앞에서
     else if (sceneFeatures(d.scene).lathe) v.setView('front', false);
