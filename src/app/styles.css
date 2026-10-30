@@ -1905,6 +1905,23 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
 }
 
 /* 소재 깎기 시뮬레이션: 계산 중 표시(3D 보기 왼쪽 위), 깎기 탭의 짝 칸·공구 표 */
+/* 그래픽 문맥을 잃은 동안 3D 보기 가운데 안내(코어 onContextLost — 되찾으면 거둔다) */
+.gl-lost {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 6;
+  max-width: calc(100% - 32px);
+  padding: 6px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
 .sim-chip {
   position: absolute;
   top: 8px;

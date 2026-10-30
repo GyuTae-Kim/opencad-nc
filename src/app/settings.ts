@@ -1,6 +1,7 @@
 /**
  * 기계·읽기 설정(앱 전체, localStorage에 기억): 급속 속도·공구 교환 시간·블록 건너뛰기·H/D 번호 확인·도그레그 급속,
- * 작업 원점(G54)의 기계 좌표·G28 기준점·축별 허용 범위, 공구 표시를 실제 크기로. 길이는 모두 mm(inch 프로그램은 해석기가 바꿔 쓴다).
+ * 작업 원점(G54)의 기계 좌표·G28 기준점·축별 허용 범위, 공구 표시를 실제 크기로, 선반 공구 표(노즈 반지름·공구 방향 — 파일에 없을 때).
+ * 길이는 모두 mm(inch 프로그램은 해석기가 바꿔 쓴다).
  * 저장소를 못 쓰면(사생활 보호 창 등) 기본값으로 동작하고 이번 창에서만 기억한다.
  */
 import type { NcMachineOptions } from '../model';
@@ -28,6 +29,13 @@ export interface NcSettings {
   limitMax: Xyz;
   /** 재생 중 공구 표시를 실제 공구 지름 크기로(지름을 모르면 화면 크기) */
   toolSize: boolean;
+  /** 선반 공구 표: 공구 번호 → 노즈 반지름(mm)·LinuxCNC 공구 방향(1~9). 선반 반경 보정에서 파일에 값이 없을 때 쓴다 */
+  latheTools: Record<string, LatheToolSetting>;
+}
+
+export interface LatheToolSetting {
+  radiusMm: number | null;
+  orientation: number | null;
 }
 
 export const SETTINGS_KEY = 'opencad-nc.settings';
@@ -44,7 +52,28 @@ export function defaultSettings(): NcSettings {
     limitMin: [null, null, null],
     limitMax: [null, null, null],
     toolSize: false,
+    latheTools: {},
   };
+}
+
+/** 선반 공구 표 한 칸 정리: 노즈 반지름은 0보다 큰 수, 방향은 1~9의 정수(그 밖은 비움). 둘 다 비면 null */
+export function cleanLatheTool(v: unknown): LatheToolSetting | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const radiusMm = num(o.radiusMm, true);
+  const q = o.orientation;
+  const orientation = typeof q === 'number' && Number.isInteger(q) && q >= 1 && q <= 9 ? q : null;
+  return radiusMm === null && orientation === null ? null : { radiusMm, orientation };
+}
+
+function latheTools(v: unknown): Record<string, LatheToolSetting> {
+  const out: Record<string, LatheToolSetting> = {};
+  if (v && typeof v === 'object')
+    for (const [k, t] of Object.entries(v as Record<string, unknown>)) {
+      const c = /^\d{1,6}$/.test(k) ? cleanLatheTool(t) : null;
+      if (c) out[String(Number(k))] = c;
+    }
+  return out;
 }
 
 const num = (v: unknown, positive = false): number | null => (typeof v === 'number' && Number.isFinite(v) && (!positive || v > 0) ? v : null);
@@ -73,6 +102,7 @@ export function parseSettings(text: string | null): NcSettings {
     limitMin: xyz(o.limitMin),
     limitMax: xyz(o.limitMax),
     toolSize: o.toolSize === true,
+    latheTools: latheTools(o.latheTools),
   };
 }
 
@@ -114,6 +144,10 @@ export function settingsOpenOptions(s: NcSettings): Pick<NcOpenOptions, 'blockDe
     m.referenceMm = [s.referenceMm[0] ?? 0, s.referenceMm[1] ?? 0, s.referenceMm[2] ?? 0];
   }
   if ([...s.limitMin, ...s.limitMax].some((v) => v !== null)) m.limitsMm = { min: [...s.limitMin], max: [...s.limitMax] };
+  const lt: NonNullable<NcMachineOptions['latheToolsMm']> = {};
+  for (const [k, t] of Object.entries(s.latheTools ?? {}))
+    lt[Number(k)] = { ...(t.radiusMm !== null ? { radiusMm: t.radiusMm } : {}), ...(t.orientation !== null ? { orientation: t.orientation } : {}) };
+  if (Object.keys(lt).length) m.latheToolsMm = lt;
   return {
     ...(s.blockDelete ? { blockDelete: true } : {}),
     ...(s.checkToolNumbers ? {} : { checkToolNumbers: false }),

@@ -37,6 +37,20 @@ export interface NcSceneOptions {
   onCompPath?: (c: NcCompPath) => void;
 }
 
+/** 장면 meta.compRuns 한 구간(화면 정보 탭이 쓴다). tool·orientation은 선반 모드만 */
+export interface NcCompRunMeta {
+  first: number;
+  end: number;
+  side: number;
+  radius: number;
+  source: string;
+  line: number;
+  computed: boolean;
+  tool?: number;
+  orientation?: number;
+  orientationSource?: string;
+}
+
 const RAPID_COLOR: Rgba = [0.55, 0.55, 0.6, 1];
 const MACHINE_COLOR: Rgba = [0.85, 0.6, 0.25, 1];
 const COMP_COLOR: Rgba = [0.95, 0.3, 0.75, 1];
@@ -287,18 +301,31 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
 
   // 반경 보정 경로(선택)
   const extraWarnings: string[] = [];
-  let compMeta: { first: number; end: number; side: number; radius: number; source: string; line: number; computed: boolean }[] | undefined;
+  let compMeta: NcCompRunMeta[] | undefined;
   const compBox = emptyBox();
   if (opts.compPath) {
     const cp = ncCompPath(p, typeof opts.compPath === 'object' ? opts.compPath : {});
-    compMeta = cp.runs.map((r) => ({ first: r.first, end: r.end, side: r.side, radius: r.used, source: r.source, line: r.line, computed: r.computed }));
+    compMeta = cp.runs.map((r) => ({
+      first: r.first,
+      end: r.end,
+      side: r.side,
+      radius: r.used,
+      source: r.source,
+      line: r.line,
+      computed: r.computed,
+      // 선반만: 앱 선반 공구 표 열쇠·공구 방향
+      ...(r.tool !== undefined ? { tool: r.tool } : {}),
+      ...(r.orientation !== undefined ? { orientation: r.orientation, orientationSource: r.orientationSource ?? '' } : {}),
+    }));
     for (const w of cp.warnings) extraWarnings.push(`보정 경로: ${w}`);
     opts.onCompPath?.(cp);
     if (cp.count) {
       const seg = compPathSegments(cp, maxAngle);
       const q = seg.positions;
       for (let i = 0; i < q.length; i += 3) extendBox(compBox, q[i]!, q[i + 1]!, q[i + 2]!);
-      lines.push({ id: 'nc-comp', name: '보정 경로(공구 중심)', positions: q, color: COMP_COLOR, group: '보정 경로', segmentIds: seg.ids, width: 2 });
+      // 선반 공구 방향(1~8)으로 옮긴 구간이 있으면 가상 공구 끝 경로
+      const name = cp.runs.some((r) => r.tip) ? '보정 경로(가상 공구 끝)' : '보정 경로(공구 중심)';
+      lines.push({ id: 'nc-comp', name, positions: q, color: COMP_COLOR, group: '보정 경로', segmentIds: seg.ids, width: 2 });
     }
   }
   // 선반: 회전축(Z) 표시

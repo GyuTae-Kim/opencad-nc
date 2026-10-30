@@ -13,14 +13,15 @@
  * 좌표 변환: G68/G69 회전(Mach3는 G68 A·B = 중심), G51/G50 배율(Fanuc: X·Y·Z 중심 + P 또는 I·J·K, Mach3: 축별 배율),
  * G51.1/G50.1 거울, LinuxCNC G10 L2 R(좌표계 회전). 변환은 프로그램 좌표에 거울 → 배율 → 회전 차례로 건다.
  * 반경 보정: G41/G42(D 번호 → 선택 공구 표·G10 L12/L13(Fanuc)·G10 L1 R(LinuxCNC·Mach3)·공구 주석 지름), G41.1/G42.1 D 지름.
- * 프로그램 경로는 그대로 두고 구간만 기록한다(NcProgram.compRuns → comp.ts가 공구 중심 경로를 계산).
+ * 선반 모드는 공구 방향도 기록한다(G41.1/G42.1 L·공구 표·LinuxCNC G10 L1 Q, 없으면 앱 선반 공구 표 — 노즈 반지름도 파일에 없으면 그 표).
+ * 프로그램 경로는 그대로 두고 구간만 기록한다(NcProgram.compRuns → comp.ts가 공구 중심·선반 가상 공구 끝 경로를 계산).
  * 선택: 선반 모드(lathe — G18, X 지름/반지름 G7/G8, U·W 증분, G96/G97, G90/G92/G94 단순 사이클, G70~G76 복합 사이클,
  * Fanuc G 코드 체계 B·C는 latheSysCode가 A 체계 코드로 바꿔 읽음, LinuxCNC G70·G71·G72(.1·.2)는 o-코드 윤곽 Q — lathe-g7x.ts),
  * 회전축 감기(rotary — A·B·C를 축 둘레로 감아 공구 끝 경로).
  */
 import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, rotAxis, translateAffine, ZERO3, type Affine } from './affine';
 import { ExprError, GExpr, type GVarRef } from './expr';
-import { NcEmitter } from './emitter';
+import { NcEmitter, type CompTip } from './emitter';
 import {
   FLAG_CYCLE,
   FLAG_MACHINE,
@@ -75,8 +76,11 @@ export interface GcodeOptions {
   workOffsets?: Record<string, [number, number, number]>;
   /** G83 되돌아 들어갈 때 남기는 틈·G73 물러나는 양(표시 단위, 기본 mm 0.5 · inch 0.02) */
   peckClearance?: number;
-  /** 반경 보정용 공구 표(표시 단위). 키 = D 번호(LinuxCNC는 공구 번호) */
-  toolTable?: Record<number, { diameter?: number; radius?: number }>;
+  /**
+   * 반경 보정용 공구 표(표시 단위). 키 = D 번호(LinuxCNC는 공구 번호). 선반 모드에서 radius·diameter는 노즈 반지름·지름이고,
+   * orientation은 LinuxCNC 공구 방향(0~9 — 1~8이면 보정 경로를 가상 공구 끝으로, 9는 노즈 중심)
+   */
+  toolTable?: Record<number, { diameter?: number; radius?: number; orientation?: number }>;
   /**
    * 선반 모드(기본 false). true면 G18 평면, X를 지름으로(LinuxCNC·GRBL은 G7 전까지 반지름), U·W 증분(Fanuc 계열),
    * G90/G92/G94·G70~G76 선반 사이클로 읽고, 경로는 XZ 단면(X = 반지름)으로 만든다. 'auto'면 글 앞부분으로 판별
@@ -947,6 +951,10 @@ export class Runner extends NcEmitter {
   protected dDirect: number | undefined;
   protected radiusGeo = new Map<number, number>();
   protected radiusWear = new Map<number, number>();
+  /** LinuxCNC G10 L1·L10·L11 Q: 공구 번호 → 선반 공구 방향(0~9) */
+  protected orientGeo = new Map<number, number>();
+  /** LinuxCNC G41.1/G42.1 L: 선반 공구 방향(없으면 0) */
+  protected lDirect = 0;
 
   // 좌표 변환(거울·배율·회전) — 없으면 null(빠른 길)
   protected mirrorXf: { c: number[]; s: number[] } | null = null;
@@ -2093,18 +2101,69 @@ export class Runner extends NcEmitter {
       if (direct) this.dDirect = Math.abs(blk.val[LD]!) * this.scale;
       else this.dReg = Math.round(blk.val[LD]!);
     }
+    // LinuxCNC G41.1/G42.1 L: 선반 공구 방향(0~9, 없으면 0 — XZ 평면에서만). 범위 밖은 LinuxCNC 오류라 경고하고 0으로
+    if (direct) {
+      const l = blk.has[LL] ? blk.val[LL]! : 0;
+      const ok = Number.isInteger(l) && l >= 0 && l <= 9;
+      if (!ok && this.lathe) this.w.add('G41.1/G42.1 L(선반 공구 방향)이 0~9의 정수가 아님 — LinuxCNC는 오류, 방향 없이 그림', line);
+      this.lDirect = ok ? l : 0;
+    }
     if (this.comp === 0) return this.noteComp(this.plane, line);
-    if (direct && this.dDirect !== undefined) return this.noteComp(this.plane, line, this.dDirect / 2, `G4${this.comp === 1 ? 1 : 2}.1 D 지름`);
+    const tag = `G4${this.comp === 1 ? 1 : 2}.1`;
     const linux = this.dialect === 'linuxcnc' || this.dialect === 'siemens';
     const d = this.dialect === 'siemens' ? this.tool : (this.dReg ?? (linux ? this.tool : -1));
-    const name = `${linux ? 'T' : 'D'}${d}`;
-    const tt = d >= 0 ? this.o.toolTable?.[d] : undefined;
-    if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) return this.noteComp(this.plane, line, tt.radius ?? tt.diameter! / 2, `공구 표 ${name}`, d);
-    const g = this.radiusGeo.get(d);
-    const wear = this.radiusWear.get(d);
-    if (g !== undefined || wear !== undefined) return this.noteComp(this.plane, line, (g ?? 0) + (wear ?? 0), `G10 ${name} 반지름`, d);
-    if (d === 0 && !linux) return this.noteComp(this.plane, line, 0, 'D0', 0);
-    this.noteComp(this.plane, line, undefined, '', d);
+    const latheXZ = this.lathe && this.plane === 1;
+    // 선반(XZ)은 D가 없으면(Fanuc 선반 — 노즈 R은 T의 보정 번호 쪽) 지금 공구 번호로 공구 표를 찾는다
+    const key = latheXZ && d < 0 ? this.tool : d;
+    const name = `${linux || key !== d ? 'T' : 'D'}${key}`;
+    const dynamic = direct && this.dDirect !== undefined;
+    let radius: number | undefined;
+    let source = '';
+    let dd = d;
+    const tt = !dynamic && key >= 0 ? this.o.toolTable?.[key] : undefined;
+    if (dynamic) {
+      radius = this.dDirect! / 2;
+      source = `${tag} D 지름`;
+      dd = -1;
+    } else {
+      const g = this.radiusGeo.get(key);
+      const wear = this.radiusWear.get(key);
+      if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) {
+        radius = tt.radius ?? tt.diameter! / 2;
+        source = `공구 표 ${name}`;
+      } else if (g !== undefined || wear !== undefined) {
+        radius = (g ?? 0) + (wear ?? 0);
+        source = `G10 ${name} 반지름`;
+      } else if (d === 0 && !linux) {
+        radius = 0;
+        source = 'D0';
+      }
+    }
+    if (!latheXZ) return this.noteComp(this.plane, line, radius, source, dd);
+    // 선반(XZ): 노즈 반지름과 공구 방향(LinuxCNC Lathe User Information "Tool Positions") — 파일 값(G41.1/G42.1 L, 옵션 공구 표,
+    // G10 L1 Q)이 먼저이고 없으면 앱 선반 공구 표(machine.latheToolsMm). 방향 0은 정하지 않은 것으로 보고 다음 출처를 본다(G41.1 L만은 그대로)
+    const app = key >= 0 ? this.latheTools?.get(key) : undefined;
+    const appName = `선반 공구 표 T${key}`;
+    if (radius === undefined && app?.radius !== undefined) {
+      radius = app.radius;
+      source = appName;
+    }
+    const tip: CompTip = { tool: key };
+    const g10q = this.orientGeo.get(key);
+    if (dynamic) {
+      tip.orientation = this.lDirect;
+      tip.source = `${tag} L`;
+    } else if (tt?.orientation) {
+      tip.orientation = tt.orientation;
+      tip.source = `공구 표 ${name}`;
+    } else if (g10q) {
+      tip.orientation = g10q;
+      tip.source = `G10 ${name} Q`;
+    } else if (app?.orientation !== undefined) {
+      tip.orientation = app.orientation;
+      tip.source = appName;
+    }
+    this.noteComp(this.plane, line, radius, source, dd, tip);
   }
 
   /** 블록 끝: 프로그램 흐름 M 코드와 변수 대입 */
@@ -2167,6 +2226,13 @@ export class Runner extends NcEmitter {
         const nist = this.dialect === 'linuxcnc' || this.dialect === 'mach3';
         const map = nist ? (l === 13 ? null : this.radiusGeo) : l === 12 ? this.radiusGeo : l === 13 ? this.radiusWear : null;
         if (map && p >= 0) map.set(p, this.absolute ? v : (map.get(p) ?? 0) + v);
+      }
+      // LinuxCNC 선반 공구 방향 Q(설명서 "G10 L1 Set Tool Table" — 0~9, 예 G10 L1 P2 R0.015 Q3). 선반 반경 보정이 쓴다
+      if (blk.has[LQ] && this.dialect === 'linuxcnc' && l >= 1 && l <= 11) {
+        const p = blk.has[LP] ? Math.round(blk.val[LP]!) : -1;
+        const q = blk.val[LQ]!;
+        if (p >= 0 && Number.isInteger(q) && q >= 0 && q <= 9) this.orientGeo.set(p, q);
+        else this.w.add('G10 공구 방향 Q는 0~9의 정수 — 무시함', line);
       }
       return;
     }

@@ -9,9 +9,29 @@
  * - 나오기: 보정을 끈 뒤 첫 이동은 마지막 요소 끝에서 수직으로 옮긴 점에서 프로그램 끝점까지 직선.
  * - 평면에 수직인 이동(Z만)은 그 자리에서 수직 축만 움직인다. 보정 평면 밖의 호는 현(직선)으로 본다.
  * - 반지름이 음수면 보정 쪽을 바꾼다(Fanuc의 음수 보정 값과 같은 뜻).
+ * - 선반 공구 끝 R 보정(선반 모드의 XZ 구간): 노즈 반지름을 둥근 공구로 보고 위와 같이 노즈 중심 경로를 구한 뒤, 공구 방향(1~8)이 있으면
+ *   구간 전체를 노즈 중심에서 가상 공구 끝(조정점)으로 옮긴다(LATHE_TIP). 들어가기의 시작점·나오기의 끝점은 보정 없는 프로그램 점 그대로다.
  * 조각마다 원래 이동 번호를 붙인다(재생·고르기에서 같은 줄로 이어진다). 다른 NC 해석기 코드를 보지 않고 일반 기하로 짰다.
  */
 import { MOVE_ARC, PLANE_AXES, type NcCompRun, type NcProgram } from './model';
+
+/**
+ * LinuxCNC 선반 공구 방향(설명서 Lathe User Information의 "Tool Positions" 그림 — 0°는 Z+, 시계 방향 90°가 X+):
+ * 노즈 반지름 중심에서 가상 공구 끝(조정점 — X·Z축과 나란하게 노즈 원에 접하는 두 선의 교점)까지를 노즈 반지름 단위의 [dz, dx]로.
+ * 7(0°) Z+ · 2(45°) Z+X+ · 6(90°) X+ · 1(135°) Z−X+ · 5(180°) Z− · 4(225°) Z−X− · 8(270°) X− · 3(315°) Z+X−, 9는 노즈 중심.
+ * 0은 설명서가 정하지 않아 없음과 같이 본다(노즈 중심 — 경고)
+ */
+export const LATHE_TIP: Readonly<Record<number, readonly [number, number]>> = {
+  1: [-1, 1],
+  2: [1, 1],
+  3: [1, -1],
+  4: [-1, -1],
+  5: [-1, 0],
+  6: [0, 1],
+  7: [1, 0],
+  8: [0, -1],
+  9: [0, 0],
+};
 
 export interface CompPathOptions {
   /** 모든 구간에 쓸 공구 반지름(주면 프로그램에서 찾은 값 대신) */
@@ -34,8 +54,8 @@ export interface NcCompPath {
   /** 호 중심각(라디안, 평면 법선 기준 반시계 +) */
   sweep: Float64Array;
   plane: Uint8Array;
-  /** 구간과 실제로 쓴 반지름(계산하지 못했으면 computed = false) */
-  runs: (NcCompRun & { used: number; computed: boolean })[];
+  /** 구간과 실제로 쓴 반지름(계산하지 못했으면 computed = false). tip = 선반 가상 공구 끝으로 옮겼는지(공구 방향 1~8) */
+  runs: (NcCompRun & { used: number; computed: boolean; tip?: boolean })[];
   warnings: string[];
 }
 
@@ -219,10 +239,14 @@ class PieceBuf {
   /** 평면 좌표(u, v, w) → xyz */
   ax: readonly [number, number, number] = [0, 1, 2];
   pl = 0;
+  /** 구간 전체를 평면 안에서 옮기는 양(선반 가상 공구 끝 — 밀링은 0) */
+  du = 0;
+  dv = 0;
   private put(a: number[], u: number, v: number, w: number): void {
     const p = [0, 0, 0];
-    p[this.ax[0]] = u;
-    p[this.ax[1]] = v;
+    // 옮기지 않으면 값 그대로(-0도 그대로 — 밀링 보정 값이 예전과 같게)
+    p[this.ax[0]] = this.du ? u + this.du : u;
+    p[this.ax[1]] = this.dv ? v + this.dv : v;
     p[this.ax[2]] = w;
     a.push(p[0]!, p[1]!, p[2]!);
   }
@@ -274,7 +298,7 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const run = srcRuns[ri]!;
     let r = opts.radius ?? run.radius;
     if (!Number.isFinite(r) && opts.defaultRadius !== undefined) r = opts.defaultRadius;
-    const rec = { ...run, used: r, computed: false };
+    const rec: NcCompPath['runs'][number] = { ...run, used: r, computed: false };
     runs.push(rec);
     if (!Number.isFinite(r)) {
       W(`보정 구간(${run.line + 1}번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음`, run.line);
@@ -285,6 +309,11 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
       carry = null;
       continue;
     }
+    // 선반(XZ): 공구 방향 1~8이면 구간을 노즈 중심에서 가상 공구 끝으로 옮긴다(u = Z, v = X — 반지름 부호 그대로 곱함)
+    const lathe = !!p.lathe && run.plane === 1;
+    const tipDir = lathe && run.orientation !== undefined ? LATHE_TIP[run.orientation] : undefined;
+    buf.du = tipDir ? tipDir[0] * r : 0;
+    buf.dv = tipDir ? tipDir[1] * r : 0;
     let sigma = run.side === 1 ? 1 : -1;
     if (r < 0) {
       sigma = -sigma;
@@ -328,6 +357,11 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
       continue;
     }
     rec.computed = true;
+    if (lathe) {
+      if (tipDir && (tipDir[0] || tipDir[1])) rec.tip = true;
+      if (!tipDir) W(`보정 구간(${run.line + 1}번 줄): 선반 공구 방향(1~9)을 몰라 노즈 반지름 중심 경로로 그림`, run.line);
+      else if (rec.tip && p.dialect !== 'linuxcnc') W('선반 공구 방향 번호는 LinuxCNC 설명서의 그림대로 읽음 — 다른 컨트롤러는 번호가 다를 수 있음', -1);
+    }
     const L = els[planar[0]!]!;
     if (L.arc) W('보정을 켠 첫 이동이 원호 — 현(직선)으로 들어감', m.line[L.m]!);
     const nextEl = planar.length > 1 ? els[planar[1]!]! : null;
@@ -336,7 +370,8 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const su = contiguous ? carry!.u : L.su;
     const sv = contiguous ? carry!.v : L.sv;
     const sw0 = contiguous ? carry!.w : L.sw;
-    buf.line(L.m, su, sv, sw0, entryEnd[0], entryEnd[1], L.ew);
+    // 들어가기 시작점은 옮기지 않는다(보정 없는 프로그램 점, 이어지는 구간이면 앞 구간이 끝난 자리) — put이 더할 양을 미리 뺀다
+    buf.line(L.m, buf.du ? su - buf.du : su, buf.dv ? sv - buf.dv : sv, sw0, entryEnd[0], entryEnd[1], L.ew);
     let cur: P2 = entryEnd;
     let start: P2 = entryEnd;
     let gouges = 0;
@@ -390,15 +425,18 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const lastK = planar[planar.length - 1]!;
     for (let j = lastK + 1; j < els.length; j++) vertical(els[j]!);
     const lastW = els[els.length - 1]!.ew;
-    carry = { run, u: cur[0], v: cur[1], w: lastW };
+    // 구간이 끝난 자리(선반 가상 공구 끝이면 옮긴 자리)
+    const endU = buf.du ? cur[0] + buf.du : cur[0];
+    const endV = buf.dv ? cur[1] + buf.dv : cur[1];
+    carry = { run, u: endU, v: endV, w: lastW };
     // 나오기: 다음 구간이 바로 이어지면(G41 → G42) 그 구간의 들어가기가 이어 받는다
     const nextRun = srcRuns[ri + 1];
     if (run.end < m.count && !(nextRun && nextRun.first === run.end)) {
       const ex = run.end;
       if (m.kind[ex] === MOVE_ARC) W('보정을 끈 첫 이동이 원호 — 현(직선)으로 나옴', m.line[ex]!);
       const s3 = [0, 0, 0];
-      s3[a0] = cur[0];
-      s3[a1] = cur[1];
+      s3[a0] = endU;
+      s3[a1] = endV;
       s3[a2] = lastW;
       const k = (ex + 1) * 3;
       buf.line3(ex, s3, [pts[k]!, pts[k + 1]!, pts[k + 2]!]);

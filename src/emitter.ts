@@ -60,6 +60,15 @@ interface CompEvent {
   d: number;
   tool: number;
   line: number;
+  /** 선반 모드만: 공구 방향과 그 출처, 앱 선반 공구 표 열쇠 */
+  tip?: CompTip;
+}
+
+/** 선반 반경 보정의 공구 끝: 앱 선반 공구 표 열쇠(공구 번호)와 공구 방향(LinuxCNC 0~9, 모르면 없음) */
+export interface CompTip {
+  tool: number;
+  orientation?: number;
+  source?: string;
 }
 
 const AXIS_INDEX: Record<string, number> = { x: 0, y: 1, z: 2 };
@@ -155,6 +164,8 @@ export class NcEmitter {
   /** 시간 계산에 쓸 길이(도그레그: 가장 긴 축 이동, -1 = 이동 길이) */
   private timeLen = -1;
   private limits: { min: (number | null)[]; max: (number | null)[] } | null = null;
+  /** 앱 선반 공구 표(표시 단위 — 공구 번호 → 노즈 반지름·공구 방향). 선반 반경 보정에서 파일에 값이 없을 때만 */
+  protected latheTools: Map<number, { radius?: number; orientation?: number }> | null = null;
 
   /**
    * 기계 설정을 지금 표시 단위로(해석기가 단위를 정한 뒤 부른다): 급속 속도·공구 교환 시간·도그레그·허용 범위.
@@ -169,6 +180,16 @@ export class NcEmitter {
     if (m.limitsMm) {
       const f = (v: number | null | undefined): number | null => (v === null || v === undefined || !Number.isFinite(v) ? null : v * k);
       this.limits = { min: [0, 1, 2].map((a) => f(m.limitsMm!.min[a])), max: [0, 1, 2].map((a) => f(m.limitsMm!.max[a])) };
+    }
+    if (m.latheToolsMm) {
+      for (const [key, t] of Object.entries(m.latheToolsMm)) {
+        const n = Number(key);
+        if (!Number.isInteger(n) || n < 0 || !t) continue;
+        const e: { radius?: number; orientation?: number } = {};
+        if (typeof t.radiusMm === 'number' && Number.isFinite(t.radiusMm)) e.radius = t.radiusMm * k;
+        if (typeof t.orientation === 'number' && Number.isInteger(t.orientation) && t.orientation >= 0 && t.orientation <= 9) e.orientation = t.orientation;
+        if (e.radius !== undefined || e.orientation !== undefined) (this.latheTools ??= new Map()).set(n, e);
+      }
     }
     const conv = (v: [number, number, number] | undefined): [number, number, number] | undefined => (v ? [v[0] * k, v[1] * k, v[2] * k] : undefined);
     return { offset: conv(m.offsetMm), reference: conv(m.referenceMm) };
@@ -976,12 +997,13 @@ export class NcEmitter {
    * 보정 상태(this.comp)나 반지름이 바뀌었을 때 부른다. radius를 모르면 build()에서 공구 지름(D 번호 → 공구 번호 차례)으로 찾는다.
    * 다음에 만드는 이동부터 적용된다.
    */
-  protected noteComp(plane: number, line: number, radius?: number, source = '', d = -1): void {
+  protected noteComp(plane: number, line: number, radius?: number, source = '', d = -1, tip?: CompTip): void {
     const evs = this.compEvents;
     const last = evs[evs.length - 1];
     if (!last && this.comp === 0) return;
-    const ev: CompEvent = { move: this.mb.count, side: this.comp, plane, radius, source, d, tool: this.tool, line };
-    if (last && last.side === ev.side && last.plane === ev.plane && last.radius === ev.radius && last.d === ev.d && last.tool === ev.tool) return;
+    const ev: CompEvent = { move: this.mb.count, side: this.comp, plane, radius, source, d, tool: this.tool, line, ...(tip ? { tip } : {}) };
+    const sameTip = (a?: CompTip, b?: CompTip): boolean => a?.tool === b?.tool && a?.orientation === b?.orientation && a?.source === b?.source;
+    if (last && last.side === ev.side && last.plane === ev.plane && last.radius === ev.radius && last.d === ev.d && last.tool === ev.tool && sameTip(last.tip, ev.tip)) return;
     if (last && last.move === ev.move) evs[evs.length - 1] = ev;
     else evs.push(ev);
   }
@@ -1007,7 +1029,15 @@ export class NcEmitter {
           }
         }
       }
-      out.push({ first: ev.move, end, side: ev.side, plane: (ev.plane as NcPlane) ?? 0, radius: radius ?? NaN, source: radius === undefined ? '' : source, line: ev.line });
+      const run: NcCompRun = { first: ev.move, end, side: ev.side, plane: (ev.plane as NcPlane) ?? 0, radius: radius ?? NaN, source: radius === undefined ? '' : source, line: ev.line };
+      if (ev.tip) {
+        run.tool = ev.tip.tool;
+        if (ev.tip.orientation !== undefined) {
+          run.orientation = ev.tip.orientation;
+          run.orientationSource = ev.tip.source ?? '';
+        }
+      }
+      out.push(run);
     }
     return out;
   }
