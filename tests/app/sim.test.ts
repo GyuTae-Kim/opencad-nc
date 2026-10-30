@@ -473,6 +473,9 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     expect(pocket).toEqual(['mpr-op-1']);
     expect(app.doc!.scene.meshes.find((m) => m.id === 'mpr-board')!.color[3]).toBeLessThan(1);
     expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    // 29차(코어 0.27.0): 포켓(MPR 사각 포켓 — 상자)의 뚜껑(윗면 높이 19의 +w 면 두 삼각형)만 판 너머 고르기에서 지나간다
+    const lid = [...FakeViewer().pickThrough];
+    expect(lid).toEqual([['mpr-op-1', [{ start: 2, count: 2 }]]]);
     const n = FakeViewer().scenes.length;
     await api.setSim(true);
     await until(settled);
@@ -480,15 +483,18 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     // 소재 장면: 판을 빼고 소재(불투명) 위에 가공 그물을 겹친다 — 측정은 예전처럼 겹친 그물을 지나 소재를 고른다
     expect(FakeViewer().scenes.at(-1)!.meshes.map((m) => m.id)).toContain('mpr-op-1');
     expect([...FakeViewer().pickOpaque]).toEqual([]);
+    expect([...FakeViewer().pickThrough]).toEqual([]);
     await api.setSim(false);
     await until(() => simMeshes().length === 0);
     // 문서 장면을 다시 올리면(setScene이 겉모습을 비운다) 다시 켠다
     expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
     expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    expect([...FakeViewer().pickThrough]).toEqual(lid);
     // G-code 문서(공작물 상자 — 반투명)는 켜지 않는다
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
     expect([...FakeViewer().pickOpaque]).toEqual([]);
+    expect([...FakeViewer().pickThrough]).toEqual([]);
   });
 
   it('보기에서 누르기: 판이 있는 문서 장면은 판 너머 고르기(구멍을 누르면 그 가공), 소재 장면은 예전처럼 가장 앞 면(겹친 포켓 그물을 누르면 그 가공)', async () => {

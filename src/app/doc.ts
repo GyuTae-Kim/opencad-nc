@@ -317,6 +317,19 @@ export function boardThrough(scene: Scene3d): string[] | null {
   return scene.meshes.filter((m) => m.id.startsWith('mpr-op-') && m.color[3] < 0.999).map((m) => m.id);
 }
 
+/**
+ * 29차(코어 0.27.0 setItemPickThrough): 포켓·홈 그물 id의 뚜껑(들어가는 판 면 자리의 끝면) 삼각형 구간 — 해석기가 장면 meta.lids에 둔다.
+ * 판 너머 고르기가 뚜껑은 지나 그 뒤 벽·바닥(같은 그물)과 바닥에 뚫은 구멍 기둥(구멍 그물은 판 면에서 시작한다)에서 멈춘다. 바닥은 주지 않는다 —
+ * 바닥까지 지나면 그 뒤에 멈출 면이 없어 판 윗면으로 돌아간다. 없거나 그물 삼각형 밖이면 null(28차처럼 그물 전체에서 멈춘다)
+ */
+export function boardLid(scene: Scene3d, id: string): { start: number; count: number } | null {
+  const r = ((scene.meta as { lids?: Record<string, { start?: unknown; count?: unknown }> } | undefined)?.lids ?? {})[id];
+  const m = scene.meshes.find((x) => x.id === id);
+  const n = m ? (m.indices ? m.indices.length : m.positions.length / 3) / 3 : 0;
+  if (!r || typeof r.start !== 'number' || typeof r.count !== 'number' || !(r.start >= 0 && r.count > 0 && r.start + r.count <= n)) return null;
+  return { start: r.start, count: r.count };
+}
+
 /** 판재 가공 변수(scene.meta.variables) */
 export interface MprVarRow {
   name: string;
