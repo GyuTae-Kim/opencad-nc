@@ -159,6 +159,6 @@ describe('새 경고 글', () => {
         expect(out, `${code}: ${t}`).not.toMatch(/[가-힣]/);
         expect(out).toContain('LinuxCNC');
       }
-    expect(translate(texts[1]!, 'en')).toBe('Correction path: Line 12: The first straight move after compensation off (6 long) is shorter than the tool diameter (10) — LinuxCNC stops with an error');
+    expect(translate(texts[1]!, 'en')).toBe('Compensation path: Line 12: The first straight move after compensation off (6 long) is shorter than the tool diameter (10) — LinuxCNC stops with an error');
   });
 });
