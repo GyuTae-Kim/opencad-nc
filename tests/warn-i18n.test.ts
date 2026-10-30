@@ -73,6 +73,14 @@ describe('이유 글을 끼운 해석 경고(정보 탭 — 줄 번호와 따로
     expect(translate('윤곽 요소 KR(모서리 둥글리기·모따기): 크기가 변보다 큼 — 모서리 그대로 그림', 'en')).toBe('Contour element KR (corner rounding/chamfer): the size is larger than the side — corner drawn unchanged');
   });
 
+  it('정보 탭 보정 구간 줄과 깎기 공구 표 이름(헤드리스 훑기에서 남던 것)', () => {
+    for (const t of ['5번 줄 왼쪽', '12번 줄 오른쪽', 'O1001.nc · 4번 줄 왼쪽', '공구 없음 종류', '공구 없음 지름', '— 종류', 'T3 지름'])
+      for (const code of codes) expect(translate(t, code), `${code}: ${t}`).not.toMatch(hangul);
+    expect(translate('5번 줄 왼쪽', 'en')).toBe('Line 5 left');
+    expect(translate('공구 없음 지름', 'de')).toBe('Durchmesser (kein Werkzeug)');
+    expect(translate('종류', 'zh-CN')).toBe('类型');
+  });
+
   it('뜻이 틀렸던 옛 번역', () => {
     expect(translate('뒤에 정의된 변수를 쓰는 변수 식이 있음 — 정의 차례와 상관없이 풀어 계산함', 'en')).toBe('Some variable expressions use variables defined later — solved regardless of definition order');
     expect(translate('뒤에 요소가 없음', 'en')).toBe('No element follows');
