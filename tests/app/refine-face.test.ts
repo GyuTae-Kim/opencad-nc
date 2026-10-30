@@ -45,10 +45,13 @@ const meshOf = (name: RegExp): Mesh3d => r.scene.meshes.find((m) => name.test(m.
 
 /**
  * 코어처럼(0.18.0 axisFaceSnap): 축 직선(지나는 점 o, 세계 축)이 그물 삼각형 평면과 만나는 점 가운데 삼각형 안이고 guess에 가장 가까운 것 —
- * 평면 위 점은 첫 꼭짓점, 법선은 float32 꼭짓점 외적(눈 쪽은 상관없다 — 앱은 부호를 보지 않는다)
+ * 평면 위 점은 첫 꼭짓점, 법선은 float32 꼭짓점 외적(눈 쪽은 상관없다 — 앱은 부호를 보지 않는다).
+ * axis 대신 방향(수 셋)을 주면 코어 0.20.0의 축이 아닌 잠근 선(단위 방향, line.axis 없음)
  */
-function coreFace(m: Mesh3d, o: readonly number[], axis: 'x' | 'y' | 'z', guess: readonly number[]): SnapRefineFaceInput {
-  const d = AX[axis];
+function coreFace(m: Mesh3d, o: readonly number[], axis: 'x' | 'y' | 'z' | readonly number[], guess: readonly number[]): SnapRefineFaceInput {
+  const raw = typeof axis === 'string' ? AX[axis] : axis;
+  const dl = Math.hypot(raw[0]!, raw[1]!, raw[2]!);
+  const d: V3 = [raw[0]! / dl, raw[1]! / dl, raw[2]! / dl];
   const P = m.positions;
   const I = m.indices!;
   let best: { p: V3; n: V3; i: number } | null = null;
@@ -72,7 +75,8 @@ function coreFace(m: Mesh3d, o: readonly number[], axis: 'x' | 'y' | 'z', guess:
     if (!best || dist(p, guess) < dist(best.p, guess)) best = { p, n, i: k / 3 };
   }
   expect(best, `${m.id}: 축이 그물을 뚫지 않음`).toBeTruthy();
-  return { kind: 'axisFace', point: best!.p, face: { id: m.id, index: best!.i, normal: best!.n }, line: { origin: [...o] as V3, dir: [...d] as V3, axis }, first: [...o] as V3, ray: { origin: [0, 0, 100], dir: [0, 0, -1] } };
+  const line = typeof axis === 'string' ? { origin: [...o] as V3, dir: [...d] as V3, axis } : { origin: [...o] as V3, dir: [...d] as V3 };
+  return { kind: 'axisFace', point: best!.p, face: { id: m.id, index: best!.i, normal: best!.n }, line, first: [...o] as V3, ray: { origin: [0, 0, 100], dir: [0, 0, -1] } };
 }
 
 /** 다듬은 점 q가 축 직선 위(남은 두 좌표가 지나는 점 그대로)인지 */
@@ -123,6 +127,61 @@ describe('축이 원기둥 벽을 뚫는 점(정확한 원기둥 위, 남은 좌
       // 결과는 커서 광선과 상관없다
       expect(refineFaceSnap({ ...inp, ray: { origin: [1, 2, 3], dir: [0, 1, 0] } }, t)).toEqual(q);
     });
+});
+
+describe('기운 잠근 선이 원기둥 벽을 뚫는 점(22차 — 코어 0.20.0 나란함·수직·접선 잠금, line.axis 없음)', () => {
+  /** 점 q에서 직선(o, 단위 방향 d)까지 거리 */
+  const offLine = (q: readonly number[], o: readonly number[], d: readonly number[]): number => Math.hypot(...cross(sub(q, o), d));
+  /** 직선 o + s·e(e 단위)가 Z 방향 원기둥(중심 (cx, cy), 반지름 r)을 나가는 근(큰 s) */
+  const exitZ = (o: readonly number[], dir: readonly number[], cx: number, cy: number, r: number): V3 => {
+    const l = Math.hypot(dir[0]!, dir[1]!, dir[2]!);
+    const e = dir.map((x) => x / l);
+    const A = e[0]! ** 2 + e[1]! ** 2;
+    const B = (o[0]! - cx) * e[0]! + (o[1]! - cy) * e[1]!;
+    const C = (o[0]! - cx) ** 2 + (o[1]! - cy) ** 2 - r * r;
+    const s = (-B + Math.sqrt(B * B - A * C)) / A;
+    return [o[0]! + e[0]! * s, o[1]! + e[1]! * s, o[2]! + e[2]! * s];
+  };
+  const cases: { name: string; mesh: RegExp; o: V3; dir: V3; want: V3 }[] = [
+    { name: '판 외곽선 R50 × 비탈진 선(1, 0.02, 0.01)', mesh: /^판/, o: [0, 20, 9], dir: [1, 0.02, 0.01], want: exitZ([0, 20, 9], [1, 0.02, 0.01], 350, 50, 50) },
+    { name: '판 외곽선 R50 × 수평으로 기운 선(1, 0.02, 0)', mesh: /^판/, o: [0, 20, 9], dir: [1, 0.02, 0], want: exitZ([0, 20, 9], [1, 0.02, 0], 350, 50, 50) },
+    // 수직 구멍 Ø10: 단면에 비춘 선은 y = 20 그대로 — x = 150 + √21, 높이는 그 자리까지 오른 만큼
+    { name: '구멍 Ø10 × 비탈진 선(1, 0, 0.02)', mesh: /Ø10/, o: [0, 20, 9], dir: [1, 0, 0.02], want: [150 + Math.sqrt(21), 20, 9 + 0.02 * (150 + Math.sqrt(21))] },
+    // 수평 구멍 Ø8(기둥 방향 X): 단면(YZ)에 비춘 선은 y = 22 그대로 — z = 9 + √12, x는 그 높이까지 간 만큼
+    { name: '수평 구멍 × 기운 선(0.1, 0, 1)', mesh: /수평 드릴/, o: [10, 22, 0], dir: [0.1, 0, 1], want: [10 + 0.1 * (9 + Math.sqrt(12)), 22, 9 + Math.sqrt(12)] },
+  ];
+  for (const c of cases)
+    it(c.name, () => {
+      const inp = coreFace(meshOf(c.mesh), c.o, c.dir, c.want);
+      expect(inp.line.axis).toBeUndefined();
+      expect(dist(inp.point, c.want)).toBeGreaterThan(1e-4);
+      expect(dist(inp.point, c.want)).toBeLessThan(0.2);
+      const q = refineFaceSnap(inp, t)!;
+      expect(q).toBeTruthy();
+      expect(dist(q, c.want)).toBeLessThan(1e-9);
+      expect(offLine(q, inp.line.origin, inp.line.dir)).toBeLessThan(1e-9);
+    });
+
+  it('가파른 선: 벽 높이 안에서 뚫으면 원기둥 위, 뚫는 점이 벽 위·아래 밖이면(판 윗면 위) null, 기둥과 거의 나란하면 null', () => {
+    const base = coreFace(meshOf(/^판/), [0, 20, 9], 'x', [390, 20, 9]);
+    const p = base.point;
+    const steep = (dx: number): SnapRefineFaceInput => {
+      const l = Math.hypot(dx, 0, 1);
+      const d: V3 = [dx / l, 0, 1 / l];
+      return { ...base, line: { origin: [p[0] - d[0] * 5, p[1], p[2] - d[2] * 5], dir: d } };
+    };
+    // (0.05, 0, 1): 현에서 원기둥까지 x로 몇 백분의 1 — 높이는 1 남짓 오른다
+    const ok = steep(0.05);
+    const q = refineFaceSnap(ok, t)!;
+    expect(q).toBeTruthy();
+    expect(Math.abs(Math.hypot(q[0] - 350, q[1] - 50) - 50)).toBeLessThan(1e-9);
+    expect(offLine(q, ok.line.origin, ok.line.dir)).toBeLessThan(1e-9);
+    expect(q[2]).toBeGreaterThan(9);
+    expect(q[2]).toBeLessThan(18);
+    // (0.002, 0, 1): 같은 만큼 바깥으로 가는 동안 높이가 판 두께(18)를 넘는다
+    expect(refineFaceSnap(steep(0.002), t)).toBeNull();
+    expect(refineFaceSnap(steep(1e-6), t)).toBeNull();
+  });
 });
 
 describe('다듬지 않는 것(null — 코어 점 그대로)', () => {
