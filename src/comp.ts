@@ -6,6 +6,9 @@
  * - 모서리: 보정 쪽이 안쪽이면 옮긴 두 요소의 교점까지 자르고(직선·호 모든 짝), 바깥쪽이면 모서리점을 중심으로
  *   반지름 r인 호로 잇는다. 교점이 요소 밖이면(요소가 공구보다 짧음) 두 끝을 직선으로 잇고 간섭 경고를 남긴다.
  * - 들어가기: 보정을 켠 뒤 첫 평면 이동은 시작점(보정 없음)에서, 다음 요소 시작 방향에 수직으로 옮긴 점까지 직선.
+ *   LinuxCNC 방언(설명서 "Cutter Compensation"·G40·G41/G42): 보정을 켠 뒤 평면 급속이 이어지면 마지막 급속만 보정 자리로 가므로 앞 급속은
+ *   보정 없이 그리고 마지막 급속을 들어가기로 본다. 들어가기가 공구 반지름보다 짧거나, 보정을 끈 첫 이동이 원호이거나 공구 지름보다 짧은 직선이면 경고한다
+ *   (길이는 보정 평면 안 — 프로그램 점끼리).
  * - 나오기: 보정을 끈 뒤 첫 이동은 마지막 요소 끝에서 수직으로 옮긴 점에서 프로그램 끝점까지 직선.
  * - 평면에 수직인 이동(Z만)은 그 자리에서 수직 축만 움직인다. 보정 평면 밖의 호는 현(직선)으로 본다.
  * - 반지름이 음수면 보정 쪽을 바꾼다(Fanuc의 음수 보정 값과 같은 뜻).
@@ -13,7 +16,7 @@
  *   구간 전체를 노즈 중심에서 가상 공구 끝(조정점)으로 옮긴다(LATHE_TIP). 들어가기의 시작점·나오기의 끝점은 보정 없는 프로그램 점 그대로다.
  * 조각마다 원래 이동 번호를 붙인다(재생·고르기에서 같은 줄로 이어진다). 다른 NC 해석기 코드를 보지 않고 일반 기하로 짰다.
  */
-import { MOVE_ARC, PLANE_AXES, type NcCompRun, type NcProgram } from './model';
+import { MOVE_ARC, MOVE_RAPID, PLANE_AXES, type NcCompRun, type NcProgram } from './model';
 
 /**
  * LinuxCNC 선반 공구 방향(설명서 Lathe User Information의 "Tool Positions" 그림 — 0°는 Z+, 시계 방향 90°가 X+):
@@ -362,11 +365,32 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
       if (!tipDir) W(`보정 구간(${run.line + 1}번 줄): 선반 공구 방향(1~9)을 몰라 노즈 반지름 중심 경로로 그림`, run.line);
       else if (rec.tip && p.dialect !== 'linuxcnc') W('선반 공구 방향 번호는 LinuxCNC 설명서의 그림대로 읽음 — 다른 컨트롤러는 번호가 다를 수 있음', -1);
     }
+    const contiguous = carry && carry.run.end === run.first && carry.run.plane === run.plane;
+    const lcnc = p.dialect === 'linuxcnc';
+    if (lcnc && !contiguous) {
+      // LinuxCNC(설명서 "Cutter Compensation" — Programming Entry Moves): G41/G42 뒤 급속이 여럿이면 마지막 급속만 보정 자리로 간다.
+      // 앞 급속(과 그 사이 이동)은 보정 없이 프로그램 점 그대로 그리고, 이어지는 평면 급속 가운데 마지막 것을 들어가기로 본다
+      let k0 = 0;
+      const rapidTo = (a: number, b: number): boolean => {
+        for (let j = a; j <= b; j++) if (m.kind[els[j]!.m] !== MOVE_RAPID) return false;
+        return true;
+      };
+      while (k0 + 1 < planar.length && rapidTo(planar[k0]!, planar[k0 + 1]!)) k0++;
+      for (let j = planar[0]!; j < planar[k0]!; j++) {
+        const el = els[j]!;
+        buf.line(el.m, el.su - buf.du, el.sv - buf.dv, el.sw, el.eu - buf.du, el.ev - buf.dv, el.ew);
+      }
+      planar.splice(0, k0);
+    }
     const L = els[planar[0]!]!;
     if (L.arc) W('보정을 켠 첫 이동이 원호 — 현(직선)으로 들어감', m.line[L.m]!);
+    // LinuxCNC(설명서 G41/G42·Cutter Compensation): 들어가기 이동은 공구 반지름 이상 — 보정 평면 안 길이(프로그램 점끼리)로 본다
+    if (lcnc && !contiguous) {
+      const len = Math.hypot(L.eu - L.su, L.ev - L.sv);
+      if (len < r - 1e-9) W(`들어가기 이동 길이(${round(len)})가 공구 반지름(${round(r)})보다 짧음 — LinuxCNC 설명서는 반지름 이상을 요구`, m.line[L.m]!);
+    }
     const nextEl = planar.length > 1 ? els[planar[1]!]! : null;
     const entryEnd = nextEl ? offAt(nextEl, false, sr) : offAt(L, true, sr);
-    const contiguous = carry && carry.run.end === run.first && carry.run.plane === run.plane;
     const su = contiguous ? carry!.u : L.su;
     const sv = contiguous ? carry!.v : L.sv;
     const sw0 = contiguous ? carry!.w : L.sw;
@@ -433,7 +457,14 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const nextRun = srcRuns[ri + 1];
     if (run.end < m.count && !(nextRun && nextRun.first === run.end)) {
       const ex = run.end;
-      if (m.kind[ex] === MOVE_ARC) W('보정을 끈 첫 이동이 원호 — 현(직선)으로 나옴', m.line[ex]!);
+      // LinuxCNC(설명서 G40): 보정을 끈 다음 이동은 공구 지름보다 긴 직선이어야 하고, 원호이거나 더 짧으면 오류로 멈춘다 — 보정 평면 안 길이로 보고
+      // 평면에 수직인 이동(Z만)은 설명서가 길이를 어떻게 재는지 정하지 않아 보지 않는다
+      if (m.kind[ex] === MOVE_ARC) W(lcnc ? '보정을 끈 첫 이동이 원호 — LinuxCNC는 오류로 멈춤(현(직선)으로 그림)' : '보정을 끈 첫 이동이 원호 — 현(직선)으로 나옴', m.line[ex]!);
+      else if (lcnc) {
+        const k = ex * 3;
+        const len = Math.hypot(pts[k + 3 + a0]! - pts[k + a0]!, pts[k + 3 + a1]! - pts[k + a1]!);
+        if (len > EPS && len < 2 * r - 1e-9) W(`보정을 끈 뒤 첫 직선 이동 길이(${round(len)})가 공구 지름(${round(2 * r)})보다 짧음 — LinuxCNC는 오류로 멈춤`, m.line[ex]!);
+      }
       const s3 = [0, 0, 0];
       s3[a0] = endU;
       s3[a1] = endV;
