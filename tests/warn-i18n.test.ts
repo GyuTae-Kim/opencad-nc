@@ -85,6 +85,9 @@ describe('이유 글을 끼운 해석 경고(정보 탭 — 줄 번호와 따로
     expect(translate('뒤에 정의된 변수를 쓰는 변수 식이 있음 — 정의 차례와 상관없이 풀어 계산함', 'en')).toBe('Some variable expressions use variables defined later — solved regardless of definition order');
     expect(translate('뒤에 요소가 없음', 'en')).toBe('No element follows');
     expect(translate('G2: 반지름·끝점만으로는 해가 둘 — 짧은 호로 그림', 'ja')).not.toContain('太陽');
+    // 정보 탭 읽기 설정 풀이(앞 절반이 빠졌던 영어·독일어)
+    expect(translate('바꾸면 파일을 다시 읽습니다.', 'en')).toBe('Changing this re-reads the file.');
+    for (const code of codes) expect(translate('바꾸면 파일을 다시 읽습니다.', code), code).not.toMatch(/^[,.\s]|^[a-zäöü]/);
     for (const code of codes) expect(translate('뒤에 정의된 변수를 쓰는 변수 식이 있음 — 정의 차례와 상관없이 풀어 계산함', code), code).not.toMatch(/^\s*[—–]/);
   });
 });
