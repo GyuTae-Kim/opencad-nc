@@ -25,7 +25,10 @@ afterAll(() => restore());
 const path = new Float32Array([0, 0, 0, 40, 0, 0, 40, 0, 0, 40, 30, 0, 40, 30, 0, 10, 30, 0, 10, 30, 0, 0, 0, 0, 60, 10, 0, 80, 40, 0]);
 const scene: Scene3d = { name: 'lock', units: 'mm', meshes: [], lines: [{ id: 'path', positions: path }], points: [] };
 
-/** 코어 뷰 큐브 캔버스 자리(오른쪽 위 8화소, 기본 112 — jsdom 가짜는 모든 요소를 캔버스 크기로 재므로 큐브만 제자리로 둔다) */
+/**
+ * 코어 뷰 큐브 자리(오른쪽 위 8화소, 기본 112). 25차부터 앱은 코어 0.23.0 viewCubeRect를 읽는다 — jsdom 가짜는 모든 요소를 캔버스 크기로 재므로
+ * 큐브 캔버스 요소(canvas.v3d-cube)는 800 × 600으로 잰다. 앱이 그 요소를 재면 아래 피할 자리가 캔버스 전체가 된다
+ */
 const CUBE: MeasureLabelRect = { x: 800 - 8 - 112, y: 8, width: 112, height: 112 };
 const box = (r: MeasureLabelRect) => () => ({ left: r.x, top: r.y, width: r.width, height: r.height, right: r.x + r.width, bottom: r.y + r.height, x: r.x, y: r.y, toJSON() {} }) as DOMRect;
 
@@ -35,7 +38,7 @@ function setup(touch = false, overlays: readonly Element[] = []) {
   const bar = document.createElement('div');
   document.body.append(host, bar);
   const v = new Viewer3d(host, { animate: false });
-  host.querySelector<HTMLCanvasElement>('canvas.v3d-cube')!.getBoundingClientRect = box(CUBE);
+  expect(v.viewCubeRect).toEqual(CUBE);
   v.setScene(scene);
   v.setView('top', false);
   v.fit(false);

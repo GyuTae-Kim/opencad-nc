@@ -6,6 +6,8 @@
  * - 같은 축으로 잠가도(lockFaces) 같은 점 — '잠근 X축 · 면 위'
  * - 판을 숨기면 보이는 수직 구멍 Ø10의 벽도 원기둥 위
  * - refineFace를 뺀 붙잡기와 평면(윗면)·벽이 아닌 자리의 미리 보기가 같다(0.18.0과 같은 값)
+ * - 25차(코어 0.23.0 throughTranslucent): 판을 숨기지 않아도 반투명 판 너머 수직 구멍 벽을 축이 뚫는 점·붙잡기 없는 커서가 맞은 점(0.21.0 onFace)이 원기둥 위.
+ *   판을 불투명으로 그리거나 판 너머를 고르지 않으면 판 윗면, 뒤에 불투명 그물이 없는 판 위 자리는 판 너머를 고르든 않든 같은 값
  * 커서는 벽 위 안쪽 자리(현의 경계·그물 윤곽선이 아닌 곳)를 가리킨다.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -181,5 +183,77 @@ describe('축이 판재 원기둥 벽을 뚫는 점(코어 0.19.0 refineFace, �
     expect(Math.abs(wall[0]![0]! - 390)).toBeLessThan(1e-9);
     // 뺀 쪽은 현 위(원기둥 안쪽 — 중심에서 50보다 가깝다)
     expect(Math.hypot(wall[1]![0]! - 350, wall[1]![1]! - 50)).toBeLessThan(50 - 1e-4);
+  });
+});
+
+describe('반투명 판 너머 구멍 벽(25차 — 코어 0.23.0 throughTranslucent, 실제 코어 판정)', () => {
+  /** 판(투명도 0.35)을 지나 고르지 않는 붙잡기(24차까지와 같은 고르기) */
+  const front = (o: MeasureSnapOptions): MeasureSnapOptions => ({ ...o, throughTranslucent: false });
+  const view = (h: Viewer3d['measureHoverSnap']) => h && { snap: h.snap, point: h.point, axis: h.axis ?? null, refined: !!h.refined, face: h.face?.id ?? null, segment: h.segment?.id ?? null };
+  const cylDev = (p: readonly number[]): number => Math.abs(Math.hypot(p[0]! - 150, p[1]! - 22) - 5);
+  // 구멍 그물은 위·아래가 막힌 원기둥(불투명)이라 판 너머로 보이는 것은 그 바깥 벽이다. Ø10 벽의 눈 쪽(−42.5° — 토막 가운데, 높이 12):
+  // 그 자리 광선은 구멍 테두리 바깥에서 판 윗면을 지나 판 안을 거쳐 벽에 닿는다(판을 지나지 않으면 판 윗면)
+  const near = onWall([150, 22], 5, -42.5, 12.2);
+
+  it('판을 숨기지 않아도 수평 구멍 중심의 X축이 수직 구멍 Ø10 벽을 뚫는 점: 원기둥 위 — "X축 · 면 위"(판 너머를 고르지 않으면 그 점에 붙지 않는다)', () => {
+    const w = setup();
+    w.click([0, 20.2, 9.1]);
+    expect(w.v.measurePoints[0]!.point).toEqual([0, 20, 9]);
+    w.zoomBox([140, 10, 4], [160, 30, 18]);
+    w.hover(onWall([150, 22], 5, -23.2, 9.1));
+    const h = w.v.measureHoverSnap!;
+    expect(h).toMatchObject({ snap: 'axis', axis: 'x', refined: true, face: { id: 'mpr-op-1' } });
+    expect(h.point[1]).toBe(20);
+    expect(h.point[2]).toBe(9);
+    expect(Math.abs(h.point[0] - H10[0]!)).toBeLessThan(1e-9);
+    expect(w.lock.snapshot().tip).toBe('X축 · 면 위');
+    const old = setup(front);
+    old.click([0, 20.2, 9.1]);
+    old.zoomBox([140, 10, 4], [160, 30, 18]);
+    old.hover(onWall([150, 22], 5, -23.2, 9.1));
+    const g = old.v.measureHoverSnap;
+    expect(g?.face?.id ?? null).not.toBe('mpr-op-1');
+    expect(g && Math.abs(g.point[0] - H10[0]!) < 1e-9 && g.refined).toBeFalsy();
+  });
+
+  it('붙잡기 없는 커서가 판 너머 Ø10 벽(눈 쪽)을 맞은 점: 원기둥 위(onFace, refined) — 판을 지나지 않으면 판 윗면(높이 18)', () => {
+    const faces: string[] = [];
+    const w = setup((o) => ({ ...o, refineFace: (c) => (faces.push(`${c.kind}:${c.face.id}`), o.refineFace!(c)) }));
+    w.zoomBox([143, 15, 4], [157, 29, 18]);
+    w.hover(near);
+    const h = w.v.measureHoverSnap!;
+    expect(faces).toContain('onFace:mpr-op-1');
+    expect(h).toMatchObject({ snap: null, refined: true });
+    expect(cylDev(h.point)).toBeLessThan(1e-9);
+    expect(h.point[2]).toBeGreaterThan(6);
+    expect(h.point[2]).toBeLessThan(18);
+    const old = setup(front);
+    old.zoomBox([143, 15, 4], [157, 29, 18]);
+    old.hover(near);
+    const g = old.v.measureHoverSnap!;
+    expect(g.snap).toBeNull();
+    expect(g.refined).toBeFalsy();
+    expect(Math.abs(g.point[2] - 18)).toBeLessThan(1e-4);
+  });
+
+  it('판을 불투명으로 그리면(setItemColor 알파 1 — setItemOpacity는 판 색 알파 0.35에 곱한다) 판 너머를 고르지 않는다 — 판을 지나지 않는 붙잡기와 같은 값. 뒤에 불투명 그물이 없는 판 위 자리도 같은 값', () => {
+    const spots = [[200.3, 150.2, 18], [120.4, 0.3, 9.2], [399.6, 200.4, 18]];
+    const seen: unknown[][] = [];
+    for (const [tweak, opaque] of [[(o: MeasureSnapOptions) => o, true], [front, true], [front, false]] as const) {
+      const w = setup(tweak);
+      if (opaque) w.v.setItemColor('mpr-board', [0.86, 0.74, 0.55, 1]);
+      w.zoomBox([143, 15, 4], [157, 29, 18]);
+      const row: unknown[] = [view((w.hover(near), w.v.measureHoverSnap))];
+      w.v.fit(false);
+      w.v.renderNow();
+      for (const p of spots) row.push(view((w.hover(p), w.v.measureHoverSnap)));
+      seen.push(row);
+    }
+    expect(seen[0]).toEqual(seen[1]);
+    // 반투명 판(그대로)에서도 뒤에 불투명 그물이 없는 판 위 세 자리는 판을 지나든 않든 같다
+    const now = setup();
+    const row = spots.map((p) => view((now.hover(p), now.v.measureHoverSnap)));
+    expect(row).toEqual(seen[2]!.slice(1));
+    expect(row.filter(Boolean).length).toBe(3);
   });
 });

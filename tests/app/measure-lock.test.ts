@@ -206,23 +206,26 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     ).toEqual([{ x: 50, y: 550, width: 274, height: 50 }]);
   });
 
-  it('23차: 측정 중이면 뷰 큐브(캔버스 옆 canvas.v3d-cube — 보일 때만)와 앱이 띄운 띠(숨긴 것은 빼고)를 툴팁 첫 자리 뒤에 넘기고, 측정을 끄면 거둔다', () => {
+  it('23차: 측정 중이면 뷰 큐브(25차부터 코어 viewCubeRect — 보일 때만)와 앱이 띄운 띠(숨긴 것은 빼고)를 툴팁 첫 자리 뒤에 넘기고, 측정을 끄면 거둔다', () => {
     const { v, layer } = setup(true);
     const wrap = document.createElement('div');
-    const cube = document.createElement('canvas');
-    cube.className = 'v3d-cube';
-    wrap.append(v.canvas, cube);
+    wrap.append(v.canvas);
     layer.append(wrap);
     const rect = (x: number, y: number, w: number, ht: number) => () => ({ left: x, top: y, width: w, height: ht, right: x + w, bottom: y + ht, x, y, toJSON() {} }) as DOMRect;
-    v.canvas.getBoundingClientRect = rect(0, 0, 375, 600);
-    cube.getBoundingClientRect = rect(291, 8, 76, 76);
+    // 캔버스가 화면 (10, 50)에 있어도 뷰 큐브 자리는 코어가 준 캔버스 기준 그대로(소수 자리는 바깥으로)
+    v.canvas.getBoundingClientRect = rect(10, 50, 375, 600);
+    // 큐브 캔버스 요소는 더 이상 찾지 않는다(코어 안쪽 클래스 — 다른 자리에 있어도 상관없다)
+    const stray = document.createElement('canvas');
+    stray.className = 'v3d-cube';
+    stray.getBoundingClientRect = rect(0, 0, 375, 600);
+    wrap.append(stray);
     const bar = document.createElement('div');
-    bar.getBoundingClientRect = rect(50, 520, 274, 66);
+    bar.getBoundingClientRect = rect(60, 570, 274, 66);
     const strip = document.createElement('div');
     strip.hidden = true;
-    strip.getBoundingClientRect = rect(8, 400, 359, 120);
-    const fake = v as unknown as { viewCubeVisible: boolean };
-    fake.viewCubeVisible = true;
+    strip.getBoundingClientRect = rect(18, 450, 359, 120);
+    const fake = v as unknown as { viewCubeRect: MeasureLabelRect | null };
+    fake.viewCubeRect = { x: 291, y: 8, width: 75.6, height: 76 };
     const lock = new MeasureLock({ viewer: () => v as unknown as LockViewer, touch: () => true, layer, changed: vi.fn(), overlays: () => [bar, strip] });
     v.hover = { point: [1, 2, 3], snap: 'endpoint' };
     lock.update();
@@ -234,8 +237,8 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     v.hover = { point: [1, 2, 3], snap: null };
     lock.update();
     expect(lock.labelAvoid).toEqual({ rects: [CUBE, BAR] });
-    // 큐브를 숨기면(뷰 큐브 끔) 빼고, 재생 띠가 나타나면 더한다
-    fake.viewCubeVisible = false;
+    // 큐브를 숨기면(뷰 큐브 끔 — 코어가 null) 빼고, 재생 띠가 나타나면 더한다
+    fake.viewCubeRect = null;
     strip.hidden = false;
     lock.update();
     expect(lock.labelAvoid).toEqual({ rects: [BAR, { x: 8, y: 400, width: 359, height: 120 }] });

@@ -19,23 +19,36 @@ export const MEASURE_LOADING = '측정 도구를 받는 중…';
  * 'edge' = 끌어온 축이 선분·윤곽선과 만나는 점(0.17.0 — segment가 그 선분), 'x'·'y'·'z' = 끌어온 축끼리의 교차(0.17.0 — 둘째 끌어온 축 trackOther의 축).
  * 0.18.0: 'face' = 끌어온 축이 그물 면을 뚫는 점, 'axisEdge'·'axisFace' = 첫 점 축이 선분·윤곽선과 만나는 점·그물 면을 뚫는 점.
  * 0.19.0: 'lockEdge'·'lockFace' = 잠근 선(축·나란함·수직·원호 접선)이 선분·윤곽선과 만나는 점·그물 면을 뚫는 점(inference.lockEdges·lockFaces)
+ * 0.21.0(inference.lockTracks): 'lockX'·'lockY'·'lockZ' = 잠근 선이 끌어온 점의 그 축과 만나는 점(trackOther), 'lockFrom' = 축으로 잠근 선 위에서 끌어온 점과 나란한 자리(trackFrom)
  */
-export type TrackMark = true | 'edge' | 'face' | 'axisEdge' | 'axisFace' | 'lockEdge' | 'lockFace' | SnapAxis;
+export type TrackMark = true | 'edge' | 'face' | 'axisEdge' | 'axisFace' | LockMeet | SnapAxis;
 
-/** 잠근 선 위의 교차인지(0.19.0 — 이름이 이미 "잠근 …"이라 툴팁·결과에 "잠금"을 다시 붙이지 않는다) */
-export const lockMeet = (t: TrackMark | boolean | undefined): t is 'lockEdge' | 'lockFace' => t === 'lockEdge' || t === 'lockFace';
+/** 잠근 선 위의 점 종류(0.19.0 모서리·면, 0.21.0 끌어온 축·끌어온 점과 나란한 자리) */
+export type LockMeet = 'lockEdge' | 'lockFace' | 'lockX' | 'lockY' | 'lockZ' | 'lockFrom';
+const LOCK_MEETS: ReadonlySet<unknown> = new Set(['lockEdge', 'lockFace', 'lockX', 'lockY', 'lockZ', 'lockFrom']);
 
-/** 잠근 선 위 교차의 이름: 잠근 방향(X축·나란한 방향·수직 방향·접선 방향) 다음에 모서리 위·면 위 — '잠근 X축 · 모서리 위' */
-export const lockMeetLabel = (base: string, t: 'lockEdge' | 'lockFace'): string => `잠근 ${base} · ${t === 'lockEdge' ? '모서리' : '면'} 위`;
+/** 잠근 선 위의 교차인지(0.19.0·0.21.0 — 이름이 이미 "잠근 …"이라 툴팁·결과에 "잠금"을 다시 붙이지 않는다) */
+export const lockMeet = (t: TrackMark | boolean | undefined): t is LockMeet => LOCK_MEETS.has(t);
+
+/**
+ * 잠근 선 위 교차의 이름: 잠근 방향(X축·나란한 방향·수직 방향·접선 방향) 다음에 모서리 위·면 위 — '잠근 X축 · 모서리 위',
+ * 끌어온 축이면 '잠근 X축 · 끌어온 점에서 Y축', 끌어온 점과 나란한 자리면 '잠근 X축 · 끌어온 점과 나란히'
+ */
+export const lockMeetLabel = (base: string, t: LockMeet): string =>
+  t === 'lockEdge' || t === 'lockFace' ? `잠근 ${base} · ${t === 'lockEdge' ? '모서리' : '면'} 위` : t === 'lockFrom' ? `잠근 ${base} · 끌어온 점과 나란히` : `잠근 ${base} · 끌어온 점에서 ${t.slice(4)}축`;
 
 /**
  * 측정 점·미리 보기(measurePoints·measureHoverSnap)의 축 위 점 종류(코어 0.17.0·0.18.0·0.19.0 README의 가르는 법): trackOther가 있으면 축끼리의 교차,
  * trackFrom과 face면 면 위, trackFrom과 segment면 모서리 위, trackFrom과 direction뿐이면 첫 점 축 위 나란한 자리(첫 점에서 그 축 방향 — false),
  * 그 밖의 trackFrom은 끌어온 축. 잠근 선 위 점(locked)에 segment·face가 있으면 잠근 선이 모서리와 만나는 점·면을 뚫는 점(0.19.0 — from은 없다).
- * 끌어온 점이 없는 축 붙잡기(snap 'axis')는 face면 첫 점 축 · 면 위, segment면 첫 점 축 · 모서리 위, 아니면 false
+ * 끌어온 점이 없는 축 붙잡기(snap 'axis')는 face면 첫 점 축 · 면 위, segment면 첫 점 축 · 모서리 위, 아니면 false.
+ * 0.21.0(lockTracks): 잠근 선 위 점에 trackOther가 있으면(trackFrom 없이) 잠근 선이 끌어온 점의 그 축과 만나는 점, trackFrom만 있으면(trackOther·선분·면 없이)
+ * 잠근 축 위 끌어온 점과 나란한 자리(잠그지 않은 점의 trackFrom은 0.16.0 그대로 — 잠근 동안 끌어온 축은 이 선택으로만 온다)
  */
 export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly number[]; trackOther?: { axis: SnapAxis }; segment?: unknown; face?: unknown; direction?: readonly number[]; locked?: boolean } | null | undefined): TrackMark | false {
   if (p?.locked && !p.trackFrom && (p.face || p.segment)) return p.face ? 'lockFace' : 'lockEdge';
+  if (p?.locked && p.trackOther && !p.trackFrom) return `lock${p.trackOther.axis.toUpperCase() as 'X' | 'Y' | 'Z'}`;
+  if (p?.locked && p.trackFrom && !p.trackOther && !p.segment && !p.face) return 'lockFrom';
   if (!p?.trackFrom) return p?.snap !== 'axis' ? false : p.face ? 'axisFace' : p.segment ? 'axisEdge' : false;
   if (p.trackOther) return p.trackOther.axis;
   if (p.face) return 'face';
@@ -48,7 +61,9 @@ export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly numb
  * tracked(trackMark — 다른 점에서 끌어온 축, 코어 0.16.0·0.17.0 inference.track)면 '끌어온 점에서 X축', 모서리와 만나면
  * '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차면 '끌어온 X축과 Y축의 교차'(사전에 9개 모두 있다).
  * 0.18.0: 면을 뚫으면 '끌어온 점에서 X축 · 면 위', 첫 점 축이 모서리·면과 만나면 'X축 · 모서리 위'·'X축 · 면 위'(사전에 9개 더).
- * 0.19.0: 잠근 선이 모서리·면과 만나면 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'처럼(축 셋·나란함·수직·접선·모르는 방향 × 둘 — 사전에 14개)
+ * 0.19.0: 잠근 선이 모서리·면과 만나면 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'처럼(축 셋·나란함·수직·접선·모르는 방향 × 둘 — 사전에 14개).
+ * 0.21.0: 잠근 선이 끌어온 점의 축과 만나면 '잠근 X축 · 끌어온 점에서 Y축'(잠근 축과 나란한 축은 오지 않아 축 잠금 6 + 나란함·수직·접선·모르는 방향 × 축 셋 12),
+ * 축으로 잠근 선 위 끌어온 점과 나란한 자리면 '잠근 X축 · 끌어온 점과 나란히'(축 셋) — 사전에 21개
  */
 export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked: TrackMark | boolean = false): string {
   if (lockMeet(tracked)) return lockMeetLabel(kind === 'axis' && axis ? `${axis.toUpperCase()}축` : kind === 'parallel' ? '나란한 방향' : kind === 'perpendicular' ? '수직 방향' : '방향', tracked);
@@ -109,7 +124,7 @@ export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; 
   if (!m.snapA && !m.snapB) return null;
   // 0.19.0 잠근 선 위 교차는 이름이 "잠근 …"이라 셋째 값(잠금 표시)을 끈다. 원호 접선으로 잠근 선이면 '잠근 접선 방향 · 모서리 위'
   const meet = lockMeet(m.trackB);
-  const b = m.tangentB && m.lockedB ? (meet ? lockMeetLabel(TANGENT_LABEL, m.trackB as 'lockEdge' | 'lockFace') : TANGENT_LABEL) : snapLabel(m.snapB, m.axisB, m.trackB);
+  const b = m.tangentB && m.lockedB ? (meet ? lockMeetLabel(TANGENT_LABEL, m.trackB as LockMeet) : TANGENT_LABEL) : snapLabel(m.snapB, m.axisB, m.trackB);
   return [snapLabel(m.snapA, m.axisA, m.trackA), b, !!m.lockedB && !meet];
 }
 
@@ -153,8 +168,12 @@ export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
  * 0.19.0 lockEdges·lockFaces: 잠근 동안(Shift·화살표·잠금 단추) 잠근 선이 공구 경로·윤곽선과 만나는 점·소재 면을 뚫는 점(잠근 축이면 같은 다듬기로 곡선·원기둥 위).
  * 0.20.0: 나란함·수직·접선으로 잠근 선도 같은 다듬기로 곡선·원기둥 위, 축·잠근 선이 꺾은선 토막과 만나지 않고 그 활꼴만 지나면(다른 깊이의 원호·나선·스플라인을
  * 뚫는 축 등) 열린 후보로 곡선 위 교차(refine.ts — 새 선택 없이 refine을 준 앱이면 코어가 부른다)
+ * 0.21.0 lockTracks: 잠근 동안 잠근 선이 끌어온 점(track — 머문 점)의 X·Y·Z축과 만나는 점, 축으로 잠갔으면 잠근 축 위 끌어온 점과 나란한 자리에도 붙는다
+ * (잠근 동안 끌어온 축은 이 선택으로만 온다 — 끄면 22차까지처럼 잠근 선 위 커서 자리).
+ * 0.22.0: 축·잠근 선이 원기둥 벽 삼각형을 비켜 가며 원기둥만 뚫는 자리도 refineFace('axisFace', open)로 곡면 위 교차(새 선택 없음).
+ * 0.21.0 refineFace 'onFace'(붙잡지 않은 면 위 점 — 커서 광선)와 0.23.0 반투명 판 너머 고르기(throughTranslucent)는 refine.ts의 붙잡기 선택이 켠다
  */
-export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true } as const;
+export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true } as const;
 
 /** 잠금 단추를 눌렀는데 잠글 방향이 없을 때(손가락 기기·마우스) */
 export const NO_LOCK_TOUCH = '잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요';

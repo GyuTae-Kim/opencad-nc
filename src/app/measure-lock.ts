@@ -29,6 +29,7 @@
  *   상관없이 정해진다)를 캔버스 기준으로 넘겨 코어 글상자가 먼저 비키게 하고, 그래도 겹치면 placeTip이 예전처럼 툴팁을 옮긴다(둘이 서로 쫓지 않는다).
  *   휴대폰 정밀 조준 중에는 십자선(커서 둘레 반지름)과 손가락 자리도 넘긴다(setAim — 십자선을 옮기는 같은 처리 안에서, 같은 프레임에).
  *   23차: 측정 중에는 3D 보기 위에 떠서 캔버스 덧그림을 가리는 것(코어 뷰 큐브, 측정 띠·해석 판단 띠·재생 띠 — host.overlays)의 자리도 넘긴다(coverRects).
+ *   25차: 뷰 큐브 자리는 DOM에서 찾지 않고 코어 0.23.0 viewCubeRect로 읽는다.
  *   휴대폰은 거리 글상자가 화면 폭의 절반을 넘어 두 점이 오른쪽 위면 뷰 큐브 밑에, 아래면 측정 띠 밑에 그려졌다. 코어는 기본 자리가 넘긴 자리와
  *   겹칠 때만 옮기므로 겹치지 않는 측정의 글상자 자리는 그대로다. 측정을 끄거나 툴팁을 숨기고 조준도 하지 않으며 떠 있는 것도 없으면 null.
  * - 24차: 측정 띠의 끌어온 점 단추(measure-track.ts)는 이 모듈의 띠 위 알림(showFlash)을 함께 쓰고, 끌어온 점 수가 바뀌면(머무르기로 기억함)
@@ -58,7 +59,7 @@ export type LockViewer = Pick<
   | 'setMeasureInferenceLock'
   | 'setMeasureLabelAvoid'
   | 'project'
-  | 'viewCubeVisible'
+  | 'viewCubeRect'
 >;
 
 export interface MeasureLockHost {
@@ -82,13 +83,10 @@ export interface MeasureLockHost {
   tangentBy?(): string | null;
   /**
    * 3D 보기 위에 떠서 코어 거리 글상자를 가리는 앱 요소(측정 띠·해석 판단 띠·재생 띠). 숨었거나 크기가 0이면 뺀다.
-   * 코어 뷰 큐브는 이 모듈이 캔버스 옆에서 찾는다(CUBE_SELECTOR). 없으면 뷰 큐브만
+   * 코어 뷰 큐브 자리는 코어가 알려 준다(viewCubeRect). 없으면 뷰 큐브만
    */
   overlays?(): readonly Element[];
 }
-
-/** 코어가 캔버스 옆(같은 부모)에 두는 뷰 큐브 캔버스 */
-const CUBE_SELECTOR = 'canvas.v3d-cube';
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -127,7 +125,9 @@ const TIP_EDGE = 4;
  * 첫 점에서 그 축 방향이 아님)은 '끌어온 점에서 X축', 첫 점 축 위에서 끌어온 점과 나란한 자리(방향이 있음)는 'X축 방향' 그대로.
  * 0.17.0: 끌어온 축이 선분과 만나는 점(segment)은 '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차(trackOther)는 '끌어온 X축과 Y축의 교차'.
  * 0.18.0: 축이 면을 뚫는 점(face)은 '끌어온 점에서 X축 · 면 위'·'X축 · 면 위', 첫 점 축이 선분과 만나는 점(trackFrom 없이 segment)은 'X축 · 모서리 위'.
- * 0.19.0: 잠근 선이 선분과 만나는 점·면을 뚫는 점(locked에 segment·face)은 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'
+ * 0.19.0: 잠근 선이 선분과 만나는 점·면을 뚫는 점(locked에 segment·face)은 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'.
+ * 0.21.0: 잠근 선이 끌어온 점의 축과 만나는 점(locked에 trackOther)은 '잠근 X축 · 끌어온 점에서 Y축', 잠근 축 위 끌어온 점과 나란한 자리(locked에 trackFrom만)는
+ * '잠근 Z축 · 끌어온 점과 나란히'(이름에 잠금이 들어 있어 "잠금"을 다시 붙이지 않는다)
  */
 export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
@@ -457,14 +457,18 @@ export class MeasureLock {
     this.pushAvoid();
   }
 
-  /** 측정 중 캔버스 위에 떠 있는 것(코어 뷰 큐브, host.overlays — 측정 띠·해석 판단 띠·재생 띠)의 캔버스 기준 자리(coverRects) */
+  /**
+   * 측정 중 캔버스 위에 떠 있는 것(코어 뷰 큐브, host.overlays — 측정 띠·해석 판단 띠·재생 띠)의 캔버스 기준 자리(coverRects).
+   * 뷰 큐브는 25차부터 코어가 알려 주는 자리(0.23.0 viewCubeRect — 이미 캔버스 기준, 감췄으면 null)를 쓴다. 앱은 CSS로 큐브를 옮기지 않는다
+   */
   private covers(v: LockViewer): MeasureLabelRect[] {
     const els: Element[] = [];
-    const cube = v.viewCubeVisible ? v.canvas.parentElement?.querySelector(CUBE_SELECTOR) : null;
-    if (cube) els.push(cube);
     for (const e of this.host.overlays?.() ?? []) if (!(e as HTMLElement).hidden) els.push(e);
-    if (!els.length) return [];
-    return coverRects(v.canvas.getBoundingClientRect(), els.map((e) => e.getBoundingClientRect()));
+    const cube = v.viewCubeRect;
+    if (!cube && !els.length) return [];
+    const c = v.canvas.getBoundingClientRect();
+    const out = cube ? coverRects({ left: 0, top: 0, width: c.width, height: c.height }, [{ left: cube.x, top: cube.y, width: cube.width, height: cube.height }]) : [];
+    return els.length ? [...out, ...coverRects(c, els.map((e) => e.getBoundingClientRect()))] : out;
   }
 
   /** 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리·떠 있는 것, 조준 중이면 커서 둘레)를 코어에 준다 — 바뀌었을 때만, 모두 없으면 null */

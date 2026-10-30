@@ -184,6 +184,176 @@ describe('기운 잠근 선이 원기둥 벽을 뚫는 점(22차 — 코어 0.20
   });
 });
 
+describe('25차: 커서 광선이 원기둥 벽을 맞은 점(코어 0.21.0 onFace — 붙잡지 않은 면 위 점, line = 커서 광선)', () => {
+  /** 코어 0.21.0처럼: 눈 eye에서 to를 향한 커서 광선이 그물을 맞은 삼각형 위 점(to에 가까운 것) — line·ray 모두 커서 광선, 축 이름 없음 */
+  const rayFace = (m: Mesh3d, eye: V3, to: V3): SnapRefineFaceInput => {
+    const inp = coreFace(m, eye, sub(to, eye), to);
+    const ray = { origin: inp.line.origin, dir: inp.line.dir };
+    return { ...inp, kind: 'onFace', line: ray, ray, first: null };
+  };
+  const D = Math.PI / 180;
+  /** 광선(눈 eye, 단위 방향 d) 위 점인지 */
+  const offRay = (q: readonly number[], eye: readonly number[], to: readonly number[]): number => {
+    const d = sub(to, eye);
+    const l = Math.hypot(...d);
+    return Math.hypot(...cross(sub(q, eye), [d[0] / l, d[1] / l, d[2] / l]));
+  };
+  const cases: { name: string; mesh: RegExp; eye: V3; want: V3 }[] = [
+    // 위에서 비스듬히 구멍 Ø20(중심 (300,200), Z 6~18)을 들여다보면 맞은편 벽: 광선이 원기둥을 나가는 근
+    { name: '구멍 Ø20 맞은편 벽(오목 — 광선이 나가는 근)', mesh: /Ø20/, eye: [260, 195, 60], want: [300 + 10 * Math.cos(12 * D), 200 + 10 * Math.sin(12 * D), 12] },
+    // 판 바깥에서 오른쪽 앞 R50 둥근 모서리(중심 (350,50), Z 0~18)를 보면 앞쪽 근
+    { name: '판 외곽선 R50(볼록 — 광선이 먼저 닿는 근)', mesh: /^판/, eye: [500, -100, 40], want: [350 + 50 * Math.cos(-33 * D), 50 + 50 * Math.sin(-33 * D), 9] },
+    // 왼쪽면 수평 구멍 Ø8(기둥 방향 X, 중심 y 20 · z 9)을 옆에서 들여다본 벽
+    { name: '수평 구멍 Ø8 안쪽 벽', mesh: /수평 드릴/, eye: [-40, 20.5, 9.5], want: [15, 20 + 4 * Math.cos(70 * D), 9 + 4 * Math.sin(70 * D)] },
+    // 원형 포켓 Ø40(중심 (100,150), Z 8~18) 맞은편 벽
+    { name: '원형 포켓 맞은편 벽', mesh: /원형 포켓/, eye: [60, 150, 50], want: [100 + 20 * Math.cos(-8 * D), 150 + 20 * Math.sin(-8 * D), 12] },
+  ];
+  for (const c of cases)
+    it(c.name, () => {
+      const inp = rayFace(meshOf(c.mesh), c.eye, c.want);
+      // 맞은 점은 삼각형(현) 위라 원기둥에서 처짐만큼 벗어난다(벽을 비스듬히 보면 광선을 따라 처짐보다 길게 — 수평 구멍은 0.5 남짓)
+      expect(dist(inp.point, c.want)).toBeGreaterThan(1e-4);
+      expect(dist(inp.point, c.want)).toBeLessThan(1);
+      const q = refineFaceSnap(inp, t)!;
+      expect(q).toBeTruthy();
+      expect(dist(q, c.want)).toBeLessThan(1e-9);
+      expect(offRay(q, c.eye, c.want)).toBeLessThan(1e-9);
+    });
+
+  it('평면(판 윗면·곧은 옆면·구멍 바닥·포켓 바닥)과 모르는 그물은 null, 같은 자리의 축 다듬기(axisFace)는 그대로', () => {
+    expect(refineFaceSnap(rayFace(meshOf(/^판/), [50, 40, 80], [52, 50, 18]), t)).toBeNull();
+    expect(refineFaceSnap(rayFace(meshOf(/^판/), [100, -80, 30], [110, 0, 9]), t)).toBeNull();
+    expect(refineFaceSnap(rayFace(meshOf(/Ø20/), [298, 199, 40], [302, 201, 6]), t)).toBeNull();
+    expect(refineFaceSnap(rayFace(meshOf(/^포켓/), [195, 55, 40], [200, 60, 13]), t)).toBeNull();
+    const wall = rayFace(meshOf(/Ø20/), [260, 195, 60], [300 + 10 * Math.cos(12 * D), 200 + 10 * Math.sin(12 * D), 12]);
+    expect(refineFaceSnap({ ...wall, face: { ...wall.face, id: 'nc-stock' } }, t)).toBeNull();
+    // 같은 입력을 축 다듬기로 넘기면 코어 점에 가까운 근 — 맞은편 벽 하나뿐이라 같은 점
+    expect(refineFaceSnap({ ...wall, kind: 'axisFace' }, t)).toEqual(refineFaceSnap(wall, t));
+  });
+});
+
+describe('25차: 축이 벽 삼각형을 비켜 가며 원기둥만 뚫는 자리(코어 0.22.0 면의 열린 교차 — axisFace open)', () => {
+  // 판 위쪽 변에 볼록 호(중심 (200,260), R50, 37°→121° — 17토막, 꼭대기 90°가 86.412°~91.353° 토막 안이라 X축이 꼭대기를 그 현 바깥으로 스칠 수 있다)
+  const D = Math.PI / 180;
+  const at = (deg: number): number[] => [200 + 50 * Math.cos(deg * D), 260 + 50 * Math.sin(deg * D)].map((x) => +x.toFixed(6));
+  const [A0, A1] = [at(37), at(121)];
+  const BUMP = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <outlines>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+   <outline x="400" y="0" bulge="0" banding="0"/>
+   <outline x="400" y="300" bulge="0" banding="0"/>
+   <outline x="${A0[0]}" y="${A0[1]}" bulge="${Math.tan(21 * D)}" banding="0"/>
+   <outline x="${A1[0]}" y="${A1[1]}" bulge="0" banding="0"/>
+   <outline x="0" y="300" bulge="0" banding="0"/>
+   <outline x="0" y="0" bulge="0" banding="0"/>
+  </outlines>
+ </panel>
+</pgi>`;
+  const rb = parseForView('b.pgi', enc(BUMP));
+  const tb = rb.mpr!.snap!;
+  const board = rb.scene.meshes.find((m) => m.id === 'mpr-board')!;
+  /** 법선 방향 각(도)이 deg인 옆면 삼각형들(꼭짓점·무게중심·법선 — float32 꼭짓점 외적, 바깥쪽) */
+  const trisAt = (deg: number) => {
+    const P = board.positions;
+    const I = board.indices!;
+    const out: { i: number; c: V3; n: V3; v: V3[] }[] = [];
+    for (let k = 0; k + 2 < I.length; k += 3) {
+      const v = [I[k]!, I[k + 1]!, I[k + 2]!].map((j) => [P[j * 3]!, P[j * 3 + 1]!, P[j * 3 + 2]!] as V3);
+      const nn = cross(sub(v[1]!, v[0]!), sub(v[2]!, v[0]!));
+      const l = Math.hypot(...nn);
+      if (!(l > 0) || Math.abs(nn[2] / l) > 1e-6) continue;
+      const n: V3 = [nn[0] / l, nn[1] / l, 0];
+      const a = Math.atan2(n[1], n[0]) / D;
+      const out_ = Math.abs(a - deg) < 0.01 ? n : Math.abs(Math.abs(a - deg) - 180) < 0.01 ? (n.map((x) => -x) as V3) : null;
+      if (out_) out.push({ i: k / 3, c: [(v[0]![0] + v[1]![0] + v[2]![0]) / 3, (v[0]![1] + v[1]![1] + v[2]![1]) / 3, (v[0]![2] + v[1]![2] + v[2]![2]) / 3], n: out_, v });
+    }
+    return out;
+  };
+  /** 첫 점 o의 X축과 삼각형 tri의 열린 후보(코어 0.22.0처럼 — point = 선 위에서 무게중심에 가장 가까운 점), 커서 광선은 눈 eye에서 aim으로 */
+  const openX = (o: V3, tri: { i: number; c: V3; n: V3 }, eye: V3, aim: V3): SnapRefineFaceInput => {
+    const hint: V3 = [tri.c[0], o[1], o[2]];
+    const dir = sub(aim, eye);
+    const l = Math.hypot(...dir);
+    return { kind: 'axisFace', open: true, point: hint, face: { id: board.id, index: tri.i, normal: tri.n }, line: { origin: o, dir: [1, 0, 0], axis: 'x' }, first: o, ray: { origin: eye, dir: [dir[0] / l, dir[1] / l, dir[2] / l] } };
+  };
+  // 꼭대기 토막(86.412°~91.353°)의 가운데 각
+  const MID = (86.412 + 91.353) / 2;
+  const YL = 309.995;
+  // 해석기가 읽은 벽(반올림한 시작·끝점에서 구한 중심·반지름)과 X축(y = YL)의 두 교차
+  const W = panelWalls(tb, 'mpr-board')[0]!;
+  const S = Math.sqrt(W.r * W.r - (YL - W.cv) ** 2);
+  const Q1: V3 = [W.cu - S, YL, 3];
+  const Q2: V3 = [W.cu + S, YL, 3];
+  const EYE = (q: V3): V3 => [q[0] + 0.3, 400, q[2] + 0.2];
+
+  it('전제: 꼭대기 토막 삼각형 둘, X축(y = 309.995)은 그 현과 만나지 않고 두 근 모두 그 토막 각 안이다. 한 삼각형의 무게중심 쪽 힌트는 원기둥 밖이다', () => {
+    expect(panelWalls(tb, 'mpr-board')).toHaveLength(1);
+    expect(Math.abs(W.r - 50)).toBeLessThan(1e-4);
+    const tris = trisAt(MID);
+    expect(tris).toHaveLength(2);
+    for (const q of [Q1, Q2]) {
+      const a = Math.atan2(q[1] - 260, q[0] - 200) / D;
+      expect(a).toBeGreaterThan(86.412);
+      expect(a).toBeLessThan(91.353);
+    }
+    // 현(두 꼭짓점의 y)은 모두 선보다 아래 — 선은 현 바깥(활꼴)만 지난다
+    for (const tri of tris) for (const v of tri.v) expect(v[1]).toBeLessThan(YL);
+    const rho = tris.map((tri) => Math.hypot(tri.c[0] - 200, YL - 260));
+    expect(Math.min(...rho)).toBeLessThan(50);
+    expect(Math.max(...rho)).toBeGreaterThan(50);
+  });
+
+  it('두 삼각형 어느 힌트로 불려도 그 힌트에 가까운 근(원기둥 위, 축 위 — 남은 좌표는 첫 점 그대로), 커서 광선과 상관없다(코어가 광선 없는 열쇠로 기억한다)', () => {
+    const o: V3 = [100, YL, 3];
+    for (const tri of trisAt(MID)) {
+      const r = refineFaceSnap(openX(o, tri, EYE(Q2), Q2), tb)!;
+      expect(r, `${tri.i}`).toBeTruthy();
+      // 두 힌트(x ≈ 200.26·201.69) 모두 Q2(x ≈ 200.71) 쪽
+      expect(dist(r, Q2)).toBeLessThan(1e-9);
+      expect(r[1]).toBe(YL);
+      expect(r[2]).toBe(3);
+      expect(Math.abs(Math.hypot(r[0] - W.cu, r[1] - W.cv) - W.r)).toBeLessThan(1e-9);
+      expect(refineFaceSnap(openX(o, tri, EYE(Q1), Q1), tb)).toEqual(r);
+    }
+  });
+
+  it('22차까지의 길(open 없이 — 코어 점에서 바깥쪽 근)이면 원기둥 밖 힌트는 null, 원기둥 안 힌트는 같은 근', () => {
+    const o: V3 = [100, YL, 3];
+    const [inside, outside] = [...trisAt(MID)].sort((a, b) => Math.hypot(a.c[0] - W.cu, YL - W.cv) - Math.hypot(b.c[0] - W.cu, YL - W.cv));
+    const old = (tri: typeof inside) => refineFaceSnap({ ...openX(o, tri!, EYE(Q2), Q2), open: undefined }, tb);
+    expect(old(outside!)).toBeNull();
+    expect(dist(old(inside!)!, Q2)).toBeLessThan(1e-9);
+  });
+
+  it('null: 선이 원기둥을 비켜 감(y = 310.01), 근이 그 토막 각 밖(이웃 토막 삼각형), 평면(윗면·곧은 옆면), 모르는 그물', () => {
+    const tri = trisAt(MID)[0]!;
+    expect(refineFaceSnap(openX([100, 310.01, 3], tri, EYE(Q1), Q1), tb)).toBeNull();
+    for (const nb of [...trisAt((81.471 + 86.412) / 2), ...trisAt((91.353 + 96.294) / 2)]) {
+      expect(refineFaceSnap(openX([100, YL, 3], nb, EYE(Q1), Q1), tb)).toBeNull();
+      expect(refineFaceSnap(openX([100, YL, 3], nb, EYE(Q2), Q2), tb)).toBeNull();
+    }
+    const flat = openX([100, YL, 3], tri, EYE(Q1), Q1);
+    expect(refineFaceSnap({ ...flat, face: { ...flat.face, normal: [0, 0, 1] } }, tb)).toBeNull();
+    expect(refineFaceSnap({ ...flat, face: { ...flat.face, normal: [1, 0, 0] } }, tb)).toBeNull();
+    expect(refineFaceSnap({ ...flat, face: { ...flat.face, id: 'nc-stock' } }, tb)).toBeNull();
+    // 기둥과 나란한 Z축은 뚫지 않는다
+    expect(refineFaceSnap({ ...flat, line: { origin: [200, YL, 0], dir: [0, 0, 1], axis: 'z' } }, tb)).toBeNull();
+  });
+
+  it('판 외곽선 R50(−90°~0°, 꼭짓점이 축 방향 접점)의 열린 후보: 근이 그 토막 각 안일 때만 원기둥 위', () => {
+    // 첫 점 (0,20,9) X축은 R50을 −36.87°에서 뚫는다(−40°~−35° 토막). 그 토막 삼각형으로 열린 후보를 만들면 그 근, 이웃 토막이면 null
+    const m = meshOf(/^판/);
+    const wall = coreFace(m, [0, 20, 9], 'x', [390, 20, 9]);
+    const inp: SnapRefineFaceInput = { ...wall, open: true, point: [wall.point[0] + 0.1, 20, 9], ray: { origin: [390.2, -300, 9.1], dir: [0, 1, 0] } };
+    const q = refineFaceSnap(inp, t)!;
+    expect(dist(q, [390, 20, 9])).toBeLessThan(1e-9);
+    const nb = Math.atan2(wall.face.normal[1], wall.face.normal[0]) + 5 * D;
+    expect(refineFaceSnap({ ...inp, face: { ...inp.face, normal: [Math.cos(nb), Math.sin(nb), 0] } }, t)).toBeNull();
+  });
+});
+
 describe('다듬지 않는 것(null — 코어 점 그대로)', () => {
   it('평면: 판 윗면, 곧은 옆면, 구멍 바닥, 포켓 바닥', () => {
     expect(refineFaceSnap(coreFace(meshOf(/^판/), [50, 50, 30], 'z', [50, 50, 18]), t)).toBeNull();
