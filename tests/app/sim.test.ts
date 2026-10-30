@@ -3,7 +3,7 @@
  * 깎기 시뮬레이션 화면(app.ts·sim.ts): 켜고 끄기, 문서 장면 + 소재 그물, 재생 막대 따라가기, 깎기 탭(소재·공구 표·급속 경고),
  * 시뮬레이션하지 않는 프로그램 알림. 뷰어 코어(WebGL)는 가짜, 워커는 같은 실행기(SimRunner)를 같은 스레드에서 돌리는 가짜.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
   class FakeViewer {
@@ -39,6 +39,17 @@ const fake = vi.hoisted(() => {
     }
     /** 코어 0.24.0 setItemPickOpaque로 켠 그물(지금 장면에서) */
     pickOpaque = new Set<string>();
+    /** 누르기 알림(단 차례대로 — 코어처럼 한 누르기의 알림들은 같은 사건 객체를 받는다) */
+    picks: { cb: (p: unknown, e: object) => void; through: boolean }[] = [];
+    onPick(cb: (p: unknown, e: object) => void, o?: { throughTranslucent?: boolean }): () => void {
+      this.picks.push({ cb, through: !!o?.throughTranslucent });
+      return () => {};
+    }
+    /** 누르기 한 번: 판 너머 알림에는 through, 나머지에는 front */
+    click(front: unknown, through: unknown): void {
+      const e = { clicks: 1, button: 0, pointerType: 'mouse' };
+      for (const k of this.picks) k.cb(k.through ? through : front, e);
+    }
     setItemPickOpaque(id: string, on: boolean): void {
       if (on) this.pickOpaque.add(id);
       else this.pickOpaque.delete(id);
@@ -471,6 +482,40 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
     expect([...FakeViewer().pickOpaque]).toEqual([]);
+  });
+
+  it('보기에서 누르기: 판이 있는 문서 장면은 판 너머 고르기(구멍을 누르면 그 가공), 소재 장면은 예전처럼 가장 앞 면(겹친 포켓 그물을 누르면 그 가공)', async () => {
+    // jsdom에는 없다(가공 탭에서 고른 줄을 보이게 할 때 부른다)
+    const proto = Element.prototype as { scrollIntoView?: unknown };
+    const had = proto.scrollIntoView;
+    proto.scrollIntoView = () => {};
+    onTestFinished(() => {
+      proto.scrollIntoView = had;
+    });
+    const { app } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    const v = FakeViewer();
+    // 앱은 판 너머 알림을 먼저, 가장 앞 면 알림을 다음에 단다
+    expect(v.picks.map((k) => k.through)).toEqual([true, false]);
+    const mesh = (id: string) => ({ kind: 'mesh', id, index: 0, point: [0, 0, 0] });
+    v.click(mesh('mpr-board'), mesh('mpr-op-0'));
+    expect(app.doc!.selKey).toBe('0');
+    expect(app.doc!.highlight).toEqual(['mpr-op-0']);
+    // 뒤에 아무것도 없으면 두 고르기가 같다(판)
+    v.click(mesh('mpr-board'), mesh('mpr-board'));
+    expect(app.doc!.selKey).toBeNull();
+    expect(app.doc!.highlight).toEqual(['mpr-board']);
+    await api.setSim(true);
+    await until(settled);
+    v.click(mesh('mpr-op-1'), mesh('sim-tile-0-0'));
+    expect(app.doc!.selKey).toBe('1');
+    await api.setSim(false);
+    await until(() => simMeshes().length === 0);
+    v.click(mesh('mpr-board'), mesh('mpr-op-1'));
+    expect(app.doc!.selKey).toBe('1');
+    v.click(mesh('mpr-board'), mesh('mpr-op-0'));
+    expect(app.doc!.selKey).toBe('0');
   });
 });
 
