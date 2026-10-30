@@ -518,6 +518,7 @@
   "보정 경로": "Kalibrierungspfad",
   "보정 경로 보기": "Korrekturpfad anzeigen",
   "보정 경로(공구 중심)": "Korrekturweg (Werkzeugmitte)",
+  "그래픽을 다시 준비하는 중…": "Grafik wird neu vorbereitet …",
   "보정 경로: {0}": "Korrekturpfad: {0}",
   "보정 구간({0}번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음": "Kompensationsabschnitt (Linie {0}): Der Kompensationspfad wird nicht gezeichnet, da der Werkzeugradius nicht bekannt ist.",
   "보정 구간({0}번 줄)에 간섭 의심 {1}곳": "{1} vermutete Störung im Kalibrierabschnitt (Zeile {0})",

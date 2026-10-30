@@ -1305,6 +1305,14 @@ export class NcViewerApp implements PanelHost {
     v.onSectionChange((st) => this.renderSection(st));
     v.onCameraChange(() => this.placeSecHandle());
     this.renderSection(null);
+    // 그래픽 문맥을 잃으면(휴대폰이 앱을 뒤로 보냈다 돌아올 때 등) 되찾을 때까지 3D 보기 가운데에 안내(코어 0.25.0 알림 — 놓기는 쓰지 않아
+    // 코어가 장면을 그대로 다시 올린다). 가운데라 위·아래 띠, 왼쪽 위 계산 표시, 오른쪽 위 뷰 큐브와 겹치지 않는다
+    let lost: HTMLElement | null = null;
+    v.onContextLost(() => this.viewEl.append((lost ??= h('div', { class: 'gl-lost', role: 'status' }, '그래픽을 다시 준비하는 중…'))));
+    v.onContextRestore(() => {
+      lost?.remove();
+      lost = null;
+    });
     // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계)
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();

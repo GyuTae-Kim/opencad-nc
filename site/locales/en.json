@@ -518,6 +518,7 @@
   "보정 경로": "Calibration Path",
   "보정 경로 보기": "View correction path",
   "보정 경로(공구 중심)": "Compensation path (tool center)",
+  "그래픽을 다시 준비하는 중…": "Preparing the graphics again…",
   "보정 경로: {0}": "Correction path: {0}",
   "보정 구간({0}번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음": "Compensation section (line {0}): The compensation path is not drawn because the tool radius is not known.",
   "보정 구간({0}번 줄)에 간섭 의심 {1}곳": "{1} suspected interference in the calibration section (line {0})",
