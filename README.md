@@ -460,6 +460,9 @@ const t = parseGcode(text, { lathe: true, toolTable: { 1: { radius: 0.4, orienta
 t.compRuns; // [{ …, radius: 0.4, tool: 1, orientation: 3, orientationSource: '공구 표 T1' }]
 ```
 
+판재 장면(`mprToScene`)의 `meta.lids`는 포켓·홈 그물 id마다 뚜껑(들어가는 판 면 자리의 끝면) 삼각형 구간 `{ start, count }`입니다.
+3D 뷰어 코어 `setItemPickThrough(id, [lid])`에 넘기면 반투명 판 너머 고르기가 뚜껑을 지나 포켓 바닥·벽에서 멈춥니다(뷰어 앱이 그렇게 씁니다).
+
 ## 구조
 
 | 경로 | 내용 |
