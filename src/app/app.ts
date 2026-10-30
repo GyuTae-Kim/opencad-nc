@@ -458,9 +458,13 @@ export class NcViewerApp implements PanelHost {
     this.playStrip = this.buildPlayStrip();
     this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar, this.playStrip.el);
     // 알림은 3D 보기 아래쪽 띠(해석 판단·재생·측정) 위로 올린다 — 띠가 나타나거나 크기가 바뀌면 다시 잰다
+    // 측정 중이면 코어 거리 글상자가 비킬 띠·뷰 큐브 자리도 다시 넘긴다(3D 보기 크기가 바뀌면 오른쪽 위 뷰 큐브가 옮는다 — measure-lock.ts coverRects)
     if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(() => this.liftToasts());
-      for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) ro.observe(el);
+      const ro = new ResizeObserver(() => {
+        this.liftToasts();
+        this.mlock?.schedule();
+      });
+      for (const el of [this.noticeBar, this.playStrip.el, this.measureBar, this.viewEl]) ro.observe(el);
     }
     this.workspace.append(this.viewEl, this.startEl);
     this.panel = new NcPanel(this, this.workspace);
@@ -505,6 +509,7 @@ export class NcViewerApp implements PanelHost {
         // 넓은 화면 ↔ 휴대폰: 막대 단추가 바뀌므로 펼친 메뉴를 닫는다
         this.closeMenu();
         this.viewer?.setViewCubeSize(this.cubeSizeFor());
+        this.mlock?.schedule();
       });
       // 마우스를 잇거나 뗀 태블릿: 파일 고르기와 안내 글을 다시 맞춘다
       this.coarse?.addEventListener('change', () => {
@@ -1317,6 +1322,8 @@ export class NcViewerApp implements PanelHost {
       changed: () => this.renderStatus(),
       arcTangent: (a, p) => (this.doc ? tangents.ofDoc(this.doc, a, p) : null),
       tangentBy: () => tangents.by,
+      // 3D 보기 위에 떠서 코어 거리 글상자를 가리는 띠(휴대폰 측정 띠·해석 판단 띠·재생 띠 — 뷰 큐브는 잠금 손잡이가 찾는다)
+      overlays: () => [this.measureBar, this.noticeBar, this.playStrip.el],
     });
     this.mlock = lock;
     this.measureActs.prepend(lock.button);
@@ -1545,6 +1552,7 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     v.setViewCubeVisible(on ?? !v.viewCubeVisible);
     this.renderToolbar();
+    this.mlock?.schedule();
   }
 
   toggleAxes(on?: boolean): void {

@@ -10,6 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
+import { placeMeasureLabel } from 'opencad-viewer3d/measurelabel';
 import { ARROW_LOCK_HINT, LOCK_HINTS, MEASURE_INFERENCE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
 import { installCanvasFakes } from './fake-webgl';
@@ -24,12 +25,17 @@ afterAll(() => restore());
 const path = new Float32Array([0, 0, 0, 40, 0, 0, 40, 0, 0, 40, 30, 0, 40, 30, 0, 10, 30, 0, 10, 30, 0, 0, 0, 0, 60, 10, 0, 80, 40, 0]);
 const scene: Scene3d = { name: 'lock', units: 'mm', meshes: [], lines: [{ id: 'path', positions: path }], points: [] };
 
-function setup(touch = false) {
+/** 코어 뷰 큐브 캔버스 자리(오른쪽 위 8화소, 기본 112 — jsdom 가짜는 모든 요소를 캔버스 크기로 재므로 큐브만 제자리로 둔다) */
+const CUBE: MeasureLabelRect = { x: 800 - 8 - 112, y: 8, width: 112, height: 112 };
+const box = (r: MeasureLabelRect) => () => ({ left: r.x, top: r.y, width: r.width, height: r.height, right: r.x + r.width, bottom: r.y + r.height, x: r.x, y: r.y, toJSON() {} }) as DOMRect;
+
+function setup(touch = false, overlays: readonly Element[] = []) {
   document.body.innerHTML = '';
   const host = document.createElement('div');
   const bar = document.createElement('div');
   document.body.append(host, bar);
   const v = new Viewer3d(host, { animate: false });
+  host.querySelector<HTMLCanvasElement>('canvas.v3d-cube')!.getBoundingClientRect = box(CUBE);
   v.setScene(scene);
   v.setView('top', false);
   v.fit(false);
@@ -38,9 +44,9 @@ function setup(touch = false) {
   v.setMeasureSnap({ midpoints: true, inference: MEASURE_INFERENCE });
   v.renderNow();
   const changed = vi.fn();
-  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed });
+  const lock = new MeasureLock({ viewer: () => v, touch: () => touch, layer: host, changed, overlays: () => overlays });
   bar.append(lock.button, lock.flash);
-  const at = (p: readonly number[]): { x: number; y: number } => {
+  const at =(p: readonly number[]): { x: number; y: number } => {
     const s = v.project(p)!;
     expect(s.onScreen).toBe(true);
     return { x: s.x, y: s.y };
@@ -211,7 +217,8 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     w.hoverXY(a.x, a.y - 90);
     const p = w.at(v.measureHoverSnap!.point);
     const first = { x: Math.round(p.x + 12), y: Math.round(p.y + 12), width: 80, height: 20 };
-    expect(v.measureLabelAvoid).toEqual({ rects: [first] });
+    // 23차: 측정 중이면 뷰 큐브 자리도(툴팁 다음)
+    expect(v.measureLabelAvoid).toEqual({ rects: [first, CUBE] });
     // 이 그리기는 넘기기 전 자리(툴팁 첫 자리에 걸림) — 툴팁이 비켰다
     expect(overlaps(first, v.measureLabelRect!)).toBe(true);
     v.renderNow();
@@ -255,5 +262,96 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     for (const r of avoid.rects!) expect(overlaps(label, r)).toBe(false);
     lock.setAim(null);
     expect(v.measureLabelAvoid?.pointerRadius).toBeUndefined();
+  });
+});
+
+describe('23차: 거리 글상자가 뷰 큐브·측정 띠를 비킨다(코어 0.13.0 setMeasureLabelAvoid)', () => {
+  /** 카메라 대상만 옮겨 세계 점 m이 캔버스 (dx, dy)에 오게(위에서 본 보기 — 화면 이동의 야코비안으로 두 번) */
+  const place = (v: Viewer3d, m: readonly number[], dx: number, dy: number): void => {
+    for (let k = 0; k < 3; k++) {
+      const s = v.project(m)!;
+      const sx = v.project([m[0]! + 1, m[1]!, m[2]!])!;
+      const sy = v.project([m[0]!, m[1]! + 1, m[2]!])!;
+      const a = sx.x - s.x, b = sy.x - s.x, c = sx.y - s.y, d = sy.y - s.y;
+      const det = a * d - b * c;
+      const ex = dx - s.x, ey = dy - s.y;
+      const cam = v.getCamera();
+      v.setCamera({ ...cam, target: [cam.target[0] - (d * ex - b * ey) / det, cam.target[1] - (-c * ex + a * ey) / det, cam.target[2]] });
+    }
+  };
+  /** 대각 선분 (60,10) → (80,40)을 잰 결과(가운데 (70,25))를 화면 (dx, dy)에 두고 앱이 맞춘 뒤 그린 글상자 */
+  const measureAt = (w: ReturnType<typeof setup>, dx: number, dy: number): MeasureLabelRect => {
+    const { v, lock } = w;
+    place(v, [70, 25, 0], dx, dy);
+    v.renderNow();
+    lock.update();
+    v.renderNow();
+    return v.measureLabelRect!;
+  };
+  /** 비킬 것이 없을 때의 자리(0.12.0 기본 자리 — 두 점 화면 가운데 오른쪽 10·위 8, 캔버스 안으로 당김), 크기는 그린 글상자 r */
+  const plain = (v: Viewer3d, r: MeasureLabelRect): MeasureLabelRect => {
+    const a = v.project([60, 10, 0])!;
+    const b = v.project([80, 40, 0])!;
+    return placeMeasureLabel([(a.x + b.x) / 2, (a.y + b.y) / 2], r, { width: 800, height: 600 }, null);
+  };
+
+  it('두 점 가운데가 뷰 큐브 왼쪽 아래면 기본 자리가 큐브에 걸리고, 앱이 큐브 자리를 넘겨 코어가 비켜 그린다 — 큐브를 숨기면 기본 자리', () => {
+    const w = setup(true);
+    const { v, lock } = w;
+    w.click([60, 10, 0], 'touch');
+    w.click([80, 40, 0], 'touch');
+    expect(v.measurement()?.distance).toBeCloseTo(Math.hypot(20, 30), 4);
+    const label = measureAt(w, CUBE.x - 30, CUBE.y + CUBE.height + 10);
+    const def = plain(v, label);
+    expect(overlaps(def, CUBE)).toBe(true);
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE] });
+    expect(overlaps(label, CUBE)).toBe(false);
+    expect([label.width, label.height]).toEqual([def.width, def.height]);
+    // 큐브를 숨기면(보기 메뉴) 넘기지 않아 기본 자리(0.12.0과 같다)
+    v.setViewCubeVisible(false);
+    lock.update();
+    v.renderNow();
+    expect(v.measureLabelAvoid).toBeNull();
+    for (const k of ['x', 'y', 'width', 'height'] as const) expect(v.measureLabelRect![k]).toBeCloseTo(def[k], 6);
+    v.setViewCubeVisible(true);
+    // 측정을 끄면 거둔다
+    v.setMeasureMode(false);
+    lock.reset();
+    lock.update();
+    expect(v.measureLabelAvoid).toBeNull();
+  });
+
+  it('측정 띠(앱이 3D 보기 아래에 띄운 것) 바로 위면 띠를 비키고, 띠를 숨기면 넘기지 않는다', () => {
+    const bar = document.createElement('div');
+    const BAR: MeasureLabelRect = { x: 263, y: 530, width: 274, height: 60 };
+    bar.getBoundingClientRect = box(BAR);
+    const w = setup(true, [bar]);
+    const { v, lock } = w;
+    w.click([60, 10, 0], 'touch');
+    w.click([80, 40, 0], 'touch');
+    const label = measureAt(w, 400, BAR.y + 15);
+    expect(overlaps(plain(v, label), BAR)).toBe(true);
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE, BAR] });
+    expect(overlaps(label, BAR)).toBe(false);
+    expect(overlaps(label, CUBE)).toBe(false);
+    bar.hidden = true;
+    lock.update();
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE] });
+  });
+
+  it('큐브·띠와 겹치지 않는 측정은 글상자 자리가 기본 자리 그대로다(넘겨도 옮기지 않는다)', () => {
+    const bar = document.createElement('div');
+    bar.getBoundingClientRect = box({ x: 263, y: 530, width: 274, height: 60 });
+    const w = setup(true, [bar]);
+    const { v } = w;
+    w.click([60, 10, 0], 'touch');
+    w.click([80, 40, 0], 'touch');
+    for (const [x, y] of [[300, 300], [100, 80], [600, 420]] as const) {
+      const label = measureAt(w, x, y);
+      expect(v.measureLabelAvoid?.rects).toHaveLength(2);
+      // 코어는 두 점을 제 투영으로 옮기므로 마지막 자리 반올림만 다를 수 있다
+      const def = plain(v, label);
+      for (const k of ['x', 'y', 'width', 'height'] as const) expect(label[k]).toBeCloseTo(def[k], 6);
+    }
   });
 });
