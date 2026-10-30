@@ -31,6 +31,8 @@
  *   23차: 측정 중에는 3D 보기 위에 떠서 캔버스 덧그림을 가리는 것(코어 뷰 큐브, 측정 띠·해석 판단 띠·재생 띠 — host.overlays)의 자리도 넘긴다(coverRects).
  *   휴대폰은 거리 글상자가 화면 폭의 절반을 넘어 두 점이 오른쪽 위면 뷰 큐브 밑에, 아래면 측정 띠 밑에 그려졌다. 코어는 기본 자리가 넘긴 자리와
  *   겹칠 때만 옮기므로 겹치지 않는 측정의 글상자 자리는 그대로다. 측정을 끄거나 툴팁을 숨기고 조준도 하지 않으며 떠 있는 것도 없으면 null.
+ * - 24차: 측정 띠의 끌어온 점 단추(measure-track.ts)는 이 모듈의 띠 위 알림(showFlash)을 함께 쓰고, 끌어온 점 수가 바뀌면(머무르기로 기억함)
+ *   host.changed로 알린다.
  */
 import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
@@ -52,6 +54,7 @@ export type LockViewer = Pick<
   | 'measureHoverLock'
   | 'measureInferenceLock'
   | 'measureLabelRect'
+  | 'measureTrackPoints'
   | 'setMeasureInferenceLock'
   | 'setMeasureLabelAvoid'
   | 'project'
@@ -64,7 +67,10 @@ export interface MeasureLockHost {
   touch(): boolean;
   /** 툴팁을 붙일 층(3D 보기) */
   layer: HTMLElement;
-  /** 잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었다(상태 줄·측정 띠 다시 그리기) */
+  /**
+   * 잠금·찍은 점 수·Shift로 잠글 방향·끌어온 점 수가 바뀌었다(상태 줄·측정 띠 다시 그리기 — 끌어온 점은 코어 머무르기가 타이머로 기억하므로
+   * 그 뒤 포인터 이동에서 알아챈다. 정밀 조준 십자선을 멈춰 기억한 점도 측정 띠의 끌어온 점 단추 수에 들어가게)
+   */
   changed(): void;
   /**
    * 첫 측정 점(코어 measurePoints[0] — 0.16.0부터 그 점이 놓인 선분 식별자 segment·other)이 원호(G2/G3 이동·판재 윤곽 호)의
@@ -311,7 +317,7 @@ export class MeasureLock {
     this.button.setAttribute('aria-pressed', String(!!lock));
     this.button.classList.toggle('on', !!lock);
     this.button.title = lock ? '방향 잠금 풀기' : '지금 방향 잠그기(다시 누르면 풀기)';
-    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}|${this.hoverLock ?? ''}`;
+    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}|${this.hoverLock ?? ''}|${on ? v!.measureTrackPoints.length : 0}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.host.changed();

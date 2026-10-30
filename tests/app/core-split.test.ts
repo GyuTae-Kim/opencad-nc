@@ -17,7 +17,7 @@ const CORE = join(ROOT, 'node_modules/opencad-viewer3d/src');
 /** 첫 화면에서 바로 가져와도 되는 코어 모듈(작고 다른 코어 모듈을 거의 끌어오지 않는다) */
 const SMALL = new Set(['camera', 'pointer', 'viewcube', 'types', 'math', 'bounds']);
 /** 문서를 열 때 측정 도구 조각으로 나눠 받는 앱 모듈(첫 화면 그래프에 없어야 한다) */
-const SPLIT_APP = ['src/app/measure-tools.ts', 'src/app/measure-lock.ts', 'src/app/snap.ts', 'src/app/aim.ts', 'src/app/tangent.ts'];
+const SPLIT_APP = ['src/app/measure-tools.ts', 'src/app/measure-lock.ts', 'src/app/measure-track.ts', 'src/app/snap.ts', 'src/app/aim.ts', 'src/app/tangent.ts'];
 
 /** 주석을 뺀 글(주석 속 예시를 가져오기로 세지 않게) */
 const stripComments = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
@@ -111,7 +111,7 @@ describe('코어 나눠 받기', () => {
     const dyn: string[] = [];
     for (const f of files) {
       if (f.startsWith(CORE)) continue;
-      for (const s of dynamicSpecs(readFileSync(f, 'utf8'))) if (/^\.\/(measure-tools|measure-lock|snap|aim|tangent)$/.test(s)) dyn.push(`${relative(ROOT, f)} ${s}`);
+      for (const s of dynamicSpecs(readFileSync(f, 'utf8'))) if (/^\.\/(measure-tools|measure-lock|measure-track|snap|aim|tangent)$/.test(s)) dyn.push(`${relative(ROOT, f)} ${s}`);
     }
     expect(dyn).toEqual(['src/app/core.ts ./measure-tools']);
   });
@@ -147,7 +147,7 @@ describe('측정 도구 나눠 받기', () => {
     const a = loadMeasureTools();
     expect(loadMeasureTools()).toBe(a);
     const m = await a;
-    for (const k of ['MeasureLock', 'TouchAim', 'ArcTangents', 'arcCenters', 'moveSnapPoints', 'panelCenters', 'panelSnapPoints'] as const) expect(typeof m[k], k).toBe('function');
+    for (const k of ['MeasureLock', 'TouchAim', 'TrackPick', 'ArcTangents', 'arcCenters', 'moveSnapPoints', 'panelCenters', 'panelSnapPoints'] as const) expect(typeof m[k], k).toBe('function');
     const measure = await import('../../src/app/measure');
     const snap = await import('../../src/app/snap');
     expect(snap.snapPair).toBe(measure.snapPair);
