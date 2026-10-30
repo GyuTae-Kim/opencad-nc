@@ -34,25 +34,32 @@ const fake = vi.hoisted(() => {
       this.scenes.push(s);
       this.current = s;
       this.keepView.push(!!o.keepView);
-      // 코어처럼 장면을 바꾸면 겉모습(고르기 불투명 포함)을 비운다
+      // 코어처럼 장면을 바꾸면 겉모습(고르기 불투명·지나갈 삼각형 포함)을 비운다
       this.pickOpaque = new Set();
+      this.pickThrough = new Map();
     }
     /** 코어 0.24.0 setItemPickOpaque로 켠 그물(지금 장면에서) */
     pickOpaque = new Set<string>();
-    /** 누르기 알림(단 차례대로 — 코어처럼 한 누르기의 알림들은 같은 사건 객체를 받는다) */
-    picks: { cb: (p: unknown, e: object) => void; through: boolean }[] = [];
-    onPick(cb: (p: unknown, e: object) => void, o?: { throughTranslucent?: boolean }): () => void {
-      this.picks.push({ cb, through: !!o?.throughTranslucent });
+    /** 코어 0.27.0 setItemPickThrough로 준 그물별 삼각형 구간(지금 장면에서) */
+    pickThrough = new Map<string, unknown>();
+    /** 누르기 알림(단 차례대로) */
+    picks: { cb: (p: unknown, e: object) => void; through: boolean; front: boolean }[] = [];
+    onPick(cb: (p: unknown, e: object) => void, o?: { throughTranslucent?: boolean; front?: boolean }): () => void {
+      this.picks.push({ cb, through: !!o?.throughTranslucent, front: !!o?.front });
       return () => {};
     }
-    /** 누르기 한 번: 판 너머 알림에는 through, 나머지에는 front */
+    /** 누르기 한 번: 판 너머 알림에는 through(코어 0.26.0 front를 준 알림이면 사건의 front에 가장 앞 고르기), 나머지에는 front */
     click(front: unknown, through: unknown): void {
       const e = { clicks: 1, button: 0, pointerType: 'mouse' };
-      for (const k of this.picks) k.cb(k.through ? through : front, e);
+      for (const k of this.picks) k.cb(k.through ? through : front, k.front ? { ...e, front } : e);
     }
     setItemPickOpaque(id: string, on: boolean): void {
       if (on) this.pickOpaque.add(id);
       else this.pickOpaque.delete(id);
+    }
+    setItemPickThrough(id: string, ranges: unknown): void {
+      if (ranges) this.pickThrough.set(id, ranges);
+      else this.pickThrough.delete(id);
     }
     setMesh(m: { id: string }): boolean {
       const s = this.current;
@@ -466,6 +473,9 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     expect(pocket).toEqual(['mpr-op-1']);
     expect(app.doc!.scene.meshes.find((m) => m.id === 'mpr-board')!.color[3]).toBeLessThan(1);
     expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    // 29차(코어 0.27.0): 포켓(MPR 사각 포켓 — 상자)의 뚜껑(윗면 높이 19의 +w 면 두 삼각형)만 판 너머 고르기에서 지나간다
+    const lid = [...FakeViewer().pickThrough];
+    expect(lid).toEqual([['mpr-op-1', [{ start: 2, count: 2 }]]]);
     const n = FakeViewer().scenes.length;
     await api.setSim(true);
     await until(settled);
@@ -473,15 +483,18 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     // 소재 장면: 판을 빼고 소재(불투명) 위에 가공 그물을 겹친다 — 측정은 예전처럼 겹친 그물을 지나 소재를 고른다
     expect(FakeViewer().scenes.at(-1)!.meshes.map((m) => m.id)).toContain('mpr-op-1');
     expect([...FakeViewer().pickOpaque]).toEqual([]);
+    expect([...FakeViewer().pickThrough]).toEqual([]);
     await api.setSim(false);
     await until(() => simMeshes().length === 0);
     // 문서 장면을 다시 올리면(setScene이 겉모습을 비운다) 다시 켠다
     expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
     expect([...FakeViewer().pickOpaque]).toEqual(pocket);
+    expect([...FakeViewer().pickThrough]).toEqual(lid);
     // G-code 문서(공작물 상자 — 반투명)는 켜지 않는다
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     expect(FakeViewer().scenes.at(-1)).toBe(app.doc!.scene);
     expect([...FakeViewer().pickOpaque]).toEqual([]);
+    expect([...FakeViewer().pickThrough]).toEqual([]);
   });
 
   it('보기에서 누르기: 판이 있는 문서 장면은 판 너머 고르기(구멍을 누르면 그 가공), 소재 장면은 예전처럼 가장 앞 면(겹친 포켓 그물을 누르면 그 가공)', async () => {
@@ -496,8 +509,8 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     await open(app, 'p.mpr', PANEL_MPR);
     const api = window.opencadApp!;
     const v = FakeViewer();
-    // 앱은 판 너머 알림을 먼저, 가장 앞 면 알림을 다음에 단다
-    expect(v.picks.map((k) => k.through)).toEqual([true, false]);
+    // 29차(코어 0.26.0): 앱은 판 너머 알림 하나에 가장 앞 고르기(e.front)를 함께 받는다
+    expect(v.picks.map((k) => [k.through, k.front])).toEqual([[true, true]]);
     const mesh = (id: string) => ({ kind: 'mesh', id, index: 0, point: [0, 0, 0] });
     v.click(mesh('mpr-board'), mesh('mpr-op-0'));
     expect(app.doc!.selKey).toBe('0');

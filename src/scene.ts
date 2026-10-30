@@ -12,7 +12,7 @@
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
 import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions, type NcCompPath } from './comp';
-import { MeshAccum, TOOL_COLORS, cylinderAxes, rampColor } from './mesh';
+import { MeshAccum, TOOL_COLORS, cylinderAxes, rampColor, type TriRange } from './mesh';
 import { pathPolyline, type MprEdgeOp, type MprHole, type MprPart, type MprWorkpiece, type PanelFace, type PrismArcs } from './mpr';
 
 export interface NcSceneOptions {
@@ -651,6 +651,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
   const centerIds: number[] = [];
   const others: number[] = [];
   const otherIds: number[] = [];
+  /** 포켓·홈 그물 id → 뚜껑(들어가는 판 면 자리의 끝면) 삼각형 구간 — meta.lids */
+  const lids: Record<string, TriRange> = {};
   part.operations.forEach((op, oi) => {
     if (!op.enabled && !opts.disabled) return;
     const group = op.enabled ? opGroup(op.kind) : '꺼진 가공';
@@ -700,6 +702,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
             if (!pr.arcs?.elements.length && !c?.elements.some((e) => e.arc?.sweep)) snap.straight(`mpr-op-${oi}`);
           }
           meshes.push({ id: `mpr-op-${oi}`, name: op.label, ...acc.arrays(), color: op.kind === 'groove' ? GROOVE_COLOR : POCKET_COLOR, group, doubleSided: true });
+          // 뚜껑 = 다각형 쪽(들어가는 면 위 — 해석기는 외곽선을 들어가는 면에 두고 dir로 판 안쪽으로 민다)
+          if (acc.caps) lids[`mpr-op-${oi}`] = acc.caps[0];
           for (let i = 0; i + 2 < pr.outline.length; i += 3)
             for (const k of [0, pr.depth])
               extendBox(box, pr.outline[i]! + pr.dir[0] * k, pr.outline[i + 1]! + pr.dir[1] * k, pr.outline[i + 2]! + pr.dir[2] * k);
@@ -717,6 +721,12 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
           group,
           doubleSided: true,
         });
+        // 뚜껑 = 들어가는 면 쪽 끝면: w가 판 안쪽(들어가는 방향)이면 원점 쪽 면(PGI·XML 톱 홈 — 원점이 면 위), 아니면 +w 면(MPR — 원점이 바닥)
+        if (acc.caps) {
+          const into = FACE_DIR[op.face ?? 'top'];
+          const w = op.box.w;
+          lids[`mpr-op-${oi}`] = acc.caps[w[0]! * into[0] + w[1]! * into[1] + w[2]! * into[2] > 0 ? 0 : 1];
+        }
         const o = op.box.origin;
         for (const [a, b, c] of [
           [0, 0, 0],
@@ -829,6 +839,8 @@ export function mprToScene(part: MprPart, opts: MprSceneOptions = {}): Scene3d {
       contourCount: part.contours.length,
       variables: part.variables.map((v) => ({ name: v.name, value: v.value, expr: v.expr, comment: v.comment })),
       stats: part.stats,
+      // 포켓·홈 그물의 뚜껑 삼각형 구간(그물 id별): 앱이 판 너머 고르기에서 뚜껑만 지나가게 한다(그림과는 상관없다)
+      ...(Object.keys(lids).length ? { lids } : {}),
     },
   };
   const bb = boxOf(box);

@@ -455,7 +455,8 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 그 뒤 불투명 그물(수직·수평 구멍 — 투명도 1)의 면을 고른다(코어 0.23.0 throughTranslucent — 판을 숨기지 않아도 판 너머 구멍 벽·바닥을 잰다).
  * 뒤에 불투명 그물이 없으면 예전처럼 가장 앞의 반투명 면(판)이다.
  * 27차(코어 0.24.0 setItemPickOpaque): 포켓·홈 그물은 반투명(0.75·0.85)으로 그리지만 앱이 장면마다 고르기에서 불투명으로 보게 해(app.ts applyDoc — doc.ts boardThrough)
- * 판 너머 포켓·홈 벽·윗면에서도 멈춘다. 판을 뺀 깎기 시뮬레이션 장면에서는 켜지 않아 예전처럼 겹친 그물을 지나 소재를 고른다
+ * 판 너머 포켓·홈 벽·윗면에서도 멈춘다. 판을 뺀 깎기 시뮬레이션 장면에서는 켜지 않아 예전처럼 겹친 그물을 지나 소재를 고른다.
+ * 29차(코어 0.27.0 setItemPickThrough): 포켓·홈의 뚜껑(윗면 — doc.ts boardLid)은 지나가고 벽·바닥과 바닥에 뚫은 구멍에서 멈춘다
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
   return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };

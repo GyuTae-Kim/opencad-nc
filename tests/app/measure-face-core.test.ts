@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureSnapOptions } from 'opencad-viewer3d';
-import { boardThrough } from '../../src/app/doc';
+import { boardLid, boardThrough } from '../../src/app/doc';
 import { parseForView } from '../../src/app/payload';
 import { snapPair, trackMarks } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
@@ -273,14 +273,22 @@ describe('반투명 판 너머 포켓 벽(27차 — 코어 0.24.0 setItemPickOpa
   const P = parseForView('k.pgi', enc(POCKET));
   const FIRST = [0, 100, 15];
   const view = (h: Viewer3d['measureHoverSnap']) => h && { snap: h.snap, point: h.point, axis: h.axis ?? null, refined: !!h.refined, face: h.face?.id ?? null, segment: h.segment?.id ?? null };
-  /** 앱(app.ts applyDoc)처럼 장면을 올린 뒤 판 너머 고르기에서 멈출 그물을 켠다. opaque = false면 26차(코어 0.23.0)처럼 켜지 않는다 */
+  /**
+   * 앱(app.ts applyDoc)처럼 장면을 올린 뒤 판 너머 고르기에서 멈출 그물을 켜고 뚜껑을 준다(29차 — 바깥에서 본 벽은 뚜껑을 지나지 않아 27차와 같다).
+   * opaque = false면 26차(코어 0.23.0)처럼 켜지 않는다
+   */
   function open(opaque = true) {
     document.body.innerHTML = '';
     const host = document.createElement('div');
     document.body.append(host);
     const v = new Viewer3d(host, { animate: false });
     v.setScene(P.scene);
-    if (opaque) for (const id of boardThrough(P.scene) ?? []) v.setItemPickOpaque(id, true);
+    if (opaque)
+      for (const id of boardThrough(P.scene) ?? []) {
+        v.setItemPickOpaque(id, true);
+        const lid = boardLid(P.scene, id);
+        if (lid) v.setItemPickThrough(id, [lid]);
+      }
     v.setView('seIso', false);
     v.fit(false);
     v.setMeasureMode(true);
@@ -332,7 +340,7 @@ describe('반투명 판 너머 포켓 벽(27차 — 코어 0.24.0 setItemPickOpa
     expect(boardThrough(P.scene)).toEqual(['mpr-op-0']);
     expect(P.scene.meshes.find((m) => m.id === 'mpr-op-0')!.color[3]).toBe(0.75);
     const w = open();
-    expect(w.v.itemLook('mpr-op-0')).toEqual({ pickable: true, pickOpaque: true });
+    expect(w.v.itemLook('mpr-op-0')).toEqual({ pickable: true, pickOpaque: true, pickThrough: [boardLid(P.scene, 'mpr-op-0')] });
     expect(w.v.itemLook('mpr-board')).toBeNull();
     // 장면을 다시 주면 코어가 비운다 — 앱은 장면마다 다시 켠다(app.ts applyDoc)
     w.v.setScene(P.scene);

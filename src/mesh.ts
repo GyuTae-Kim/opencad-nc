@@ -3,12 +3,27 @@
  * 정점·법선·번호는 형식 배열로 — 뷰어 계약(Mesh3d)에 바로 넣는다.
  */
 
+/** 그물 안 삼각형 구간(삼각형 번호 — 뷰어 Pick3d.raw·setHiddenRanges와 같은 번호) */
+export interface TriRange {
+  start: number;
+  count: number;
+}
+
 /** 그물 조각 모음(합쳐서 한 Mesh3d로) */
 export class MeshAccum {
   pos: number[] = [];
   nrm: number[] = [];
   idx: number[] = [];
   edges: number[] = [];
+  /**
+   * 마지막 box·prism의 두 끝면 삼각형 구간: box는 [원점 쪽(−w) 면, +w 면], prism은 [다각형 쪽 뚜껑, 민 쪽 뚜껑].
+   * 판재 포켓·홈 그물의 뚜껑(판 면 자리)을 판 너머 고르기에서 지나가게 할 때 쓴다(scene.ts — 그림과는 상관없다)
+   */
+  caps: [TriRange, TriRange] | null = null;
+
+  get triangleCount(): number {
+    return this.idx.length / 3;
+  }
 
   get vertexCount(): number {
     return this.pos.length / 3;
@@ -38,8 +53,13 @@ export class MeshAccum {
       return [(s * x[0]!) / l, (s * x[1]!) / l, (s * x[2]!) / l];
     };
     // 여섯 면(바깥 법선, 반시계 감기)
+    const t0 = this.triangleCount;
     this.quad([P(0, 0, 0), P(0, 1, 0), P(1, 1, 0), P(1, 0, 0)], unit(w, -1));
     this.quad([P(0, 0, 1), P(1, 0, 1), P(1, 1, 1), P(0, 1, 1)], unit(w));
+    this.caps = [
+      { start: t0, count: 2 },
+      { start: t0 + 2, count: 2 },
+    ];
     this.quad([P(0, 0, 0), P(1, 0, 0), P(1, 0, 1), P(0, 0, 1)], unit(v, -1));
     this.quad([P(0, 1, 0), P(0, 1, 1), P(1, 1, 1), P(1, 1, 0)], unit(v));
     this.quad([P(0, 0, 0), P(0, 0, 1), P(0, 1, 1), P(0, 1, 0)], unit(u, -1));
@@ -142,6 +162,11 @@ export class MeshAccum {
     const low = pts.map((p) => [p[0]! + off[0]!, p[1]! + off[1]!, p[2]! + off[2]!]);
     // 뚜껑: 면 쪽(바깥 법선 -dir)은 반시계 그대로, 깊은 쪽(+dir)은 뒤집어서
     const tris = earClip(pts.map(uv));
+    const t0 = this.triangleCount;
+    this.caps = [
+      { start: t0, count: tris.length / 3 },
+      { start: t0 + tris.length / 3, count: tris.length / 3 },
+    ];
     for (const [ring, sgn] of [
       [pts, -1],
       [low, 1],

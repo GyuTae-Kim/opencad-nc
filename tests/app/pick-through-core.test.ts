@@ -3,7 +3,7 @@
  * 27차: 보기(측정이 아닐 때)에서 판재 문서의 반투명 판 너머 구멍·포켓을 누르면 그 가공을 고른다(app.ts — 3D 뷰어 코어 0.23.0 onPick의
  * throughTranslucent, 0.24.0 setItemPickOpaque). 앱을 진짜 코어(가짜 WebGL)로 띄우고 해석 워커만 같은 스레드의 parseForView로 바꾼다.
  * - 판 너머 수직 구멍 윗면·포켓 윗면을 누르면 그 가공(상태 막대 "가공 N · …" — 가공 목록에서 고른 것과 같다), 뒤에 아무것도 없는 판 위는 판(26차 그대로)
- * - 앱이 단 두 알림(판 너머·가장 앞 면)은 한 누르기에서 같은 사건 객체를 받고 판 너머 알림이 먼저다(앱이 그 짝으로 판 너머 고르기를 쓴다)
+ * - 29차(코어 0.26.0): 앱은 판 너머 알림 하나에 같은 누르기의 가장 앞 고르기(e.front)를 함께 받아, 판재 문서면 판 너머, 아니면 가장 앞을 쓴다
  * 화면 자리는 그물 경계·윤곽선을 정확히 가리키지 않는다(구멍·포켓 가운데 쪽).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -110,19 +110,51 @@ describe('보기에서 반투명 판 너머 가공 누르기(27차, 실제 코�
     expect(status()).toMatch(/^판 400×300×18 · /);
   });
 
-  it('코어는 한 누르기의 판 너머 알림과 가장 앞 면 알림에 같은 사건 객체를 단 차례대로 준다(앱이 그 짝을 쓴다)', async () => {
+  it('29차(코어 0.26.0 front): 판 너머 알림 하나가 같은 누르기의 가장 앞 고르기(e.front)를 함께 받는다 — 앱이 쓰는 짝, 28차의 알림 둘과 같은 고르기', async () => {
     const { v, click, zoom } = await openPanel();
-    const got: { through: boolean; p: Pick3d | null; e: PickEvent }[] = [];
-    const off = [v.onPick((p, e) => got.push({ through: true, p, e }), { throughTranslucent: true }), v.onPick((p, e) => got.push({ through: false, p, e }))];
+    const got: { kind: string; p: Pick3d | null; e: PickEvent }[] = [];
+    const off = [
+      v.onPick((p, e) => got.push({ kind: 'front', p, e }), { throughTranslucent: true, front: true }),
+      v.onPick((p, e) => got.push({ kind: 'through', p, e }), { throughTranslucent: true }),
+      v.onPick((p, e) => got.push({ kind: 'plain', p, e })),
+    ];
     zoom(140, 12, 160, 32);
     click(HOLE);
     off.forEach((f) => f());
-    // 앱이 먼저 단 둘(판 너머·가장 앞)과 시험이 단 둘: 판 너머 알림끼리·가장 앞 알림끼리 같은 고르기, 모두 같은 사건 객체
-    expect(got.map((g) => [g.through, g.p?.id ?? null])).toEqual([
-      [true, 'mpr-op-0'],
-      [false, 'mpr-board'],
+    expect(got.map((g) => [g.kind, g.p?.id ?? null])).toEqual([
+      ['front', 'mpr-op-0'],
+      ['through', 'mpr-op-0'],
+      ['plain', 'mpr-board'],
     ]);
-    expect(got[0]!.e).toBe(got[1]!.e);
+    // front는 front를 준 알림의 사건에만 있고, 선택 없이 단 알림이 받는 고르기와 같다
+    expect(got[0]!.e.front).toBe(got[2]!.p);
+    expect('front' in got[1]!.e).toBe(false);
+    expect(got[0]!.p).toBe(got[1]!.p);
+  });
+
+  it('판이 없는 문서(G-code)는 보기에서 누르면 가장 앞 고르기(e.front — 28차와 같다)', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const app = new NcViewerApp(document.getElementById('app')!);
+    const nc = ['G21 G90 G17', 'G0 X0 Y0 Z5', 'G1 Z-2 F300', 'G1 X40 Y0', 'G1 X40 Y30', 'G0 Z5', 'M2'].join('\n');
+    expect(await app.openBuffer('a.nc', new TextEncoder().encode(nc).buffer as ArrayBuffer)).toBe(true);
+    const v = app.viewer!;
+    v.setView('top', false);
+    v.fit(false);
+    v.renderNow();
+    const plain: (Pick3d | null)[] = [];
+    const off = v.onPick((p) => plain.push(p));
+    // 경로 선분 X0→X40(Y 0, Z −2)의 가운데 쪽
+    const s = v.project([20.3, 0, -2])!;
+    for (const type of ['pointerdown', 'pointerup']) {
+      const e = new MouseEvent(type, { clientX: s.x, clientY: s.y, bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
+      Object.defineProperty(e, 'pointerId', { value: 1 });
+      Object.defineProperty(e, 'pointerType', { value: 'mouse' });
+      v.canvas.dispatchEvent(e);
+    }
+    off();
+    expect(plain).toHaveLength(1);
+    expect(plain[0]).toMatchObject({ kind: 'line' });
+    expect(app.doc!.pick).toEqual(plain[0]);
   });
 
   it('측정 중 누르기는 고르지 않는다(코어가 알리지 않는다 — 예전 그대로)', async () => {

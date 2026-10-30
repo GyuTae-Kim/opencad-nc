@@ -19,7 +19,7 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import type { MeasureResult, Pick3d, PickEvent, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
+import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
@@ -31,7 +31,7 @@ import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
-import { boardThrough, createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
+import { boardLid, boardThrough, createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
@@ -1295,10 +1295,9 @@ export class NcViewerApp implements PanelHost {
     this.applyThemeUi();
     // 판재 문서는 보기에서 누르면 반투명 판 너머를 고른다(27차 — 코어 0.23.0 throughTranslucent: 판 안 구멍·포켓·홈을 누르면 그 가공(onPick → selectMprOp,
     // 가공 목록에서 고른 것과 같다), 뒤에 없으면 판).
-    // 한 누르기의 알림들은 같은 사건 객체를 받는다: 판 너머 고르기를 먼저 달아 두고, 판이 있는 장면이면 그것을 쓴다(아니면 가장 앞 면 — 예전 그대로)
-    let through: { e: PickEvent; p: Pick3d | null } | null = null;
-    v.onPick((p, e) => (through = { e, p }), { throughTranslucent: true });
-    v.onPick((p, e) => this.onPick(this.pickThrough && through?.e === e ? through.p : p));
+    // 29차(코어 0.26.0 front): 알림 하나가 한 누르기의 판 너머 고르기(첫 인자)와 가장 앞 고르기(e.front)를 함께 받는다 — 판이 있는 장면이면 판 너머,
+    // 아니면 가장 앞 면(예전 그대로). 판 너머 고르기는 포켓·홈 뚜껑을 지나간다(applyDoc — 코어 0.27.0 setItemPickThrough)
+    v.onPick((p, e) => this.onPick(this.pickThrough ? p : (e.front ?? null)), { throughTranslucent: true, front: true });
     v.onMeasure((m) => this.onMeasure(m));
     this.secHandle = this.makeSecHandle();
     this.viewEl.append(this.secHandle);
@@ -1417,9 +1416,14 @@ export class NcViewerApp implements PanelHost {
     // 깎기 시뮬레이션이 켜져 있으면 문서 장면 + 소재 그물(sim.ts)
     const scene = this.sim?.sceneFor(d) ?? d.scene;
     v.setScene(scene, { keepView: !!cam });
-    // 판재: 반투명 판 너머 고르기(측정·누르기)가 판 안 포켓·홈 그물에서 멈추게(코어 0.24.0 — 그림은 그대로, setScene이 겉모습을 비우므로 장면마다)
+    // 판재: 반투명 판 너머 고르기(측정·누르기)가 판 안 포켓·홈 그물에서 멈추게(코어 0.24.0 — 그림은 그대로, setScene이 겉모습을 비우므로 장면마다).
+    // 29차(코어 0.27.0): 뚜껑(판 면 자리)은 지나가고 벽·바닥과 바닥의 구멍에서 멈춘다 — 판 위에서 포켓 바닥·그 구멍을 잰다
     const through = boardThrough(scene);
-    for (const id of through ?? []) v.setItemPickOpaque(id, true);
+    for (const id of through ?? []) {
+      v.setItemPickOpaque(id, true);
+      const lid = boardLid(scene, id);
+      if (lid) v.setItemPickThrough(id, [lid]);
+    }
     this.pickThrough = !!through;
     if (cam) v.setCamera(cam);
     // 선반: XZ 단면이 보이게 앞에서
