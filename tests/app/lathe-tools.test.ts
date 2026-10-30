@@ -105,6 +105,10 @@ describe('정보 탭: 선반 공구 표', () => {
     expect(fake.opens[2]!.opts).toMatchObject({ comp: true, machine: { latheToolsMm: { 1: { radiusMm: 0.4, orientation: 3 } } } });
     expect(JSON.parse(localStorage.getItem(SETTINGS_KEY)!).latheTools).toEqual({ 1: { radiusMm: 0.4, orientation: 3 } });
     expect(dirRow()).toBe('3 · 선반 공구 표 T1');
+    // 보정 구간 줄: 반지름과 출처를 조각으로(출처가 따로 옮겨지게) — 통째로 옮겨질 풍선 글은 두지 않는다(30차)
+    const runRow = [...root.querySelectorAll('.prop-row')].find((e) => /번 줄 오른쪽$/.test(e.querySelector('.k')?.textContent ?? ''))!;
+    expect(runRow.querySelector('.v')!.textContent).toBe('반지름 0.4 mm (선반 공구 표 T1)');
+    expect(runRow.querySelector('.v')!.hasAttribute('title')).toBe(false);
     expect(root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 반지름(mm)"]')!.value).toBe('0.4');
     // 비우면 기억에서 빼고 다시 읽는다
     const r2 = root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 반지름(mm)"]')!;

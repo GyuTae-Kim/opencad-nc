@@ -41,12 +41,15 @@ const ARC_ANGLE = Math.PI / 36;
 
 type Ends = readonly (readonly number[])[];
 
+/** 토막 두 끝이 원호 모양 g 위에 있는지(장면 float32 반올림 안 — 그 호를 나눈 현) */
+const onArc = (g: ArcShape, ends: Ends): boolean => !ends.some((e) => shapeNearest(g, e).dist > 4 * pointTol(e));
+
 /**
  * 원호 모양 g 위에 토막 두 끝이 있으면(장면 반올림 안) 그 요소: 찾기 범위는 코어 점 둘레(양옆 토막 둘씩 — 나눈 각은 모양에 적힌 각, 없으면 maxAngle).
  * 평면 위의 고른 원호면 원(교차점을 식으로)
  */
 function arcSide(g: ArcShape, ends: Ends, point: readonly number[], maxAngle: number, key: string): Side | null {
-  for (const e of ends) if (shapeNearest(g, e).dist > 4 * pointTol(e)) return null;
+  if (!onArc(g, ends)) return null;
   const n = shapeChords(g, maxAngle);
   const f0 = shapeNearest(g, point).f;
   const s: V3 = [g.s[0]!, g.s[1]!, g.s[2]!];
@@ -438,13 +441,73 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
 }
 
 /**
+ * 끌어온 점 나란함·수직의 기준 선분 거르기(30차 — 코어 0.28.0 inference.trackDirs { edge }): 커서가 지나간 선분·윤곽선 s가 곧은 요소일 때만 true.
+ * 원호·나선·스플라인 이동, 보정 경로의 호, 판재 윤곽의 호와 판 외곽선·포켓 둘레·구멍 테두리의 호는 짧은 현으로 나눠 그리므로 그 현을 지나면
+ * 곡선과 상관없는 현의 방향이 기준이 된다(29차 탐색 — 구멍 중심을 끌어온 뒤 둘레를 훑으면 엉뚱한 방향에 붙음). 받지 않으면 코어가 앞서 받은 기준을 남긴다.
+ * - NC: 공구 경로 묶음(nc-cut-·nc-drill-·nc-rapid·nc-machine — 그 이동이 그려지는 묶음일 때)은 이동 번호(segmentIds)로 — 원호 이동도 스플라인 조각도 아니면
+ *   곧은 이동이다(장면은 원호 이동만 여러 토막으로 나눈다). 보정 경로(nc-comp)는 그 이동의 보정 조각 가운데 토막 두 끝이 놓인 조각이 직선일 때.
+ *   그 밖의 묶음(선반 회전축)은 받지 않는다
+ * - 판재: 선분 묶음(윤곽 가공·가공 없는 윤곽)은 붙잡기 표의 요소 가운데 토막이 놓인 것이 직선일 때(시작 깊이 선·모서리 띠처럼 표에 없는 토막은 받지 않는다).
+ *   그물 윤곽선은 그 그물 둘레 호(outlines) 위가 아니고 곧은 모서리를 아는 그물(둘레 호를 적은 그물·윤곽선이 모두 곧은 그물 straight)일 때.
+ *   그 밖의 그물(앱이 모양을 모르는 것)은 받지 않는다
+ * 커서가 새 선분을 지날 때마다 불리므로(바로 앞과 같은 선분은 코어가 다시 묻지 않는다) 표 찾기와 토막 두 끝의 곡선 거리만 본다
+ */
+export function trackDirEdge(src: SnapMoves | PanelSnapTable): (s: SnapSegment) => boolean {
+  if ('moves' in src) {
+    const m = src.moves;
+    return (s) => {
+      const i = s.index;
+      if (s.kind !== 'line' || !(i >= 0 && i < m.count)) return false;
+      if (s.id === 'nc-comp') {
+        const c = src.comp;
+        if (!c) return false;
+        const [lo, hi] = compPiecesOf(c, i);
+        const arcs = compArcs(c);
+        for (let k = lo; k < hi; k++) {
+          const g = arcs[k];
+          if (g) {
+            if (onArc(g, s.ends)) return false;
+          } else if (c.kind[k] !== 1 && straightSide(compEnd(c.points, k, 0), compEnd(c.points, k, 3), s.ends, '')) return true;
+        }
+        return false;
+      }
+      return m.kind[i] !== MOVE_ARC && splineOfMove(src.splines, i) < 0 && ncPathSetId(m.kind[i]!, m.flags[i]!, m.tool[i]!) === s.id;
+    };
+  }
+  const t = src;
+  return (s) => {
+    const ends = s.ends;
+    if (s.kind === 'edge') {
+      for (const g of panelArcsOf(t, `edge:${s.id}`)) if (onArc(g, ends)) return false;
+      return !!(t.outlines?.has(s.id) || t.straight?.has(s.id));
+    }
+    const el = t.paths.get(`${s.id}#${s.index}`);
+    if (!el) return false;
+    for (let i = 0; i + 9 <= el.length; i += 9) {
+      const a: V3 = [el[i]!, el[i + 1]!, el[i + 2]!];
+      const b: V3 = [el[i + 3]!, el[i + 4]!, el[i + 5]!];
+      const sweep = el[i + 8]!;
+      if (sweep) {
+        const g = shapeOf(a, b, 0, 1, 2, el[i + 6]!, el[i + 7]!, sweep);
+        if (g && Number.isFinite(g.r0 + g.r1 + g.t0) && onArc(g, ends)) return false;
+      } else if (straightSide(a, b, ends, '')) return true;
+    }
+    return false;
+  };
+}
+
+/** 보정 조각 k의 시작(o = 0)·끝(o = 3) */
+const compEnd = (p: Float64Array, k: number, o: number): V3 => [p[k * 6 + o]!, p[k * 6 + o + 1]!, p[k * 6 + o + 2]!];
+
+/**
  * 앱(app.ts syncMeasureSnap)이 NC 문서를 재는 동안 코어에 주는 붙잡기 선택: 원호 중심(늘 후보 — 재생 중 한도), 고른 이동의 가운데 점·중심
  * (snap.ts moveSnapPoints), 추론 붙잡기, 곡선 위로 다듬기(refineSnap). 시험도 같은 것을 쓴다.
  * 25차(코어 0.23.0 throughTranslucent): 측정 점 고르기가 반투명 그물(공작물 상자 — 투명도 0.22)의 면을 지나 그 뒤 불투명 그물 면을 고른다.
- * 뒤에 불투명 그물이 없으면 예전처럼 공작물 면이다(깎기 시뮬레이션은 공작물 상자를 빼고 불투명 소재를 그린다)
+ * 뒤에 불투명 그물이 없으면 예전처럼 공작물 면이다(깎기 시뮬레이션은 공작물 상자를 빼고 불투명 소재를 그린다).
+ * 30차(코어 0.28.0 inference.trackDirs { edge }): 끌어온 점에서 지나간 곧은 경로 선분과 나란한 선·수직인 선에도 붙는다(원호·나선·스플라인을 나눈 현은 기준이 아니다 — trackDirEdge)
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
-  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: MEASURE_INFERENCE, limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
+  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: { ...MEASURE_INFERENCE, trackDirs: { edge: trackDirEdge(nc) } }, limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
 }
 
 /**
@@ -456,8 +519,10 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 뒤에 불투명 그물이 없으면 예전처럼 가장 앞의 반투명 면(판)이다.
  * 27차(코어 0.24.0 setItemPickOpaque): 포켓·홈 그물은 반투명(0.75·0.85)으로 그리지만 앱이 장면마다 고르기에서 불투명으로 보게 해(app.ts applyDoc — doc.ts boardThrough)
  * 판 너머 포켓·홈 벽·윗면에서도 멈춘다. 판을 뺀 깎기 시뮬레이션 장면에서는 켜지 않아 예전처럼 겹친 그물을 지나 소재를 고른다.
- * 29차(코어 0.27.0 setItemPickThrough): 포켓·홈의 뚜껑(윗면 — doc.ts boardLid)은 지나가고 벽·바닥과 바닥에 뚫은 구멍에서 멈춘다
+ * 29차(코어 0.27.0 setItemPickThrough): 포켓·홈의 뚜껑(윗면 — doc.ts boardLid)은 지나가고 벽·바닥과 바닥에 뚫은 구멍에서 멈춘다.
+ * 30차(코어 0.28.0 inference.trackDirs { edge }): 끌어온 점에서 지나간 곧은 윤곽 요소·모서리와 나란한 선·수직인 선에도 붙는다
+ * (윤곽 호·판 외곽선·포켓 둘레·구멍 테두리의 호를 나눈 현은 기준이 아니다 — trackDirEdge)
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
+  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: { ...MEASURE_INFERENCE, trackDirs: { edge: trackDirEdge(t) } }, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
 }

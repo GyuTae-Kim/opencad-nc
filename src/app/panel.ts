@@ -897,8 +897,12 @@ export class NcPanel {
         for (const r of f.compRuns.slice(0, 20)) {
           const v = r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음';
           const el = row(`${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`, v);
-          // 출처(G10 T1 반지름·선반 공구 표 T1 등)는 따로 옮겨지게 조각으로 — 보이는 글은 같다
-          if (r.computed && r.source) el.querySelector('.v')!.replaceChildren(`반지름 ${fmtNum(r.radius)} ${u}`, ' (', h('span', {}, r.source), ')');
+          // 출처(G10 T1 반지름·선반 공구 표 T1 등)는 따로 옮겨지게 조각으로 — 보이는 글은 같다. 풍선 글(title)은 통째로 옮겨져 출처가 한국어로 남으므로 뺀다(30차)
+          if (r.computed && r.source) {
+            const ve = el.querySelector('.v')!;
+            ve.replaceChildren(`반지름 ${fmtNum(r.radius)} ${u}`, ' (', h('span', {}, r.source), ')');
+            ve.removeAttribute('title');
+          }
           opts.push(el);
           // 선반: 공구 방향(값과 출처를 따로 — 출처 글이 따로 옮겨지게)
           if (r.tool !== undefined)

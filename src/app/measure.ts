@@ -20,8 +20,9 @@ export const MEASURE_LOADING = '측정 도구를 받는 중…';
  * 0.18.0: 'face' = 끌어온 축이 그물 면을 뚫는 점, 'axisEdge'·'axisFace' = 첫 점 축이 선분·윤곽선과 만나는 점·그물 면을 뚫는 점.
  * 0.19.0: 'lockEdge'·'lockFace' = 잠근 선(축·나란함·수직·원호 접선)이 선분·윤곽선과 만나는 점·그물 면을 뚫는 점(inference.lockEdges·lockFaces)
  * 0.21.0(inference.lockTracks): 'lockX'·'lockY'·'lockZ' = 잠근 선이 끌어온 점의 그 축과 만나는 점(trackOther), 'lockFrom' = 축으로 잠근 선 위에서 끌어온 점과 나란한 자리(trackFrom)
+ * 0.27.0·0.28.0(inference.trackDirs — 30차): 'dir' = 끌어온 점에서 지나간 모서리와 나란한 선·수직인 선 위 점(잠그지 않은 'parallel'·'perpendicular'에 trackFrom)
  */
-export type TrackMark = true | 'edge' | 'face' | 'axisEdge' | 'axisFace' | LockMeet | SnapAxis;
+export type TrackMark = true | 'edge' | 'face' | 'axisEdge' | 'axisFace' | 'dir' | LockMeet | SnapAxis;
 
 /** 잠근 선 위의 점 종류(0.19.0 모서리·면, 0.21.0 끌어온 축·끌어온 점과 나란한 자리) */
 export type LockMeet = 'lockEdge' | 'lockFace' | 'lockX' | 'lockY' | 'lockZ' | 'lockFrom';
@@ -43,12 +44,15 @@ export const lockMeetLabel = (base: string, t: LockMeet): string =>
  * 그 밖의 trackFrom은 끌어온 축. 잠근 선 위 점(locked)에 segment·face가 있으면 잠근 선이 모서리와 만나는 점·면을 뚫는 점(0.19.0 — from은 없다).
  * 끌어온 점이 없는 축 붙잡기(snap 'axis')는 face면 첫 점 축 · 면 위, segment면 첫 점 축 · 모서리 위, 아니면 false.
  * 0.21.0(lockTracks): 잠근 선 위 점에 trackOther가 있으면(trackFrom 없이) 잠근 선이 끌어온 점의 그 축과 만나는 점, trackFrom만 있으면(trackOther·선분·면 없이)
- * 잠근 축 위 끌어온 점과 나란한 자리(잠그지 않은 점의 trackFrom은 0.16.0 그대로 — 잠근 동안 끌어온 축은 이 선택으로만 온다)
+ * 잠근 축 위 끌어온 점과 나란한 자리(잠그지 않은 점의 trackFrom은 0.16.0 그대로 — 잠근 동안 끌어온 축은 이 선택으로만 온다).
+ * 0.27.0 trackDirs(30차): 잠그지 않은 'parallel'·'perpendicular'에 trackFrom이 있으면 끌어온 점에서 모서리와 나란함·수직(코어 0.28.0 README의 가르는 법 —
+ * 첫 점의 나란함은 trackFrom이 없고 direction이 있으며, 첫 점에서 내린 수직 발에도 trackFrom이 없다)
  */
 export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly number[]; trackOther?: { axis: SnapAxis }; segment?: unknown; face?: unknown; direction?: readonly number[]; locked?: boolean } | null | undefined): TrackMark | false {
   if (p?.locked && !p.trackFrom && (p.face || p.segment)) return p.face ? 'lockFace' : 'lockEdge';
   if (p?.locked && p.trackOther && !p.trackFrom) return `lock${p.trackOther.axis.toUpperCase() as 'X' | 'Y' | 'Z'}`;
   if (p?.locked && p.trackFrom && !p.trackOther && !p.segment && !p.face) return 'lockFrom';
+  if (p?.trackFrom && !p.locked && (p.snap === 'parallel' || p.snap === 'perpendicular')) return 'dir';
   if (!p?.trackFrom) return p?.snap !== 'axis' ? false : p.face ? 'axisFace' : p.segment ? 'axisEdge' : false;
   if (p.trackOther) return p.trackOther.axis;
   if (p.face) return 'face';
@@ -63,10 +67,13 @@ export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly numb
  * 0.18.0: 면을 뚫으면 '끌어온 점에서 X축 · 면 위', 첫 점 축이 모서리·면과 만나면 'X축 · 모서리 위'·'X축 · 면 위'(사전에 9개 더).
  * 0.19.0: 잠근 선이 모서리·면과 만나면 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'처럼(축 셋·나란함·수직·접선·모르는 방향 × 둘 — 사전에 14개).
  * 0.21.0: 잠근 선이 끌어온 점의 축과 만나면 '잠근 X축 · 끌어온 점에서 Y축'(잠근 축과 나란한 축은 오지 않아 축 잠금 6 + 나란함·수직·접선·모르는 방향 × 축 셋 12),
- * 축으로 잠근 선 위 끌어온 점과 나란한 자리면 '잠근 X축 · 끌어온 점과 나란히'(축 셋) — 사전에 21개
+ * 축으로 잠근 선 위 끌어온 점과 나란한 자리면 '잠근 X축 · 끌어온 점과 나란히'(축 셋) — 사전에 21개.
+ * 30차(코어 0.27.0·0.28.0 trackDirs — 'dir'): 끌어온 점에서 지나간 모서리와 나란한 선 위면 '끌어온 점에서 모서리와 나란히', 수직인 선 위면 '끌어온 점에서 모서리에 수직'
+ * (첫 점의 '나란한 방향'·'수직 발'과 가른다 — 사전에 2개)
  */
 export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | null, tracked: TrackMark | boolean = false): string {
   if (lockMeet(tracked)) return lockMeetLabel(kind === 'axis' && axis ? `${axis.toUpperCase()}축` : kind === 'parallel' ? '나란한 방향' : kind === 'perpendicular' ? '수직 방향' : '방향', tracked);
+  if (tracked === 'dir' && (kind === 'parallel' || kind === 'perpendicular')) return kind === 'parallel' ? TRACK_PARALLEL_LABEL : TRACK_PERPENDICULAR_LABEL;
   if (kind === 'axis' && tracked && axis) {
     const a = `${axis.toUpperCase()}축`;
     if (tracked === 'axisEdge' || tracked === 'axisFace') return `${a} · ${tracked === 'axisEdge' ? '모서리' : '면'} 위`;
@@ -109,6 +116,10 @@ export function trackMarks(points: readonly Parameters<typeof trackMark>[0][]): 
 
 /** 원호 접선으로 잠근 선 위의 점 이름(측정 툴팁·결과 — 코어 종류는 나란함) */
 export const TANGENT_LABEL = '접선 방향';
+
+/** 끌어온 점에서 지나간 모서리와 나란한 선·수직인 선 위의 점 이름(30차 — 코어 trackDirs, 툴팁·결과) */
+export const TRACK_PARALLEL_LABEL = '끌어온 점에서 모서리와 나란히';
+export const TRACK_PERPENDICULAR_LABEL = '끌어온 점에서 모서리에 수직';
 
 /**
  * 측정 결과의 두 점 붙잡기 이름(붙잡기를 켠 결과 — snapA·snapB가 있을 때만, 둘 다 붙잡지 않았으면 null).
