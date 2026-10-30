@@ -504,7 +504,7 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.27.0`(잠금 커밋 `02e1361`)으로 받습니다. 보기에서 누르기는 0.26.0 `onPick`의 `front`로
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.28.0`(잠금 커밋 `c766d37`)으로 받습니다. 보기에서 누르기는 0.26.0 `onPick`의 `front`로
 판 너머 고르기와 가장 앞 고르기를 알림 하나에서 받고, 판재 포켓·홈 뚜껑은 0.27.0 `setItemPickThrough`로 판 너머 고르기에서 지나가게 합니다.
 0.26.0의 작은 법선 배열(`packNormals`)은 아직 쓰지 않습니다(아래 놓기와 같은 까닭으로 NC 장면의 법선이 작습니다). 0.25.0의 놓기(`setScene`의 `release` —
 올린 뒤 법선·무늬 좌표·무늬 원본을 장면에서 지움)는 쓰지 않습니다. NC 장면에서 놓을 수 있는 것은 그물 법선뿐이고(공구 경로 선분은 위치·색이라 놓을 것이 없고
