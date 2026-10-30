@@ -358,7 +358,9 @@ function angleGap(a: number, b: number): number {
  *   법선 방향에서 반각 × 2 안이어야 한다(무게중심은 현의 각 범위 안이고 힌트는 거기서 선을 따라 조금 비켜 있다)
  * - 고르는 것: 그 현의 각 범위(법선 방향 ± 반각) 안의 근 가운데 힌트에 가까운 것. 22차까지의 길(코어 점에서 바깥쪽 근)로는 힌트가 원기둥 밖이면 null이었다.
  *   커서 광선은 보지 않는다 — 코어가 결과를 커서 광선 없는 열쇠(종류·힌트·면·선·첫 점)로 기억하므로 같은 입력에는 늘 같은 답이어야 한다.
- *   그래서 두 근이 한 삼각형 위면 힌트 쪽 근 하나만 붙는다(코어 README 0.22.0과 같은 한계)
+ *   그래서 두 근이 한 삼각형 위면 힌트 쪽 근 하나만 붙었다(코어 0.22.0·0.23.0).
+ *   27차(코어 0.24.0 면의 열린 교차 둘째 힌트): 선이 그 삼각형 위 곡면 조각을 두 번 지날 수 있으면 코어가 그 조각의 두 끝을 힌트로 더 부른다.
+ *   그 끝도 현의 각 범위 둘레(중심에서 r·cos 반각~r ÷ cos(반각 × 2), 법선 방향에서 반각 × 2 안)라 같은 길로 풀려 각 끝에 가까운 근이 따로 온다 — 두 근 모두 붙는다
  * 받을지(그 삼각형 위 곡면 조각 자리·커서 붙잡기 거리 안·가림)는 코어가 정한다
  */
 export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | null {
@@ -451,7 +453,9 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 21차: 축이 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리를 뚫는 점은 원기둥 위로(refineFace — refineFaceSnap). 22차: 기운 잠근 선(코어 0.20.0)도.
  * 25차: 붙잡지 않은 커서가 원기둥 벽을 맞은 점도 원기둥 위로(코어 0.21.0 'onFace'), 측정 점 고르기가 반투명 판(투명도 0.35)을 지나
  * 그 뒤 불투명 그물(수직·수평 구멍 — 투명도 1)의 면을 고른다(코어 0.23.0 throughTranslucent — 판을 숨기지 않아도 판 너머 구멍 벽·바닥을 잰다).
- * 포켓·홈 그물은 반투명(0.75·0.85)이라 함께 지나간다 — 뒤에 불투명 그물이 없으면 예전처럼 가장 앞의 반투명 면(판)이다
+ * 뒤에 불투명 그물이 없으면 예전처럼 가장 앞의 반투명 면(판)이다.
+ * 27차(코어 0.24.0 setItemPickOpaque): 포켓·홈 그물은 반투명(0.75·0.85)으로 그리지만 앱이 장면마다 고르기에서 불투명으로 보게 해(app.ts applyDoc — doc.ts boardThrough)
+ * 판 너머 포켓·홈 벽·윗면에서도 멈춘다. 판을 뺀 깎기 시뮬레이션 장면에서는 켜지 않아 예전처럼 겹친 그물을 지나 소재를 고른다
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
   return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: MEASURE_INFERENCE, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };

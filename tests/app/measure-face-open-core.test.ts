@@ -6,7 +6,9 @@
  * - 높이 3: 커서 쪽 근(x ≈ 200.707)의 삼각형은 무게중심 쪽 힌트가 원기둥 밖이다. 22차까지의 길(코어 점에서 바깥쪽 근)은 null이라 축 위 커서 자리였고,
  *   25차 열린 후보 길은 원기둥 위 교차 — 'X축 · 면 위', 거리 100.707
  * - 높이 9: 힌트가 원기둥 안인 삼각형 — 22차 길로도 같은 점
- * - 같은 축의 다른 근(x ≈ 199.293)은 한 삼각형 위를 선이 두 번 지나는 자리라 힌트 쪽 근 하나만 받는다(코어 0.22.0의 한계 — 코어 요청)
+ * - 같은 축의 다른 근(x ≈ 199.293)은 한 삼각형 위를 선이 두 번 지나는 자리다. 코어 0.22.0·0.23.0은 힌트 쪽 근 하나만 받았고(25차 코어 요청),
+ *   27차(코어 0.24.0 면의 열린 교차 둘째 힌트 — 그 조각의 두 끝)부터 이 근도 원기둥 위 교차 — 'X축 · 면 위', 거리 99.293.
+ *   둘째 힌트가 refineFaceSnap 열린 후보의 벽 찾기(중심에서 r·cos 반각~r ÷ cos(반각 × 2), 법선 방향에서 반각 × 2 안) 안인지도 본다
  * 첫 점은 시험이 붙잡기 점 하나를 더해 찍는다. 커서는 근에서 화면 (1, 2)화소 옆이다(선·면 경계를 정확히 가리키지 않는다).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -139,16 +141,50 @@ describe('축이 판 외곽선 볼록 호 꼭대기를 그 현 바깥으로 스�
     expect(got[1]).toEqual(got[0]);
   });
 
-  it('같은 축의 다른 근(x ≈ 199.293)은 받지 않는다: 그 자리 삼각형의 힌트 쪽 근이 다른 근이다(코어가 한 삼각형 위 두 교차 가운데 힌트 쪽 하나만 받는다)', () => {
+  it('같은 축의 다른 근(x ≈ 199.293)도 원기둥 위 교차 — "X축 · 면 위", 거리 99.293(코어 0.24.0 둘째 힌트, 0.23.0까지는 축 위 커서 자리)', () => {
     const Q = [W.cu - S, YL, 9];
     const w = setup(9);
     w.hover(Q);
     const h = w.v.measureHoverSnap!;
-    expect(h.refined).toBeFalsy();
-    const c = w.calls.find((x) => x.open)!;
-    expect(c).toBeTruthy();
-    // 앱은 그 힌트(x ≈ 200.26)에 가까운 근(x ≈ 200.707)을 준다 — 커서에서 멀어 코어가 버린다
-    const q = panelSnapOptions(r.mpr!.snap!).refineFace!(c)!;
-    expect(Math.abs(q[0] - (W.cu + S))).toBeLessThan(1e-9);
+    expect(h).toMatchObject({ snap: 'axis', axis: 'x', refined: true, face: { id: 'mpr-board' } });
+    expect(Math.abs(h.point[0] - Q[0]!)).toBeLessThan(1e-9);
+    expect(h.point[1]).toBe(YL);
+    expect(h.point[2]).toBe(9);
+    expect(w.lock.snapshot().tip).toBe('X축 · 면 위');
+    w.click(Q);
+    const m = w.v.measurement()!;
+    expect(Math.abs(m.distance - (Q[0]! - 100))).toBeLessThan(1e-9);
+    expect(Math.abs(m.distance - 99.293)).toBeLessThan(1e-3);
+    expect(snapPair({ ...m, ...trackMarks(w.v.measurePoints) })![1]).toBe('X축 · 면 위');
+  });
+
+  it('둘째 힌트(그 조각의 두 끝)는 refineFaceSnap 열린 후보의 벽 찾기 안이고 다른 근을 준다. 0.22.0 힌트(무게중심 쪽)는 예전처럼 커서 쪽 근', () => {
+    const Q = [W.cu - S, YL, 9];
+    const w = setup(9);
+    w.hover(Q);
+    const h = w.v.measureHoverSnap!;
+    expect(h.refined).toBe(true);
+    // 그 삼각형의 열린 후보(힌트마다 한 번 — 코어가 힌트별 열쇠로 기억한다): 0.22.0 힌트 하나와 둘째 힌트 둘(그 조각의 두 끝 — 가장 왼쪽·가장 오른쪽)
+    const cs = w.calls.filter((x) => x.open && x.face.id === 'mpr-board' && x.face.index === h.face!.index).sort((a, b) => a.point[0] - b.point[0]);
+    expect(cs.length).toBe(3);
+    for (const c of cs) expect([c.point[1], c.point[2]]).toEqual([YL, 9]);
+    const refine = panelSnapOptions(r.mpr!.snap!).refineFace!;
+    const got = cs.map((c) => refine(c)!);
+    // 왼쪽 끝 힌트 → 다른 근(x ≈ 199.293), 0.22.0 힌트·오른쪽 끝 힌트 → 커서 쪽 근(x ≈ 200.707)
+    expect(Math.abs(got[0]![0] - (W.cu - S))).toBeLessThan(1e-9);
+    expect(Math.abs(got[1]![0] - (W.cu + S))).toBeLessThan(1e-9);
+    expect(Math.abs(got[2]![0] - (W.cu + S))).toBeLessThan(1e-9);
+    // 둘째 힌트(두 끝)는 그 함수의 열린 후보 벽 찾기 안: 중심에서 r·cos(반각)과 r ÷ cos(반각 × 2) 사이, 면 법선(그 현의 가운데 방향)에서 반각 × 2 안
+    const n = cs[0]!.face.normal;
+    const mid = Math.atan2(n[1], n[0]);
+    for (const c of [cs[0]!, cs[2]!]) {
+      const rho = Math.hypot(c.point[0] - W.cu, c.point[1] - W.cv);
+      expect(rho).toBeGreaterThan(W.r * Math.cos(W.half));
+      expect(rho).toBeLessThan(W.r / Math.cos(2 * W.half));
+      expect(Math.abs(Math.atan2(c.point[1] - W.cv, c.point[0] - W.cu) - mid)).toBeLessThan(2 * W.half);
+      // 원기둥 밖(중심에서 50보다 멀다) — 22차 길(open 없이 — 처짐 안·코어 점에서 바깥쪽 근)로는 풀지 못한다
+      expect(rho).toBeGreaterThan(W.r);
+      expect(refine({ ...c, open: undefined })).toBeNull();
+    }
   });
 });

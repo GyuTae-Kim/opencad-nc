@@ -305,6 +305,17 @@ export function mprOps(scene: Scene3d): MprOpRow[] {
   return Array.isArray(ops) ? (ops as MprOpRow[]) : [];
 }
 
+/**
+ * 반투명 판(mpr-board — 투명도 0.35) 너머 고르기(27차 — 3D 뷰어 코어 0.24.0). 뷰어에 올린 장면에 판이 있으면 판 안의 반투명 가공 그물
+ * (포켓 0.75·홈 0.85 — mpr-op-*) id를 준다: 앱이 setItemPickOpaque로 고르기에서 불투명으로 보게 해(그림은 그대로) 판 너머 측정·누르기가
+ * 판을 지나 그 벽·면에서 멈춘다(불투명인 구멍 그물은 원래 멈춘다). 판이 없으면 null — G-code·Heidenhain 문서와 판을 빼고 불투명 소재 위에
+ * 가공 그물을 겹치는 깎기 시뮬레이션 장면은 예전처럼(측정은 겹친 그물을 지나 소재를, 누르기는 가장 앞 면을 고른다)
+ */
+export function boardThrough(scene: Scene3d): string[] | null {
+  if (!scene.meshes.some((m) => m.id === 'mpr-board')) return null;
+  return scene.meshes.filter((m) => m.id.startsWith('mpr-op-') && m.color[3] < 0.999).map((m) => m.id);
+}
+
 /** 판재 가공 변수(scene.meta.variables) */
 export interface MprVarRow {
   name: string;

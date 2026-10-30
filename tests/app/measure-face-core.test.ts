@@ -8,10 +8,13 @@
  * - refineFace를 뺀 붙잡기와 평면(윗면)·벽이 아닌 자리의 미리 보기가 같다(0.18.0과 같은 값)
  * - 25차(코어 0.23.0 throughTranslucent): 판을 숨기지 않아도 반투명 판 너머 수직 구멍 벽을 축이 뚫는 점·붙잡기 없는 커서가 맞은 점(0.21.0 onFace)이 원기둥 위.
  *   판을 불투명으로 그리거나 판 너머를 고르지 않으면 판 윗면, 뒤에 불투명 그물이 없는 판 위 자리는 판 너머를 고르든 않든 같은 값
+ * - 27차(코어 0.24.0 setItemPickOpaque — 앱 applyDoc처럼 doc.ts boardThrough의 그물을 켠다): 판을 숨기지 않아도 반투명 판 너머 포켓 벽(곧은 벽·둥근 모서리)을
+ *   축이 뚫는 점·붙잡기 없는 커서가 맞은 점이 그 벽 위. 끄면(26차) 판 윗면, 그림 겉모습(투명도·색)은 그대로
  * 커서는 벽 위 안쪽 자리(현의 경계·그물 윤곽선이 아닌 곳)를 가리킨다.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureSnapOptions } from 'opencad-viewer3d';
+import { boardThrough } from '../../src/app/doc';
 import { parseForView } from '../../src/app/payload';
 import { snapPair, trackMarks } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
@@ -255,5 +258,145 @@ describe('반투명 판 너머 구멍 벽(25차 — 코어 0.23.0 throughTranslu
     const row = spots.map((p) => view((now.hover(p), now.v.measureHoverSnap)));
     expect(row).toEqual(seen[2]!.slice(1));
     expect(row.filter(Boolean).length).toBe(3);
+  });
+});
+
+describe('반투명 판 너머 포켓 벽(27차 — 코어 0.24.0 setItemPickOpaque, 실제 코어 판정)', () => {
+  // 판 400 × 300 × 18, 윗면 포켓 80 × 60(중심 (100,100), 모서리 R10, 깊이 6 — 벽 높이 12~18. 투명도 0.75):
+  // 곧은 벽 x = 140(y 80~120)·y = 70(x 70~130) 등, 둥근 모서리 중심 (130,80)·(70,80)·(70,120)·(130,120). 첫 점은 판 왼쪽면 (0,100,15)(시험이 붙잡기 점으로 더한다)
+  const POCKET = `<?xml version="1.0" encoding="utf-8"?>
+<pgi>
+ <panel length="400" width="300" thickness="18" name="p" quantity="1">
+  <pocket length="80" width="60" depth="6" direction="z-" cornerRadius="10" angle="0" centerX="100" centerY="100" centerZ="0" enable="1" order="1"/>
+ </panel>
+</pgi>`;
+  const P = parseForView('k.pgi', enc(POCKET));
+  const FIRST = [0, 100, 15];
+  const view = (h: Viewer3d['measureHoverSnap']) => h && { snap: h.snap, point: h.point, axis: h.axis ?? null, refined: !!h.refined, face: h.face?.id ?? null, segment: h.segment?.id ?? null };
+  /** 앱(app.ts applyDoc)처럼 장면을 올린 뒤 판 너머 고르기에서 멈출 그물을 켠다. opaque = false면 26차(코어 0.23.0)처럼 켜지 않는다 */
+  function open(opaque = true) {
+    document.body.innerHTML = '';
+    const host = document.createElement('div');
+    document.body.append(host);
+    const v = new Viewer3d(host, { animate: false });
+    v.setScene(P.scene);
+    if (opaque) for (const id of boardThrough(P.scene) ?? []) v.setItemPickOpaque(id, true);
+    v.setView('seIso', false);
+    v.fit(false);
+    v.setMeasureMode(true);
+    const o = panelSnapOptions(P.mpr!.snap!);
+    /** 앱 다듬기가 받은 면(종류:그물 id) */
+    const faces: string[] = [];
+    v.setMeasureSnap({ ...o, points: [...(o.points ?? []), { point: FIRST, kind: 'center' }], refineFace: (c) => (faces.push(`${c.kind}:${c.face.id}`), o.refineFace!(c)) });
+    v.renderNow();
+    const lock = new MeasureLock({ viewer: () => v, touch: () => false, layer: host, changed: vi.fn() });
+    const ptr = (type: string, p: readonly number[]): void => {
+      const s = v.project(p)!;
+      expect(s.onScreen).toBe(true);
+      const e = new MouseEvent(type, { clientX: s.x, clientY: s.y, bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
+      Object.defineProperty(e, 'pointerId', { value: 1 });
+      Object.defineProperty(e, 'pointerType', { value: 'mouse' });
+      v.canvas.dispatchEvent(e);
+      v.renderNow();
+      lock.update();
+    };
+    const hover = (p: readonly number[]): Viewer3d['measureHoverSnap'] => (ptr('pointermove', p), v.measureHoverSnap);
+    const click = (p: readonly number[]): void => {
+      ptr('pointermove', p);
+      ptr('pointerdown', p);
+      ptr('pointerup', p);
+    };
+    const zoomBox = (lo: readonly number[], hi: readonly number[]): void => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const x of [lo[0]!, hi[0]!])
+        for (const y of [lo[1]!, hi[1]!])
+          for (const z of [lo[2]!, hi[2]!]) {
+            const s = v.project([x, y, z])!;
+            x0 = Math.min(x0, s.x);
+            y0 = Math.min(y0, s.y);
+            x1 = Math.max(x1, s.x);
+            y1 = Math.max(y1, s.y);
+          }
+      v.zoomToRect(x0, y0, x1, y1, false);
+      v.renderNow();
+    };
+    return { v, lock, faces, hover, click, zoomBox };
+  }
+  // 곧은 벽 x = 140 위 안쪽 자리(눈 쪽 — 그 자리 광선은 포켓 둘레 바깥에서 판 윗면을 지나 판 안을 거쳐 벽에 닿는다)
+  const WALL = [140, 100.3, 15.2];
+  // 둥근 모서리(중심 (130,80), 8토막 가운데 −56.25°~−45° 토막의 가운데·높이 16.4 — 대각선에서 떨어진 자리)
+  const CORNER = [130 + 10 * Math.cos(-50.625 * D), 80 + 10 * Math.sin(-50.625 * D), 16.4];
+  const cylDev = (p: readonly number[]): number => Math.abs(Math.hypot(p[0]! - 130, p[1]! - 80) - 10);
+
+  it('앱이 켜는 그물은 포켓(반투명)뿐이고, 겉모습은 고르기 불투명만(투명도·색 그대로 — 그림은 같다)', () => {
+    expect(boardThrough(P.scene)).toEqual(['mpr-op-0']);
+    expect(P.scene.meshes.find((m) => m.id === 'mpr-op-0')!.color[3]).toBe(0.75);
+    const w = open();
+    expect(w.v.itemLook('mpr-op-0')).toEqual({ pickable: true, pickOpaque: true });
+    expect(w.v.itemLook('mpr-board')).toBeNull();
+    // 장면을 다시 주면 코어가 비운다 — 앱은 장면마다 다시 켠다(app.ts applyDoc)
+    w.v.setScene(P.scene);
+    expect(w.v.itemLook('mpr-op-0')).toBeNull();
+  });
+
+  it('판을 숨기지 않아도 첫 점의 X축이 판 너머 포켓 벽(x = 140)을 뚫는 점 — "X축 · 면 위", 거리 140(켜지 않으면 그 점에 붙지 않는다)', () => {
+    const w = open();
+    w.click(FIRST);
+    expect(w.v.measurePoints[0]).toMatchObject({ point: FIRST, snap: 'center' });
+    w.zoomBox([130, 90, 10], [150, 110, 18]);
+    const h = w.hover(WALL)!;
+    expect(h).toMatchObject({ snap: 'axis', axis: 'x', face: { id: 'mpr-op-0' } });
+    expect(Math.abs(h.point[0] - 140)).toBeLessThan(1e-9);
+    expect([h.point[1], h.point[2]]).toEqual([100, 15]);
+    expect(w.lock.snapshot().tip).toBe('X축 · 면 위');
+    w.click(WALL);
+    const m = w.v.measurement()!;
+    expect(Math.abs(m.distance - 140)).toBeLessThan(1e-9);
+    expect(snapPair({ ...m, ...trackMarks(w.v.measurePoints) })).toEqual(['중심', 'X축 · 면 위', false]);
+    const old = open(false);
+    old.click(FIRST);
+    old.zoomBox([130, 90, 10], [150, 110, 18]);
+    const g = old.hover(WALL);
+    expect(g?.face?.id ?? null).not.toBe('mpr-op-0');
+    expect(g && Math.abs(g.point[0] - 140) < 1e-9).toBeFalsy();
+  });
+
+  it('붙잡기 없는 커서가 판 너머 포켓 벽을 맞은 점: 곧은 벽은 그 평면 위, 둥근 모서리는 원기둥 위(onFace, refined) — 켜지 않으면 판 윗면(높이 18)', () => {
+    const w = open();
+    w.zoomBox([130, 90, 10], [150, 110, 18]);
+    const a = w.hover(WALL)!;
+    expect(a.snap).toBeNull();
+    expect(Math.abs(a.point[0] - 140)).toBeLessThan(1e-4);
+    expect(a.point[2]).toBeGreaterThan(12);
+    expect(a.point[2]).toBeLessThan(18);
+    w.zoomBox([125, 65, 10], [145, 85, 18]);
+    const b = w.hover(CORNER)!;
+    expect(w.faces).toContain('onFace:mpr-op-0');
+    expect(b).toMatchObject({ snap: null, refined: true });
+    expect(cylDev(b.point)).toBeLessThan(1e-9);
+    expect(b.point[2]).toBeGreaterThan(12);
+    expect(b.point[2]).toBeLessThan(18);
+    const old = open(false);
+    old.zoomBox([130, 90, 10], [150, 110, 18]);
+    const g = old.hover(WALL)!;
+    expect(g.snap).toBeNull();
+    expect(Math.abs(g.point[2] - 18)).toBeLessThan(1e-4);
+    old.zoomBox([125, 65, 10], [145, 85, 18]);
+    const k = old.hover(CORNER)!;
+    expect(old.faces).not.toContain('onFace:mpr-op-0');
+    expect(k.refined).toBeFalsy();
+    expect(Math.abs(k.point[2] - 18)).toBeLessThan(1e-4);
+  });
+
+  it('뒤에 포켓이 없는 판 위 자리는 켜든 않든 같은 값(첫 점 전·뒤)', () => {
+    const spots = [[200.3, 150.2, 18], [300.4, 0.3, 9.2], [399.6, 200.4, 18], [250.2, 299.7, 7.1]];
+    const rows = [open(), open(false)].map((w) => {
+      const row = spots.map((p) => view(w.hover(p)));
+      w.click(FIRST);
+      for (const p of spots) row.push(view(w.hover(p)));
+      return row;
+    });
+    expect(rows[0]).toEqual(rows[1]);
+    expect(rows[0]!.filter(Boolean).length).toBeGreaterThan(5);
   });
 });
