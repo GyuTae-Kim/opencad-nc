@@ -19,7 +19,7 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import type { MeasureResult, Pick3d, PickEvent, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
+import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
@@ -1295,10 +1295,9 @@ export class NcViewerApp implements PanelHost {
     this.applyThemeUi();
     // 판재 문서는 보기에서 누르면 반투명 판 너머를 고른다(27차 — 코어 0.23.0 throughTranslucent: 판 안 구멍·포켓·홈을 누르면 그 가공(onPick → selectMprOp,
     // 가공 목록에서 고른 것과 같다), 뒤에 없으면 판).
-    // 한 누르기의 알림들은 같은 사건 객체를 받는다: 판 너머 고르기를 먼저 달아 두고, 판이 있는 장면이면 그것을 쓴다(아니면 가장 앞 면 — 예전 그대로)
-    let through: { e: PickEvent; p: Pick3d | null } | null = null;
-    v.onPick((p, e) => (through = { e, p }), { throughTranslucent: true });
-    v.onPick((p, e) => this.onPick(this.pickThrough && through?.e === e ? through.p : p));
+    // 29차(코어 0.26.0 front): 알림 하나가 한 누르기의 판 너머 고르기(첫 인자)와 가장 앞 고르기(e.front)를 함께 받는다 — 판이 있는 장면이면 판 너머,
+    // 아니면 가장 앞 면(예전 그대로)
+    v.onPick((p, e) => this.onPick(this.pickThrough ? p : (e.front ?? null)), { throughTranslucent: true, front: true });
     v.onMeasure((m) => this.onMeasure(m));
     this.secHandle = this.makeSecHandle();
     this.viewEl.append(this.secHandle);
