@@ -16,7 +16,7 @@ import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint, snapPair } from './measure';
 import type { NcJobInfo, NcOpenOptions } from './protocol';
-import { defaultSettings, type NcSettings } from './settings';
+import { cleanLatheTool, defaultSettings, type NcSettings } from './settings';
 
 /** 이보다 좁으면 패널을 아래 시트로 */
 export const NARROW_WIDTH = 760;
@@ -883,15 +883,37 @@ export class NcPanel {
     // 선택 기능: 반경 보정 경로·선반·회전축
     const opts: HTMLElement[] = [];
     if (f.compRunCount > 0 || d.ncOptions.comp) {
-      opts.push(this.optToggle(d, 'comp', '보정 경로 보기', `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`));
+      opts.push(
+        this.optToggle(
+          d,
+          'comp',
+          '보정 경로 보기',
+          f.lathe
+            ? `선반 공구 끝 R 보정(G41/G42) 구간 ${f.compRunCount}곳의 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 공구 방향(1~8)이 있으면 가상 공구 끝, 없거나 9면 노즈 반지름 중심 경로입니다. 프로그램 경로는 그대로입니다.`
+            : `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`,
+        ),
+      );
       if (f.compRuns)
-        for (const r of f.compRuns.slice(0, 20))
-          opts.push(
-            row(
-              `${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`,
-              r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음',
-            ),
-          );
+        for (const r of f.compRuns.slice(0, 20)) {
+          const v = r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음';
+          const el = row(`${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`, v);
+          // 출처(G10 T1 반지름·선반 공구 표 T1 등)는 따로 옮겨지게 조각으로 — 보이는 글은 같다
+          if (r.computed && r.source) el.querySelector('.v')!.replaceChildren(`반지름 ${fmtNum(r.radius)} ${u}`, ' (', h('span', {}, r.source), ')');
+          opts.push(el);
+          // 선반: 공구 방향(값과 출처를 따로 — 출처 글이 따로 옮겨지게)
+          if (r.tool !== undefined)
+            opts.push(
+              h(
+                'div',
+                { class: 'prop-row' },
+                h('span', { class: 'k' }, '공구 방향'),
+                r.orientation !== undefined && r.orientation > 0
+                  ? h('span', { class: 'v' }, String(r.orientation), ' · ', h('span', {}, r.orientationSource ?? ''))
+                  : h('span', { class: 'v' }, '모름 — 노즈 중심'),
+              ),
+            );
+        }
+      if (f.lathe && f.compRuns) opts.push(...this.latheToolRows(f.compRuns));
     }
     if (nc.kind === 'gcode') {
       opts.push(this.optToggle(d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
@@ -977,6 +999,41 @@ export class NcPanel {
       h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
       reset,
     );
+  }
+
+  /**
+   * 선반 공구 표(보정 구간이 쓰는 공구마다 노즈 반지름 mm·LinuxCNC 공구 방향) — 파일에 값이 없을 때 쓴다.
+   * 기계·읽기 설정에 기억하고, 바꾸면 다시 읽는다
+   */
+  private latheToolRows(runs: readonly { tool?: number }[]): HTMLElement[] {
+    const keys = [...new Set(runs.map((r) => r.tool).filter((t): t is number => t !== undefined && t >= 0))].sort((a, b) => a - b).slice(0, 12);
+    if (!keys.length) return [];
+    const save = (key: number, radiusMm: number | null, orientation: number | null): void => {
+      const all = { ...this.host.settings.latheTools };
+      const c = cleanLatheTool({ radiusMm, orientation });
+      if (c) all[key] = c;
+      else delete all[key];
+      this.host.setSettings({ ...this.host.settings, latheTools: all });
+    };
+    const rows = keys.map((key) => {
+      const cur = this.host.settings.latheTools[key];
+      const r = h('input', { type: 'number', step: 'any', min: '0', inputmode: 'decimal', class: 'num-input', 'aria-label': `T${key} 노즈 반지름(mm)`, placeholder: 'R' });
+      r.value = cur?.radiusMm != null ? String(cur.radiusMm) : '';
+      const q = h('select', { class: 'select', 'aria-label': `T${key} 공구 방향` });
+      q.append(h('option', { value: '' }, '—'), ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: String(n) }, String(n))));
+      q.value = cur?.orientation != null ? String(cur.orientation) : '';
+      const apply = (): void => {
+        const n = r.value.trim() === '' ? null : Number(r.value);
+        save(key, n !== null && Number.isFinite(n) && n > 0 ? n : null, q.value ? Number(q.value) : null);
+      };
+      r.addEventListener('change', apply);
+      q.addEventListener('change', apply);
+      return h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, `T${key} 노즈 R(mm) · 방향`), h('span', { class: 'sim-pair' }, r, q));
+    });
+    return [
+      ...rows,
+      h('p', { class: 'hint' }, '선반 공구 표: 파일에 노즈 반지름(G10 L1 R·G41.1 D)이나 공구 방향(G10 L1 Q·G41.1 L)이 없을 때 씁니다. 방향은 LinuxCNC 설명서의 공구 방향 번호입니다(1~8 가상 공구 끝, 9 노즈 중심). 이 브라우저에 기억합니다.'),
+    ];
   }
 
   /** 다시 읽는 켜고 끄기(선택 기능) */

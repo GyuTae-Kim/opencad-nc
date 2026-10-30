@@ -23,6 +23,7 @@ import {
   PLANE_AXES,
 } from '../model';
 import { sourceLine } from '../text';
+import type { NcCompRunMeta } from '../scene';
 import { idRange, moveEndTime, playbackAt } from '../view/playback';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint, type TrackMark } from './measure';
@@ -416,7 +417,7 @@ export function warningLabel(d: Pick<NcDoc, 'scene'>): string {
 /** 장면 meta의 선택 기능 정보(보정 구간·선반·회전축) */
 export function sceneFeatures(s: Scene3d): {
   compRunCount: number;
-  compRuns: { first: number; end: number; side: number; radius: number; source: string; line: number; computed: boolean }[] | null;
+  compRuns: NcCompRunMeta[] | null;
   lathe: boolean;
   rotaryAxes: boolean;
   disabledOps: number;

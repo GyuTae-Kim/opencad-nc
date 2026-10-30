@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { toolMarker, toolShape } from '../../src/app/doc';
 import { parseForView, parseOptions } from '../../src/app/payload';
 import type { NcPayload } from '../../src/app/protocol';
-import { defaultSettings, parseSettings, settingsNeedReparse, settingsOpenOptions } from '../../src/app/settings';
+import { cleanLatheTool, defaultSettings, parseSettings, settingsNeedReparse, settingsOpenOptions } from '../../src/app/settings';
 
 describe('기계·읽기 설정', () => {
   it('저장된 글을 읽고 모르는 값·깨진 글은 기본값으로', () => {
@@ -28,6 +28,24 @@ describe('기계·읽기 설정', () => {
     expect(settingsNeedReparse(d, { ...d, toolSize: true })).toBe(false);
     expect(settingsNeedReparse(d, { ...d, offsetMm: [1, null, null] })).toBe(false);
     expect(settingsNeedReparse(d, { ...d, toolChangeSec: 5 })).toBe(true);
+  });
+
+  it('선반 공구 표(공구 번호 → 노즈 반지름 mm·공구 방향 1~9): 깨진 값은 빼고, 바꾸면 다시 읽는다', () => {
+    const s = parseSettings(JSON.stringify({ latheTools: { 1: { radiusMm: 0.4, orientation: 3 }, 2: { radiusMm: -1, orientation: 12 }, x: { radiusMm: 1 }, '03': { orientation: 9 }, 4: 'oops' } }));
+    expect(s.latheTools).toEqual({ 1: { radiusMm: 0.4, orientation: 3 }, 3: { radiusMm: null, orientation: 9 } });
+    expect(cleanLatheTool({ radiusMm: 0.8, orientation: 0 })).toEqual({ radiusMm: 0.8, orientation: null });
+    expect(cleanLatheTool({ radiusMm: null, orientation: null })).toBeNull();
+    expect(settingsOpenOptions(s)).toEqual({ machine: { latheToolsMm: { 1: { radiusMm: 0.4, orientation: 3 }, 3: { orientation: 9 } } } });
+    const d = defaultSettings();
+    expect(d.latheTools).toEqual({});
+    expect(settingsNeedReparse(d, s)).toBe(true);
+    expect(settingsNeedReparse(s, { ...s, toolSize: true })).toBe(false);
+    // 선반 프로그램의 보정 구간에 쓰인다(파일에 노즈 R·방향이 없을 때)
+    const text = new TextEncoder().encode(`G18 G21 G40\nT0101\nG0 X80. Z5.\nG42 G1 X40. Z2. F0.2\nG1 Z-20.\nX60.\nG40 G0 X80.\nM30\n`);
+    const r = parseForView('l.nc', text, { lathe: true, comp: true, ...settingsOpenOptions(s) });
+    const runs = (r.scene.meta as { compRuns: { radius: number; orientation?: number; tool?: number }[] }).compRuns;
+    expect(runs[0]).toMatchObject({ radius: 0.4, orientation: 3, tool: 1 });
+    expect(r.scene.lines.find((l) => l.id === 'nc-comp')!.name).toBe('보정 경로(가상 공구 끝)');
   });
 
   it('워커 해석 옵션에 넘기고(블록 건너뛰기·H/D 확인·기계 설정), 결과에 반영된다', () => {

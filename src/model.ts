@@ -261,6 +261,15 @@ export interface NcCompRun {
   source: string;
   /** 보정을 켠 줄(0부터) */
   line: number;
+  /**
+   * 선반 모드만: 공구 방향(LinuxCNC 공구 방향 0~9 — G41.1 L·옵션 toolTable·G10 L1 Q·앱 선반 공구 표 차례). 1~8이면 보정 경로를
+   * 노즈 반지름 중심에서 가상 공구 끝으로 옮기고, 9는 노즈 중심 그대로, 0·없음은 정하지 않음(노즈 중심 — 경고)
+   */
+  orientation?: number;
+  /** 공구 방향을 어디서 얻었는지(사람이 읽는 글) */
+  orientationSource?: string;
+  /** 선반 모드만: 앱 선반 공구 표(machine.latheToolsMm)의 열쇠 — D 번호(LinuxCNC는 공구 번호), 없으면 지금 공구 */
+  tool?: number;
 }
 
 /**
@@ -318,6 +327,11 @@ export interface NcMachineOptions {
   limitsMm?: { min: (number | null)[]; max: (number | null)[] };
   /** 급속을 축마다 따로 움직이는 꺾인 길(도그레그)로 그리고 시간도 가장 긴 축으로 */
   dogleg?: boolean;
+  /**
+   * 선반 공구 표(공구 번호 → 노즈 반지름 mm·LinuxCNC 공구 방향 0~9). 선반 모드의 반경 보정(G41/G42)에서 파일에 그 값이 없을 때만
+   * (G41.1 D·L, 옵션 toolTable, G10 L1 R·Q 다음, 공구 주석 지름 앞) 쓴다. 밀링에는 쓰지 않는다
+   */
+  latheToolsMm?: Record<number, { radiusMm?: number; orientation?: number }>;
 }
 
 /** 해석 결과 */
