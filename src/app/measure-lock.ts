@@ -32,6 +32,9 @@
  *   25차: 뷰 큐브 자리는 DOM에서 찾지 않고 코어 0.23.0 viewCubeRect로 읽는다.
  *   휴대폰은 거리 글상자가 화면 폭의 절반을 넘어 두 점이 오른쪽 위면 뷰 큐브 밑에, 아래면 측정 띠 밑에 그려졌다. 코어는 기본 자리가 넘긴 자리와
  *   겹칠 때만 옮기므로 겹치지 않는 측정의 글상자 자리는 그대로다. 측정을 끄거나 툴팁을 숨기고 조준도 하지 않으며 떠 있는 것도 없으면 null.
+ *   33차(코어 0.31.0 points): 측정 중에는 두 측정 점 표식(첫 점·미리 보기 점 또는 두 점째)을 덮는 자리도 옮기게 늘 points: true를 넘긴다(넘길 영역이 없어도 —
+ *   마우스에서도). 0.30.0까지 코어는 기본 자리(두 점 화면 가운데의 오른쪽 위)가 표식을 덮어도 그대로 그려, 휴대폰 정밀 조준 미리 보기에서 거리 글상자가
+ *   첫 점 표식을 덮었다(글상자가 화면 폭의 절반을 넘어 캔버스 안으로 당겨지므로 더 자주). 표식을 덮지 않던 자리는 그대로다. 측정을 끄면 null.
  * - 24차: 측정 띠의 끌어온 점 단추(measure-track.ts)는 이 모듈의 띠 위 알림(showFlash)을 함께 쓰고, 끌어온 점 수가 바뀌면(머무르기로 기억함)
  *   host.changed로 알린다.
  */
@@ -245,6 +248,8 @@ export class MeasureLock {
   private aimAvoid: MeasureLabelRect | null = null;
   /** 코어 글상자가 비킬 떠 있는 것(뷰 큐브·띠 — 캔버스 기준, 측정 중일 때만) */
   private coverAvoid: MeasureLabelRect[] = [];
+  /** 측정 중인지(update가 맞추고 reset이 끈다 — 측정 중이면 코어 글상자가 측정 점 표식도 비키게 한다, 33차) */
+  private measuring = false;
   /** 코어에 마지막으로 준 비킬 자리(같으면 다시 주지 않는다) */
   private avoidKey = 'null';
   /** 툴팁을 붙인 점(캔버스 기준 화면 좌표 — 크기가 바뀌면 다시 놓는다) */
@@ -370,6 +375,7 @@ export class MeasureLock {
       this.placeTipNow(v!);
     }
     this.coverAvoid = on ? this.covers(v!) : [];
+    this.measuring = on;
     this.pushAvoid();
     const lock = this.lock;
     if (lock) this.dropFlash(NO_LOCK);
@@ -518,6 +524,7 @@ export class MeasureLock {
     this.tipAvoid = null;
     this.aimAvoid = null;
     this.coverAvoid = [];
+    this.measuring = false;
     this.pushAvoid();
     this.dropFlash(null);
     this.forgetTangent();
@@ -555,12 +562,15 @@ export class MeasureLock {
     return els.length ? [...out, ...coverRects(c, els.map((e) => e.getBoundingClientRect()))] : out;
   }
 
-  /** 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리·떠 있는 것, 조준 중이면 커서 둘레)를 코어에 준다 — 바뀌었을 때만, 모두 없으면 null */
+  /**
+   * 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리·떠 있는 것, 조준 중이면 커서 둘레)와 측정 점 표식 비키기(33차 — 코어 0.31.0 points)를 코어에 준다.
+   * 바뀌었을 때만, 측정 중이 아니고 넘길 영역도 없으면 null
+   */
   private pushAvoid(): void {
     const v = this.host.viewer();
     if (!v) return;
     const rects = [this.aimAvoid, this.tipAvoid, ...this.coverAvoid].filter((r): r is MeasureLabelRect => !!r);
-    const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid ? { rects, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
+    const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid || this.measuring ? { rects, points: true, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
     const key = JSON.stringify(avoid);
     if (key === this.avoidKey) return;
     this.avoidKey = key;
