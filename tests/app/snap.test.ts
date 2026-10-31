@@ -391,7 +391,8 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: { guides: true, open: true } } });
+    // 34차: 판재는 안내 선이 원기둥 벽 곡면만 뚫는 면의 열린 교차(코어 0.32.0 openFaces)도 — NC 문서(refineFace 없음)는 주지 않는다
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: { guides: true, open: true, openFaces: true } } });
     expect((s as { throughTranslucent?: boolean }).throughTranslucent).toBe(true);
     // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
     expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
