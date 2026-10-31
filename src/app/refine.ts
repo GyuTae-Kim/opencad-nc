@@ -515,9 +515,11 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
 /**
  * 추론 붙잡기: 기준 선분 거르기를 준 끌어온 점 나란함·수직과 그 선이 만나는 점(31차 — 코어 0.29.0 trackDirs { edge, meets }), 첫 점 나란함의 기준 거르기(parallelEdge).
  * 두 거르기에 같은 함수를 주면 코어가 같은 선분을 한 번만 묻는다. 첫 점 나란함의 기준이 원호·구멍 테두리를 나눈 현이면 첫 점에서 그 현과 나란한 엉뚱한 방향에 붙었다
- * (31차 탐색 — 실제 판재 구멍 중심을 첫 점으로 둘레를 훑은 3,584곳 가운데 '나란한 방향' 54곳이 모두 현 기준). 원호 접선 잠금(tangent.ts)·모서리 끝 방향 잠금은 이 기준과 따로다
+ * (31차 탐색 — 실제 판재 구멍 중심을 첫 점으로 둘레를 훑은 3,584곳 가운데 '나란한 방향' 54곳이 모두 현 기준). 원호 접선 잠금(tangent.ts)·모서리 끝 방향 잠금은 이 기준과 따로다.
+ * 32차(코어 0.30.0 meets { guides }): 두 끌어온 점의 나란한 선·수직인 선끼리 만나는 점(같은 기준 모서리로 그은 기운 사각형의 구석)에도 붙는다.
+ * 정확한 직선끼리라 다듬지 않고, 첫 점을 지나는 선이 아니라 Shift·잠금 단추로 잠그지 않는다
  */
-const trackInference = (edge: (s: SnapSegment) => boolean): MeasureSnapOptions['inference'] => ({ ...MEASURE_INFERENCE, parallelEdge: edge, trackDirs: { edge, meets: true } });
+const trackInference = (edge: (s: SnapSegment) => boolean): MeasureSnapOptions['inference'] => ({ ...MEASURE_INFERENCE, parallelEdge: edge, trackDirs: { edge, meets: { guides: true } } });
 
 /**
  * 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소(판 외곽선·포켓 둘레·구멍 테두리의 호 포함)의

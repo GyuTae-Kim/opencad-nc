@@ -36,7 +36,13 @@ describe('language URLs and UI presentation', () => {
         expect(value.split('\n').length, `${code}: ${key}`).toBe(key.split('\n').length);
         // 해석(parse)을 통역으로, 그릴(draw)을 석쇠로, 이송(feed)을 송금·전송으로, 주석(annotation)을 주석(錫)으로, 개(個)를 개(犬)로 옮긴 말
         expect(value, `${code}: ${key}`).not.toMatch(/译员|Dolmetsch|grill|Grill|格栅|转账|转移|Übertrag|錫|犬|Revision|Processing/);
+        // 32차: 거리(distance)를 길거리로, 선반(lathe)을 책꽂이로, 보정(compensation)을 교정(calibration)으로, 현(chord)을 화음으로, 판(panel)을 회로 기판으로,
+        // 합성(synthetic)을 작곡으로, "선반 모드에서만 읽음"을 읽기 전용으로, 휴지(dwell)를 공회전으로, 회전축 감기를 코일 감기로, 주속 일정(constant surface speed)을 일정표로 옮긴 말
+        expect(value, `${code}: ${key}`).not.toMatch(/通り|棚|搁板|Regal|shelf|Kalibrier|calibrat|校正|Akkord|Platine|komposition|只读|Leerlauf|空闲|Wicklung|スケジュール|速度表|schedule/);
       }
+    expect(translate('거리', 'ja')).toBe('距離');
+    expect(translate('선반 프로그램으로 보임', 'en')).toBe('Appears to be a lathe program');
+    expect(translate('· 선반', 'zh-CN')).toBe('· 车床');
     expect(translate('직선 이송', 'de')).toBe('Geradenvorschub');
     expect(translate('급속', 'de')).toBe('Eilgang');
     expect(translate('홈 · 포켓', 'en')).toBe('Grooves · Pockets');

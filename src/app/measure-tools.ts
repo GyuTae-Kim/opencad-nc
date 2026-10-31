@@ -9,6 +9,7 @@
  * - refine.ts: 코어 수직 발·선분 위 점을 원호·스플라인 위로, 교차점을 두 곡선의 교차점으로, 축과 선분의 교차를 축 직선과 곡선의 교차점으로
  *   다듬기(코어 0.14.0·0.15.0·0.18.0 refine)와
  *   앱이 코어에 주는 붙잡기 선택(curve.ts 곡선 위 점 찾기, spline.ts 스플라인 계산, intersect.ts 두 요소의 교차점)
+ * - measure-label.ts: 코어가 캔버스에 그리는 측정 거리 글상자의 글을 화면 언어로(32차 — 코어 setMeasureFormat, 그림 저장도 같은 글)
  *
  * 앱이 받기 전에도 쓰는 글(안내·잠금 이름·붙잡은 종류 이름)은 measure.ts(첫 화면)에 있다. 이 모듈들은 첫 화면 모듈에서 값으로 가져오지 않는다
  * (tests/app/core-split.test.ts가 본다).
@@ -19,3 +20,4 @@ export { TouchAim } from './aim';
 export { TrackPick } from './measure-track';
 export { ArcTangents } from './tangent';
 export { ncSnapOptions, panelSnapOptions } from './refine';
+export { measureLabelFormat } from './measure-label';

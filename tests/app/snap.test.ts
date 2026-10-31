@@ -296,8 +296,9 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     expect(s!.points.length).toBe(5);
     // 추론 붙잡기(교차점·수직 발·축 방향)와 코어 0.10.0 나란함·Shift 잠금, 0.16.0 끌어온 축(18차), 0.18.0 축과 모서리·면의 교차(20차),
     // 0.19.0 잠근 선과 모서리·면의 교차(21차), 0.21.0 잠근 선과 끌어온 축의 교차(25차)도 켠다. 0.23.0 반투명 공작물 너머 고르기(25차).
-    // 0.28.0 끌어온 점에서 지나간 곧은 선분과 나란함·수직(30차 — 원호를 나눈 현을 거르는 함수와 함께), 0.29.0 그 선이 만나는 점과 첫 점 나란함의 같은 거르기(31차)
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: true } });
+    // 0.28.0 끌어온 점에서 지나간 곧은 선분과 나란함·수직(30차 — 원호를 나눈 현을 거르는 함수와 함께), 0.29.0 그 선이 만나는 점과 첫 점 나란함의 같은 거르기(31차),
+    // 0.30.0 두 끌어온 점의 안내 선끼리 만나는 점(32차)
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: { guides: true } } });
     const inf = s!.inference as { parallelEdge: unknown; trackDirs: { edge: unknown } };
     expect(inf.parallelEdge).toBe(inf.trackDirs.edge);
     expect((s as { throughTranslucent?: boolean }).throughTranslucent).toBe(true);
@@ -390,7 +391,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     measureBtn(root).click();
     expect(app.state().measuring).toBe(true);
     const s = v.snaps.at(-1) as Snap & { inference?: unknown };
-    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: true } });
+    expect(s!.inference).toEqual({ intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true, parallelEdge: expect.any(Function), trackDirs: { edge: expect.any(Function), meets: { guides: true } } });
     expect((s as { throughTranslucent?: boolean }).throughTranslucent).toBe(true);
     // 가공 없는 윤곽(반원 (10,10) → (30,10), 중심 (20,10))
     expect(s!.points).toEqual([{ point: [20, 10, 19], kind: 'center', id: 'mpr-contours' }]);
