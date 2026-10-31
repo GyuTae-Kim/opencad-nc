@@ -128,7 +128,8 @@ const TIP_EDGE = 4;
  * 0.19.0: 잠근 선이 선분과 만나는 점·면을 뚫는 점(locked에 segment·face)은 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'.
  * 0.21.0: 잠근 선이 끌어온 점의 축과 만나는 점(locked에 trackOther)은 '잠근 X축 · 끌어온 점에서 Y축', 잠근 축 위 끌어온 점과 나란한 자리(locked에 trackFrom만)는
  * '잠근 Z축 · 끌어온 점과 나란히'(이름에 잠금이 들어 있어 "잠금"을 다시 붙이지 않는다).
- * 31차(코어 0.29.0 trackDirs { meets }): 끌어온 점에서 모서리와 나란한 선·수직인 선이 다른 것과 만나는 점은 '끌어온 점에서 모서리와 나란히 · X축 위'처럼(trackDirName)
+ * 31차(코어 0.29.0 trackDirs { meets }): 끌어온 점에서 모서리와 나란한 선·수직인 선이 다른 것과 만나는 점은 '끌어온 점에서 모서리와 나란히 · X축 위'처럼(trackDirName).
+ * 32차(코어 0.30.0 meets { guides }): 다른 끌어온 점의 나란한 선·수직인 선과 만나는 점은 '끌어온 점에서 모서리에 수직 · 끌어온 점 나란한 선 위'처럼
  */
 export function snapTip(hv: TrackDirPoint | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
@@ -136,29 +137,47 @@ export function snapTip(hv: TrackDirPoint | null | undefined): { name: string; l
 }
 
 /** 붙잡은 점(미리 보기 measureHoverSnap·찍은 점 measurePoints)에서 이름을 가르는 값 */
-type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction'>;
+type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction' | 'trackGuide'>;
 
 /**
  * 끌어온 점에서 모서리와 나란한 선·수직인 선이 만난 것(31차 — 코어 0.29.0 trackDirs { meets }, 코어 README의 가르는 법): 첫 점 축이면 그 축('x'·'y'·'z' — axis·direction),
  * 다른 끌어온 점의 축이면 't' + 축(trackOther), 선분·윤곽선이면 'edge'(segment), 그물 면이면 'face', 첫 점의 나란함이면 'par'(axis 없이 direction — 그 선 위 점에는 direction이 없다).
+ * 32차(코어 0.30.0 meets { guides }): 다른 끌어온 점의 나란한 선이면 'gpar', 수직인 선이면 'gperp'(trackGuide — 그 점의 안내 종류).
  * 끌어온 점 안내가 아니거나(trackMark가 'dir'이 아님) 만난 것이 없으면(그 선 위 점) null
  */
-export type TrackDirMeet = 'x' | 'y' | 'z' | 'tx' | 'ty' | 'tz' | 'edge' | 'face' | 'par';
+export type TrackDirMeet = 'x' | 'y' | 'z' | 'tx' | 'ty' | 'tz' | 'edge' | 'face' | 'par' | 'gpar' | 'gperp';
 export function trackDirMeet(p: TrackDirPoint | null | undefined): TrackDirMeet | null {
   if (!p || trackMark(p) !== 'dir') return null;
+  if (p.trackGuide) return p.trackGuide.kind === 'parallel' ? 'gpar' : 'gperp';
   return p.axis ?? (p.trackOther ? (`t${p.trackOther.axis}` as const) : p.segment ? 'edge' : p.face ? 'face' : p.direction ? 'par' : null);
 }
+
+/** 만난 것의 이름(trackDirName의 ' · ' 뒤, '위' 앞) */
+const MEET_AT: Record<TrackDirMeet, string> = {
+  x: 'X축',
+  y: 'Y축',
+  z: 'Z축',
+  tx: '끌어온 점 X축',
+  ty: '끌어온 점 Y축',
+  tz: '끌어온 점 Z축',
+  edge: '모서리',
+  face: '면',
+  par: '나란한 방향',
+  gpar: '끌어온 점 나란한 선',
+  gperp: '끌어온 점 수직인 선',
+};
 
 /**
  * 만나는 점의 이름(툴팁·측정 결과, 31차): 끌어온 점 안내 이름(TRACK_PARALLEL_LABEL·TRACK_PERPENDICULAR_LABEL) 뒤에 만난 것 —
  * '… · X축 위'(첫 점 축), '… · 나란한 방향 위'(첫 점의 나란함), '… · 끌어온 점 Y축 위'(다른 끌어온 점의 축), '… · 모서리 위', '… · 면 위'(사전에 18개).
+ * 32차: 두 끌어온 점의 안내 선끼리 만나는 점은 '… · 끌어온 점 나란한 선 위'·'… · 끌어온 점 수직인 선 위'(나란한 두 선은 만나지 않아
+ * '끌어온 점에서 모서리와 나란히 · 끌어온 점 나란한 선 위'는 없다 — 사전에 3개).
  * 만나는 점이 아니면 null(30차 이름 그대로)
  */
 export function trackDirName(p: TrackDirPoint | null | undefined): string | null {
   const m = trackDirMeet(p);
   if (!m) return null;
-  const at = m === 'edge' ? '모서리' : m === 'face' ? '면' : m === 'par' ? '나란한 방향' : m.length > 1 ? `끌어온 점 ${m[1]!.toUpperCase()}축` : `${m.toUpperCase()}축`;
-  return `${p!.snap === 'parallel' ? TRACK_PARALLEL_LABEL : TRACK_PERPENDICULAR_LABEL} · ${at} 위`;
+  return `${p!.snap === 'parallel' ? TRACK_PARALLEL_LABEL : TRACK_PERPENDICULAR_LABEL} · ${MEET_AT[m]} 위`;
 }
 
 /**
