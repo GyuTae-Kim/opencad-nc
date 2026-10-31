@@ -107,6 +107,37 @@ Q204=+10 ;2ND SET-UP CLEARANCE
     expect(tops(p)).toEqual(tops(parseHeidenhain(SRC)));
   });
 
+  it('숨긴 자리 /POS(TNC7 설명서 7.6.1 — 36차): 가공하지 않고, 다음 POS의 증분 기준으로는 남는다', () => {
+    // 이어 쓰기 꼴: POS2를 숨기면 (40,30)에 구멍이 없고, POS3(IX+10 IY-5)은 숨긴 POS2에서 (50,25)
+    const hid = SRC.replace('POS2( X+40 Y+30 Z+0 )', '/POS2( X+40 Y+30 Z+0 )');
+    const p = parseHeidenhain(hid);
+    expect(p.warnings).toEqual([]);
+    expect(tops(p)).toEqual([
+      [10, 10, 2],
+      [50, 25, 2],
+    ]);
+    // 위치 사이 옮기기도 숨긴 자리를 건너뛴다
+    expect(movesAt(p, lineOf(hid, 'CYCL CALL PAT')).filter((x) => x.kind === MOVE_FEED).map((x) => x.end)).toEqual([
+      [10, 10, 50],
+      [50, 25, 50],
+    ]);
+    // 첫 자리를 숨겨도 둘째 자리의 증분 기준은 첫 자리, 예전 꼴(다음 줄)도 같다
+    const first = pgm(`1 TOOL CALL 1 Z S5000
+2 L X+0 Y+0 Z+50 R0 FMAX
+3 PATTERN DEF
+/POS1( X+10 Y+10 Z+0 )
+POS2( IX+5 IY+5 IZ-1 )
+4 ${DRILL}
+5 CYCL CALL PAT F1000`);
+    const q = parseHeidenhain(first);
+    expect(q.warnings).toEqual([]);
+    expect(tops(q)).toEqual([[15, 15, 1]]);
+    // 숨긴 자리만 있는 패턴은 그리지 않는다(경고 없음)
+    const none = parseHeidenhain(pgm(`1 L X+0 Y+0 Z+50 R0 FMAX\n2 PATTERN DEF ~\n  /POS1( X+10 Y+10 Z+0 )\n3 ${DRILL}\n4 CYCL CALL PAT F1000`));
+    expect(none.warnings).toEqual([]);
+    expect(none.holes.count).toBe(0);
+  });
+
   it('GLOBAL DEF 125 Q345=1: 위치 사이를 늘 2차 안전 거리로(경고는 34차 전과 같음)', () => {
     const src = SRC.replace('7 CYCL CALL PAT', '7 GLOBAL DEF 125 POSITIONING ~\n  Q345=+1 ;SELECT POS. HEIGHT\n7 CYCL CALL PAT');
     const p = parseHeidenhain(src);
