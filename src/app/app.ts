@@ -308,6 +308,8 @@ export class NcViewerApp implements PanelHost {
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
     root.addEventListener('languagechange', () => {
       if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize);
+      // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다
+      this.labelFormat();
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
     });
@@ -1367,6 +1369,7 @@ export class NcViewerApp implements PanelHost {
     const m = this.measureTools;
     const lock = this.mlock;
     if (!v || !m || !lock || this.aim) return;
+    this.labelFormat();
     // 십자선·손가락 자리는 코어 거리 글상자가 비키게 잠금 손잡이가 코어에 넘긴다(코어 0.13.0 setMeasureLabelAvoid)
     // 조준을 시작하고 마칠 때 측정 띠의 끌어온 점 단추를 보이고 숨긴다(measure-track.ts)
     this.aim = new m.TouchAim(v.canvas, {
@@ -1376,6 +1379,14 @@ export class NcViewerApp implements PanelHost {
       onChange: () => this.mtrack?.update(),
     });
     lock.attach(v.canvas);
+  }
+
+  /**
+   * 코어가 캔버스에 그리는 측정 거리 글상자("거리 … mm")를 화면 언어로(32차 — 측정 도구 조각 measure-label.ts, 코어 setMeasureFormat).
+   * 그릴 때 문서 언어를 읽으므로 언어를 바꾸면 다시 넘겨 다시 그리게 한다. 조각을 받기 전에는 코어 기본(한국어) 글
+   */
+  private labelFormat(): void {
+    if (this.viewer && this.measureTools) this.viewer.setMeasureFormat(this.measureTools.measureLabelFormat(this.viewer));
   }
 
   private setDoc(d: NcDoc): void {
