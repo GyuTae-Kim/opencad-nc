@@ -21,6 +21,8 @@
  *   정확한 교차점을 축 직선 위로 내린 자리(코어 acceptOnLine이 축에서 화면 반 화소 넘게 벗어난 점은 버린다). 허용치는 교차점과 같은 꼴(토막 하나).
  *   22차(코어 0.20.0): 같은 계산이 직선이 토막과 만나지 않고 그 활꼴(현과 곡선 사이)만 지나는 열린 후보(c.open — 축이 곡선 평면을 뚫는 점)와
  *   축이 아닌 잠근 선(나란함·수직·접선 — c.line.axis 없음)도 푼다. 직선의 지나는 점·방향만 읽는다
+ *   35차(코어 0.33.0 refineEnds): 켠 선이 꺾은선 꼭짓점을 화면 반 화소 안으로 지날 때 코어가 그 꼭짓점의 두 토막을 같은 꼴('axisEdge'·open,
+ *   point = 꼭짓점을 그 선에 내린 발)로 묻는다 — 같은 계산이 그대로 푼다(곧은 토막은 null — 끝점 그대로)
  * - 모르는 종류는 null — 코어 점 그대로
  * - 축·잠근 선이 면을 뚫는 점(21차 — 코어 0.19.0 refineFace 'axisFace', 첫 점 축·끌어온 축·잠근 선, 22차부터 기운 잠근 선도): 판재 그물의 원기둥 벽(구멍 벽·둥근 포켓 벽·
  *   판 외곽선 둥근 모서리 — 붙잡기 표의 둘레 호 위·아래 고리 한 쌍, panelWalls)을 나눈 삼각형 위 코어 점을 그 직선과 원기둥의 정확한 교차점으로(refineFaceSnap)
@@ -514,9 +516,12 @@ const compEnd = (p: Float64Array, k: number, o: number): V3 => [p[k * 6 + o]!, p
  * (원호·나선·스플라인 경로와 만나는 점은 refineSnap 'axisEdge'가 곡선 위로). 첫 점 나란함(0.10.0)의 기준도 같은 거르기로 곧은 경로만 받는다(inference.parallelEdge)
  * NC 문서에는 refineFace가 없어 안내 선의 면의 열린 교차(코어 0.32.0 openFaces — 34차)는 주지 않는다.
  * 34차: G1으로 풀어 쓴 곡선 토막(CAM 곡선·회전축 감기·평면이 다른 원호를 나눈 조각)도 두 기준에서 뺀다(trackDirEdge — g1curve.ts)
+ * 35차(코어 0.33.0 refineEnds — 30차부터 요청): 켠 선(첫 점 축·끌어온 축·끌어온 점 안내 선·잠근 선)이 원호·나선·스플라인을 나눈 꺾은선 꼭짓점을
+ * 그 깊이에서 화면 반 화소 안으로 지나면 그 꼭짓점의 두 토막도 refineSnap('axisEdge'·open)에 물어, 곡선과의 정확한 교차가 꼭짓점에서 반 화소 넘게
+ * 떨어져 있으면 꼭짓점(끝점)보다 먼저 붙는다(원호 꼭대기를 스치는 축 — 23차 재현의 남은 단). 곧은 이동의 꼭짓점은 앱이 null이라 끝점 그대로다
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
-  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
+  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), refineEnds: true, throughTranslucent: true };
 }
 
 /**
@@ -554,7 +559,10 @@ const trackInference = (edge: (s: SnapSegment) => boolean, faces = false): Measu
  * (구멍 테두리·윤곽 호는 refineSnap 'axisEdge', 구멍 벽·둥근 포켓 벽은 refineFaceSnap 'axisFace'로 곡선·원기둥 위로). 첫 점 나란함의 기준도 같은 거르기로
  * 곧은 윤곽 요소·모서리만 받는다(inference.parallelEdge)
  * 34차(코어 0.32.0 meets { openFaces }): 그 선이 원기둥 벽 삼각형을 비켜 가며 곡면만 뚫는 자리에서도 원기둥 위로(refineFaceSnap — 축의 면의 열린 교차와 같은 셈)
+ * 35차(코어 0.33.0 refineEnds): 켠 선이 구멍 테두리·윤곽 호·판 외곽선 둥근 모서리를 나눈 꺾은선 꼭짓점을 반 화소 안으로 지나면 그 꼭짓점의 두 토막도
+ * refineSnap에 물어 호 위 교차가 꼭짓점보다 먼저다(ncSnapOptions와 같다). 판 모서리처럼 곧은 꼭짓점은 끝점 그대로다.
+ * 코어 0.33.0은 원근으로 아주 가까이 확대해 벽 칸의 꼭짓점이 눈 뒤로 넘어가도 그 칸을 면의 열린 교차 후보로 모은다(선택 없이 — 앱 할 일 없음)
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: trackInference(trackDirEdge(t), true), edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
+  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: trackInference(trackDirEdge(t), true), edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), refineEnds: true, throughTranslucent: true };
 }
