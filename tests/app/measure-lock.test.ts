@@ -411,3 +411,36 @@ describe('번역', () => {
     }
   });
 });
+
+describe('툴팁 크기가 바뀌면 다시 놓기(31차 — 번역층이 글을 바꾼 뒤)', () => {
+  it('글이 길어지면(다른 언어) 그 크기로 다시 놓고 코어 글상자가 비킬 자리도 맞춘다', () => {
+    const ro: { fire?: () => void } = {};
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          ro.fire = cb;
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const { v, lock, layer } = setup();
+    v.hover = END;
+    lock.update();
+    const tip = layer.querySelector<HTMLElement>('.snap-tip')!;
+    // jsdom은 크기를 재지 않아 80 × 20으로 본다: 점 (100,50) 오른쪽 아래
+    expect([tip.style.left, tip.style.top]).toEqual(['112px', '62px']);
+    // 번역된 글이 760px — 점 양옆 어느 쪽에도 들어가지 않아 점 아래에서 가로만 층 안으로(800 − 4 − 760 = 36)
+    Object.defineProperty(tip, 'offsetWidth', { configurable: true, value: 760 });
+    ro.fire!();
+    expect([tip.style.left, tip.style.top]).toEqual(['36px', '62px']);
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 112, y: 62, width: 760, height: 20 }] });
+    // 숨은 툴팁은 다시 놓지 않는다
+    v.hover = null;
+    lock.update();
+    Object.defineProperty(tip, 'offsetWidth', { configurable: true, value: 100 });
+    ro.fire!();
+    expect(tip.style.left).toBe('36px');
+  });
+});
