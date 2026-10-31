@@ -31,7 +31,7 @@ import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
-import { boardLid, boardThrough, createDoc, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
+import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, toast } from './dom';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
@@ -1072,8 +1072,9 @@ export class NcViewerApp implements PanelHost {
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
         attempt.error('empty');
-        const why = res.scene.warnings?.[0];
-        throw new Error(`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${why ? ` (해석 경고: ${why})` : ''}`);
+        // 안내 글과 첫 해석 경고(줄·글)를 조각마다 따로 번역되게(doc.ts emptyProgramParts)
+        this.showError([`${name}: `, ...emptyProgramParts(res)]);
+        return false;
       }
       await this.ensureViewer();
       if (seq !== this.loadSeq) return false;
@@ -1222,13 +1223,15 @@ export class NcViewerApp implements PanelHost {
     this.busyName.textContent = name;
   }
 
-  private showError(msg: string): void {
-    this.error = msg;
+  /** 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다) */
+  private showError(msg: string | readonly string[]): void {
+    const parts = typeof msg === 'string' ? [msg] : msg;
+    this.error = parts.join('');
     if (this.doc) {
-      toast(msg, 'error', 8000);
+      toast(parts, 'error', 8000);
       return;
     }
-    this.startError.textContent = msg;
+    this.startError.replaceChildren(...parts);
     this.startError.hidden = false;
   }
 
