@@ -6,10 +6,11 @@
  * CYCL DEF 200·201·202·203·205·240·206·207·209·1(드릴 계열)과 CYCL CALL·M99·M89, CYCL DEF 7(원점 이동),
  * 밀링 사이클 208(보어 밀링 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256(사각 보스)·257(원 보스)·232(정면 밀링),
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
- * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프.
+ * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프,
+ * PATTERN DEF(POS·ROW·PAT·CIRC·PITCHCIRC — 34차)와 CYCL CALL PAT(200번대 사이클을 가공 위치마다, GLOBAL DEF 125의 Q345).
  * 근사: RND는 작업 평면 안의 직선·원호 모서리를 접하는 호로, CHF는 두 직선 사이 모서리만 다듬고(원호와 만나면 모서리 그대로, 경고), APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
- * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF(경고).
+ * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
  */
 import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
@@ -49,6 +50,10 @@ function pgmBase(s: string): string {
 }
 
 const AXES = 'XYZ';
+/** PATTERN DEF 요소 낱말(요소 이름 + 번호, 괄호가 붙을 수 있음) */
+const PATTERN_ITEM = /^(?:POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)\d*(?:\(.*)?$/;
+/** PATTERN DEF 한 패턴에서 그리는 가공 위치 수 한도 */
+const PATTERN_MAX = 100_000;
 /** CYCL CALL에서 밀링 길을 만드는 사이클 */
 const MILL_CYCLES = new Set([208, 251, 252, 253, 256, 257, 232]);
 
@@ -81,6 +86,12 @@ class HRunner extends NcEmitter {
   private autoFeed = 0;
   private cycle: { n: number; ok: boolean } | null = null;
   private modalCall = false;
+  /** PATTERN DEF 가공 위치(34차): 작업 평면 X·Y(원점 이동은 CYCL CALL PAT 때 더한다)와 사이클 공작물 윗면(Q203)에 더할 높이. 새 PATTERN DEF·SEL PATTERN까지 남는다 */
+  private pattern: { x: number; y: number; z: number }[] | null = null;
+  /** 바로 앞 블록이 PATTERN DEF(또는 그 이어 쓴 요소)였는지 */
+  private patternOpen = false;
+  /** SEL PATTERN(점 표)을 골랐는지 — 점 표는 읽지 않는다 */
+  private patternTable = false;
   private labels: Map<string, number> | null = null;
   /** 부르기 쌓기: LBL 부프로그램과 CALL PGM(pgmEnd = 그 프로그램 구획 끝 줄) */
   private stack: { ret: number; reps: number; start: number; pgmEnd?: number }[] = [];
@@ -426,6 +437,9 @@ class HRunner extends NcEmitter {
     const t0 = T[0]!.toUpperCase();
     const t1 = (T[1] ?? '').toUpperCase();
     const line = b.line;
+    // PATTERN DEF 요소를 이어 쓰기(~) 없이 다음 줄에 쓴 꼴(2018년 설명서 예처럼 블록 번호 없이 POS1( … )·ROW1( … ))도 그 패턴에 더한다
+    if (this.patternOpen && PATTERN_ITEM.test(t0)) return this.patternDef(b.text, line, true);
+    this.patternOpen = false;
     if (t0 === '*' || t0.startsWith('*')) return; // 구조 주석
     if (t0 === 'BEGIN') return;
     if (t0 === 'END' && t1 === 'PGM') {
@@ -450,15 +464,30 @@ class HRunner extends NcEmitter {
     }
     if (t0 === 'TOOL' && t1 === 'CALL') return this.toolCall(T, line);
     if (t0 === 'CYCL' && t1 === 'DEF') return this.cyclDef(T, line);
+    if (t0 === 'PATTERN' && t1 === 'DEF') return this.patternDef(b.text, line, false);
+    if (t0 === 'SEL' && t1 === 'PATTERN') {
+      // 점 표를 고르면 PATTERN DEF 패턴은 끝난다(점 표 파일은 읽지 않는다 — 경고는 34차 전과 같다)
+      this.pattern = null;
+      this.patternTable = true;
+      this.w.add('SEL 블록은 지원하지 않음', line);
+      this.mWords(T, line, false);
+      return;
+    }
     if (t0 === 'CYCL' && t1 === 'CALL') {
-      if ((T[2] ?? '').toUpperCase() === 'PAT') {
-        this.w.add('CYCL CALL PAT(점 패턴)은 지원하지 않음', line);
-        return;
-      }
+      if ((T[2] ?? '').toUpperCase() === 'PAT') return this.cycleCallPat(T, line);
       const f = findWord(T, 'F');
       if (f !== undefined) this.feed = this.value(f);
       this.mWords(T, line, true);
       return this.cycleCall(line);
+    }
+    if (t0 === 'GLOBAL' && t1 === 'DEF') {
+      // GLOBAL DEF 125 POSITIONING의 Q345(CYCL CALL PAT 위치 높이 — 34차)만 읽는다. 다른 기본값은 읽지 않고 경고도 34차 전과 같다
+      for (const w of T.slice(2)) {
+        const m = /^Q345=(.+)$/i.exec(w);
+        if (m) this.q.set('Q345', this.value(m[1]!));
+      }
+      this.w.add(`알 수 없는 블록 '${t0}'`, line);
+      return;
     }
     if (t0 === 'LBL') {
       // LBL 0 = 부프로그램 끝(부른 곳으로 돌아간다). 다른 LBL은 표지일 뿐
@@ -776,6 +805,174 @@ class HRunner extends NcEmitter {
       return;
     }
     this.updateXf();
+  }
+
+  /**
+   * PATTERN DEF(34차): HEIDENHAIN 공식 설명서(TNC 640 가공 사이클 프로그래밍 34059x-17, 2022-10, 3.3절 — TNC 320 771851-06, 2018-10, 3.3절도 같음)의
+   * 입력 값대로 블록 안 요소마다 가공 위치를 더한다(새 PATTERN DEF 블록이면 새 패턴). 위치는 작업 평면(공구 축 Z) X·Y이고 원점 이동은 CYCL CALL PAT 때 더한다.
+   * 시작점·중심은 절대, 간격은 증분, 각은 작업 평면 첫 축(X)에서 잰다. Z는 사이클의 공작물 윗면(Q203)에 더하는 높이(없으면 0).
+   * - POS(X Y Z): 그 자리 하나. 둘째부터는 IX·IY·IZ(앞 자리에서 증분)도 된다
+   * - ROW(X Y D NUM ROT Z): 시작점에서 ROT 방향으로 간격 D씩 NUM개
+   * - PAT(X Y DX DY NUMX NUMY ROT ROTX ROTY Z): 시작점에서 열(첫 축 쪽, 간격 DX) NUMX개 × 줄(둘째 축 쪽, 간격 DY) NUMY개. 패턴 전체를 ROT만큼 시작점 둘레로 돌리고,
+   *   ROTX·ROTY는 거기에 첫 축·둘째 축만 더 돌린다(일그러뜨린 패턴). 위치 차례는 설명서에 없어 줄마다 첫 열부터(정한 것 — 사이클 221과 같음)
+   * - CIRC(X Y D START NUM Z): 중심·지름 D 원 위에 START 각에서 고르게 NUM개
+   * - PITCHCIRC(X Y D START STEP NUM Z): 같은 원 위 START 각에서 STEP 각씩 NUM개(STEP 대신 끝 각으로 준 꼴은 낱말을 몰라 빼고 경고)
+   * - FRAME: 설명서 글로는 어느 자리인지(테두리만인지) 정할 수 없어 빼고 경고
+   * 값이 모자라거나 수가 0 이상 정수가 아니면 그 요소는 빼고 경고. 한 패턴에 PATTERN_MAX개까지
+   */
+  private patternDef(text: string, line: number, cont: boolean): void {
+    if (!cont || !this.pattern) this.pattern = [];
+    this.patternOpen = true;
+    this.patternTable = false;
+    const out = this.pattern;
+    const re = /\b(POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)(\d*)\s*\(([^)]*)\)/gi;
+    const deg = Math.PI / 180;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const kind = m[1]!.toUpperCase();
+      if (kind === 'FRAME') {
+        this.w.add('PATTERN DEF FRAME(테두리 꼴)은 지원하지 않음 — 그 자리는 빼고 그림', line);
+        continue;
+      }
+      const W = tokenize(m[3]!);
+      const get = (k: string): number | undefined => {
+        const s = findWord(W, k);
+        return s === undefined ? undefined : this.value(s);
+      };
+      let ok = true;
+      const need = (k: string): number => {
+        const v = get(k);
+        if (v === undefined) ok = false;
+        return v ?? 0;
+      };
+      const count = (k: string): number => {
+        const v = get(k);
+        if (v === undefined || !Number.isInteger(v) || v < 0) {
+          ok = false;
+          return 0;
+        }
+        return v;
+      };
+      const room = PATTERN_MAX - out.length;
+      const pts: [number, number][] = [];
+      let z = get('Z') ?? 0;
+      let want = 0;
+      if (kind === 'POS') {
+        // 둘째 자리부터 증분(IX·IY·IZ)은 앞 자리에서
+        const prev = out[out.length - 1];
+        const axis = (k: 'X' | 'Y' | 'Z', base: number | undefined): number | undefined => {
+          const a = get(k);
+          if (a !== undefined) return a;
+          const i = get('I' + k);
+          return i === undefined || base === undefined ? undefined : base + i;
+        };
+        const x = axis('X', prev?.x);
+        const y = axis('Y', prev?.y);
+        z = axis('Z', prev?.z) ?? 0;
+        want = 1;
+        if (x === undefined || y === undefined) ok = false;
+        else if (room > 0) pts.push([x, y]);
+      } else if (kind === 'ROW') {
+        const x = need('X');
+        const y = need('Y');
+        const d = need('D');
+        const n = count('NUM');
+        const rot = (get('ROT') ?? 0) * deg;
+        want = n;
+        if (ok) for (let k = 0; k < n && k < room; k++) pts.push([x + k * d * Math.cos(rot), y + k * d * Math.sin(rot)]);
+      } else if (kind === 'PAT') {
+        const x = need('X');
+        const y = need('Y');
+        const dx = need('DX');
+        const dy = need('DY');
+        const nx = count('NUMX');
+        const ny = count('NUMY');
+        const rot = get('ROT') ?? 0;
+        const ax = (rot + (get('ROTX') ?? 0)) * deg;
+        const ay = (rot + (get('ROTY') ?? 0)) * deg;
+        want = nx * ny;
+        if (ok)
+          for (let j = 0; j < ny && pts.length < room; j++)
+            for (let i = 0; i < nx && pts.length < room; i++)
+              pts.push([x + i * dx * Math.cos(ax) - j * dy * Math.sin(ay), y + i * dx * Math.sin(ax) + j * dy * Math.cos(ay)]);
+      } else {
+        // CIRC·PITCHCIRC
+        const x = need('X');
+        const y = need('Y');
+        const r = need('D') / 2;
+        const start = get('START') ?? 0;
+        const n = count('NUM');
+        const step = kind === 'CIRC' ? 360 / Math.max(1, n) : need('STEP');
+        want = n;
+        if (ok) for (let k = 0; k < n && k < room; k++) pts.push([x + r * Math.cos((start + k * step) * deg), y + r * Math.sin((start + k * step) * deg)]);
+      }
+      if (!ok) {
+        this.w.add(`PATTERN DEF ${kind}: 값이 모자라거나 맞지 않아 그 자리는 빼고 그림`, line);
+        continue;
+      }
+      if (want > pts.length) this.w.add(`PATTERN DEF ${kind}: 가공 위치가 ${PATTERN_MAX}개를 넘어 거기까지 그림`, line);
+      for (const [u, v] of pts) out.push({ x: u, y: v, z });
+    }
+  }
+
+  /**
+   * CYCL CALL PAT(34차): 마지막에 정의한 사이클을 PATTERN DEF의 가공 위치마다 부른다. 설명서(3.1·3.3·3.4절)대로
+   * - 위치 사이의 안전 높이 = CYCL CALL PAT 자리의 공구 축 좌표와 2차 안전 거리(공작물 윗면 + Q204) 가운데 높은 쪽.
+   *   GLOBAL DEF 125의 Q345=1이면 늘 2차 안전 거리. 윗면이 다른 위치가 섞이면 가장 높은 윗면으로(설명서: 점 패턴의 안전 높이는 패턴 안 모든 Z의 최댓값으로 셈)
+   * - 공구 축은 급속(FMAX)으로 올리고, 작업 평면은 그 블록의 F(없으면 마지막 이송, FMAX면 급속)로 옮긴 뒤 사이클을 부른다. 위치마다 끝나면 안전 높이로 올린다
+   * - 위치마다 공작물 윗면은 Q203 + 패턴의 Z(사이클이 읽는 Q203을 잠시 바꾸고 되돌린다). 원점 이동은 지금 것을 더한다
+   * 200~209·240·251~257(지금 자리에서 하는 사이클)만 — 예전 꼴 사이클 1·2·17과 시작점을 따로 받는 232는 부르지 않고 경고.
+   * PATTERN DEF는 공구 축 Z에서만 쓴다(다른 축이면 경고). 점 표(SEL PATTERN)는 읽지 않는다
+   */
+  private cycleCallPat(T: string[], line: number): void {
+    const pts = this.pattern;
+    if (!pts) {
+      this.w.add(this.patternTable ? 'SEL PATTERN 점 표는 읽지 않아 CYCL CALL PAT를 그리지 않음' : 'PATTERN DEF 없이 CYCL CALL PAT — 그리지 않음', line);
+      return;
+    }
+    const c = this.cycle;
+    if (!c) {
+      this.w.add('정의된 드릴 사이클 없이 CYCL CALL', line);
+      return;
+    }
+    if (!c.ok) return;
+    if (c.n < 200 || c.n === 232) {
+      this.w.add(`CYCL CALL PAT: 사이클 ${c.n}은 가공 위치마다 부르지 않음 — 그리지 않음`, line);
+      return;
+    }
+    if (this.plane !== 0) {
+      this.w.add('PATTERN DEF는 공구 축 Z에서만 씀 — CYCL CALL PAT를 그리지 않음', line);
+      return;
+    }
+    const f = findWord(T, 'F');
+    if (f !== undefined) this.feed = this.value(f);
+    const fmax = T.some((w) => w.toUpperCase() === 'FMAX');
+    this.mWords(T, line, true);
+    if (!pts.length) return;
+    const q203 = this.q.get('Q203');
+    const sh = this.shift;
+    let top = -Infinity;
+    for (const p of pts) top = Math.max(top, p.z);
+    const clear = (q203 ?? 0) + top + sh[2]! + Math.abs(this.q.get('Q204') ?? 0);
+    const h = this.q.get('Q345') === 1 ? clear : Math.max(this.pos[2]!, clear);
+    const lift = (): void => {
+      if (this.pos[2]! < h - 1e-9) this.emit(MOVE_RAPID, this.pos[0]!, this.pos[1]!, h, line, FLAG_CYCLE);
+    };
+    try {
+      for (const p of pts) {
+        // 한 블록에서 이동 한도를 넘지 않게(넘으면 run이 경고하고 멈춘다)
+        if (this.mb.count >= this.maxMoves) break;
+        lift();
+        this.emit(fmax ? MOVE_RAPID : MOVE_FEED, p.x + sh[0]!, p.y + sh[1]!, this.pos[2]!, line, FLAG_CYCLE);
+        this.known = 7;
+        this.q.set('Q203', (q203 ?? 0) + p.z);
+        this.cycleCall(line);
+      }
+      lift();
+    } finally {
+      if (q203 === undefined) this.q.delete('Q203');
+      else this.q.set('Q203', q203);
+    }
   }
 
   /** 지금 위치에서 드릴 사이클 실행 */
