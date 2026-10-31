@@ -14,8 +14,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 const ROOT = resolve(__dirname, '../..');
 const CORE = join(ROOT, 'node_modules/opencad-viewer3d/src');
-/** 첫 화면에서 바로 가져와도 되는 코어 모듈(작고 다른 코어 모듈을 거의 끌어오지 않는다) */
-const SMALL = new Set(['camera', 'pointer', 'viewcube', 'types', 'math', 'bounds']);
+/**
+ * 첫 화면에서 바로 가져와도 되는 코어 모듈(작고 다른 코어 모듈을 거의 끌어오지 않는다).
+ * extent: 코어 0.31.0부터 bounds가 방향 범위(itemExtent·itemsExtent — 앱은 쓰지 않는다)를 이 작은 모듈에서 다시 내보내 그래프에 닿는다.
+ * 첫 화면(camera가 쓰는 bounds 함수)은 그것을 쓰지 않아 번들러가 빼낸다(33차 빌드 — 첫 화면 입구 조각의 원본 크기가 코어 0.30.0 빌드와 같다)
+ */
+const SMALL = new Set(['camera', 'pointer', 'viewcube', 'types', 'math', 'bounds', 'extent']);
 /** 문서를 열 때 측정 도구 조각으로 나눠 받는 앱 모듈(첫 화면 그래프에 없어야 한다) */
 const SPLIT_APP = ['src/app/measure-tools.ts', 'src/app/measure-lock.ts', 'src/app/measure-track.ts', 'src/app/snap.ts', 'src/app/aim.ts', 'src/app/tangent.ts', 'src/app/measure-label.ts'];
 
