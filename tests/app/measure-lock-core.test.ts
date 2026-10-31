@@ -223,8 +223,8 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
     w.hoverXY(a.x, a.y - 90);
     const p = w.at(v.measureHoverSnap!.point);
     const first = { x: Math.round(p.x + 12), y: Math.round(p.y + 12), width: 80, height: 20 };
-    // 23차: 측정 중이면 뷰 큐브 자리도(툴팁 다음), 33차: 측정 점 표식 비키기(points)도
-    expect(v.measureLabelAvoid).toEqual({ rects: [first, CUBE], points: true });
+    // 23차: 측정 중이면 뷰 큐브 자리도(툴팁 다음), 33차: 측정 점 표식 비키기(points)도, 35차: 그림 저장의 표식 비키기(snapshotPoints)도
+    expect(v.measureLabelAvoid).toEqual({ rects: [first, CUBE], points: true, snapshotPoints: true });
     // 이 그리기는 넘기기 전 자리(툴팁 첫 자리에 걸림) — 툴팁이 비켰다
     expect(overlaps(first, v.measureLabelRect!)).toBe(true);
     v.renderNow();
@@ -315,14 +315,14 @@ describe('23차: 거리 글상자가 뷰 큐브·측정 띠를 비킨다(코어 
     const label = measureAt(w, CUBE.x - 30, CUBE.y + CUBE.height + 10);
     const def = plain(v, label);
     expect(overlaps(def, CUBE)).toBe(true);
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true, snapshotPoints: true });
     expect(overlaps(label, CUBE)).toBe(false);
     expect([label.width, label.height]).toEqual([def.width, def.height]);
     // 큐브를 숨기면(보기 메뉴) 넘기지 않아 기본 자리(0.12.0과 같다 — 33차: 표식 비키기만 넘기고, 이 자리는 표식을 덮지 않는다)
     v.setViewCubeVisible(false);
     lock.update();
     v.renderNow();
-    expect(v.measureLabelAvoid).toEqual({ rects: [], points: true });
+    expect(v.measureLabelAvoid).toEqual({ rects: [], points: true, snapshotPoints: true });
     for (const k of ['x', 'y', 'width', 'height'] as const) expect(v.measureLabelRect![k]).toBeCloseTo(def[k], 6);
     v.setViewCubeVisible(true);
     // 측정을 끄면 거둔다
@@ -342,12 +342,12 @@ describe('23차: 거리 글상자가 뷰 큐브·측정 띠를 비킨다(코어 
     w.click([80, 40, 0], 'touch');
     const label = measureAt(w, 400, BAR.y + 15);
     expect(overlaps(plain(v, label), BAR)).toBe(true);
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE, BAR], points: true });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE, BAR], points: true, snapshotPoints: true });
     expect(overlaps(label, BAR)).toBe(false);
     expect(overlaps(label, CUBE)).toBe(false);
     bar.hidden = true;
     lock.update();
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true, snapshotPoints: true });
   });
 
   it('큐브·띠와 겹치지 않는 측정은 글상자 자리가 기본 자리 그대로다(넘겨도 옮기지 않는다)', () => {

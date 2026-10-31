@@ -6,6 +6,8 @@
  * - 표식을 덮지 않던 자리는 그대로, 마우스(조준 없음)에서도 같은 규칙
  * 앱이 points를 넘기지 않았을 때(32차 꼴)는 그 값만 뺀 것을 코어에 넘겨 견준다. 커서는 첫 점 아래 빈 곳(첫 점 Y축 방향 붙잡기 — 축에서 0.3화소 비킨다)을,
  * 첫 점은 끝점에서 조금 비켜 가리킨다
+ * 35차(코어 0.33.0 snapshotPoints): 그림 저장(PNG 단추 — toBlob)의 거리 글상자도 표식을 비킨다. 34차 꼴(snapshotPoints만 뺀 값)은 그림 저장 글상자가
+ * 기본 자리라 화면에서 비킨 자리에서도 표식을 덮었다. 그림 저장 글상자 자리는 화면 밖 캔버스(DOM에 없는 캔버스)의 rect·fillText를 엿봐 읽는다
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureLabelAvoid, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
@@ -15,11 +17,49 @@ import { installCanvasFakes } from './fake-webgl';
 
 const W = 375;
 const H = 560;
+type Call = { k: 'r'; x: number; y: number; w: number; h: number } | { k: 't'; s: string; x: number; y: number };
+/** 그림 저장 캔버스(DOM에 없는 캔버스)의 rect·fillText 기록(엿보는 동안만) */
+let rec: Call[] | null = null;
 let restore: () => void;
 beforeAll(() => {
   restore = installCanvasFakes(W, H);
+  const proto = HTMLCanvasElement.prototype as unknown as { getContext: (this: HTMLCanvasElement, t: string) => unknown; toBlob: (cb: (b: Blob | null) => void) => void };
+  const fake = proto.getContext;
+  const toBlob = proto.toBlob;
+  proto.getContext = function (t: string) {
+    const c = fake.call(this, t) as object | null;
+    if (t !== '2d' || !c) return c;
+    const canvas = this;
+    return new Proxy(c, {
+      get: (o, k) =>
+        k === 'rect'
+          ? (x: number, y: number, w: number, h: number) => void (rec && !canvas.isConnected && rec.push({ k: 'r', x, y, w, h }))
+          : k === 'fillText'
+            ? (s: string, x: number, y: number) => void (rec && !canvas.isConnected && rec.push({ k: 't', s: String(s), x, y }))
+            : Reflect.get(o, k),
+    });
+  };
+  // jsdom에는 캔버스 그림 만들기가 없다 — 빈 Blob으로 바로 끝낸다(글상자 자리는 그 전에 그린 기록으로 읽는다)
+  proto.toBlob = (cb) => cb(new Blob([]));
+  const back = restore;
+  restore = () => {
+    proto.toBlob = toBlob;
+    back();
+  };
 });
 afterAll(() => restore());
+
+/** 그림 저장(앱 PNG 단추와 같은 toBlob('image/png'))의 거리 글상자 자리 — 글(x + 7, y + 5)을 품은 사각형. 덧그림을 다시 그리지 않으면 null */
+function snapshotLabel(v: Viewer3d): MeasureLabelRect | null {
+  rec = [];
+  void v.toBlob('image/png');
+  const calls = rec;
+  rec = null;
+  const texts = calls.filter((c) => c.k === 't');
+  const boxes = calls.filter((c): c is Extract<Call, { k: 'r' }> => c.k === 'r' && texts.some((t) => Math.abs(t.x - c.x - 7) < 1e-9 && Math.abs(t.y - c.y - 5) < 1e-9));
+  const b = boxes.at(-1);
+  return b ? { x: b.x, y: b.y, width: b.w, height: b.h } : null;
+}
 
 // 첫 점 F (40,30)에서 위로 거의 세로로 뻗은 선분 하나(커서를 둘 F 아래는 빈 곳 — 첫 점 Y축 방향 붙잡기만)
 const F = [40, 30, 0];
@@ -41,8 +81,8 @@ function place(v: Viewer3d, m: readonly number[], dx: number, dy: number): void 
   }
 }
 
-/** points: false면 앱이 넘기는 값에서 points만 뺀다(32차 꼴) */
-function setup(points: boolean, touch: boolean) {
+/** points: false면 앱이 넘기는 값에서 points(와 snapshotPoints)를 뺀다(32차 꼴), snapshot: false면 snapshotPoints만 뺀다(34차 꼴) */
+function setup(points: boolean, touch: boolean, snapshot = true) {
   document.body.innerHTML = '';
   const host = document.createElement('div');
   document.body.append(host);
@@ -55,7 +95,8 @@ function setup(points: boolean, touch: boolean) {
   v.renderNow();
   const view = new Proxy(v, {
     get: (o, k) => {
-      if (k === 'setMeasureLabelAvoid' && !points) return (a: MeasureLabelAvoid | null) => o.setMeasureLabelAvoid(a && (({ points: _p, ...rest }) => rest)(a));
+      if (k === 'setMeasureLabelAvoid' && !points) return (a: MeasureLabelAvoid | null) => o.setMeasureLabelAvoid(a && (({ points: _p, snapshotPoints: _s, ...rest }) => rest)(a));
+      if (k === 'setMeasureLabelAvoid' && !snapshot) return (a: MeasureLabelAvoid | null) => o.setMeasureLabelAvoid(a && (({ snapshotPoints: _s, ...rest }) => rest)(a));
       const x = Reflect.get(o, k, o) as unknown;
       return typeof x === 'function' ? (x as (...a: unknown[]) => unknown).bind(o) : x;
     },
@@ -93,9 +134,9 @@ function setup(points: boolean, touch: boolean) {
 const near = (r: MeasureLabelRect, p: { x: number; y: number }, rad: number): boolean => Math.hypot(Math.max(r.x - p.x, 0, p.x - r.x - r.width), Math.max(r.y - p.y, 0, p.y - r.y - r.height)) < rad;
 const overlaps = (a: MeasureLabelRect, b: MeasureLabelRect): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-/** 첫 점을 캔버스 f에 두고 커서(조준이면 십자선)를 c에 둔 미리 보기의 글상자·두 표식 자리 */
-function preview(points: boolean, touch: boolean, f: { x: number; y: number }, c: { x: number; y: number }) {
-  const w = setup(points, touch);
+/** 첫 점을 캔버스 f에 두고 커서(조준이면 십자선)를 c에 둔 미리 보기의 글상자·두 표식 자리(snap = 그 미리 보기의 그림 저장 글상자) */
+function preview(points: boolean, touch: boolean, f: { x: number; y: number }, c: { x: number; y: number }, snapshot = true) {
+  const w = setup(points, touch, snapshot);
   const pointerType = touch ? 'pen' : 'mouse';
   w.first(f, pointerType);
   // 정밀 조준: 앱 aim.ts가 십자선을 옮기는 처리 안에서(펜 움직임 전) 손가락 자리(십자선 아래 64)를 알린다
@@ -108,7 +149,9 @@ function preview(points: boolean, touch: boolean, f: { x: number; y: number }, c
   const fp = v.project(v.measurePoints[0]!.point)!;
   const label = v.measureLabelRect!;
   expect(label).not.toBeNull();
-  const out = { label, avoid: v.measureLabelAvoid, coverFirst: near(label, fp, MARK), coverHover: near(label, hp, MARK), fp, hp };
+  const snap = snapshotLabel(v)!;
+  expect(snap).not.toBeNull();
+  const out = { label, avoid: v.measureLabelAvoid, coverFirst: near(label, fp, MARK), coverHover: near(label, hp, MARK), fp, hp, snap, snapCover: near(snap, fp, MARK) || near(snap, hp, MARK) };
   v.dispose();
   return out;
 }
@@ -156,6 +199,47 @@ describe('33차: 측정 거리 글상자가 측정 점 표식을 덮지 않는�
       expect(old.coverFirst || old.coverHover).toBe(false);
       const now = preview(true, touch, f, c);
       expect(now.label).toEqual(old.label);
+    }
+  });
+});
+
+describe('35차: 그림 저장(PNG)의 측정 거리 글상자도 측정 점 표식을 덮지 않는다(코어 0.33.0 snapshotPoints)', () => {
+  it('앱은 측정 중 비킬 값에 snapshotPoints: true를 함께 넘긴다(코어가 켠 값을 돌려준다)', () => {
+    const now = preview(true, true, { x: 300, y: 300 }, { x: 300.3, y: 380 });
+    expect(now.avoid).toMatchObject({ points: true, snapshotPoints: true, pointerRadius: 24 });
+    const r34 = preview(true, true, { x: 300, y: 300 }, { x: 300.3, y: 380 }, false);
+    expect(r34.avoid?.snapshotPoints).toBeUndefined();
+  });
+
+  for (const touch of [true, false])
+    it(`${touch ? '휴대폰 정밀 조준' : '마우스'}: 34차 꼴은 화면 글상자가 비켜도 그림 저장 글상자가 기본 자리라 첫 점 표식을 덮고, 이제 그림 저장 글상자도 두 표식을 비킨다`, () => {
+      const f = { x: 300, y: 300 };
+      const c = { x: 300.3, y: 380 };
+      const r34 = preview(true, touch, f, c, false);
+      // 화면 글상자는 33차부터 비켰다
+      expect(r34.coverFirst || r34.coverHover).toBe(false);
+      // 그림 저장은 기본 자리(32차 꼴 화면 글상자와 같은 자리) — 첫 점 표식을 덮는다
+      const r32 = preview(false, touch, f, c);
+      expect(r34.snap).toEqual(r32.label);
+      expect(r34.snapCover).toBe(true);
+      const now = preview(true, touch, f, c);
+      expect(now.snapCover).toBe(false);
+      // 그림 캔버스 안
+      expect(now.snap.x >= 0 && now.snap.y >= 0 && now.snap.x + now.snap.width <= W && now.snap.y + now.snap.height <= H).toBe(true);
+      // 화면 글상자는 그대로(그림 저장 선택은 화면 자리를 바꾸지 않는다)
+      expect(now.label).toEqual(r34.label);
+      // 글상자 크기(글)는 화면과 같다
+      expect([now.snap.width, now.snap.height]).toEqual([now.label.width, now.label.height]);
+    });
+
+  it('표식을 덮지 않던 자리의 그림 저장 글상자는 그대로(첫 점이 가운데의 왼쪽)', () => {
+    for (const touch of [true, false]) {
+      const f = { x: 60, y: 300 };
+      const c = { x: 60.3, y: 380 };
+      const r34 = preview(true, touch, f, c, false);
+      expect(r34.snapCover).toBe(false);
+      const now = preview(true, touch, f, c);
+      expect(now.snap).toEqual(r34.snap);
     }
   });
 });
