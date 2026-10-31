@@ -535,7 +535,9 @@ kbd {
   color: var(--text);
   font-size: 12px;
   line-height: 1.5;
-  white-space: nowrap;
+  /* 한 줄로 두되 3D 보기(양쪽 여백 4px)보다 길면 줄을 바꾼다(휴대폰 폭의 긴 이름 — 31차). 너비는 글에서 정해 자리를 옮기기 전에 잰 크기가 앞 자리에 따라 바뀌지 않는다 */
+  width: max-content;
+  max-width: calc(100% - 8px);
   box-shadow: var(--shadow);
   pointer-events: none;
 }

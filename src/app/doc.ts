@@ -54,9 +54,9 @@ export interface NcDoc {
   pick: Pick3d | null;
   /**
    * 두 점 측정 결과(tangentB = 둘째 점을 원호 접선 잠금으로 찍음, trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍음 —
-   * 끌어온 축·모서리 위·축끼리의 교차(measure.ts trackMark), 앱이 붙인다)
+   * 끌어온 축·모서리 위·축끼리의 교차(measure.ts trackMark), nameA·nameB = 끌어온 점 안내 선이 만나는 점에 찍은 점의 이름(31차 — measure-lock.ts trackDirNames), 앱이 붙인다)
    */
-  measure: (MeasureResult & { tangentB?: boolean; trackA?: TrackMark; trackB?: TrackMark }) | null;
+  measure: (MeasureResult & { tangentB?: boolean; trackA?: TrackMark; trackB?: TrackMark; nameA?: string; nameB?: string }) | null;
   /** 코드 보기에서 고른 줄(-1 없음)과 덧그림으로 강조할 이동 */
   selLine: number;
   selMoves: number[];

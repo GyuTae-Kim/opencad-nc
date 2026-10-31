@@ -505,10 +505,15 @@ const compEnd = (p: Float64Array, k: number, o: number): V3 => [p[k * 6 + o]!, p
  * 25차(코어 0.23.0 throughTranslucent): 측정 점 고르기가 반투명 그물(공작물 상자 — 투명도 0.22)의 면을 지나 그 뒤 불투명 그물 면을 고른다.
  * 뒤에 불투명 그물이 없으면 예전처럼 공작물 면이다(깎기 시뮬레이션은 공작물 상자를 빼고 불투명 소재를 그린다).
  * 30차(코어 0.28.0 inference.trackDirs { edge }): 끌어온 점에서 지나간 곧은 경로 선분과 나란한 선·수직인 선에도 붙는다(원호·나선·스플라인을 나눈 현은 기준이 아니다 — trackDirEdge)
+ * 31차(코어 0.29.0 trackDirs { meets }): 그 선이 첫 점 축·첫 점의 나란함·다른 끌어온 점의 축·커서 둘레 경로·커서 아래 소재 면과 만나는 점에도 붙는다
+ * (원호·나선·스플라인 경로와 만나는 점은 refineSnap 'axisEdge'가 곡선 위로)
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
-  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: { ...MEASURE_INFERENCE, trackDirs: { edge: trackDirEdge(nc) } }, limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
+  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
 }
+
+/** 추론 붙잡기: 기준 선분 거르기를 준 끌어온 점 나란함·수직과 그 선이 만나는 점(31차 — 코어 0.29.0 trackDirs { edge, meets }) */
+const trackInference = (edge: (s: SnapSegment) => boolean): MeasureSnapOptions['inference'] => ({ ...MEASURE_INFERENCE, trackDirs: { edge, meets: true } });
 
 /**
  * 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소(판 외곽선·포켓 둘레·구멍 테두리의 호 포함)의
@@ -522,7 +527,9 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 29차(코어 0.27.0 setItemPickThrough): 포켓·홈의 뚜껑(윗면 — doc.ts boardLid)은 지나가고 벽·바닥과 바닥에 뚫은 구멍에서 멈춘다.
  * 30차(코어 0.28.0 inference.trackDirs { edge }): 끌어온 점에서 지나간 곧은 윤곽 요소·모서리와 나란한 선·수직인 선에도 붙는다
  * (윤곽 호·판 외곽선·포켓 둘레·구멍 테두리의 호를 나눈 현은 기준이 아니다 — trackDirEdge)
+ * 31차(코어 0.29.0 trackDirs { meets }): 그 선이 첫 점 축·첫 점의 나란함·다른 끌어온 점의 축·커서 둘레 윤곽선·커서 아래 그물 면과 만나는 점에도 붙는다
+ * (구멍 테두리·윤곽 호는 refineSnap 'axisEdge', 구멍 벽·둥근 포켓 벽은 refineFaceSnap 'axisFace'로 곡선·원기둥 위로)
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: { ...MEASURE_INFERENCE, trackDirs: { edge: trackDirEdge(t) } }, edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
+  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: trackInference(trackDirEdge(t)), edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), throughTranslucent: true };
 }

@@ -128,15 +128,16 @@ export const TRACK_PERPENDICULAR_LABEL = '끌어온 점에서 모서리에 수�
  * tangentB = 앱이 둘째 점을 원호 접선 잠금으로 찍었다고 표시한 결과(app.ts — 코어 종류는 나란함이라 이름만 접선 방향으로).
  * trackA·trackB = 그 점을 다른 점에서 끌어온 축 위나 첫 점 축이 모서리·면과 만나는 점에 찍었다고 표시한 결과(app.ts trackMarks —
  * 코어 결과는 축 붙잡기라 이름만 '끌어온 점에서 X축'·'… · 모서리 위'·'… · 면 위'·'끌어온 X축과 Y축의 교차'·'X축 · 모서리 위'·'X축 · 면 위'로,
- * 0.19.0 잠근 선 위 교차는 '잠근 X축 · 모서리 위'·'잠근 접선 방향 · 면 위'처럼 — 이름에 잠금이 들어 있어 셋째 값은 false)
+ * 0.19.0 잠근 선 위 교차는 '잠근 X축 · 모서리 위'·'잠근 접선 방향 · 면 위'처럼 — 이름에 잠금이 들어 있어 셋째 값은 false).
+ * nameA·nameB = 측정 도구 조각이 지은 이름(31차 — 끌어온 점 안내 선이 만나는 점, measure-lock.ts trackDirNames)이 있으면 그것
  */
-export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: TrackMark | boolean; trackB?: TrackMark | boolean }): [string, string, boolean] | null {
+export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; axisA?: SnapAxis; axisB?: SnapAxis; lockedB?: boolean; tangentB?: boolean; trackA?: TrackMark | boolean; trackB?: TrackMark | boolean; nameA?: string; nameB?: string }): [string, string, boolean] | null {
   if (m.snapA === undefined && m.snapB === undefined) return null;
   if (!m.snapA && !m.snapB) return null;
   // 0.19.0 잠근 선 위 교차는 이름이 "잠근 …"이라 셋째 값(잠금 표시)을 끈다. 원호 접선으로 잠근 선이면 '잠근 접선 방향 · 모서리 위'
   const meet = lockMeet(m.trackB);
-  const b = m.tangentB && m.lockedB ? (meet ? lockMeetLabel(TANGENT_LABEL, m.trackB as LockMeet) : TANGENT_LABEL) : snapLabel(m.snapB, m.axisB, m.trackB);
-  return [snapLabel(m.snapA, m.axisA, m.trackA), b, !!m.lockedB && !meet];
+  const b = m.nameB ?? (m.tangentB && m.lockedB ? (meet ? lockMeetLabel(TANGENT_LABEL, m.trackB as LockMeet) : TANGENT_LABEL) : snapLabel(m.snapB, m.axisB, m.trackB));
+  return [m.nameA ?? snapLabel(m.snapA, m.axisA, m.trackA), b, !!m.lockedB && !meet];
 }
 
 /**

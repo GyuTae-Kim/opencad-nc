@@ -1497,8 +1497,10 @@ export class NcViewerApp implements PanelHost {
   private onMeasure(m: MeasureResult | null): void {
     const d = this.doc;
     if (!d) return;
-    // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함), 끌어온 축 위에 찍은 점은 "끌어온 점에서 X축"으로(코어 0.16.0)
-    const marks = m ? { ...(this.mlock?.tangentResult(m) ? { tangentB: true } : {}), ...trackMarks(this.viewer?.measurePoints ?? []) } : {};
+    // 원호 접선 잠금으로 찍은 둘째 점은 결과에 "접선 방향"으로(코어 종류는 나란함), 끌어온 축 위에 찍은 점은 "끌어온 점에서 X축"으로(코어 0.16.0),
+    // 끌어온 점 안내 선이 만나는 점은 "… · X축 위"처럼(31차 — 이름은 측정 도구 조각이 짓는다)
+    const pts = this.viewer?.measurePoints ?? [];
+    const marks = m ? { ...(this.mlock?.tangentResult(m) ? { tangentB: true } : {}), ...trackMarks(pts), ...this.measureTools?.trackDirNames(pts) } : {};
     d.measure = m && Object.keys(marks).length ? { ...m, ...marks } : m;
     this.panel.onMeasure();
     this.renderStatus();
