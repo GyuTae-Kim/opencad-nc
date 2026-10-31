@@ -1209,5 +1209,16 @@
   "{0}: 지름 모드(G7)에서 {1}는 반지름 거리로 봄(설명서에 정해지지 않음)": "{0}: im Durchmessermodus (G7) gelten {1} als Radialabstände (im Handbuch nicht festgelegt)",
   "{0}: 절입 I가 0임 — 다듬질 윤곽만 그림": "{0}: Zustellung I ist 0 — nur die Schlichtkontur wird gezeichnet",
   "{0}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림": "{0}: Reihenfolge beim Einfahren in Vertiefungen (Taschen) steht nicht im Handbuch — entlang der Schicht darüber absteigend gezeichnet",
-  "{0}: 멈추고 이어 깎는 자리는 설명서에 자세히 없어 윤곽이 처음 다시 깊어지는 꼭짓점으로 봄": "{0}: Wo der Zyklus anhält und fortsetzt, beschreibt das Handbuch nicht näher — als der Eckpunkt angenommen, an dem die Kontur erstmals wieder tiefer wird"
+  "{0}: 멈추고 이어 깎는 자리는 설명서에 자세히 없어 윤곽이 처음 다시 깊어지는 꼭짓점으로 봄": "{0}: Wo der Zyklus anhält und fortsetzt, beschreibt das Handbuch nicht näher — als der Eckpunkt angenommen, an dem die Kontur erstmals wieder tiefer wird",
+  "{0}: 깊이(_DP)가 없음 — 그리지 않음": "{0}: keine Tiefe (_DP) — nicht gezeichnet",
+  "{0}: 가공 종류(_VARI = {1})가 맞지 않음 — 그리지 않음": "{0}: ungültige Bearbeitungsart (_VARI = {1}) — nicht gezeichnet",
+  "{0}: 공구 반지름을 몰라 반지름 0으로 그림": "{0}: Werkzeugradius unbekannt — mit Radius 0 gezeichnet",
+  "POCKET3: 길이·너비(_LENG·_WID)가 없음 — 그리지 않음": "POCKET3: keine Länge oder Breite (_LENG, _WID) — nicht gezeichnet",
+  "{0}: 공구 반지름이 포켓보다 큼 — 그리지 않음": "{0}: Werkzeugradius ist größer als die Tasche — nicht gezeichnet",
+  "POCKET4: 포켓 반지름(_PRAD)이 없음 — 그리지 않음": "POCKET4: kein Taschenradius (_PRAD) — nicht gezeichnet",
+  "{0}: 블랭크 치수(_AP·_AD)는 반영하지 않고 온 포켓으로 그림": "{0}: Rohteilmaße (_AP, _AD) werden nicht berücksichtigt — als volle Tasche gezeichnet",
+  "POCKET4: 나선 가공(_VARI 1xxx)은 층마다 평면 가공으로 그림": "POCKET4: Helixbearbeitung (_VARI 1xxx) wird je Zustellung als ebenenweise Bearbeitung gezeichnet",
+  "{0}: 가공 방향(_CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: ungültige Fräsrichtung (_CDIR = {1}) — im Gleichlauf gezeichnet",
+  "{0}: 나선 진입 반지름·깊이(_RAD1·_DP1)가 없어 수직 이송으로 그림": "{0}: kein Helixradius bzw. keine Helixtiefe (_RAD1, _DP1) — als senkrechte Zustellung gezeichnet",
+  "POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림": "POCKET3: Pendelndes Eintauchen auf der Längsachse (_VARI 3X) wird als senkrechte Zustellung gezeichnet"
 }

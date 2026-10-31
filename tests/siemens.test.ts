@@ -233,13 +233,13 @@ SCALE`);
 G4 F2.5
 G1 Z-0.1 F10
 G74 Z1=0
-POCKET4(10, 0, 1, -5)
+SLOT1(10, 0, 1, -5)
 R5=$AA_IW[X]
 G0 X2`);
     expect(p.units).toBe('inch');
     expect(p.stats.dwellTime).toBeCloseTo(2.5);
     expect(p.moves.flags[2]! & FLAG_MACHINE_EST).toBe(FLAG_MACHINE_EST);
-    expect(p.warnings.some((w) => w.includes('POCKET4'))).toBe(true);
+    expect(p.warnings.some((w) => w.includes('SLOT1') && w.includes('지원하지 않음'))).toBe(true);
     expect(p.warnings.some((w) => w.includes('$AA_IW'))).toBe(true);
     expect(ends(p).slice(-1)[0]![0]).toBe(2);
   });
