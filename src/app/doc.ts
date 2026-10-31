@@ -54,9 +54,9 @@ export interface NcDoc {
   pick: Pick3d | null;
   /**
    * 두 점 측정 결과(tangentB = 둘째 점을 원호 접선 잠금으로 찍음, trackA·trackB = 그 점을 다른 점에서 끌어온 축 위에 찍음 —
-   * 끌어온 축·모서리 위·축끼리의 교차(measure.ts trackMark), 앱이 붙인다)
+   * 끌어온 축·모서리 위·축끼리의 교차(measure.ts trackMark), nameA·nameB = 끌어온 점 안내 선이 만나는 점에 찍은 점의 이름(31차 — measure-lock.ts trackDirNames), 앱이 붙인다)
    */
-  measure: (MeasureResult & { tangentB?: boolean; trackA?: TrackMark; trackB?: TrackMark }) | null;
+  measure: (MeasureResult & { tangentB?: boolean; trackA?: TrackMark; trackB?: TrackMark; nameA?: string; nameB?: string }) | null;
   /** 코드 보기에서 고른 줄(-1 없음)과 덧그림으로 강조할 이동 */
   selLine: number;
   selMoves: number[];
@@ -171,6 +171,17 @@ export function lineLabel(d: Pick<NcDoc, 'job'>, line: number): string {
 export function lineAtLabel(d: Pick<NcDoc, 'job'>, line: number): string {
   const j = jobLineOf(d.job, line);
   return j ? `${j.file} · ${j.local}번 줄` : `${line + 1}번 줄`;
+}
+
+/**
+ * 그릴 것이 없는 프로그램 알림의 글 조각(app.ts openBuffer — 조각마다 글 마디 하나라 번역층이 따로 옮긴다): 안내 글, 첫 해석 경고가 있으면
+ * ' (' · '해석 경고' · ': ' · 줄 · ': ' · 경고 글 · ')'. 경고는 정보 탭 목록처럼 줄과 글을 나눠(warnItems — 같은 사전 열쇠로 옮겨진다) 두고, 여러 번 났으면 '모두 N번'.
+ * 31차: 한 글로 끼우면 사전 틀({0})이 잡은 경고가 다른 언어에서도 한국어로 남았다. 경고 조각이 없으면 장면 경고 글 그대로
+ */
+export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' | 'mpr'>): string[] {
+  const it = res.nc?.warnItems?.[0] ?? res.mpr?.warnItems?.[0];
+  const w = it ? [...(it.line >= 0 ? [lineAtLabel({ job: res.job ?? null }, it.line), ': '] : []), it.text, ...(it.count > 1 ? [' · ', `모두 ${it.count}번`] : [])] : res.scene.warnings?.slice(0, 1) ?? [];
+  return ['그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.', ...(w.length ? [' (', '해석 경고', ': ', ...w, ')'] : [])];
 }
 
 /** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */

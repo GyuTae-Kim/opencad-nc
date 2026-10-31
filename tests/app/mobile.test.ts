@@ -414,6 +414,30 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
     expect(await app.openFile(ok)).toBe(true);
     expect(app.state().docName).toBe('program.txt');
   });
+
+  it('그릴 것이 없는 프로그램 알림은 안내 글과 첫 해석 경고(줄·글)를 글 마디마다 따로 둔다 — 다른 언어에서 경고가 한국어로 남지 않게(31차)', async () => {
+    const { app, root } = makeApp(true, true);
+    const EMPTY = '그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.';
+    const nodes = (el: Element): string[] => [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent ?? '');
+    // 시작 화면: Heidenhain 부르기만 있는 프로그램(줄 있는 경고)
+    expect(await app.openFile(textFile('sub.h', '0 BEGIN PGM T MM\n1 TOOL CALL 1 Z S3000\n2 CALL PGM SUB\n3 END PGM T MM\n'))).toBe(false);
+    const a = nodes(root.querySelector('.start-error')!);
+    expect(a).toEqual(['sub.h: ', EMPTY, ' (', '해석 경고', ': ', '3번 줄', ': ', 'CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', ')']);
+    expect(app.state().error).toBe(a.join(''));
+    // 문서가 열려 있으면 알림 상자: 단위 코드가 없는 G-code(줄 없는 경고)
+    expect(await app.openFile(textFile('ok.nc', PROGRAM))).toBe(true);
+    expect(await app.openFile(textFile('none.nc', 'G999 X10\nM30\n'))).toBe(false);
+    const b = nodes([...document.querySelectorAll('.toast.error')].at(-1)!);
+    expect(b).toEqual(['none.nc: ', EMPTY, ' (', '해석 경고', ': ', '단위 코드(G20/G21)가 없어 mm로 봄', ')']);
+    // 경고가 없으면 안내 글만
+    expect(await app.openFile(textFile('blank.nc', 'G21\nM30\n'))).toBe(false);
+    expect(nodes([...document.querySelectorAll('.toast.error')].at(-1)!)).toEqual(['blank.nc: ', EMPTY]);
+    // 조각마다 옮기면(번역층이 글 마디마다 하듯) 네 언어 모두 한국어가 남지 않는다
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) for (const parts of [a, b]) expect(parts.map((p) => translate(p, code)).join(''), code).not.toMatch(/[가-힣]/);
+    expect(a.map((p) => translate(p, 'en')).join('')).toBe(
+      `sub.h: No tool path to draw was found. The program may have no motion commands (G0·G1·L, etc.). (Analysis Warning: Line 3: ${translate('CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', 'en')})`,
+    );
+  });
 });
 
 describe('최근 문서(시작 화면)', () => {

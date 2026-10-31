@@ -39,7 +39,7 @@ import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } 
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
+import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
 import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
@@ -127,16 +127,55 @@ const TIP_EDGE = 4;
  * 0.18.0: 축이 면을 뚫는 점(face)은 '끌어온 점에서 X축 · 면 위'·'X축 · 면 위', 첫 점 축이 선분과 만나는 점(trackFrom 없이 segment)은 'X축 · 모서리 위'.
  * 0.19.0: 잠근 선이 선분과 만나는 점·면을 뚫는 점(locked에 segment·face)은 '잠근 X축 · 모서리 위'·'잠근 나란한 방향 · 면 위'.
  * 0.21.0: 잠근 선이 끌어온 점의 축과 만나는 점(locked에 trackOther)은 '잠근 X축 · 끌어온 점에서 Y축', 잠근 축 위 끌어온 점과 나란한 자리(locked에 trackFrom만)는
- * '잠근 Z축 · 끌어온 점과 나란히'(이름에 잠금이 들어 있어 "잠금"을 다시 붙이지 않는다)
+ * '잠근 Z축 · 끌어온 점과 나란히'(이름에 잠금이 들어 있어 "잠금"을 다시 붙이지 않는다).
+ * 31차(코어 0.29.0 trackDirs { meets }): 끌어온 점에서 모서리와 나란한 선·수직인 선이 다른 것과 만나는 점은 '끌어온 점에서 모서리와 나란히 · X축 위'처럼(trackDirName)
  */
-export function snapTip(hv: Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction'> | null | undefined): { name: string; locked: boolean } | null {
+export function snapTip(hv: TrackDirPoint | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
-  return { name: snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
+  return { name: trackDirName(hv) ?? snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
+}
+
+/** 붙잡은 점(미리 보기 measureHoverSnap·찍은 점 measurePoints)에서 이름을 가르는 값 */
+type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction'>;
+
+/**
+ * 끌어온 점에서 모서리와 나란한 선·수직인 선이 만난 것(31차 — 코어 0.29.0 trackDirs { meets }, 코어 README의 가르는 법): 첫 점 축이면 그 축('x'·'y'·'z' — axis·direction),
+ * 다른 끌어온 점의 축이면 't' + 축(trackOther), 선분·윤곽선이면 'edge'(segment), 그물 면이면 'face', 첫 점의 나란함이면 'par'(axis 없이 direction — 그 선 위 점에는 direction이 없다).
+ * 끌어온 점 안내가 아니거나(trackMark가 'dir'이 아님) 만난 것이 없으면(그 선 위 점) null
+ */
+export type TrackDirMeet = 'x' | 'y' | 'z' | 'tx' | 'ty' | 'tz' | 'edge' | 'face' | 'par';
+export function trackDirMeet(p: TrackDirPoint | null | undefined): TrackDirMeet | null {
+  if (!p || trackMark(p) !== 'dir') return null;
+  return p.axis ?? (p.trackOther ? (`t${p.trackOther.axis}` as const) : p.segment ? 'edge' : p.face ? 'face' : p.direction ? 'par' : null);
+}
+
+/**
+ * 만나는 점의 이름(툴팁·측정 결과, 31차): 끌어온 점 안내 이름(TRACK_PARALLEL_LABEL·TRACK_PERPENDICULAR_LABEL) 뒤에 만난 것 —
+ * '… · X축 위'(첫 점 축), '… · 나란한 방향 위'(첫 점의 나란함), '… · 끌어온 점 Y축 위'(다른 끌어온 점의 축), '… · 모서리 위', '… · 면 위'(사전에 18개).
+ * 만나는 점이 아니면 null(30차 이름 그대로)
+ */
+export function trackDirName(p: TrackDirPoint | null | undefined): string | null {
+  const m = trackDirMeet(p);
+  if (!m) return null;
+  const at = m === 'edge' ? '모서리' : m === 'face' ? '면' : m === 'par' ? '나란한 방향' : m.length > 1 ? `끌어온 점 ${m[1]!.toUpperCase()}축` : `${m.toUpperCase()}축`;
+  return `${p!.snap === 'parallel' ? TRACK_PARALLEL_LABEL : TRACK_PERPENDICULAR_LABEL} · ${at} 위`;
+}
+
+/**
+ * 측정 결과 두 점의 만나는 점 이름(31차 — app.ts onMeasure가 찍은 점 measurePoints로 붙이고 첫 화면 snapPair가 그 이름을 그대로 쓴다.
+ * 코어 결과 MeasureResult에는 만난 것이 없다). 만나는 점이 아닌 점은 빼고, 둘 다 아니면 빈 객체
+ */
+export function trackDirNames(points: readonly (TrackDirPoint | null | undefined)[]): { nameA?: string; nameB?: string } {
+  const a = trackDirName(points[0]);
+  const b = trackDirName(points[1]);
+  return { ...(a ? { nameA: a } : {}), ...(b ? { nameB: b } : {}) };
 }
 
 /**
  * 툴팁 왼쪽 위 자리(층 기준 CSS 화소): 점(px, py) 오른쪽 아래가 먼저이고, 층(width × height) 밖으로 나가거나 피할 상자(코어 거리 글상자 —
- * 같은 층 기준)와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 본다. 층 안이면서 겹치지 않는 곳이 없으면 층 안인 첫 자리(없으면 오른쪽 아래)
+ * 같은 층 기준)와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 본다. 층 안이면서 겹치지 않는 곳이 없으면 층 안인 첫 자리.
+ * 31차: 넷 모두 층 밖이면(점 양옆 어느 쪽에도 들어가지 않는 넓은 툴팁 — 휴대폰 폭의 긴 이름) 점 아래·위에서 가로만 층 안으로 민 자리(겹치지 않는 것 먼저),
+ * 그것도 층 밖이면 오른쪽 아래
  */
 export function placeTip(px: number, py: number, w: number, ht: number, layer: { width: number; height: number }, avoid: MeasureLabelRect | null): { x: number; y: number } {
   const right = px + TIP_GAP;
@@ -151,7 +190,12 @@ export function placeTip(px: number, py: number, w: number, ht: number, layer: {
   ];
   const inside = (s: { x: number; y: number }): boolean => s.x >= TIP_EDGE && s.y >= TIP_EDGE && s.x + w <= layer.width - TIP_EDGE && s.y + ht <= layer.height - TIP_EDGE;
   const clear = (s: { x: number; y: number }): boolean => !avoid || s.x >= avoid.x + avoid.width || avoid.x >= s.x + w || s.y >= avoid.y + avoid.height || avoid.y >= s.y + ht;
-  return spots.find((s) => inside(s) && clear(s)) ?? spots.find(inside) ?? spots[0]!;
+  const x = Math.max(TIP_EDGE, Math.min(right, layer.width - TIP_EDGE - w));
+  const slid = [
+    { x, y: below },
+    { x, y: above },
+  ];
+  return spots.find((s) => inside(s) && clear(s)) ?? spots.find(inside) ?? slid.find((s) => inside(s) && clear(s)) ?? slid.find(inside) ?? spots[0]!;
 }
 
 export class MeasureLock {
@@ -184,10 +228,20 @@ export class MeasureLock {
   private coverAvoid: MeasureLabelRect[] = [];
   /** 코어에 마지막으로 준 비킬 자리(같으면 다시 주지 않는다) */
   private avoidKey = 'null';
+  /** 툴팁을 붙인 점(캔버스 기준 화면 좌표 — 크기가 바뀌면 다시 놓는다) */
+  private tipAt: { x: number; y: number } | null = null;
 
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
     host.layer.append(this.tip);
+    // 번역층이 툴팁 글을 바꿔 크기가 달라지면 다시 놓는다(같은 프레임 — 그리기 전에 온다). 크기를 알리지 않는 환경(jsdom)은 update의 자리 그대로
+    if (typeof ResizeObserver === 'function')
+      new ResizeObserver(() => {
+        const v = this.host.viewer();
+        if (this.tip.hidden || !v) return;
+        this.placeTipNow(v);
+        this.pushAvoid();
+      }).observe(this.tip);
     this.button = h('button', { class: 'mb-btn icon mb-lock', type: 'button', title: '지금 방향 잠그기(다시 누르면 풀기)', 'aria-label': '방향 잠금', 'aria-pressed': 'false', hidden: true, html: icon('lock') });
     let pressedAt = -Infinity;
     this.button.addEventListener('pointerdown', (e) => {
@@ -293,20 +347,8 @@ export class MeasureLock {
       this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked && !lockMeet(meet) ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
       this.tip.classList.toggle('locked', tip.locked);
       this.tip.hidden = false;
-      const c = v!.canvas.getBoundingClientRect();
-      const l = this.host.layer.getBoundingClientRect();
-      const ox = c.left - l.left;
-      const oy = c.top - l.top;
-      const w = this.tip.offsetWidth || 80;
-      const ht = this.tip.offsetHeight || 20;
-      // 코어 글상자가 비킬 자리: 툴팁의 첫 자리(점 오른쪽 아래 — 캔버스 기준). 코어 글상자와 상관없이 정해지므로 서로 쫓지 않는다
-      this.tipAvoid = { x: Math.round(sp.x + TIP_GAP), y: Math.round(sp.y + TIP_GAP), width: Math.round(w), height: Math.round(ht) };
-      // 코어 거리 글상자(캔버스 기준 — 지난 그리기)를 층 기준으로
-      const r = v!.measureLabelRect;
-      const avoid = r ? { x: ox + r.x, y: oy + r.y, width: r.width, height: r.height } : null;
-      const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid);
-      this.tip.style.left = `${Math.round(at.x)}px`;
-      this.tip.style.top = `${Math.round(at.y)}px`;
+      this.tipAt = { x: sp.x, y: sp.y };
+      this.placeTipNow(v!);
     }
     this.coverAvoid = on ? this.covers(v!) : [];
     this.pushAvoid();
@@ -322,6 +364,29 @@ export class MeasureLock {
       this.lastKey = key;
       this.host.changed();
     }
+  }
+
+  /**
+   * 툴팁 크기를 재어 점(tipAt — 캔버스 기준) 둘레에 놓고 코어 글상자가 비킬 자리(tipAvoid)를 맞춘다. 툴팁 글을 바꾼 뒤(update)와
+   * 크기가 바뀐 뒤(31차 — 번역층이 글을 다른 언어로 바꾸면 길이가 달라지는데, update는 바꾸기 전 한국어 글의 크기로 놓아 휴대폰 폭에서 3D 보기 밖으로 잘렸다)
+   */
+  private placeTipNow(v: LockViewer): void {
+    const sp = this.tipAt;
+    if (!sp) return;
+    const c = v.canvas.getBoundingClientRect();
+    const l = this.host.layer.getBoundingClientRect();
+    const ox = c.left - l.left;
+    const oy = c.top - l.top;
+    const w = this.tip.offsetWidth || 80;
+    const ht = this.tip.offsetHeight || 20;
+    // 코어 글상자가 비킬 자리: 툴팁의 첫 자리(점 오른쪽 아래 — 캔버스 기준). 코어 글상자와 상관없이 정해지므로 서로 쫓지 않는다
+    this.tipAvoid = { x: Math.round(sp.x + TIP_GAP), y: Math.round(sp.y + TIP_GAP), width: Math.round(w), height: Math.round(ht) };
+    // 코어 거리 글상자(캔버스 기준 — 지난 그리기)를 층 기준으로
+    const r = v.measureLabelRect;
+    const avoid = r ? { x: ox + r.x, y: oy + r.y, width: r.width, height: r.height } : null;
+    const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid);
+    this.tip.style.left = `${Math.round(at.x)}px`;
+    this.tip.style.top = `${Math.round(at.y)}px`;
   }
 
   /** 잠금 단추: 잠겼으면 풀고, 아니면 지금 방향(원호 접선이나 코어 — Shift와 같은 판정, 없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
