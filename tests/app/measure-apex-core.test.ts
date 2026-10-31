@@ -20,6 +20,10 @@
  * 선이 그 꼭짓점을 반 화소 안으로 지나 열린 교차가 되지 못하고 꼭짓점(끝점)이나 축 위 커서 자리였다. 이제 코어가 그 꼭짓점의 두 토막도 앱 refine에 물어
  * 원 위 교차를 끝점보다 먼저 받으므로, 같은 셈에 "틈이 반 화소 아래이고 원 위 교차가 그 토막 안·꼭짓점에서 반 화소 넘게·커서에서 붙잡기 거리 안"(ends)을
  * 더한 단과 같다 — 12단 가운데 11단(δ 0.01은 12단, 앞 1단은 틈이 붙잡기 거리보다 넓다). refineEnds를 끄면(34차 꼴) 25차 값 그대로다.
+ *
+ * 37차(코어 0.35.0 cursorInLens): 틈이 붙잡기 거리의 세계 길이를 넘어도 커서가 그 토막 활꼴 쪽(현에 내린 발이 토막 안, 현에서 축 쪽으로 0.1 × 토막 길이 안)이면
+ * 열린 교차 후보로 남는다. 같은 셈의 넓힌 규칙(wide)에 그 조건을 더하면 앞 1단(1화소 0.002)도 붙고, 실제 코어도 그 단에서 원 위 교차(축 위·원 위 — sign이 본다)에 붙는다.
+ * 그래서 앱 선택(refineEnds 켬)은 12단 모두, 끈 것은 앞 9단(δ 0.01은 8단)이다.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
@@ -66,11 +70,19 @@ function model(w: number, yl: number, a: V2, b: V2, c: V2): { now: boolean; wide
   const q: V2 = [xi, yl];
   const px = (p: V2, s: V2): number => Math.hypot(p[0] - s[0], p[1] - s[1]) / w;
   const u = ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (L * L);
+  // 열린 교차 후보의 틈: 현에서 반 화소 넘게, 활꼴 높이 한도(0.1 × 토막 길이) 안, 붙잡기 거리의 세계 길이 안(0.20.0~0.34.0)
   const inGap = gap > tol && gap <= Math.min(0.1 * L, SNAP * w);
+  // 37차(코어 0.35.0 cursorInLens): 커서가 현에 내린 발이 토막 안이고 현에서 축 쪽으로 0.1 × 토막 길이 안(활꼴 쪽)이면 붙잡기 거리의 세계 길이를 넘는 틈도 남긴다
+  const g: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+  const nrm: V2 = g[0] >= 0 ? [-g[1], g[0]] : [g[1], -g[0]];
+  const tc = ((c[0] - a[0]) * g[0] + (c[1] - a[1]) * g[1]) / L;
+  const vc = (c[0] - a[0]) * nrm[0] + (c[1] - a[1]) * nrm[1];
+  const lens = tc >= 0 && tc <= 1 && vc >= 0 && vc <= 0.1 * L;
+  const inGap35 = gap > tol && gap <= 0.1 * L && (gap <= SNAP * w || lens);
   const inSeg = u >= 0 && u <= 1 && px(q, a) > 0.5 && px(q, b) > 0.5 && px(q, c) <= SNAP;
   const vertexPx = Math.min(px(c, a), px(c, b));
   const free = vertexPx > SNAP;
-  return { now: inGap && inSeg && free && px(core, c) <= 2 * SNAP && px(q, core) <= SNAP, wide: inGap && inSeg && free, ends: gap <= tol && inSeg, gapPx: gap / w, corePx: px(q, core), vertexPx };
+  return { now: inGap && inSeg && free && px(core, c) <= 2 * SNAP && px(q, core) <= SNAP, wide: inGap35 && inSeg && free, ends: gap <= tol && inSeg, gapPx: gap / w, corePx: px(q, core), vertexPx };
 }
 
 /** ends = false면 앱 선택에서 refineEnds만 끈다(34차 꼴) */
@@ -191,17 +203,19 @@ describe('같은 평면에서 원호 꼭대기에 거의 닿는 축(23차 재현
     });
   }
 
-  it('기록: 코어 0.23.0은 12단 가운데 8단, 0.33.0 refineEnds를 켠 앱은 11단(δ 0.01은 12단)에서 원 위 교차에 붙는다(0.20.0 규칙으로는 0단 — 23차 기록)', () => {
+  it('기록: 코어 0.23.0은 12단 가운데 8단, 0.33.0 refineEnds를 켠 앱은 11단, 0.35.0은 12단 모두에서 원 위 교차에 붙는다(0.20.0 규칙으로는 0단 — 23차 기록)', () => {
     // 23차(코어 0.20.0)에 본 값(확대가 작은 쪽부터): δ 0.0001·0.001 'aaaaaaaaaaav', 0.003 'aaaaaaaaaavv', 0.01 'aaaaaaaaavvv'
     // (a = X축 방향 커서 자리, v = 꼭짓점 끝점, o = 원 위 교차). 25차(0.23.0): 앞 1단(δ 0.01은 0단)은 틈이 붙잡기 거리보다 넓어 커서 자리,
     // 뒤 3~4단은 틈이 반 화소 아래이거나 꼭짓점이 커서에서 붙잡기 거리 안이라 커서 자리·끝점이다(코어 v0.23.0 README의 12단 가운데 8단).
-    // 35차(0.33.0 refineEnds): 그 뒤 3~4단은 틈이 반 화소 아래라 선이 꼭짓점을 반 화소 안으로 지나고, 코어가 그 꼭짓점의 토막을 앱에 물어 원 위 교차를 받는다
+    // 35차(0.33.0 refineEnds): 그 뒤 3~4단은 틈이 반 화소 아래라 선이 꼭짓점을 반 화소 안으로 지나고, 코어가 그 꼭짓점의 토막을 앱에 물어 원 위 교차를 받는다.
+    // 37차(0.35.0 cursorInLens): 앞 1단(1화소 0.002 — 틈 0.023이 붙잡기 거리의 세계 길이 0.02를 넘는다)도 커서가 꼭대기 토막 활꼴 쪽이라 원 위 교차에 붙는다
+    // (35차까지 'a'). refineEnds를 꺼도 그 단은 붙는다 — 코어 v0.35.0 README의 NC 23차 재현 표와 같다
     expect(rows.map((r) => r.d)).toEqual([0.0001, 0.001, 0.003, 0.01]);
-    expect(rows.map((r) => r.off)).toEqual(['aooooooooaav', 'aooooooooaav', 'aooooooooavv', 'ooooooooavvv']);
-    expect(rows.map((r) => r.seen)).toEqual(['aooooooooooo', 'aooooooooooo', 'aooooooooooo', 'oooooooooooo']);
+    expect(rows.map((r) => r.off)).toEqual(['oooooooooaav', 'oooooooooaav', 'oooooooooavv', 'ooooooooavvv']);
+    expect(rows.map((r) => r.seen)).toEqual(['oooooooooooo', 'oooooooooooo', 'oooooooooooo', 'oooooooooooo']);
     for (const r of rows) expect(r.now).toBe('............');
-    // 넓힌 규칙: 틈이 반~10화소이고 꼭짓점이 붙잡기 거리 밖인 확대(앞 1단은 틈이 10화소를 넘고, 뒤 3~4단은 틈이 반 화소 아래거나 꼭짓점이 가깝다)
-    expect(rows.map((r) => r.wide)).toEqual(['.oooooooo...', '.oooooooo...', '.oooooooo...', 'oooooooo....']);
+    // 넓힌 규칙: 틈이 반 화소~활꼴 높이 한도이고(붙잡기 거리를 넘으면 커서가 활꼴 쪽일 때만) 꼭짓점이 붙잡기 거리 밖인 확대(뒤 3~4단은 틈이 반 화소 아래거나 꼭짓점이 가깝다)
+    expect(rows.map((r) => r.wide)).toEqual(['ooooooooo...', 'ooooooooo...', 'ooooooooo...', 'oooooooo....']);
     // refineEnds 규칙: 틈이 반 화소 아래인 뒤 3~4단(원 위 교차가 그 토막 안·커서 가까이)
     expect(rows.map((r) => r.ends)).toEqual(['.........ooo', '.........ooo', '.........ooo', '........oooo']);
     // 다른 교차(첫 점에서 먼 쪽 −xi)도 같은 단에서 붙는다 — 앱 refine이 열린 후보의 둘째 힌트(현의 다른 끝 발)·꼭짓점 발을 그 둘레 근으로 풀어 준다

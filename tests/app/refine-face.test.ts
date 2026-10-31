@@ -354,6 +354,77 @@ describe('25차: 축이 벽 삼각형을 비켜 가며 원기둥만 뚫는 자�
   });
 });
 
+describe('37차: 누운 구멍 벽을 비스듬한 안내 선이 스칠 때(코어 0.34.0 — 구멍 안 아주 가까이 본 벽의 열린 후보)', () => {
+  // 수평 구멍 Ø8(기둥 방향 X, 단면 YZ 중심 (20, 9), x 0~30, 16토막 — 90°가 꼭짓점). 선은 z = 13 − δ, XY에서 27° 비스듬히 (15, 20)을 지난다.
+  // 원기둥과 만나는 두 근은 y − 20 = ±√(16 − (4 − δ)²) — 꼭대기 양쪽 토막(67.5°~90°, 90°~112.5°) 위
+  const RD = Math.PI / 180;
+  const m = meshOf(/수평 드릴/);
+  const W = panelWalls(t, m.id)[0]!;
+  const dir: V3 = [Math.cos(27 * RD), Math.sin(27 * RD), 0];
+  /** 단면 법선 각(도)이 deg인 벽 삼각형들(무게중심·바깥쪽 법선 — float32 꼭짓점 외적) */
+  const trisAt = (deg: number) => {
+    const P = m.positions;
+    const I = m.indices!;
+    const out: { i: number; c: V3; n: V3 }[] = [];
+    for (let k = 0; k + 2 < I.length; k += 3) {
+      const v = [I[k]!, I[k + 1]!, I[k + 2]!].map((j) => [P[j * 3]!, P[j * 3 + 1]!, P[j * 3 + 2]!] as V3);
+      const nn = cross(sub(v[1]!, v[0]!), sub(v[2]!, v[0]!));
+      const l = Math.hypot(...nn);
+      if (!(l > 0) || Math.abs(nn[0] / l) > 1e-6) continue;
+      const n: V3 = [0, nn[1] / l, nn[2] / l];
+      const a = Math.atan2(n[2], n[1]) / RD;
+      const o = Math.abs(a - deg) < 0.01 ? n : Math.abs(Math.abs(a - deg) - 180) < 0.01 ? (n.map((x) => -x) as V3) : null;
+      if (o) out.push({ i: k / 3, c: [(v[0]![0] + v[1]![0] + v[2]![0]) / 3, (v[0]![1] + v[1]![1] + v[2]![1]) / 3, (v[0]![2] + v[1]![2] + v[2]![2]) / 3], n: o });
+    }
+    return out;
+  };
+  /** 코어 0.22.0처럼 열린 후보: 힌트 = 선 위에서 그 삼각형 무게중심에 가장 가까운 점 */
+  const openOn = (o: V3, tri: { i: number; c: V3; n: V3 }): SnapRefineFaceInput => {
+    const s = dot(sub(tri.c, o), dir);
+    const hint: V3 = [o[0] + dir[0] * s, o[1] + dir[1] * s, o[2] + dir[2] * s];
+    return { kind: 'axisFace', open: true, point: hint, face: { id: m.id, index: tri.i, normal: tri.n }, line: { origin: o, dir }, first: o, ray: { origin: [15, 18, 10], dir: [0, 0.2, 1] } };
+  };
+  const radius = (q: readonly number[]): number => Math.hypot(q[1]! - W.cu, q[2]! - W.cv);
+  const angle = (q: readonly number[]): number => Math.atan2(q[2]! - W.cv, q[1]! - W.cu) / RD;
+
+  it('전제: 벽 중심·반지름·토막, 꼭대기 양쪽 토막 삼각형의 무게중심 쪽 힌트가 현 둘레(r ÷ cos(반각 × 2)) 밖이다 — 36차까지 null', () => {
+    expect([W.a2, W.cu, W.cv, W.r, W.lo, W.hi]).toEqual([0, 20, 9, 4, 0, 30]);
+    expect(W.half / RD).toBeCloseTo(11.25, 9);
+    for (const deg of [78.75, 101.25]) {
+      const tris = trisAt(deg);
+      expect(tris.length).toBeGreaterThan(0);
+      for (const tri of tris) expect(radius(openOn([15, 20, 13 - 0.002], tri).point)).toBeGreaterThan(W.r / Math.cos(2 * W.half));
+    }
+  });
+
+  for (const delta of [0.002, 0.02])
+    it(`δ = ${delta}: 각 토막 삼각형의 열린 후보는 그 토막 위 근 — 원기둥 위·선 위, 다른 근은 이웃 토막이라 같은 삼각형으로는 받지 않는다`, () => {
+      const o: V3 = [15, 20, 13 - delta];
+      const tt = Math.sqrt(16 - (4 - delta) ** 2);
+      for (const [deg, sgn] of [
+        [78.75, 1],
+        [101.25, -1],
+      ] as const) {
+        const want: V3 = [15 + (sgn * tt * dir[0]) / dir[1], 20 + sgn * tt, 13 - delta];
+        for (const tri of trisAt(deg)) {
+          const q = refineFaceSnap(openOn(o, tri), t)!;
+          expect(q, `${deg}`).toBeTruthy();
+          expect(dist(q, want)).toBeLessThan(1e-9);
+          expect(Math.abs(radius(q) - 4)).toBeLessThan(1e-9);
+          expect(Math.hypot(...cross(sub(q, o), dir))).toBeLessThan(1e-9);
+          expect(Math.abs(angle(q) - deg)).toBeLessThan(11.25);
+        }
+      }
+    });
+
+  it('null: 선이 원기둥 위로 비켜 감(z = 13.01), 근이 그 토막 각 밖(45°~67.5° 토막), 기둥과 나란한 선', () => {
+    for (const tri of trisAt(78.75)) expect(refineFaceSnap(openOn([15, 20, 13.01], tri), t)).toBeNull();
+    for (const tri of trisAt(56.25)) expect(refineFaceSnap(openOn([15, 20, 13 - 0.002], tri), t)).toBeNull();
+    const tri = trisAt(78.75)[0]!;
+    expect(refineFaceSnap({ ...openOn([15, 20, 13 - 0.002], tri), line: { origin: [15, 20, 13 - 0.002], dir: [1, 0, 0], axis: 'x' } }, t)).toBeNull();
+  });
+});
+
 describe('다듬지 않는 것(null — 코어 점 그대로)', () => {
   it('평면: 판 윗면, 곧은 옆면, 구멍 바닥, 포켓 바닥', () => {
     expect(refineFaceSnap(coreFace(meshOf(/^판/), [50, 50, 30], 'z', [50, 50, 18]), t)).toBeNull();

@@ -377,7 +377,9 @@ function angleGap(a: number, b: number): number {
  * 선 위에서 그 삼각형 무게중심에 가장 가까운 점(힌트)이라 원기둥 밖일 수 있고(선이 호 꼭대기를 아주 얕게 스치면 무게중심 쪽 힌트가 두 근 바깥), 두 근이
  * 모두 그 현 위일 수 있다. 그래서 열린 후보만 따로 본다(그 밖의 길은 위 그대로):
  * - 벽 찾기: 현은 면 법선(반지름 방향 — 눈 쪽이면 뒤집는다)으로 찾는다. 법선 방향이 호 안이고, 힌트가 벽 높이 안·중심에서 현(r·cos 반각)과 r ÷ cos(반각 × 2) 사이·
- *   법선 방향에서 반각 × 2 안이어야 한다(무게중심은 현의 각 범위 안이고 힌트는 거기서 선을 따라 조금 비켜 있다)
+ *   법선 방향에서 반각 × 2 안이어야 한다(무게중심은 현의 각 범위 안이고 힌트는 거기서 선을 따라 조금 비켜 있다).
+ *   37차: 기둥 방향으로 긴 벽(누운 구멍)을 비스듬한 선이 스치면 힌트가 선을 따라 멀리 비켜 그 둘레 밖이라, 그때는 선이 단면에서 그 현의 가운데 각을 지나는 자리로
+ *   같은 둘레·높이를 본다(힌트가 둘레 안이던 자리는 그대로)
  * - 고르는 것: 그 현의 각 범위(법선 방향 ± 반각) 안의 근 가운데 힌트에 가까운 것. 22차까지의 길(코어 점에서 바깥쪽 근)로는 힌트가 원기둥 밖이면 null이었다.
  *   커서 광선은 보지 않는다 — 코어가 결과를 커서 광선 없는 열쇠(종류·힌트·면·선·첫 점)로 기억하므로 같은 입력에는 늘 같은 답이어야 한다.
  *   그래서 두 근이 한 삼각형 위면 힌트 쪽 근 하나만 붙었다(코어 0.22.0·0.23.0).
@@ -406,26 +408,45 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
   for (const w of walls) {
     const { a0, a1, a2, r } = w;
     if (Math.abs(n[a2]) > 1e-3) continue;
-    if (p[a2] < w.lo - tol || p[a2] > w.hi + tol) continue;
+    const inH = (q: readonly number[]): boolean => q[a2]! >= w.lo - tol && q[a2]! <= w.hi + tol;
+    if (!open && !inH(p)) continue;
     const pu = p[a0] - w.cu;
     const pv = p[a1] - w.cv;
     const rho = Math.hypot(pu, pv);
     const nl = Math.hypot(n[a0], n[a1]);
-    // 열린 후보: 그 현의 가운데 각(면 법선 — 바깥쪽으로)
-    let mid = 0;
-    if (open) {
-      if (!(nl > 0.5) || rho > r / Math.cos(2 * w.half) + tol || rho < r * Math.cos(w.half) - tol) continue;
-      mid = Math.atan2(n[a1], n[a0]) + (n[a0] * pu + n[a1] * pv < 0 ? Math.PI : 0);
-      if (!inWall(w, mid, tol / r) || angleGap(Math.atan2(pv, pu), mid) > 2 * w.half + tol / r) continue;
-    } else {
-      if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
-      if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
-    }
     // 단면 평면에 비춘 직선 (ou, ov) + s(du, dv): |·|² = r² — 높이는 o[a2] + s·d[a2](세계 축이 기둥에 수직이면 d[a2] = 0이라 지나는 점 그대로)
     const ou = o[a0] - w.cu;
     const ov = o[a1] - w.cv;
     const du = d[a0];
     const dv = d[a1];
+    // 열린 후보: 그 현의 가운데 각(면 법선 — 바깥쪽으로)
+    let mid = 0;
+    if (open) {
+      if (!(nl > 0.5)) continue;
+      mid = Math.atan2(n[a1], n[a0]) + (n[a0] * pu + n[a1] * pv < 0 ? Math.PI : 0);
+      if (!inWall(w, mid, tol / r)) continue;
+      // 힌트(단면 자리)가 그 현 둘레 — 현(r·cos 반각)과 r ÷ cos(반각 × 2) 사이, 법선 방향에서 반각 × 2 안
+      const lensNear = (u: number, v: number): boolean => {
+        const rr = Math.hypot(u, v);
+        return rr <= r / Math.cos(2 * w.half) + tol && rr >= r * Math.cos(w.half) - tol && angleGap(Math.atan2(v, u), mid) <= 2 * w.half + tol / r;
+      };
+      if (!(inH(p) && lensNear(pu, pv))) {
+        // 37차: 무게중심 쪽 힌트는 벽이 기둥 방향으로 길고(누운 구멍) 선이 기둥 방향과 비스듬하면 선을 따라 멀리 비켜 그 둘레 밖이다(코어 0.34.0이 구멍 안 아주 가까이 본
+        // 벽에서 열린 후보를 넘겨도 누운 구멍은 여기서 null이었다). 그때는 선이 단면에서 그 현의 가운데 각을 지나는 자리로 같은 둘레·높이를 본다(근은 그대로 힌트에 가까운 것)
+        const cm = Math.cos(mid);
+        const sm = Math.sin(mid);
+        const den = du * sm - dv * cm;
+        if (!(Math.abs(den) > 1e-9)) continue;
+        const s = (ov * cm - ou * sm) / den;
+        const q: V3 = [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
+        const qu = ou + s * du;
+        const qv = ov + s * dv;
+        if (!(qu * cm + qv * sm > 0) || !inH(q) || !lensNear(qu, qv)) continue;
+      }
+    } else {
+      if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
+      if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
+    }
     const A = du * du + dv * dv;
     const cr = ou * dv - ov * du;
     const disc = A * r * r - cr * cr;
