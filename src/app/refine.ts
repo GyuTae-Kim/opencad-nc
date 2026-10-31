@@ -192,7 +192,10 @@ function refineIntersection(c: SnapRefineInput, src: SnapMoves | PanelSnapTable,
  * 곧은 요소(직선 이동·곧은 모서리 — 코어 점이 정확하다)·모르는 묶음·만나지 않으면(축이 곡선 평면 밖으로 tol 넘게 지나감) null.
  * 코어 0.20.0의 열린 후보(c.open — 직선이 토막과 3D로 만나지 않고 활꼴만 지난다, 코어 점 = 직선 위에서 토막에 가장 가까운 점)와 축이 아닌 잠근 선
  * (c.line.axis 없음)도 그대로 푼다: 곡선 평면을 뚫는 직선이면 lineCircle의 평면 교차·나선·스플라인은 두 매개변수 뉴턴, 평면 안에서 활꼴을 두 번 지나면 코어 점에 가까운 근.
- * 받을지(그 토막 범위 안·현에서 0.1 × 토막 길이 안)는 코어가 정한다
+ * 받을지(그 토막 범위 안·현에서 0.1 × 토막 길이 안)는 코어가 정한다.
+ * 36차: 코어 0.33.0 refineEnds의 꼭짓점 후보는 코어 점이 꼭짓점에서 선에 내린 발이라, 선이 꼭짓점 접선과 나란히 스치면 두 근(꼭짓점 양쪽 토막 위)에서 거의 같은 거리다.
+ * 가까운 근이 반올림으로 이웃 토막 쪽이면 코어가 그 토막 범위 밖이라 받지 않아 다듬기가 빠졌다(잠근 Y가 원 왼쪽 꼭짓점을 스칠 때 — 커서 쪽 토막만 묻는다).
+ * 그래서 고른 근이 이 토막 범위 밖이면 토막 가운데에 가까운 근으로 다시 풀고, 그 근이 범위 안이면 그것을 준다(범위 안 근이 있던 자리는 그대로)
  */
 function refineAxisEdge(c: SnapRefineInput, src: SnapMoves | PanelSnapTable, arcAngle: number): V3 | null {
   const l = c.line;
@@ -212,7 +215,20 @@ function refineAxisEdge(c: SnapRefineInput, src: SnapMoves | PanelSnapTable, arc
   const t0 = (c.point[0] - o[0]) * e[0] + (c.point[1] - o[1]) * e[1] + (c.point[2] - o[2]) * e[2];
   const h = 2 * (len + tol);
   const A = lineSide(along(t0 - h), along(t0 + h), 'axis');
-  const X = A && intersectSides(A, B, c.point, tol, tol, len + tol);
+  if (!A) return null;
+  let X = intersectSides(A, B, c.point, tol, tol, len + tol);
+  const [a, b] = c.segment.ends;
+  const g = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const gg = g[0]! * g[0]! + g[1]! * g[1]! + g[2]! * g[2]!;
+  // 그 토막 범위 안(토막에 내린 자리가 두 끝 사이)
+  const inSeg = (p: readonly number[]): boolean => {
+    const u = ((p[0]! - a[0]) * g[0]! + (p[1]! - a[1]) * g[1]! + (p[2]! - a[2]) * g[2]!) / gg;
+    return u >= -1e-9 && u <= 1 + 1e-9;
+  };
+  if (X && gg > 0 && !inSeg(X)) {
+    const Y = intersectSides(A, B, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], tol, tol, len + tol);
+    if (Y && inSeg(Y)) X = Y;
+  }
   return X && along((X[0] - o[0]) * e[0] + (X[1] - o[1]) * e[1] + (X[2] - o[2]) * e[2]);
 }
 

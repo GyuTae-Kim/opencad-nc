@@ -50,15 +50,26 @@ function setup(name: string, text: string, ends: boolean) {
   v.setMeasureSnap(ends ? opts : { ...opts, refineEnds: false });
   v.renderNow();
   const lock = new MeasureLock({ viewer: () => v, touch: () => false, layer: host, changed: vi.fn() });
-  const hover = (p: readonly number[], dx = 1, dy = 2): MeasureHoverSnap | null => {
+  const ptr = (type: string, p: readonly number[], dx: number, dy: number): void => {
     const s = v.project(p)!;
-    const e = new MouseEvent('pointermove', { clientX: s.x + dx, clientY: s.y + dy, bubbles: true, cancelable: true, button: 0, buttons: 0 });
+    const e = new MouseEvent(type, { clientX: s.x + dx, clientY: s.y + dy, bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
     Object.defineProperty(e, 'pointerId', { value: 1 });
     Object.defineProperty(e, 'pointerType', { value: 'mouse' });
     v.canvas.dispatchEvent(e);
+  };
+  const hover = (p: readonly number[], dx = 1, dy = 2): MeasureHoverSnap | null => {
+    ptr('pointermove', p, dx, dy);
     v.renderNow();
     lock.update();
     return v.measureHoverSnap;
+  };
+  /** 첫 점 찍기(36차 잠근 선 — 그 점을 지나는 선을 잠근다) */
+  const click = (p: readonly number[]): void => {
+    hover(p, 0.3, 0.2);
+    ptr('pointerdown', p, 0.3, 0.2);
+    ptr('pointerup', p, 0.3, 0.2);
+    v.renderNow();
+    lock.update();
   };
   /** 위에서 본 보기: c 둘레를 1화소 ≈ w로 — 실제 1화소 길이 */
   const zoom = (c: readonly number[], w: number): number => {
@@ -70,7 +81,7 @@ function setup(name: string, text: string, ends: boolean) {
     const p1 = v.project([c[0]! + 1, c[1]!, c[2]!])!;
     return 1 / Math.abs(p1.x - p0.x);
   };
-  return { v, hover, zoom };
+  return { v, lock, hover, click, zoom };
 }
 
 describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 화소 안으로 지나는 자리', () => {
@@ -99,6 +110,62 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
     expect(h.point[2]).toBe(0);
     expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA)).toBeLessThan(1e-6);
     expect(Math.abs(h.point[0] - Q[0]!)).toBeLessThan(1e-6);
+  });
+
+  it('36차: 잠근 X·Y·임의 선이 원호 꼭짓점을 스칠 때도 — 끄면 다듬지 않은 자리, 켜면 원 위 교차(잠금 그대로)', () => {
+    const d = 0.002;
+    // 첫 점 = 짧은 직선 이송의 끝 F. 잠근 선이 꼭짓점 V에서 원 안쪽으로 d 떨어져 지나고, Q는 그 선과 원이 만나는 점
+    const cases: { lock: 'x' | 'y' | number[]; V: number[]; F: number[]; Q: number[] }[] = [];
+    {
+      // 잠근 X: 꼭대기(90°)
+      const xi = Math.sqrt(RA * RA - (RA - d) ** 2);
+      cases.push({ lock: 'x', V: TOP, F: [110, TOP[1]! - d, 0], Q: [TOP[0]! + xi, TOP[1]! - d, 0] });
+    }
+    for (const [deg, lk] of [
+      [180, 'y'],
+      [100, 'dir'],
+    ] as const) {
+      // 잠근 Y: 원의 180° 자리는 이 원호 밖이라 쓰지 않는다 — 대신 같은 원을 온 원으로 그린 장면에서 왼쪽 꼭짓점
+      // 임의 방향: 100° 꼭짓점의 접선과 나란히 잠근 선
+      const a = (deg * Math.PI) / 180;
+      const n = [Math.cos(a), Math.sin(a)];
+      const t = [-Math.sin(a), Math.cos(a), 0];
+      const V = [20 + RA * n[0]!, 20 + RA * n[1]!, 0];
+      const P = [20 + (RA - d) * n[0]!, 20 + (RA - d) * n[1]!];
+      const s = Math.sqrt(RA * RA - (RA - d) ** 2);
+      cases.push({ lock: lk === 'y' ? 'y' : t, V, F: [P[0]! - 70 * t[0]!, P[1]! - 70 * t[1]!, 0], Q: [P[0]! + s * t[0]!, P[1]! + s * t[1]!, 0] });
+    }
+    // 온 원(중심 (20,20), 5° 토막 — 180°가 꼭짓점)과 1/4 원호
+    const FULL = ['G21 G90 G17', `G0 X${(20 + RA).toFixed(6)} Y20 Z0`, `G2 X${(20 + RA).toFixed(6)} Y20 I${(-RA).toFixed(6)} J0 F500`, 'G1 X80 Y20'].join('\n');
+    for (const c of cases) {
+      const base = c.lock === 'x' ? ARC : FULL;
+      const text = [base, `G0 X${(c.F[0]! + 1.5).toFixed(6)} Y${c.F[1]!.toFixed(6)} Z0`, `G1 X${c.F[0]!.toFixed(6)} Y${c.F[1]!.toFixed(6)}`].join('\n');
+      const got: Record<string, MeasureHoverSnap | null> = {};
+      let first: number[] = [];
+      let dir: number[] = [];
+      for (const ends of [false, true]) {
+        const w = setup('a.nc', text, ends);
+        w.click(c.F);
+        expect(w.v.measurePoints[0]).toMatchObject({ snap: 'endpoint' });
+        first = [...w.v.measurePoints[0]!.point];
+        if (Array.isArray(c.lock)) expect(w.v.setMeasureInferenceLock({ direction: c.lock, kind: 'parallel' })).toBe(true);
+        else w.lock.arrow(c.lock);
+        dir = [...w.v.measureInferenceLock!.direction];
+        const px = w.zoom(c.V, 0.012);
+        expect(d / px).toBeLessThan(0.5);
+        got[String(ends)] = w.hover(c.Q);
+        w.v.dispose();
+      }
+      expect(got.false?.refined ?? false).toBe(false);
+      const h = got.true!;
+      expect(h, String(c.lock)).toMatchObject({ locked: true, refined: true });
+      expect(h.segment).toMatchObject({ kind: 'line' });
+      // 원 위, 첫 점을 지나는 잠근 선 위(F는 소수 여섯째 자리로 적어 Q에서 조금 비킨다), Q 쪽 근
+      expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA)).toBeLessThan(1e-6);
+      const q = [h.point[0] - first[0]!, h.point[1] - first[1]!];
+      expect(Math.abs(q[0]! * dir[1]! - q[1]! * dir[0]!) / Math.hypot(dir[0]!, dir[1]!)).toBeLessThan(1e-6);
+      expect(Math.hypot(h.point[0] - c.Q[0]!, h.point[1] - c.Q[1]!)).toBeLessThan(1e-3);
+    }
   });
 
   it('판재 구멍 테두리 꼭대기를 스치는 끌어온 X축: 켜면 테두리(원) 위 교차', () => {
