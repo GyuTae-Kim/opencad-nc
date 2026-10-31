@@ -35,6 +35,9 @@
  *   33차(코어 0.31.0 points): 측정 중에는 두 측정 점 표식(첫 점·미리 보기 점 또는 두 점째)을 덮는 자리도 옮기게 늘 points: true를 넘긴다(넘길 영역이 없어도 —
  *   마우스에서도). 0.30.0까지 코어는 기본 자리(두 점 화면 가운데의 오른쪽 위)가 표식을 덮어도 그대로 그려, 휴대폰 정밀 조준 미리 보기에서 거리 글상자가
  *   첫 점 표식을 덮었다(글상자가 화면 폭의 절반을 넘어 캔버스 안으로 당겨지므로 더 자주). 표식을 덮지 않던 자리는 그대로다. 측정을 끄면 null.
+ *   35차(코어 0.33.0 snapshotPoints): 같은 값에 snapshotPoints: true를 더해 그림 저장(PNG 단추 — toBlob)의 거리 글상자도 표식을 비킨다.
+ *   34차까지 그림 저장은 측정 중이면(이 값을 늘 넘긴다) 덧그림을 기본 자리로 다시 그려, 화면에서 비킨 글상자가 그림에서는 표식을 덮었다. 그림에는 십자선·툴팁이 없어
+ *   그것들은 보지 않고 표식만 비킨다(화면 글상자를 옮긴 것이 표식뿐이면 화면과 같은 자리).
  * - 24차: 측정 띠의 끌어온 점 단추(measure-track.ts)는 이 모듈의 띠 위 알림(showFlash)을 함께 쓰고, 끌어온 점 수가 바뀌면(머무르기로 기억함)
  *   host.changed로 알린다.
  */
@@ -564,13 +567,14 @@ export class MeasureLock {
 
   /**
    * 코어 글상자가 비킬 자리(손가락·툴팁 첫 자리·떠 있는 것, 조준 중이면 커서 둘레)와 측정 점 표식 비키기(33차 — 코어 0.31.0 points)를 코어에 준다.
+   * 35차(코어 0.33.0 snapshotPoints): 그림 저장(PNG — toBlob)의 거리 글상자도 두 측정 점 표식을 덮는 자리만 옮긴다(그림에 없는 앱 영역·커서 둘레는 보지 않는다).
    * 바뀌었을 때만, 측정 중이 아니고 넘길 영역도 없으면 null
    */
   private pushAvoid(): void {
     const v = this.host.viewer();
     if (!v) return;
     const rects = [this.aimAvoid, this.tipAvoid, ...this.coverAvoid].filter((r): r is MeasureLabelRect => !!r);
-    const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid || this.measuring ? { rects, points: true, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
+    const avoid: MeasureLabelAvoid | null = rects.length || this.aimAvoid || this.measuring ? { rects, points: true, snapshotPoints: true, ...(this.aimAvoid ? { pointerRadius: AIM_RETICLE_RADIUS } : {}) } : null;
     const key = JSON.stringify(avoid);
     if (key === this.avoidKey) return;
     this.avoidKey = key;

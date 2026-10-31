@@ -15,6 +15,11 @@
  * 그 자리에서는 꼭짓점(끝점 붙잡기 — 점 붙잡기가 먼저다)이 이긴다. 그래서 원 위 교차는 거의 붙지 않았다.
  * 확대 12단(1화소의 세계 길이 0.002~0.1)마다 실제 코어(가짜 WebGL 위 Viewer3d — 앱과 같은 붙잡기 선택)가 고른 것을 적고,
  * 받는 한도(코어 점에서 붙잡기 거리 안)를 "현 위 자리가 그 토막 안"(0.23.0 토막 범위 판정)으로만 두면 붙을 확대 수를 같은 셈으로 센다.
+ *
+ * 35차(코어 0.33.0 refineEnds — 앱 ncSnapOptions가 켠다): 0.23.0 규칙으로 남던 뒤 3~4단은 틈(축과 꼭대기 토막 높은 쪽 끝의 거리)이 반 화소 아래라
+ * 선이 그 꼭짓점을 반 화소 안으로 지나 열린 교차가 되지 못하고 꼭짓점(끝점)이나 축 위 커서 자리였다. 이제 코어가 그 꼭짓점의 두 토막도 앱 refine에 물어
+ * 원 위 교차를 끝점보다 먼저 받으므로, 같은 셈에 "틈이 반 화소 아래이고 원 위 교차가 그 토막 안·꼭짓점에서 반 화소 넘게·커서에서 붙잡기 거리 안"(ends)을
+ * 더한 단과 같다 — 12단 가운데 11단(δ 0.01은 12단, 앞 1단은 틈이 붙잡기 거리보다 넓다). refineEnds를 끄면(34차 꼴) 25차 값 그대로다.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
@@ -46,9 +51,11 @@ type Seen = 'o' | 'v' | 'a' | '-';
 /**
  * 같은 셈(코어 0.20.0 openEdgeCandidates·openEdgeSnap 규칙을 이 경우로 — 위에서 본 평면, 1화소 = w): 축 y = yl과 꼭대기 토막 a → b,
  * 원 위 교차 q = (xi, yl), 커서 c. now = 0.20.0 규칙으로 열린 교차가 붙는지(꼭짓점이 커서에서 붙잡기 거리 안이면 꼭짓점이 먼저),
- * wide = 코어 점에서의 한도(후보 2 × 붙잡기 거리·받기 붙잡기 거리)를 빼면 붙는지(0.22.0 둘째 힌트 토막·0.23.0 열린 교차의 받는 규칙)
+ * wide = 코어 점에서의 한도(후보 2 × 붙잡기 거리·받기 붙잡기 거리)를 빼면 붙는지(0.22.0 둘째 힌트 토막·0.23.0 열린 교차의 받는 규칙),
+ * ends = 틈이 반 화소 아래(축이 높은 쪽 꼭짓점을 반 화소 안으로 지난다)이고 원 위 교차가 그 토막 안·두 끝에서 반 화소 넘게·커서에서 붙잡기 거리 안인지
+ * (35차 — 코어 0.33.0 refineEnds의 받는 규칙 vertexEdgeSnap을 이 경우로. 꼭짓점이 커서 가까이여도 끝점보다 먼저다)
  */
-function model(w: number, yl: number, a: V2, b: V2, c: V2): { now: boolean; wide: boolean; gapPx: number; corePx: number; vertexPx: number } {
+function model(w: number, yl: number, a: V2, b: V2, c: V2): { now: boolean; wide: boolean; ends: boolean; gapPx: number; corePx: number; vertexPx: number } {
   const xi = Math.sqrt(R * R - yl * yl);
   // 축과 거의 나란한 현: 가장 가까운 자리는 높은 쪽 끝(축 위 코어 점은 그 끝의 x)
   const hi = a[1] >= b[1] ? a : b;
@@ -63,10 +70,11 @@ function model(w: number, yl: number, a: V2, b: V2, c: V2): { now: boolean; wide
   const inSeg = u >= 0 && u <= 1 && px(q, a) > 0.5 && px(q, b) > 0.5 && px(q, c) <= SNAP;
   const vertexPx = Math.min(px(c, a), px(c, b));
   const free = vertexPx > SNAP;
-  return { now: inGap && inSeg && free && px(core, c) <= 2 * SNAP && px(q, core) <= SNAP, wide: inGap && inSeg && free, gapPx: gap / w, corePx: px(q, core), vertexPx };
+  return { now: inGap && inSeg && free && px(core, c) <= 2 * SNAP && px(q, core) <= SNAP, wide: inGap && inSeg && free, ends: gap <= tol && inSeg, gapPx: gap / w, corePx: px(q, core), vertexPx };
 }
 
-function setup(d: number) {
+/** ends = false면 앱 선택에서 refineEnds만 끈다(34차 꼴) */
+function setup(d: number, ends = true) {
   const text = ['G21 G90 G17', `G0 X${S[0]} Y${S[1]} Z0`, `G2 X${E[0]} Y${E[1]} I${-S[0]!} J${-S[1]!} F500`, `G0 X40 Y${(25 - d).toFixed(6)}`].join('\n');
   const r = parseForView('apex.nc', enc(text));
   document.body.innerHTML = '';
@@ -77,7 +85,9 @@ function setup(d: number) {
   v.setView('top', false);
   v.fit(false);
   v.setMeasureMode(true);
-  v.setMeasureSnap(ncSnapOptions(r.nc!, arcCenters(r.nc!), null, (r.scene.meta as { arcAngle?: number }).arcAngle));
+  const opts = ncSnapOptions(r.nc!, arcCenters(r.nc!), null, (r.scene.meta as { arcAngle?: number }).arcAngle);
+  expect(opts.refineEnds).toBe(true);
+  v.setMeasureSnap(ends ? opts : { ...opts, refineEnds: false });
   v.renderNow();
   const lock = new MeasureLock({ viewer: () => v, touch: () => false, layer: host, changed: vi.fn() });
   // 꼭대기 토막(장면 float32 꼭짓점 — 두 끝이 꼭대기 양쪽)
@@ -117,10 +127,10 @@ function setup(d: number) {
   return { v, apex: apex!, hover, click, zoom };
 }
 
-describe('같은 평면에서 원호 꼭대기에 거의 닿는 축(23차 재현 기록 → 코어 0.23.0 받는 한도)', () => {
+describe('같은 평면에서 원호 꼭대기에 거의 닿는 축(23차 재현 기록 → 코어 0.23.0 받는 한도 → 0.33.0 refineEnds)', () => {
   // 1화소의 세계 길이 0.002~0.1 사이 12단(곱 비 약 1.43)
   const steps = Array.from({ length: 12 }, (_, k) => 0.002 * Math.pow(50, k / 11));
-  const rows: { d: number; seen: string; now: string; wide: string; minus: string }[] = [];
+  const rows: { d: number; seen: string; now: string; wide: string; ends: string; minus: string; off: string; offMinus: string }[] = [];
   /** 미리 보기 하나를 기호로(붙으면 원 위 — 축 위, 남은 두 좌표는 첫 점 그대로) */
   const sign = (h: ReturnType<typeof setup>['v']['measureHoverSnap'], yl: number): Seen => {
     if (h?.snap === 'endpoint') return 'v';
@@ -131,50 +141,71 @@ describe('같은 평면에서 원호 꼭대기에 거의 닿는 축(23차 재현
     }
     return h?.snap === 'axis' && h.axis === 'x' && !h.segment ? 'a' : '-';
   };
+  /** 확대 12단마다 원 위 교차(+xi)와 다른 교차(−xi) 둘레를 가리켜 기호 줄을 만든다(같은 셈 줄도) */
+  const sweep = (d: number, ends: boolean) => {
+    const w = setup(d, ends);
+    const { v, apex } = w;
+    // 꼭대기 토막은 87.5°·92.5° 둘레 꼭짓점, 높은 쪽 끝이 오른쪽(현이 조금 기울었다)
+    expect(Math.atan2(apex[0][1], apex[0][0]) / DEG).toBeCloseTo(92.504, 2);
+    expect(Math.atan2(apex[1][1], apex[1][0]) / DEG).toBeCloseTo(87.504, 2);
+    expect(apex[1][1]).toBeGreaterThan(apex[0][1]);
+    w.click([40, 25 - d, 0]);
+    expect(v.measurePoints[0]).toMatchObject({ point: [40, Math.fround(25 - d), 0], snap: 'endpoint' });
+    const yl = v.measurePoints[0]!.point[1];
+    const xi = Math.sqrt(R * R - yl * yl);
+    const out = { seen: '', now: '', wide: '', ends: '', minus: '', gap: [] as number[] };
+    for (const s of steps) {
+      const px = w.zoom(s);
+      w.hover([xi, yl, 0], 1, 2);
+      // 커서(세계): 원 위 교차에서 화면 (1, 2)화소 — 위에서 본 보기라 x는 +1화소, y는 −2화소
+      const m = model(px, yl, apex[0], apex[1], [xi + px, yl - 2 * px]);
+      out.seen += sign(v.measureHoverSnap, yl);
+      out.now += m.now ? 'o' : '.';
+      out.wide += m.wide ? 'o' : '.';
+      out.ends += m.ends ? 'o' : '.';
+      out.gap.push(m.gapPx);
+      // 같은 토막의 다른 교차(−xi — 코어 0.22.0 둘째 힌트)
+      w.hover([-xi, yl, 0], 1, 2);
+      out.minus += sign(v.measureHoverSnap, yl);
+    }
+    v.dispose();
+    return out;
+  };
   for (const d of [0.0001, 0.001, 0.003, 0.01]) {
-    it(`δ = ${d}: 붙은 것을 적고, 열린 교차가 붙은 확대는 같은 셈(코어 점에서의 한도를 뺀 규칙)과 같다`, () => {
-      const w = setup(d);
-      const { v, apex } = w;
-      // 꼭대기 토막은 87.5°·92.5° 둘레 꼭짓점, 높은 쪽 끝이 오른쪽(현이 조금 기울었다)
-      expect(Math.atan2(apex[0][1], apex[0][0]) / DEG).toBeCloseTo(92.504, 2);
-      expect(Math.atan2(apex[1][1], apex[1][0]) / DEG).toBeCloseTo(87.504, 2);
-      expect(apex[1][1]).toBeGreaterThan(apex[0][1]);
-      w.click([40, 25 - d, 0]);
-      expect(v.measurePoints[0]).toMatchObject({ point: [40, Math.fround(25 - d), 0], snap: 'endpoint' });
-      const yl = v.measurePoints[0]!.point[1];
-      const xi = Math.sqrt(R * R - yl * yl);
-      let seen = '';
-      let now = '';
-      let wide = '';
-      let minus = '';
-      for (const s of steps) {
-        const px = w.zoom(s);
-        w.hover([xi, yl, 0], 1, 2);
-        // 커서(세계): 원 위 교차에서 화면 (1, 2)화소 — 위에서 본 보기라 x는 +1화소, y는 −2화소
-        const m = model(px, yl, apex[0], apex[1], [xi + px, yl - 2 * px]);
-        seen += sign(v.measureHoverSnap, yl);
-        now += m.now ? 'o' : '.';
-        wide += m.wide ? 'o' : '.';
-        // 같은 토막의 다른 교차(−xi — 코어 0.22.0 둘째 힌트)
-        w.hover([-xi, yl, 0], 1, 2);
-        minus += sign(v.measureHoverSnap, yl);
-      }
-      rows.push({ d, seen, now, wide, minus });
-      // 열린 교차가 붙은 확대 = 같은 셈이 코어 점에서의 한도를 뺀 규칙으로 붙는다고 한 확대(0.20.0 규칙 now는 어느 단에서도 붙지 않는다)
-      expect(seen.replace(/[^o]/g, '.')).toBe(wide);
+    it(`δ = ${d}: 붙은 것을 적고, 원 위 교차가 붙은 확대는 같은 셈과 같다(refineEnds를 끄면 코어 점에서의 한도를 뺀 규칙, 켜면 거기에 꼭짓점을 반 화소 안으로 지나는 단)`, () => {
+      const on = sweep(d, true);
+      const off = sweep(d, false);
+      rows.push({ d, seen: on.seen, now: on.now, wide: on.wide, ends: on.ends, minus: on.minus, off: off.seen, offMinus: off.minus });
+      // 34차 꼴(끔): 열린 교차가 붙은 확대 = 코어 점에서의 한도를 뺀 규칙(wide — 0.20.0 규칙 now는 어느 단에서도 붙지 않는다)
+      expect(off.seen.replace(/[^o]/g, '.')).toBe(off.wide);
+      // 앱 선택(켬): wide 또는 ends인 단
+      const want = [...on.wide].map((c, i) => (c === 'o' || on.ends[i] === 'o' ? 'o' : '.')).join('');
+      expect(on.seen.replace(/[^o]/g, '.')).toBe(want);
+      // 바뀐 단은 모두 끈 것의 꼭짓점·커서 자리에서 원 위 교차로, 틈이 반 화소 아래인 단이다
+      for (let i = 0; i < steps.length; i++)
+        if (on.seen[i] !== off.seen[i]) {
+          expect(on.seen[i]).toBe('o');
+          expect('va').toContain(off.seen[i]);
+          expect(on.gap[i]).toBeLessThanOrEqual(0.5);
+        }
     });
   }
 
-  it('기록: 코어 0.23.0은 12단 가운데 8단에서 원 위 교차에 붙는다(0.20.0 규칙으로는 0단 — 23차 기록)', () => {
+  it('기록: 코어 0.23.0은 12단 가운데 8단, 0.33.0 refineEnds를 켠 앱은 11단(δ 0.01은 12단)에서 원 위 교차에 붙는다(0.20.0 규칙으로는 0단 — 23차 기록)', () => {
     // 23차(코어 0.20.0)에 본 값(확대가 작은 쪽부터): δ 0.0001·0.001 'aaaaaaaaaaav', 0.003 'aaaaaaaaaavv', 0.01 'aaaaaaaaavvv'
     // (a = X축 방향 커서 자리, v = 꼭짓점 끝점, o = 원 위 교차). 25차(0.23.0): 앞 1단(δ 0.01은 0단)은 틈이 붙잡기 거리보다 넓어 커서 자리,
-    // 뒤 3~4단은 틈이 반 화소 아래이거나 꼭짓점이 커서에서 붙잡기 거리 안이라 커서 자리·끝점이다(코어 v0.23.0 README의 12단 가운데 8단)
+    // 뒤 3~4단은 틈이 반 화소 아래이거나 꼭짓점이 커서에서 붙잡기 거리 안이라 커서 자리·끝점이다(코어 v0.23.0 README의 12단 가운데 8단).
+    // 35차(0.33.0 refineEnds): 그 뒤 3~4단은 틈이 반 화소 아래라 선이 꼭짓점을 반 화소 안으로 지나고, 코어가 그 꼭짓점의 토막을 앱에 물어 원 위 교차를 받는다
     expect(rows.map((r) => r.d)).toEqual([0.0001, 0.001, 0.003, 0.01]);
-    expect(rows.map((r) => r.seen)).toEqual(['aooooooooaav', 'aooooooooaav', 'aooooooooavv', 'ooooooooavvv']);
+    expect(rows.map((r) => r.off)).toEqual(['aooooooooaav', 'aooooooooaav', 'aooooooooavv', 'ooooooooavvv']);
+    expect(rows.map((r) => r.seen)).toEqual(['aooooooooooo', 'aooooooooooo', 'aooooooooooo', 'oooooooooooo']);
     for (const r of rows) expect(r.now).toBe('............');
     // 넓힌 규칙: 틈이 반~10화소이고 꼭짓점이 붙잡기 거리 밖인 확대(앞 1단은 틈이 10화소를 넘고, 뒤 3~4단은 틈이 반 화소 아래거나 꼭짓점이 가깝다)
     expect(rows.map((r) => r.wide)).toEqual(['.oooooooo...', '.oooooooo...', '.oooooooo...', 'oooooooo....']);
-    // 다른 교차(첫 점에서 먼 쪽 −xi)도 같은 8단에서 붙는다 — 앱 refine이 열린 후보의 둘째 힌트(현의 다른 끝 발)를 그 둘레 근으로 풀어 준다
-    expect(rows.map((r) => r.minus.replace(/[^o]/g, '.'))).toEqual(rows.map((r) => r.wide));
+    // refineEnds 규칙: 틈이 반 화소 아래인 뒤 3~4단(원 위 교차가 그 토막 안·커서 가까이)
+    expect(rows.map((r) => r.ends)).toEqual(['.........ooo', '.........ooo', '.........ooo', '........oooo']);
+    // 다른 교차(첫 점에서 먼 쪽 −xi)도 같은 단에서 붙는다 — 앱 refine이 열린 후보의 둘째 힌트(현의 다른 끝 발)·꼭짓점 발을 그 둘레 근으로 풀어 준다
+    expect(rows.map((r) => r.offMinus.replace(/[^o]/g, '.'))).toEqual(rows.map((r) => r.wide));
+    expect(rows.map((r) => r.minus)).toEqual(rows.map((r) => r.seen));
   });
 });
