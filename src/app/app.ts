@@ -1383,10 +1383,11 @@ export class NcViewerApp implements PanelHost {
 
   /**
    * 코어가 캔버스에 그리는 측정 거리 글상자("거리 … mm")를 화면 언어로(32차 — 측정 도구 조각 measure-label.ts, 코어 setMeasureFormat).
-   * 그릴 때 문서 언어를 읽으므로 언어를 바꾸면 다시 넘겨 다시 그리게 한다. 조각을 받기 전에는 코어 기본(한국어) 글
+   * 그릴 때 문서 언어를 읽으므로 언어를 바꾸면 다시 넘겨 다시 그리게 한다. 조각을 받기 전에는 코어 기본(한국어) 글.
+   * 33차: 수·자릿수·단위 글은 코어가 글 꼴의 둘째 인자로 넘긴다(코어 0.31.0 — 장면을 몰라도 된다)
    */
   private labelFormat(): void {
-    if (this.viewer && this.measureTools) this.viewer.setMeasureFormat(this.measureTools.measureLabelFormat(this.viewer));
+    if (this.viewer && this.measureTools) this.viewer.setMeasureFormat(this.measureTools.measureLabelFormat());
   }
 
   private setDoc(d: NcDoc): void {

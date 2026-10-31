@@ -1,48 +1,63 @@
 // @vitest-environment jsdom
 /**
- * 코어 측정 거리 글상자의 글(32차 — measure-label.ts, 코어 setMeasureFormat):
- * - 자릿수·"-0"·단위가 코어 기본 글과 같은 규칙인지(순수)
- * - 이름표 "거리"를 네 언어 사전으로 옮기는지(일본어는 길거리 "通り"가 아니라 "距離")
- * - 실제 코어(가짜 캔버스)에 붙였을 때 한국어 화면은 코어 기본 글과 글자까지 같고, 다른 언어는 이름표만 바뀌는지(그린 글을 모아 견준다).
+ * 코어 측정 거리 글상자의 글(32차 — measure-label.ts, 코어 setMeasureFormat; 33차 — 코어 0.31.0 글 꼴의 둘째 인자 MeasureFormatCore):
+ * - 이름표 "거리"만 네 언어 사전으로 옮기고(일본어는 길거리 "通り"가 아니라 "距離") 수·단위·축별 줄은 코어가 넘긴 것 그대로인지(순수 — 코어 인자를 흉내)
+ * - 실제 코어(가짜 캔버스)에 붙였을 때 한국어 화면은 코어 기본 글과 글자까지 같고, 다른 언어는 이름표만 바뀌는지(그린 글을 모아 견준다 — mm·인치).
  *   커서는 선 끝을 정확히 가리키지 않는다(끝점 붙잡기로 붙는다)
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Viewer3d } from 'opencad-viewer3d';
+import { Viewer3d, type MeasureFormat, type MeasureFormatCore } from 'opencad-viewer3d';
 import { parseForView } from '../../src/app/payload';
-import { fixedNum, measureDigits, measureLabelFormat, measureLabelLines } from '../../src/app/measure-label';
+import { measureLabelFormat } from '../../src/app/measure-label';
 import { MeasureLock } from '../../src/app/measure-lock';
 import { arcCenters } from '../../src/app/snap';
 import { ncSnapOptions } from '../../src/app/refine';
-import { translate } from '../../site/i18n.mjs';
+// 네 언어 사전을 넣는다(앱은 src/app/i18n.ts가 넣는다 — measure-label.ts는 번역기만 쓴다)
+import '../../site/i18n.mjs';
 import { installCanvasFakes } from './fake-webgl';
 
-const box = (lo: number[], hi: number[]) => ({ min: lo as [number, number, number], max: hi as [number, number, number] });
+/** 코어가 넘기는 둘째 인자 흉내(소수 digits자리, "-0"은 "0") */
+function core(digits: number, unit: string, lines: string[], source: MeasureFormatCore['source'] = 'measure'): MeasureFormatCore {
+  const num = (v: number): string => {
+    const s = v.toFixed(digits);
+    return s === `-${(0).toFixed(digits)}` ? (0).toFixed(digits) : s;
+  };
+  return { lines, num, digits, unit, source };
+}
 
-describe('측정 글상자 글(순수)', () => {
-  it('자릿수는 장면 범위 대각선으로(코어 규칙): 0~6자리, 빈 범위는 0자리', () => {
-    expect(measureDigits(box([0, 0, 0], [100, 100, 100]))).toBe(3); // 대각선 173
-    expect(measureDigits(box([0, 0, 0], [3000, 0, 0]))).toBe(2);
-    expect(measureDigits(box([0, 0, 0], [0.5, 0, 0]))).toBe(6);
-    expect(measureDigits(box([0, 0, 0], [1e-6, 0, 0]))).toBe(6);
-    expect(measureDigits(box([0, 0, 0], [2e6, 0, 0]))).toBe(0);
-    expect(measureDigits(box([5, 5, 5], [5, 5, 5]))).toBe(5); // 크기 0 — 1로 본다
-    expect(measureDigits(box([Infinity, Infinity, Infinity], [-Infinity, -Infinity, -Infinity]))).toBe(0);
-    expect(fixedNum(-0.0001, 3)).toBe('0.000');
-    expect(fixedNum(-0.001, 3)).toBe('-0.001');
-    expect(fixedNum(12.3456, 2)).toBe('12.35');
+describe('측정 글상자 글(순수 — 코어 인자 흉내)', () => {
+  const m = { distance: 50, dx: 40, dy: -30, dz: -0.0001, units: 'mm' } as unknown as Parameters<MeasureFormat>[0];
+  const LINES = ['거리 50.000 mm', 'ΔX 40.000  ΔY -30.000  ΔZ 0.000'];
+
+  it('한국어는 코어 기본 줄과 같고, 다른 언어는 이름표만 바뀐다(둘째 줄은 코어 줄 그대로)', () => {
+    expect(measureLabelFormat(() => 'ko')(m, core(3, 'mm', LINES))).toEqual(LINES);
+    const want: Record<string, string> = { en: 'Distance', ja: '距離', 'zh-CN': '距离', de: 'Abstand' };
+    for (const [code, word] of Object.entries(want)) expect(measureLabelFormat(() => code)(m, core(3, 'mm', LINES)), code).toEqual([`${word} 50.000 mm`, LINES[1]]);
   });
 
-  it('두 줄: 거리·단위와 축별 길이, 이름표만 옮긴다', () => {
-    const m = { distance: 50, dx: 40, dy: -30, dz: 0, units: 'mm' as const };
-    expect(measureLabelLines(m, 3)).toEqual(['거리 50.000 mm', 'ΔX 40.000  ΔY -30.000  ΔZ 0.000']);
-    expect(measureLabelLines({ ...m, units: 'inch' }, 4)[0]).toBe('거리 50.0000 in');
-    expect(measureLabelLines({ ...m, units: 'unknown' }, 1)[0]).toBe('거리 50.0');
-    const tr = (code: string) => (ko: string) => translate(ko, code);
-    expect(measureLabelLines(m, 3, tr('en'))[0]).toBe('Distance 50.000 mm');
-    expect(measureLabelLines(m, 3, tr('ja'))[0]).toBe('距離 50.000 mm');
-    expect(measureLabelLines(m, 3, tr('zh-CN'))[0]).toBe('距离 50.000 mm');
-    expect(measureLabelLines(m, 3, tr('de'))[0]).toBe('Abstand 50.000 mm');
-    for (const code of ['en', 'ja', 'zh-CN', 'de']) expect(measureLabelLines(m, 3, tr(code))[1]).toBe('ΔX 40.000  ΔY -30.000  ΔZ 0.000');
+  it('수는 코어 수 꼴(c.num — 자릿수), 단위는 코어 단위 글(c.unit — 모르면 없음)', () => {
+    expect(measureLabelFormat(() => 'en')(m, core(4, 'in', ['거리 50.0000 in', 'ΔX …']))).toEqual(['Distance 50.0000 in', 'ΔX …']);
+    expect(measureLabelFormat(() => 'de')(m, core(1, '', ['거리 50.0', 'ΔX …']))).toEqual(['Abstand 50.0', 'ΔX …']);
+    // "-0"도 코어 수 꼴이 맡는다
+    expect(measureLabelFormat(() => 'en')({ ...m, distance: -0.0001 }, core(3, 'mm', LINES))[0]).toBe('Distance 0.000 mm');
+    // 코어가 줄을 더 주면 둘째 줄부터 그대로
+    expect(measureLabelFormat(() => 'ja')(m, core(0, 'mm', ['거리 50 mm', 'a', 'b']))).toEqual(['距離 50 mm', 'a', 'b']);
+  });
+
+  it('글을 주지 않은 거리 덧그림(annotation)은 코어 줄 그대로', () => {
+    expect(measureLabelFormat(() => 'en')(m, core(3, 'mm', ['50.000 mm'], 'annotation'))).toEqual(['50.000 mm']);
+  });
+
+  it('언어는 그릴 때마다 읽는다(기본은 문서 언어 — 없으면 한국어)', () => {
+    let lang = 'ko';
+    const f = measureLabelFormat(() => lang);
+    expect(f(m, core(3, 'mm', LINES))[0]).toBe('거리 50.000 mm');
+    lang = 'en';
+    expect(f(m, core(3, 'mm', LINES))[0]).toBe('Distance 50.000 mm');
+    document.documentElement.lang = 'zh-CN';
+    expect(measureLabelFormat()(m, core(3, 'mm', LINES))[0]).toBe('距离 50.000 mm');
+    document.documentElement.lang = '';
+    expect(measureLabelFormat()(m, core(3, 'mm', LINES))[0]).toBe('거리 50.000 mm');
   });
 });
 
@@ -64,8 +79,8 @@ describe('실제 코어에 붙인 측정 글상자', () => {
 
   const ARC = ['G21 G90 G17', 'G0 X0 Y40 Z0', 'G2 X40 Y40 I20 J-20 F500', 'G1 X60 Y40', 'G1 X60 Y45', 'G0 X100 Y60', 'G1 X120 Y20'].join('\n');
 
-  /** (60,45)·(100,60) 끝점을 재고 마지막 그리기의 글상자 글(거리·축 줄)을 돌려준다 */
-  function measure(lang: string | null, units?: 'inch'): { lines: string[]; rect: unknown } {
+  /** (60,45)·(100,60) 끝점을 재고 마지막 그리기의 글상자 글(거리·축 줄)과 코어가 넘긴 둘째 인자를 돌려준다 */
+  function measure(lang: string | null, units?: 'inch'): { lines: string[]; rect: unknown; core: MeasureFormatCore | null } {
     const r = parseForView('a.nc', new TextEncoder().encode(units ? ARC.replace('G21', 'G20') : ARC));
     document.body.innerHTML = '';
     const host = document.createElement('div');
@@ -76,7 +91,11 @@ describe('실제 코어에 붙인 측정 글상자', () => {
     v.fit(false);
     v.setMeasureMode(true);
     v.setMeasureSnap(ncSnapOptions(r.nc!, arcCenters(r.nc!), null, (r.scene.meta as { arcAngle?: number }).arcAngle));
-    if (lang) v.setMeasureFormat(measureLabelFormat(v, () => lang));
+    let seen: MeasureFormatCore | null = null;
+    if (lang) {
+      const f = measureLabelFormat(() => lang);
+      v.setMeasureFormat((x, c) => ((seen = c), f(x, c)));
+    }
     const lock = new MeasureLock({ viewer: () => v, touch: () => false, layer: host, changed: vi.fn() });
     const ptr = (type: string, p: readonly number[]): void => {
       const s = v.project(p)!;
@@ -98,27 +117,31 @@ describe('실제 코어에 붙인 측정 글상자', () => {
     const lines = texts.filter((t) => /ΔX|\d+\.\d+ (mm|in)$/.test(t));
     const rect = v.measureLabelRect;
     v.dispose();
-    return { lines, rect };
+    return { lines, rect, core: seen };
   }
 
-  it('한국어 화면은 코어 기본 글과 같고, 다른 언어는 이름표만 바뀐다', () => {
-    const core = measure(null);
-    expect(core.lines.length).toBe(2);
-    expect(core.lines[0]).toMatch(/^거리 42\.72\d* mm$/);
+  it('한국어 화면은 코어 기본 글·글상자 자리와 같고, 다른 언어는 이름표만 바뀐다', () => {
+    const base = measure(null);
+    expect(base.lines.length).toBe(2);
+    expect(base.lines[0]).toMatch(/^거리 42\.72\d* mm$/);
     const ko = measure('ko');
-    expect(ko.lines).toEqual(core.lines);
-    expect(ko.rect).toEqual(core.rect);
+    expect(ko.lines).toEqual(base.lines);
+    expect(ko.rect).toEqual(base.rect);
+    // 코어가 넘긴 기본 줄이 글 꼴이 없을 때 그린 글과 같다
+    expect(ko.core).toMatchObject({ lines: base.lines, unit: 'mm', source: 'measure' });
     const want: Record<string, string> = { en: 'Distance', ja: '距離', 'zh-CN': '距离', de: 'Abstand' };
     for (const [code, word] of Object.entries(want)) {
       const x = measure(code);
-      expect(x.lines, code).toEqual([core.lines[0]!.replace('거리', word), core.lines[1]]);
+      expect(x.lines, code).toEqual([base.lines[0]!.replace('거리', word), base.lines[1]]);
     }
   });
 
   it('인치 문서는 in, 한국어는 코어 기본과 같다', () => {
-    const core = measure(null, 'inch');
-    expect(core.lines[0]).toMatch(/ in$/);
-    expect(measure('ko', 'inch').lines).toEqual(core.lines);
-    expect(measure('en', 'inch').lines[0]).toBe(core.lines[0]!.replace('거리', 'Distance'));
+    const base = measure(null, 'inch');
+    expect(base.lines[0]).toMatch(/ in$/);
+    const ko = measure('ko', 'inch');
+    expect(ko.lines).toEqual(base.lines);
+    expect(ko.core).toMatchObject({ unit: 'in' });
+    expect(measure('en', 'inch').lines[0]).toBe(base.lines[0]!.replace('거리', 'Distance'));
   });
 });

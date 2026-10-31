@@ -517,9 +517,12 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 두 거르기에 같은 함수를 주면 코어가 같은 선분을 한 번만 묻는다. 첫 점 나란함의 기준이 원호·구멍 테두리를 나눈 현이면 첫 점에서 그 현과 나란한 엉뚱한 방향에 붙었다
  * (31차 탐색 — 실제 판재 구멍 중심을 첫 점으로 둘레를 훑은 3,584곳 가운데 '나란한 방향' 54곳이 모두 현 기준). 원호 접선 잠금(tangent.ts)·모서리 끝 방향 잠금은 이 기준과 따로다.
  * 32차(코어 0.30.0 meets { guides }): 두 끌어온 점의 나란한 선·수직인 선끼리 만나는 점(같은 기준 모서리로 그은 기운 사각형의 구석)에도 붙는다.
- * 정확한 직선끼리라 다듬지 않고, 첫 점을 지나는 선이 아니라 Shift·잠금 단추로 잠그지 않는다
+ * 정확한 직선끼리라 다듬지 않고, 첫 점을 지나는 선이 아니라 Shift·잠금 단추로 잠그지 않는다.
+ * 33차(코어 0.31.0 meets { open }): 그 선이 곡선(원호·나선·스플라인 경로, 판재 윤곽 호·구멍 테두리)을 나눈 토막과 3D로 만나지 않고 그 활꼴(현과 곡선 사이)만
+ * 지나는 자리 — 곡선 평면을 비스듬히 뚫는 선(두 깊이 원호와 경사 진입), 같은 평면에서 곡선에 거의 닿듯 지나는 선 — 에서도 곡선 위 교차점에 붙는다.
+ * 코어가 refine을 'axisEdge'·open: true(축 이름 없는 안내 선)로 부르고 refineAxisEdge가 이미 그 꼴을 곡선 위로 푼다. 이름은 0.29.0 만나는 점과 같다('… · 모서리 위')
  */
-const trackInference = (edge: (s: SnapSegment) => boolean): MeasureSnapOptions['inference'] => ({ ...MEASURE_INFERENCE, parallelEdge: edge, trackDirs: { edge, meets: { guides: true } } });
+const trackInference = (edge: (s: SnapSegment) => boolean): MeasureSnapOptions['inference'] => ({ ...MEASURE_INFERENCE, parallelEdge: edge, trackDirs: { edge, meets: { guides: true, open: true } } });
 
 /**
  * 판재(MPR·PGI·XML) 문서의 붙잡기 선택: 윤곽·판 외곽선의 원호 중심·원형 포켓 중심, 고른 윤곽 요소(판 외곽선·포켓 둘레·구멍 테두리의 호 포함)의

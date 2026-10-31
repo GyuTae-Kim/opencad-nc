@@ -186,9 +186,11 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
   it('커서 옆 툴팁이 코어 거리 글상자와 겹치면(첫 점에서 위로 잴 때) 겹치지 않는 자리로 옮긴다', () => {
     const w = setup();
     const { v, lock } = w;
-    w.click([60, 10, 0]);
+    // 33차: 첫 점 (60,10)(캔버스 오른쪽)에서는 글상자가 캔버스 안으로 당겨져 미리 보기 점 표식을 덮던 자리라 이제 코어가 표식을 비켜(points) 툴팁과도 겹치지 않는다 —
+    // 툴팁 옮기기를 보려고 캔버스 왼쪽 (0,0)에서(그 위 Y축은 빈 곳)
+    w.click([0, 0, 0]);
     // 첫 점에서 화면 위로 90화소: Y축 방향 붙잡기, 코어 글상자는 두 점 가운데 오른쪽 위라 커서 오른쪽 아래 툴팁 자리에 걸린다
-    const a = w.at([60, 10, 0]);
+    const a = w.at([0, 0, 0]);
     w.hoverXY(a.x, a.y - 90);
     expect(v.measureHoverSnap).toMatchObject({ snap: 'axis', axis: 'y' });
     const label = v.measureLabelRect!;
@@ -215,13 +217,14 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
   it('코어 0.13.0: 툴팁 첫 자리를 넘기면 다음 그리기에서 코어 글상자가 비키고 툴팁은 오른쪽 아래 제자리, 둘이 서로 쫓지 않는다', () => {
     const w = setup();
     const { v, lock } = w;
-    w.click([60, 10, 0]);
-    const a = w.at([60, 10, 0]);
+    // 33차: 위 시험과 같은 까닭으로 캔버스 왼쪽 (0,0)에서
+    w.click([0, 0, 0]);
+    const a = w.at([0, 0, 0]);
     w.hoverXY(a.x, a.y - 90);
     const p = w.at(v.measureHoverSnap!.point);
     const first = { x: Math.round(p.x + 12), y: Math.round(p.y + 12), width: 80, height: 20 };
-    // 23차: 측정 중이면 뷰 큐브 자리도(툴팁 다음)
-    expect(v.measureLabelAvoid).toEqual({ rects: [first, CUBE] });
+    // 23차: 측정 중이면 뷰 큐브 자리도(툴팁 다음), 33차: 측정 점 표식 비키기(points)도
+    expect(v.measureLabelAvoid).toEqual({ rects: [first, CUBE], points: true });
     // 이 그리기는 넘기기 전 자리(툴팁 첫 자리에 걸림) — 툴팁이 비켰다
     expect(overlaps(first, v.measureLabelRect!)).toBe(true);
     v.renderNow();
@@ -252,7 +255,12 @@ describe('측정 방향 잠금(실제 코어 판정)', () => {
       return v.measureLabelRect!;
     })();
     const near = (r: MeasureLabelRect, x: number, y: number, rad: number): boolean => Math.hypot(Math.max(r.x - x, 0, x - r.x - r.width), Math.max(r.y - y, 0, y - r.y - r.height)) < rad;
-    expect(near(before, c.x, c.y, 24)).toBe(true);
+    const hp = w.at(v.measureHoverSnap!.point);
+    const def = placeMeasureLabel([(a.x + hp.x) / 2, (a.y + hp.y) / 2], before, { width: 800, height: 600 }, null);
+    expect(near(def, c.x, c.y, 24)).toBe(true);
+    // 33차: 기본 자리는 미리 보기 점 표식도 덮어 조준을 알리기 전에도 코어가 표식을 비킨다(points — 측정 중이면 늘 넘긴다)
+    expect(near(def, hp.x, hp.y, 6)).toBe(true);
+    expect(near(before, hp.x, hp.y, 6)).toBe(false);
     // 앱 aim.ts가 십자선을 옮기는 처리 안에서(펜 움직임 전) 손가락 자리를 알린다
     lock.setAim({ x: c.x, y: c.y + 64 });
     w.hoverXY(c.x, c.y, { pointerType: 'pen' });
@@ -307,14 +315,14 @@ describe('23차: 거리 글상자가 뷰 큐브·측정 띠를 비킨다(코어 
     const label = measureAt(w, CUBE.x - 30, CUBE.y + CUBE.height + 10);
     const def = plain(v, label);
     expect(overlaps(def, CUBE)).toBe(true);
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE] });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true });
     expect(overlaps(label, CUBE)).toBe(false);
     expect([label.width, label.height]).toEqual([def.width, def.height]);
-    // 큐브를 숨기면(보기 메뉴) 넘기지 않아 기본 자리(0.12.0과 같다)
+    // 큐브를 숨기면(보기 메뉴) 넘기지 않아 기본 자리(0.12.0과 같다 — 33차: 표식 비키기만 넘기고, 이 자리는 표식을 덮지 않는다)
     v.setViewCubeVisible(false);
     lock.update();
     v.renderNow();
-    expect(v.measureLabelAvoid).toBeNull();
+    expect(v.measureLabelAvoid).toEqual({ rects: [], points: true });
     for (const k of ['x', 'y', 'width', 'height'] as const) expect(v.measureLabelRect![k]).toBeCloseTo(def[k], 6);
     v.setViewCubeVisible(true);
     // 측정을 끄면 거둔다
@@ -334,12 +342,12 @@ describe('23차: 거리 글상자가 뷰 큐브·측정 띠를 비킨다(코어 
     w.click([80, 40, 0], 'touch');
     const label = measureAt(w, 400, BAR.y + 15);
     expect(overlaps(plain(v, label), BAR)).toBe(true);
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE, BAR] });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE, BAR], points: true });
     expect(overlaps(label, BAR)).toBe(false);
     expect(overlaps(label, CUBE)).toBe(false);
     bar.hidden = true;
     lock.update();
-    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE] });
+    expect(v.measureLabelAvoid).toEqual({ rects: [CUBE], points: true });
   });
 
   it('큐브·띠와 겹치지 않는 측정은 글상자 자리가 기본 자리 그대로다(넘겨도 옮기지 않는다)', () => {

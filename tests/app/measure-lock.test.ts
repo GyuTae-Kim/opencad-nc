@@ -165,8 +165,9 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     v.hover = { point: [1, 2, 3], snap: 'axis', axis: 'y', direction: [0, 1, 0] };
     lock.update();
     const tip = { x: 112, y: 62, width: 80, height: 20 };
-    expect(v.avoids).toEqual([{ rects: [tip] }]);
-    expect(lock.labelAvoid).toEqual({ rects: [tip] });
+    // 33차(코어 0.31.0): 측정 중이면 측정 점 표식 비키기(points)도 늘 함께
+    expect(v.avoids).toEqual([{ rects: [tip], points: true }]);
+    expect(lock.labelAvoid).toEqual({ rects: [tip], points: true });
     // 코어 글상자가 옮겨도 넘기는 자리는 툴팁 첫 자리 그대로(서로 쫓지 않는다) — 같으면 다시 주지 않는다
     v.labelRect = { x: 110, y: 70, width: 200, height: 40 };
     lock.update();
@@ -174,20 +175,39 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     expect(v.avoids).toHaveLength(1);
     // 정밀 조준(손가락 (130, 180), 십자선은 그 위): 손가락 둘레 44화소 사각형과 십자선 반지름 24
     lock.setAim({ x: 130, y: 180 });
-    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }, tip], pointerRadius: 24 });
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }, tip], points: true, pointerRadius: 24 });
     // 툴팁을 숨기면(붙잡지 않은 점) 조준 자리만
     v.hover = { point: [1, 2, 3], snap: null };
     lock.update();
-    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }], pointerRadius: 24 });
-    // 조준을 마치면 끈다(0.12.0과 같은 자리)
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }], points: true, pointerRadius: 24 });
+    // 조준을 마치면 십자선·손가락을 거둔다 — 측정 중이라 표식 비키기만 남는다(0.30.0까지는 null)
     lock.setAim(null);
-    expect(v.avoids.at(-1)).toBeNull();
-    expect(lock.labelAvoid).toBeNull();
+    expect(v.avoids.at(-1)).toEqual({ rects: [], points: true });
+    expect(lock.labelAvoid).toEqual({ rects: [], points: true });
     // 측정을 끄거나 문서를 바꾸면 거둔다
     v.hover = { point: [1, 2, 3], snap: 'endpoint' };
     lock.update();
-    expect(v.avoids.at(-1)).toEqual({ rects: [tip] });
+    expect(v.avoids.at(-1)).toEqual({ rects: [tip], points: true });
     lock.reset();
+    expect(v.avoids.at(-1)).toBeNull();
+    // 같은 측정을 이어 그리면(update) 다시 준다
+    lock.update();
+    expect(v.avoids.at(-1)).toEqual({ rects: [tip], points: true });
+  });
+
+  it('33차: 측정을 켜기만 해도(툴팁·조준·떠 있는 것이 없어도) 표식 비키기를 넘기고, 측정을 끄면 null', () => {
+    const { v, lock } = setup(false);
+    v.hover = null;
+    lock.update();
+    expect(v.avoids).toEqual([{ rects: [], points: true }]);
+    v.measureMode = false;
+    lock.update();
+    expect(v.avoids.at(-1)).toBeNull();
+    expect(lock.labelAvoid).toBeNull();
+    // 측정을 끈 동안 조준 자리를 받아도(앱은 측정 중에만 조준한다) 그 자리만 — 표식 비키기는 측정 중의 것과 같은 꼴
+    lock.setAim({ x: 130, y: 180 });
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 108, y: 158, width: 44, height: 44 }], points: true, pointerRadius: 24 });
+    lock.setAim(null);
     expect(v.avoids.at(-1)).toBeNull();
   });
 
@@ -232,16 +252,16 @@ describe('툴팁 자리(코어 거리 글상자 피하기)', () => {
     const tip = { x: 112, y: 62, width: 80, height: 20 };
     const CUBE = { x: 291, y: 8, width: 76, height: 76 };
     const BAR = { x: 50, y: 520, width: 274, height: 66 };
-    expect(lock.labelAvoid).toEqual({ rects: [tip, CUBE, BAR] });
+    expect(lock.labelAvoid).toEqual({ rects: [tip, CUBE, BAR], points: true });
     // 붙잡지 않은 점(툴팁 없음)에서도 떠 있는 것은 넘긴다
     v.hover = { point: [1, 2, 3], snap: null };
     lock.update();
-    expect(lock.labelAvoid).toEqual({ rects: [CUBE, BAR] });
+    expect(lock.labelAvoid).toEqual({ rects: [CUBE, BAR], points: true });
     // 큐브를 숨기면(뷰 큐브 끔 — 코어가 null) 빼고, 재생 띠가 나타나면 더한다
     fake.viewCubeRect = null;
     strip.hidden = false;
     lock.update();
-    expect(lock.labelAvoid).toEqual({ rects: [BAR, { x: 8, y: 400, width: 359, height: 120 }] });
+    expect(lock.labelAvoid).toEqual({ rects: [BAR, { x: 8, y: 400, width: 359, height: 120 }], points: true });
     // 측정을 끄면(update만으로도) 거둔다
     v.measureMode = false;
     lock.update();
@@ -435,7 +455,7 @@ describe('툴팁 크기가 바뀌면 다시 놓기(31차 — 번역층이 글을
     Object.defineProperty(tip, 'offsetWidth', { configurable: true, value: 760 });
     ro.fire!();
     expect([tip.style.left, tip.style.top]).toEqual(['36px', '62px']);
-    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 112, y: 62, width: 760, height: 20 }] });
+    expect(v.avoids.at(-1)).toEqual({ rects: [{ x: 112, y: 62, width: 760, height: 20 }], points: true });
     // 숨은 툴팁은 다시 놓지 않는다
     v.hover = null;
     lock.update();
