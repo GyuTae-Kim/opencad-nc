@@ -7,7 +7,7 @@
  * 밀링 사이클 208(보어 밀링 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256(사각 보스)·257(원 보스)·232(정면 밀링),
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
  * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프,
- * PATTERN DEF(POS·ROW·PAT·CIRC·PITCHCIRC — 34차)와 CYCL CALL PAT(200번대 사이클을 가공 위치마다, GLOBAL DEF 125의 Q345).
+ * PATTERN DEF(POS·ROW·PAT·CIRC·PITCHCIRC — 34차, 숨긴 자리 /POS — 36차)와 CYCL CALL PAT(200번대 사이클을 가공 위치마다, GLOBAL DEF 125의 Q345).
  * 근사: RND는 작업 평면 안의 직선·원호 모서리를 접하는 호로, CHF는 두 직선 사이 모서리만 다듬고(원호와 만나면 모서리 그대로, 경고), APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
  * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
@@ -50,8 +50,8 @@ function pgmBase(s: string): string {
 }
 
 const AXES = 'XYZ';
-/** PATTERN DEF 요소 낱말(요소 이름 + 번호, 괄호가 붙을 수 있음) */
-const PATTERN_ITEM = /^(?:POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)\d*(?:\(.*)?$/;
+/** PATTERN DEF 요소 낱말(요소 이름 + 번호, 괄호가 붙을 수 있음 — 숨긴 자리 /POS도) */
+const PATTERN_ITEM = /^(?:\/?POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)\d*(?:\(.*)?$/;
 /** PATTERN DEF 한 패턴에서 그리는 가공 위치 수 한도 */
 const PATTERN_MAX = 100_000;
 /** CYCL CALL에서 밀링 길을 만드는 사이클 */
@@ -88,6 +88,8 @@ class HRunner extends NcEmitter {
   private modalCall = false;
   /** PATTERN DEF 가공 위치(34차): 작업 평면 X·Y(원점 이동은 CYCL CALL PAT 때 더한다)와 사이클 공작물 윗면(Q203)에 더할 높이. 새 PATTERN DEF·SEL PATTERN까지 남는다 */
   private pattern: { x: number; y: number; z: number }[] | null = null;
+  /** 지금 패턴에서 마지막으로 정의한 자리(숨긴 /POS 포함 — 다음 POS 증분의 기준, 36차) */
+  private patternLast: { x: number; y: number; z: number } | null = null;
   /** 바로 앞 블록이 PATTERN DEF(또는 그 이어 쓴 요소)였는지 */
   private patternOpen = false;
   /** SEL PATTERN(점 표)을 골랐는지 — 점 표는 읽지 않는다 */
@@ -811,7 +813,8 @@ class HRunner extends NcEmitter {
    * PATTERN DEF(34차): HEIDENHAIN 공식 설명서(TNC 640 가공 사이클 프로그래밍 34059x-17, 2022-10, 3.3절 — TNC 320 771851-06, 2018-10, 3.3절도 같음)의
    * 입력 값대로 블록 안 요소마다 가공 위치를 더한다(새 PATTERN DEF 블록이면 새 패턴). 위치는 작업 평면(공구 축 Z) X·Y이고 원점 이동은 CYCL CALL PAT 때 더한다.
    * 시작점·중심은 절대, 간격은 증분, 각은 작업 평면 첫 축(X)에서 잰다. Z는 사이클의 공작물 윗면(Q203)에 더하는 높이(없으면 0).
-   * - POS(X Y Z): 그 자리 하나. 둘째부터는 IX·IY·IZ(앞 자리에서 증분)도 된다
+   * - POS(X Y Z): 그 자리 하나. 둘째부터는 IX·IY·IZ(앞 자리에서 증분)도 된다.
+   *   /POS(36차 — TNC7 가공 사이클 설명서 81762x-19, 2024-09, 7.6.1절)는 정의한 자리를 숨긴 것이라 가공하지 않는다(다음 POS의 증분 기준으로는 남는다)
    * - ROW(X Y D NUM ROT Z): 시작점에서 ROT 방향으로 간격 D씩 NUM개
    * - PAT(X Y DX DY NUMX NUMY ROT ROTX ROTY Z): 시작점에서 열(첫 축 쪽, 간격 DX) NUMX개 × 줄(둘째 축 쪽, 간격 DY) NUMY개. 패턴 전체를 ROT만큼 시작점 둘레로 돌리고,
    *   ROTX·ROTY는 거기에 첫 축·둘째 축만 더 돌린다(일그러뜨린 패턴). 위치 차례는 설명서에 없어 줄마다 첫 열부터(정한 것 — 사이클 221과 같음)
@@ -821,20 +824,23 @@ class HRunner extends NcEmitter {
    * 값이 모자라거나 수가 0 이상 정수가 아니면 그 요소는 빼고 경고. 한 패턴에 PATTERN_MAX개까지
    */
   private patternDef(text: string, line: number, cont: boolean): void {
-    if (!cont || !this.pattern) this.pattern = [];
+    if (!cont || !this.pattern) {
+      this.pattern = [];
+      this.patternLast = null;
+    }
     this.patternOpen = true;
     this.patternTable = false;
     const out = this.pattern;
-    const re = /\b(POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)(\d*)\s*\(([^)]*)\)/gi;
+    const re = /(\/\s*)?\b(POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)(\d*)\s*\(([^)]*)\)/gi;
     const deg = Math.PI / 180;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
-      const kind = m[1]!.toUpperCase();
+      const kind = m[2]!.toUpperCase();
       if (kind === 'FRAME') {
         this.w.add('PATTERN DEF FRAME(테두리 꼴)은 지원하지 않음 — 그 자리는 빼고 그림', line);
         continue;
       }
-      const W = tokenize(m[3]!);
+      const W = tokenize(m[4]!);
       const get = (k: string): number | undefined => {
         const s = findWord(W, k);
         return s === undefined ? undefined : this.value(s);
@@ -858,8 +864,8 @@ class HRunner extends NcEmitter {
       let z = get('Z') ?? 0;
       let want = 0;
       if (kind === 'POS') {
-        // 둘째 자리부터 증분(IX·IY·IZ)은 앞 자리에서
-        const prev = out[out.length - 1];
+        // 둘째 자리부터 증분(IX·IY·IZ)은 앞 자리에서(숨긴 /POS도 앞 자리)
+        const prev = this.patternLast;
         const axis = (k: 'X' | 'Y' | 'Z', base: number | undefined): number | undefined => {
           const a = get(k);
           if (a !== undefined) return a;
@@ -869,9 +875,15 @@ class HRunner extends NcEmitter {
         const x = axis('X', prev?.x);
         const y = axis('Y', prev?.y);
         z = axis('Z', prev?.z) ?? 0;
-        want = 1;
         if (x === undefined || y === undefined) ok = false;
-        else if (room > 0) pts.push([x, y]);
+        else if (m[1]) {
+          // 숨긴 자리: 정의만 남기고 가공하지 않는다
+          this.patternLast = { x, y, z };
+          continue;
+        } else {
+          want = 1;
+          if (room > 0) pts.push([x, y]);
+        }
       } else if (kind === 'ROW') {
         const x = need('X');
         const y = need('Y');
@@ -912,6 +924,7 @@ class HRunner extends NcEmitter {
       }
       if (want > pts.length) this.w.add(`PATTERN DEF ${kind}: 가공 위치가 ${PATTERN_MAX}개를 넘어 거기까지 그림`, line);
       for (const [u, v] of pts) out.push({ x: u, y: v, z });
+      if (pts.length) this.patternLast = out[out.length - 1]!;
     }
   }
 
