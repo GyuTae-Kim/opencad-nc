@@ -516,7 +516,7 @@ npm run build      # tsc --noEmit && vite build → dist/
 npm run preview    # 빌드 결과 보기
 ```
 
-3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.29.0`(잠금 커밋 `2180172`)으로 받습니다. 보기에서 누르기는 0.26.0 `onPick`의 `front`로
+3D 뷰어 코어는 `github:GyuTae-Kim/opencad-viewer3d#v0.30.0`(잠금 커밋 `8abc39f`)으로 받습니다. 보기에서 누르기는 0.26.0 `onPick`의 `front`로
 판 너머 고르기와 가장 앞 고르기를 알림 하나에서 받고, 판재 포켓·홈 뚜껑은 0.27.0 `setItemPickThrough`로 판 너머 고르기에서 지나가게 합니다.
 끌어온 점에서 나란함·수직은 0.28.0 `inference.trackDirs`의 `edge` 거르기(`src/app/refine.ts`의 `trackDirEdge` — 이동 번호·판재 붙잡기 표로 곡선을 나눈 현을 가름)로 켜고,
 그 선이 만나는 점은 0.29.0 `meets`로 켭니다(곡선·원기둥과 만나는 점은 이미 쓰던 `refine`의 `'axisEdge'`·`refineFace`의 `'axisFace'`가 축 이름 없는 안내 선으로 다듬음).
