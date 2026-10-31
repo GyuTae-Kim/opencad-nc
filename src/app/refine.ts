@@ -32,6 +32,7 @@ import type { PanelSnapTable } from '../scene';
 import { MEASURE_INFERENCE } from './measure';
 import { closestToRay, footsFrom, nearestOn, type Curve, type V3 } from './curve';
 import { dist3, intersectSides, lineSide, type Side } from './intersect';
+import { g1CurvePieces } from './g1curve';
 import { arcCurve, arcShape, compArcs, compPiecesOf, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
 import { splineCurve, splineNearest, splineOfMove } from './spline';
 import { moveSnapPoints, panelCenters, panelSnapPoints, type ArcCenters, type SnapMoves } from './snap';
@@ -446,18 +447,22 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
  * 곡선과 상관없는 현의 방향이 기준이 된다(29차 탐색 — 구멍 중심을 끌어온 뒤 둘레를 훑으면 엉뚱한 방향에 붙음). 받지 않으면 코어가 앞서 받은 기준을 남긴다.
  * - NC: 공구 경로 묶음(nc-cut-·nc-drill-·nc-rapid·nc-machine — 그 이동이 그려지는 묶음일 때)은 이동 번호(segmentIds)로 — 원호 이동도 스플라인 조각도 아니면
  *   곧은 이동이다(장면은 원호 이동만 여러 토막으로 나눈다). 보정 경로(nc-comp)는 그 이동의 보정 조각 가운데 토막 두 끝이 놓인 조각이 직선일 때.
- *   그 밖의 묶음(선반 회전축)은 받지 않는다
+ *   그 밖의 묶음(선반 회전축)은 받지 않는다.
+ *   34차: 곧은 이동이어도 G1으로 풀어 쓴 곡선 토막(CAM 곡선·회전축 감기·평면이 다른 원호를 나눈 조각 — g1curve.ts 판정)이면 받지 않는다(그 이동의 보정 경로도)
  * - 판재: 선분 묶음(윤곽 가공·가공 없는 윤곽)은 붙잡기 표의 요소 가운데 토막이 놓인 것이 직선일 때(시작 깊이 선·모서리 띠처럼 표에 없는 토막은 받지 않는다).
  *   그물 윤곽선은 그 그물 둘레 호(outlines) 위가 아니고 곧은 모서리를 아는 그물(둘레 호를 적은 그물·윤곽선이 모두 곧은 그물 straight)일 때.
  *   그 밖의 그물(앱이 모양을 모르는 것)은 받지 않는다
  * 커서가 새 선분을 지날 때마다 불리므로(바로 앞과 같은 선분은 코어가 다시 묻지 않는다) 표 찾기와 토막 두 끝의 곡선 거리만 본다
+ * (곡선 토막 표는 처음 물을 때 이동 표마다 한 번 셈한다 — 이동 20만 개에 수십 ms)
  */
 export function trackDirEdge(src: SnapMoves | PanelSnapTable): (s: SnapSegment) => boolean {
   if ('moves' in src) {
     const m = src.moves;
+    let curve: Uint8Array | null = null;
     return (s) => {
       const i = s.index;
       if (s.kind !== 'line' || !(i >= 0 && i < m.count)) return false;
+      if ((curve ??= g1CurvePieces(src))[i]) return false;
       if (s.id === 'nc-comp') {
         const c = src.comp;
         if (!c) return false;
@@ -507,7 +512,8 @@ const compEnd = (p: Float64Array, k: number, o: number): V3 => [p[k * 6 + o]!, p
  * 30차(코어 0.28.0 inference.trackDirs { edge }): 끌어온 점에서 지나간 곧은 경로 선분과 나란한 선·수직인 선에도 붙는다(원호·나선·스플라인을 나눈 현은 기준이 아니다 — trackDirEdge)
  * 31차(코어 0.29.0 trackDirs { meets }): 그 선이 첫 점 축·첫 점의 나란함·다른 끌어온 점의 축·커서 둘레 경로·커서 아래 소재 면과 만나는 점에도 붙는다
  * (원호·나선·스플라인 경로와 만나는 점은 refineSnap 'axisEdge'가 곡선 위로). 첫 점 나란함(0.10.0)의 기준도 같은 거르기로 곧은 경로만 받는다(inference.parallelEdge)
- * NC 문서에는 refineFace가 없어 안내 선의 면의 열린 교차(코어 0.32.0 openFaces — 34차)는 주지 않는다
+ * NC 문서에는 refineFace가 없어 안내 선의 면의 열린 교차(코어 0.32.0 openFaces — 34차)는 주지 않는다.
+ * 34차: G1으로 풀어 쓴 곡선 토막(CAM 곡선·회전축 감기·평면이 다른 원호를 나눈 조각)도 두 기준에서 뺀다(trackDirEdge — g1curve.ts)
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
   return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), throughTranslucent: true };
