@@ -12,12 +12,13 @@
  * 프레임 TRANS·ATRANS·ROT·AROT(RPL·X·Y·Z)·SCALE·ASCALE·MIRROR·AMIRROR·G58·G59, 작업 좌표계 G54~G57·G505~G599,
  * 기계 좌표 쪽 이동 SUPA·G53·G153·G74·G75(위치를 모르면 안전 높이 규칙), 단위 G70/G71/G700/G710, G4 F(초)·S(회전).
  * CT(접선 원호, 모달)는 앞 요소에 접하는 원호로, RND·RNDM·CHF·CHR은 앞뒤가 직선인 모서리를 다듬는다(원호와 만나면 그대로, 경고).
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 밀링·선반 사이클(POCKET·SLOT·CYCLE95 등),
+ * 포켓 사이클 POCKET3(사각)·POCKET4(원)는 층마다 중심에서 바깥으로 고리 경로(38차 — pocket 참고)와 사이클 설정 _ZSD[1]·[2]·[9] 대입.
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(POCKET1·POCKET2·SLOT·CYCLE95 등),
  * 시스템 변수($…), 배열·문자열 변수.
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
-import { JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
+import { FLAG_CYCLE, JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
 import { sourceLine, type NcSource } from './text';
 
 const DEG = Math.PI / 180;
@@ -162,9 +163,19 @@ class SiemensRunner extends Runner {
   private frame: Affine | null = null;
   private toolByName = new Map<string, number>();
   private warnedWord = new Set<string>();
+  /** 사이클 설정 _ZSD[n](38차 — 프로그램이 대입한 것만, 없으면 0) */
+  private zsd = new Map<number, number>();
+  /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
+  private inCycle = false;
+  /** 포켓 사이클 경로가 이동 한도(또는 남은 이동 수만큼의 반복)를 넘어 멈췄는지 — 그 줄에서 읽기를 멈춘다 */
+  private cycleOverflow = false;
 
   constructor(src: NcSource, opts: GcodeOptions, head: () => string) {
     super(src, opts, 'siemens', head);
+  }
+
+  protected override flags(): number {
+    return super.flags() | (this.inCycle ? FLAG_CYCLE : 0);
   }
 
   // ───────────────────────── 색인 ─────────────────────────
@@ -301,7 +312,7 @@ class SiemensRunner extends Runner {
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
       }
       this.afterLine(line);
-      if (this.mb.count >= this.maxMoves) {
+      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
         this.hitLimit = true;
         break;
@@ -979,6 +990,14 @@ class SiemensRunner extends Runner {
           calls.push({ name: id, args: this.args(sc) });
           continue;
         }
+        if (id === '_ZSD' && sc.peek() === '[') {
+          // 사이클 설정 _ZSD[n] = 값(38차 — 포켓 사이클의 깊이 셈·기준점)
+          sc.i++;
+          const k = Math.round(this.expr(sc));
+          if (!sc.eat(']') || !sc.eat('=')) throw new ExprError('_ZSD[…] = 없음');
+          this.zsd.set(k, this.expr(sc));
+          continue;
+        }
         if (sc.peek() === '[') {
           // FA[X]=… 꼴: 값을 읽고 버린다
           const e = sc.s.indexOf(']', sc.i);
@@ -1289,6 +1308,7 @@ class SiemensRunner extends Runner {
         /* 고속 가공 설정·글: 모양 없음 */
       } else if (c.name === 'CYCLE800') this.warnOnce('CYCLE800', 'CYCLE800 기울인 평면은 지원하지 않음(변환 없이 그림)', line);
       else if (this.sections.has(c.name)) this.callSub(c.name, 1, c.args, line, false);
+      else if (c.name === 'POCKET3' || c.name === 'POCKET4') this.pocket(c.name, c.args, line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
     }
@@ -1464,6 +1484,282 @@ class SiemensRunner extends Runner {
       if (mc && mc.kind === 'cycle') this.sCycle(mc.name, mc.args, line);
     }
 
+  }
+
+  // ── 포켓 사이클 ──
+  /**
+   * POCKET3(사각 포켓)·POCKET4(원 포켓)(38차): SINUMERIK 840D sl/840D/840Di sl/840Di/810D 사이클 프로그래밍 설명서
+   * (6FC5398-3BP20-0BA0, 2006-11 — 3.2절 사이클 설정, 3.9 POCKET3, 3.10 POCKET4. 2006-04판 6FC5398-3BP10-0BA0도 같음)의 매개변수 차례·뜻대로.
+   * POCKET3(_RTP, _RFP, _SDIS, _DP, _LENG, _WID, _CRAD, _PA, _PO, _STA, _MID, _FAL, _FALD, _FFP1, _FFD, _CDIR, _VARI, _MIDA, _AP1, _AP2, _AD, _RAD1, _DP1)
+   * POCKET4(_RTP, _RFP, _SDIS, _DP, _PRAD, _PA, _PO, _MID, _FAL, _FALD, _FFP1, _FFD, _CDIR, _VARI, _MIDA, _AP1, _AD, _RAD1, _DP1)
+   * - 기준점: POCKET3은 _ZSD[2] = 0이면 (_PA, _PO)가 포켓 중심, 1이면 모서리(_LENG·_WID 부호가 놓이는 쪽). _STA는 첫 축에서 긴 축까지의 각으로
+   *   기준점 둘레로 돌린다(_ZSD[9] = 1이면 모서리 기준이어도 중심 둘레). POCKET4는 늘 중심. _ZSD는 프로그램이 대입한 것만 쓰고 없으면 0
+   * - 순서(설명서): 급속으로 후퇴 면(_RTP)에서 포켓 중심 위로 → 기준면 + 안전 거리(_RFP + _SDIS)로 → 진입 → 층마다 평면 가공 → 끝나면 후퇴 면
+   *   (설명서는 POCKET1에서 "포켓 중심 위 후퇴 면"으로 끝난다고 적는다 — 같은 꼴로)
+   * - 깊이: _ZSD[1] = 0이면 기준면 + 안전 거리, 1이면 기준면부터 _DP까지(황삭은 바닥 여유 _FALD만큼 위까지)를 _MID 이하의 같은 절입으로 가장 적은 층(_MID = 0이면 한 번)
+   * - 진입(_VARI 십의 자리): 0 = 중심에서 수직 G0, 1 = 수직 G1(_FFD), 2 = 반지름 _RAD1·한 바퀴 깊이 _DP1의 나선(긴 축 + 쪽 자리에서 G1로 들어가 정수 바퀴,
+   *   그 깊이에서 한 바퀴 더 — _FFD), 3(POCKET3) = 긴 축 왕복(왕복 길이는 사이클이 셈한다고만 적어 수직 G1로 그리고 경고)
+   * - 평면 가공: 중심에서 바깥으로 고리(사각은 둥근 모서리 사각, 원은 원) — 옆 간격은 _MIDA 이하(없거나 0이면 공구 지름 × 0.8)로 고르게 나누고 가장자리 여유 _FAL까지.
+   *   설명서는 고리 꼴을 적지 않아 Heidenhain 251·252와 같은 꼴(정한 것). 모서리 반지름은 공구 반지름보다 작으면 공구 반지름(공구 중심 모서리 0)
+   * - 정삭(_VARI 일의 자리 2): 가장자리(_FAL > 0)는 윤곽을 한 번만 돈다(설명서 — 중심에서 바닥 여유 높이까지 급속으로 내려가 곧게 들어감, 접근 사분원은 그리지 않음),
+   *   바닥(_FALD > 0)은 중심에서 _DP + _FALD + _SDIS까지 급속, _DP까지 _FFD로 내려가 바닥을 한 번(고리)
+   * - 가공 방향(_CDIR): 2 = G2, 3 = G3, 0 = 하향(M3 → G3, M4 → G2), 1 = 상향(M3 → G2, M4 → G3) — 영어판 매개변수 표는 1도 "Down-cut"으로
+   *   적지만 같은 절의 설명(하향·상향을 고른다)과 같은 판의 스페인어판(6FC5398-3BP10-0EA0, "1: Fresado en oposición")대로 상향
+   * - 경고하고 그리는 것: 블랭크 치수(_AP1·_AP2·_AD — 온 포켓으로), POCKET4 나선 가공(_VARI 1xxx — 층마다 평면으로), 공구 반지름 모름(0으로)
+   * - 그리지 않는 것: 깊이·크기 없음, 공구가 포켓보다 큼(알람 61105), _VARI가 맞지 않음(알람 61002)
+   * - 이동 한도(maxMoves)는 층·고리·나선 바퀴를 돌 때마다 본다(아주 작은 _MID·_MIDA·_DP1이나 아주 큰 깊이·크기 한 줄이 한 블록에서
+   *   한도를 넘게 만들지 않게). 넘으면 그 자리에서 멈추고, 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
+   * 이동은 블록으로 Runner에 넘겨 프레임(TRANS·ROT·MIRROR·SCALE)·평면(G17~G19)을 그대로 따르고, 고정 사이클 이동(FLAG_CYCLE)으로 표시한다.
+   * 앞의 G 모드(이동 꼴)·이송은 사이클 뒤 그대로다(설명서 3.2절)
+   */
+  private pocket(name: 'POCKET3' | 'POCKET4', a: (number | undefined)[], line: number): void {
+    const p3 = name === 'POCKET3';
+    const at = (k: number): number => a[k] ?? 0;
+    if (a[3] === undefined) {
+      this.w.add(`${name}: 깊이(_DP)가 없음 — 그리지 않음`, line);
+      return;
+    }
+    const rtp = at(0);
+    const rfp = at(1);
+    const sdis = Math.abs(at(2));
+    const dp = a[3];
+    // _MID부터는 두 사이클이 같은 차례(POCKET3은 10번째, POCKET4는 7번째 자리부터 — POCKET4에는 _AP2가 없다)
+    const k0 = p3 ? 10 : 7;
+    const mid = Math.abs(at(k0));
+    const fal = Math.abs(at(k0 + 1));
+    const fald = Math.abs(at(k0 + 2));
+    const ffp1 = at(k0 + 3);
+    const ffd = at(k0 + 4);
+    const cdir = Math.round(at(k0 + 5));
+    const vari = Math.round(at(k0 + 6));
+    const mida = Math.abs(at(k0 + 7));
+    const blank = p3 ? [at(18), at(19), at(20)] : [at(15), at(16)];
+    const rad1 = Math.abs(at(p3 ? 21 : 17));
+    const dp1 = Math.abs(at(p3 ? 22 : 18));
+    const units = vari % 10;
+    const tens = Math.floor(vari / 10) % 10;
+    const hundreds = Math.floor(vari / 100) % 10;
+    const thousands = Math.floor(vari / 1000);
+    if (!(vari > 0 && (units === 1 || units === 2) && hundreds === 0 && (p3 ? tens <= 3 && thousands === 0 : tens <= 2 && thousands <= 1))) {
+      this.w.add(`${name}: 가공 종류(_VARI = ${vari})가 맞지 않음 — 그리지 않음`, line);
+      return;
+    }
+    const rd = this.toolRadiusFor(this.dNum >= 0 ? this.dNum : undefined);
+    if (rd === undefined) this.w.add(`${name}: 공구 반지름을 몰라 반지름 0으로 그림`, line);
+    // 프로그램 단위 공구 반지름(toolRadiusFor는 표시 단위)
+    const r = (rd ?? 0) / this.scale;
+
+    // 포켓 중심(프로그램 좌표)·긴 축 각·공구 중심의 완성 윤곽(반너비·모서리)
+    let cu: number;
+    let cv: number;
+    let ang = 0;
+    let hx: number;
+    let hy: number;
+    let rc: number;
+    if (p3) {
+      const leng = at(4);
+      const wid = at(5);
+      const L = Math.abs(leng);
+      const W = Math.abs(wid);
+      if (!(L > 0 && W > 0)) {
+        this.w.add('POCKET3: 길이·너비(_LENG·_WID)가 없음 — 그리지 않음', line);
+        return;
+      }
+      if (r > Math.min(L, W) / 2 + 1e-9) {
+        this.w.add(`${name}: 공구 반지름이 포켓보다 큼 — 그리지 않음`, line);
+        return;
+      }
+      ang = at(9) * DEG;
+      if ((this.zsd.get(2) ?? 0) === 1) {
+        // 모서리 기준: 부호 있는 _LENG·_WID의 반만큼(_ZSD[9] = 0이면 모서리 둘레로 돈 긴 축을 따라)
+        const t = (this.zsd.get(9) ?? 0) === 1 ? 0 : ang;
+        cu = at(7) + (leng / 2) * Math.cos(t) - (wid / 2) * Math.sin(t);
+        cv = at(8) + (leng / 2) * Math.sin(t) + (wid / 2) * Math.cos(t);
+      } else {
+        cu = at(7);
+        cv = at(8);
+      }
+      hx = L / 2 - r;
+      hy = W / 2 - r;
+      rc = Math.max(0, Math.abs(at(6)) - r);
+    } else {
+      const prad = Math.abs(at(4));
+      if (!(prad > 0)) {
+        this.w.add('POCKET4: 포켓 반지름(_PRAD)이 없음 — 그리지 않음', line);
+        return;
+      }
+      if (r > prad + 1e-9) {
+        this.w.add(`${name}: 공구 반지름이 포켓보다 큼 — 그리지 않음`, line);
+        return;
+      }
+      cu = at(5);
+      cv = at(6);
+      hx = hy = rc = prad - r;
+    }
+    if (blank.some((v) => v !== 0)) this.w.add(`${name}: 블랭크 치수(_AP·_AD)는 반영하지 않고 온 포켓으로 그림`, line);
+    if (!p3 && thousands === 1) this.w.add('POCKET4: 나선 가공(_VARI 1xxx)은 층마다 평면 가공으로 그림', line);
+    // 가공 방향: 2 = G2(시계), 3 = G3(반시계), 1 = 상향(M3 → G2, M4 → G3), 0·그 밖은 하향(M3 → G3, M4 → G2)
+    if (cdir < 0 || cdir > 3) this.w.add(`${name}: 가공 방향(_CDIR = ${cdir})이 맞지 않아 하향으로 그림`, line);
+    const ccw = cdir === 2 ? false : cdir === 3 ? true : cdir === 1 ? this.spindleDir === 4 : this.spindleDir !== 4;
+
+    const up = rfp >= dp ? 1 : -1;
+    const safe = rfp + up * sdis;
+    const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
+    // 이동 한도: 층·고리·나선 바퀴는 한 블록 안에서 돌아 run의 블록 사이 검사가 닿지 않으므로 여기서도 본다.
+    // 반복(층·고리·바퀴) 한 번은 보통 이동을 하나 넘게 만들므로 반복 수도 남은 이동 수까지만 — 길이 0 이동만 만드는
+    // 아주 작은 절입·간격도 멈춘다. 멈추면 run이 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
+    const budget = Math.max(0, this.maxMoves - this.mb.count);
+    let steps = 0;
+    let stop = false;
+    const go = (): boolean => {
+      if (!stop && (this.mb.count >= this.maxMoves || ++steps > budget)) stop = true;
+      return !stop;
+    };
+    /** from에서 to까지 _MID 이하 같은 절입의 층 수(가장 적은 수 — 배열로 만들지 않는다: 아주 작은 _MID면 매우 크다) */
+    const levelCount = (from: number, to: number): number => {
+      const total = up * (from - to);
+      return total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
+    };
+    /** n층 가운데 k번째(0부터) 깊이 */
+    const levelAt = (from: number, to: number, n: number, k: number): number => (k >= n - 1 ? to : from - ((from - to) * (k + 1)) / n);
+    /** 0에서 m까지 _MIDA 이하(없으면 공구 지름 × 0.8) 같은 간격의 칸 수 */
+    const maxW = mida > 0 ? mida : 1.6 * r;
+    const widthCount = (m: number): number => (maxW > 0 ? Math.max(1, Math.ceil(m / maxW - 1e-9)) : 1);
+
+    // ── 블록으로 그리기(프로그램 좌표, 중심 (cu, cv)·긴 축 각 ang의 지역 좌표) ──
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const P = (lu: number, lv: number): [number, number] => [cu + lu * ca - lv * sa, cv + lu * sa + lv * ca];
+    const b = new Block();
+    const move = (g: 0 | 1 | 2 | 3, p: [number, number] | null, w: number | null, f: number, c?: [number, number]): void => {
+      if (stop) return;
+      b.reset();
+      b.set(6, g, true);
+      if (p) {
+        b.set(LET(AX[a0]!), p[0], true);
+        b.set(LET(AX[a1]!), p[1], true);
+        b.axAbs |= (1 << a0) | (1 << a1);
+      }
+      if (w !== null) {
+        b.set(LET(AX[a2]!), w, true);
+        b.axAbs |= 1 << a2;
+      }
+      if (c) {
+        b.set(LET(CENTER[a0]!), c[0], true);
+        b.set(LET(CENTER[a1]!), c[1], true);
+        b.cAbs = (1 << a0) | (1 << a1);
+      }
+      if (g !== 0 && f > 0) b.set(LET('F'), f, true);
+      this.exec(b, line);
+      if (this.mb.count >= this.maxMoves) stop = true;
+    };
+    const lin = (lu: number, lv: number, f = ffp1): void => move(1, P(lu, lv), null, f);
+    const arc = (lcu: number, lcv: number, lu: number, lv: number, w: number | null, f: number): void => move(ccw ? 3 : 2, P(lu, lv), w, f, P(lcu, lcv));
+    const s = ccw ? 1 : -1;
+    /** 공구 중심 고리 하나(반너비 ex·ey, 모서리 er) — 오른쪽 가운데에서 시작해 가공 방향으로 */
+    const loop = (ex: number, ey: number, er: number): void => {
+      if (!p3) {
+        lin(ex, 0);
+        if (ex > 1e-9) {
+          arc(0, 0, -ex, 0, null, ffp1);
+          arc(0, 0, ex, 0, null, ffp1);
+        }
+        return;
+      }
+      er = Math.max(0, Math.min(er, ex, ey));
+      lin(ex, 0);
+      if (ex < 1e-9 || ey < 1e-9) {
+        // 폭 0인 고리: 긴 쪽으로 왕복
+        lin(-ex, -s * ey);
+        lin(ex, s * ey);
+        lin(ex, 0);
+        return;
+      }
+      lin(ex, s * (ey - er));
+      if (er > 0) arc(ex - er, s * (ey - er), ex - er, s * ey, null, ffp1);
+      lin(-ex + er, s * ey);
+      if (er > 0) arc(-ex + er, s * (ey - er), -ex, s * (ey - er), null, ffp1);
+      lin(-ex, -s * (ey - er));
+      if (er > 0) arc(-ex + er, -s * (ey - er), -ex + er, -s * ey, null, ffp1);
+      lin(ex - er, -s * ey);
+      if (er > 0) arc(ex - er, -s * (ey - er), ex, -s * (ey - er), null, ffp1);
+      lin(ex, 0);
+    };
+    /** 평면 가공: 가장자리 여유 al까지 중심에서 바깥으로 고리(마지막 고리만 모서리) */
+    const solid = (al: number): void => {
+      const ex = hx - al;
+      const ey = hy - al;
+      if (ex < -1e-9 || ey < -1e-9) return;
+      const m = Math.min(ex, ey);
+      // 폭이 0이면 고리 하나(모서리 있는 마지막 고리), 아니면 0·m/n·…·m의 n + 1개
+      const flat = !(m > 1e-9);
+      const n = flat ? 0 : widthCount(m);
+      for (let k = 0; k <= n && go(); k++) {
+        const e = flat ? Math.max(0, m) : (m * k) / n;
+        if (!p3 && e <= 1e-9) continue;
+        loop(ex - m + e, ey - m + e, k === n ? rc - al : 0);
+      }
+      lin(0, 0);
+    };
+    /** 지금 높이(cur)에서 깊이 d까지 진입 */
+    let cur = safe;
+    const plunge = (d: number): void => {
+      if (tens === 2 && rad1 > 0 && dp1 > 0) {
+        // 나선: 긴 축 + 쪽 자리에서 정수 바퀴로 d까지, 그 깊이에서 한 바퀴 더
+        lin(rad1, 0, ffd);
+        const turns = Math.max(1, Math.ceil((up * (cur - d)) / dp1 - 1e-9));
+        for (let k = 1; k <= turns && go(); k++) {
+          const w1 = cur - (up * (cur - d) * (k - 0.5)) / turns;
+          const w2 = cur - (up * (cur - d) * k) / turns;
+          arc(0, 0, -rad1, 0, w1, ffd);
+          arc(0, 0, rad1, 0, w2, ffd);
+        }
+        arc(0, 0, -rad1, 0, null, ffd);
+        arc(0, 0, rad1, 0, null, ffd);
+        lin(0, 0);
+      } else move(tens === 0 ? 0 : 1, null, d, ffd);
+      cur = d;
+    };
+    if (tens === 2 && !(rad1 > 0 && dp1 > 0)) this.w.add(`${name}: 나선 진입 반지름·깊이(_RAD1·_DP1)가 없어 수직 이송으로 그림`, line);
+    if (p3 && tens === 3) this.w.add('POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림', line);
+
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    this.inCycle = true;
+    try {
+      // 후퇴 면으로 올라가 포켓 중심 위 → 기준면 + 안전 거리
+      move(0, null, rtp, 0);
+      move(0, P(0, 0), null, 0);
+      move(0, null, safe, 0);
+      if (units === 1) {
+        const to = dp + up * fald;
+        const n = levelCount(top, to);
+        for (let k = 0; k < n && go(); k++) {
+          plunge(levelAt(top, to, n, k));
+          solid(fal);
+        }
+      } else {
+        // 정삭: 가장자리는 바닥 여유 높이까지 급속으로 내려가 윤곽 한 바퀴만, 그다음 바닥 한 번
+        if (fal > 0) {
+          move(0, null, dp + up * fald, 0);
+          loop(hx, hy, rc);
+          lin(0, 0);
+        }
+        if (fald > 0) {
+          move(0, null, dp + up * (fald + sdis), 0);
+          move(1, null, dp, ffd);
+          solid(0);
+        }
+      }
+      move(0, null, rtp, 0);
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+    }
+    if (stop) this.cycleOverflow = true;
+    this.known = 7;
   }
 
   /** 작업 좌표계 이름(G505~G599) */
