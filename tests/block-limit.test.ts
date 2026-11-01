@@ -634,6 +634,54 @@ describe('한도와 블록 실행', () => {
     }
   });
 
+  it('구멍 표는 잘린 이동이 아니라 바닥에 닿았는지로 정한다: 길이 0 꼬리만 막히거나 복귀만 잘린 구멍은 남는다', () => {
+    const count = (go: Run, maxMoves: number): number => go({ maxMoves }).holes.count;
+    // 꼬리 이동의 길이가 0이고 마지막 구멍의 이동이 한도와 꼭 맞는다
+    const h201 = heidenhain('1 L X+0 Y+0 Z+9 FMAX\n2 L Z+2 FMAX\n3 CYCL DEF 201 REIBEN ~\n  Q200=2 ~\n  Q201=-5 ~\n  Q206=100 ~\n  Q203=+0 ~\n  Q204=0\n4 CYCL CALL\n5 L X+10 FMAX\n6 CYCL CALL');
+    const g76 = fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG98 G76 X0 Y0 Z-10 R1 P100 F100 L2\nG80\nM2');
+    // 쪼기 1만 번 안전장치가 바닥에 닿기 전에 끝난 구멍도 이동이 다 쌓였으면 전체와 같다
+    const guard = fanuc('G21 G90 G17\nG0 X0 Y0 Z1\nG83 X0 Y0 Z-100 R1 Q0.00001 F100\nG80\nG0 X99\nM2');
+    expect(h201({ maxMoves: FREE }).moves.count).toBe(6);
+    expect(count(h201, FREE)).toBe(2);
+    expect(count(h201, 6)).toBe(2);
+    expect(g76({ maxMoves: FREE }).moves.count).toBe(7);
+    expect(count(g76, 7)).toBe(2);
+    expect(count(guard, FREE)).toBe(1);
+    expect(count(guard, 30_000)).toBe(1);
+    // 바닥까지 뚫고 복귀만 잘린 구멍은 남고, 바닥 전에 잘린 구멍은 빠진다
+    const g81 = fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG81 X0 Y0 Z-10 R1 F100\nG80\nG0 X99\nM2');
+    expect(count(g81, 2)).toBe(0);
+    expect(count(g81, 3)).toBe(1);
+    const g83 = fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG83 X0 Y0 Z-10 R1 Q2 F100\nG80\nG0 X99\nM2');
+    const n83 = g83({ maxMoves: FREE }).moves.count;
+    expect(count(g83, 3)).toBe(0);
+    // 마지막 두 이동은 복귀와 X99: 그 앞까지 쌓으면 바닥에 닿았다
+    expect(count(g83, n83 - 3)).toBe(0);
+    expect(count(g83, n83 - 2)).toBe(1);
+  });
+
+  it('구멍 바닥은 좌표 변환을 적용해 견준다(Heidenhain 회전 사이클, Siemens 기운 프레임)', () => {
+    const rot = heidenhain('1 L X+10 Y+0 Z+9 FMAX\n2 L Z+2 FMAX\n3 CYCL DEF 10.0 DREHUNG\n4 CYCL DEF 10.1 ROT+30\n5 CYCL DEF 201 REIBEN ~\n  Q200=2 ~\n  Q201=-5 ~\n  Q206=100 ~\n  Q203=+0 ~\n  Q204=20\n6 CYCL CALL\n7 L X+99 FMAX');
+    const tilt = siemens('G17 G90 G71\nG0 X10 Y0 Z10\nROT X30\nCYCLE81(10, 0, 2, -5)\nROT\nG0 X99\nM30');
+    for (const [name, go] of [
+      ['Heidenhain', rot],
+      ['Siemens', tilt],
+    ] as const) {
+      const full = go({ maxMoves: FREE });
+      expect(full.holes.count, name).toBe(1);
+      const b = [full.holes.bottom[0]!, full.holes.bottom[1]!, full.holes.bottom[2]!];
+      // 바닥에 닿는 이동의 번호: 그 수까지만 쌓아도 구멍이 남고, 하나 적으면 빠진다
+      let at = -1;
+      for (let i = 0; i < full.moves.count && at < 0; i++) {
+        const e = moveEnd(full.moves, i);
+        if (Math.hypot(e[0] - b[0]!, e[1] - b[1]!, e[2] - b[2]!) < 1e-6) at = i;
+      }
+      expect(at, name).toBeGreaterThan(0);
+      expect(go({ maxMoves: at + 1 }).holes.count, name).toBe(1);
+      expect(go({ maxMoves: at }).holes.count, name).toBe(0);
+    }
+  });
+
   it('쌓지 못한 드릴의 휴지는 시간에 넣지 않는다', () => {
     const go = fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG82 X0 Y0 Z-10 R1 P9000 F100\nG80\nM2');
     const sum = (p: NcProgram): number => {
