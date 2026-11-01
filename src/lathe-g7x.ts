@@ -40,6 +40,8 @@ export interface G7xMove {
 }
 
 const TAU = Math.PI * 2;
+/** 거친 깎기 구간 수 상한(메모리 보호 — 구간 하나는 이동 넷 이상이라 기본 이동 한도 800만 개보다 적게 멈추지 않는다) */
+export const G7X_MAX_RUNS = 2_000_000;
 
 export function g7xLine(su: number, sv: number, eu: number, ev: number): G7xEl {
   return { arc: false, su, sv, eu, ev, cu: 0, cv: 0, sweep: 0 };
@@ -345,8 +347,9 @@ interface Run {
  * 시작점 쪽으로 열린 구간(윤곽 시작에서 이어짐)은 시작 자리에서 급속으로 층에 들어가 구간 끝까지 이송하고 R만큼 45°로 물러나 시작 자리로 돌아온다.
  * 포켓 구간은 열린 구간을 다 깎은 뒤, 바로 위 층에서 그 구간을 품는 구간(깎은 곳)의 R 위를 따라 들어가 깎는다(깊이 우선).
  * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다.
- * maxMoves = 남은 이동 수: 층이 많고 윤곽이 톱니처럼 오르내려 층마다 구간이 많으면 한 블록의 이동이 아주 많아지므로, 이동을 그만큼까지만 쌓고
- * 구간도 그 안에서만 모은다(구간 하나는 이동 넷 이상). 넘으면 capped = true
+ * emit을 주면 이동을 모으지 않고 차례대로 넘긴다(false를 돌려주면 거기서 멈춘다 — 이동을 쌓는 쪽이 자리가 있는지 안다. 길이 0 이동은 쌓이지 않으므로 여기서 세어 멈추면 안 된다).
+ * maxRuns = 메모리 보호: 층이 많고 윤곽이 톱니처럼 오르내리면 구간이 아주 많다. 이 part에서 이동을 만드는 구간(.1은 열린 구간, .2는 포켓)이 이 수를 넘으면
+ * 뒤 층은 보지 않고 capped = true
  */
 export function g7xRough(
   pts: readonly number[],
@@ -357,13 +360,15 @@ export function g7xRough(
   R: number,
   part: 0 | 1 | 2,
   maxLevels = 10000,
-  maxMoves = Infinity,
+  emit?: (rapid: boolean, u: number, v: number) => boolean,
+  maxRuns = G7X_MAX_RUNS,
 ): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean } {
   const c = (1 - s) as 0 | 1;
   const n = pts.length / 2;
   const moves: G7xMove[] = [];
   if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false };
   let capped = false;
+  let stopped = false;
   let ext = 0;
   let deepest = -Infinity;
   for (let i = 0; i < n; i++) {
@@ -375,9 +380,12 @@ export function g7xRough(
   const tdir = Math.sign(pts[(n - 1) * 2 + c]! - c0) || 1;
   const up = -dir;
   const at = (lev: number, cv: number): [number, number] => (s === 1 ? [cv, lev] : [lev, cv]);
+  let last = { u: S[0], v: S[1] };
   const go = (rapid: boolean, p: [number, number]): void => {
-    if (moves.length >= maxMoves) capped = true;
-    else moves.push({ rapid, u: p[0], v: p[1] });
+    if (stopped) return;
+    last = { u: p[0], v: p[1] };
+    if (!emit) moves.push({ rapid, u: p[0], v: p[1] });
+    else if (!emit(rapid, p[0], p[1])) stopped = true;
   };
   const cAt = (t: number): number => {
     const i = Math.min(n - 2, Math.floor(t));
@@ -390,11 +398,11 @@ export function g7xRough(
     if (lev * dir >= deepest - tol) break;
     levels.push(lev);
   }
-  // 층마다 살이 있는 구간
+  // 층마다 살이 있는 구간(.1은 층의 첫 구간만 쓴다)
   let runCount = 0;
   const runs: Run[][] = levels.map((lev, li) => {
     const out: Run[] = [];
-    if (runCount * 4 >= maxMoves) {
+    if (runCount > maxRuns) {
       capped = true;
       return out;
     }
@@ -412,10 +420,13 @@ export function g7xRough(
       else if (t0 >= 0) {
         out.push(mkRun(t0, i + fr, li));
         t0 = -1;
+        if (part === 1) break;
       }
     }
     if (t0 >= 0) out.push(mkRun(t0, n - 1, li));
-    runCount += out.length;
+    out.forEach((r, k) => {
+      if (r.open ? k === 0 && part !== 2 : part !== 1) runCount++;
+    });
     return out;
   });
   function mkRun(t0: number, t1: number, level: number): Run {
@@ -445,13 +456,22 @@ export function g7xRough(
       else parent.kids.push(r);
     }
   });
-  if (part !== 1 && roots.length) {
-    let cur: { u: number; v: number } = moves.length ? moves[moves.length - 1]! : { u: S[0], v: S[1] };
+  if (part !== 1 && roots.length && !stopped) {
+    // 깊이 우선 차례를 먼저 펴고 이동은 그 차례로 낸다(이동을 넘기는 쪽의 호출이 재귀 위에 쌓이지 않게)
+    const order: Run[] = [];
+    const visit = (r: Run): void => {
+      order.push(r);
+      for (const k of r.kids) visit(k);
+    };
+    roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level);
+    for (const r of roots) visit(r);
+    let cur = last;
     const goC = (rapid: boolean, p: [number, number]): void => {
       go(rapid, p);
       cur = { u: p[0], v: p[1] };
     };
-    const visit = (r: Run): void => {
+    for (const r of order) {
+      if (stopped) break;
       const lev = levels[r.level]!;
       const cl = r.level === 0 ? S[s]! : levels[r.level - 1]! + up * R;
       const cc = s === 1 ? cur.u : cur.v;
@@ -460,10 +480,7 @@ export function g7xRough(
       goC(false, at(lev, r.a));
       goC(false, at(lev, r.b));
       goC(false, at(lev + up * R, r.b - tdir * R));
-      for (const k of r.kids) visit(k);
-    };
-    roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level);
-    for (const r of roots) visit(r);
+    }
     goC(true, at(S[s]!, s === 1 ? cur.u : cur.v));
     goC(true, at(S[s]!, S[c]!));
   }

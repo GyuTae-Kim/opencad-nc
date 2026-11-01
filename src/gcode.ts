@@ -41,7 +41,7 @@ import {
   type NcProgram,
   type NcRotaryOptions,
 } from './model';
-import { g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
+import { G7X_MAX_RUNS, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
@@ -3348,8 +3348,22 @@ export class Runner extends NcEmitter {
       const poly = g7xPolyline(off, Math.PI / 90);
       const s = (1 - m) as 0 | 1;
       const dir = -side;
-      const plan = g7xRough(poly.pts, S, s, dir, I, R, part, undefined, Math.max(0, this.maxMoves - this.mb.count));
-      for (const mv of plan.moves) this.lgo(mv.rapid ? MOVE_RAPID : MOVE_FEED, mv.v, mv.u, line);
+      // 층마다 쌓으면서 간다: 길이 0 이동은 쌓이지 않으므로 넘침은 쌓은 결과로만 안다. 계획을 끝까지 만들지 못했으면(구간 상한) 그 뒤는 읽지 않는다
+      const plan = g7xRough(
+        poly.pts,
+        S,
+        s,
+        dir,
+        I,
+        R,
+        part,
+        undefined,
+        (rapid, u, v) => {
+          this.lgo(rapid ? MOVE_RAPID : MOVE_FEED, v, u, line);
+          return !this.mb.full();
+        },
+        Math.max(G7X_MAX_RUNS, Math.ceil(this.maxMoves / 4)),
+      );
       if (plan.capped) this.mb.overflow = true;
       if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
       let path = off;
