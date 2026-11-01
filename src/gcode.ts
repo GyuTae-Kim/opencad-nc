@@ -1147,17 +1147,25 @@ export class Runner extends NcEmitter {
         }
       }
       if (blk.blockDelete && this.o.blockDelete) {
-        if (line === this.rangeEnd) this.endRange();
+        if (line === this.rangeEnd) {
+          // G70의 범위가 지우는 블록에서 끝남: 시작점으로 돌아오는 이동은 G70 줄의 것이다
+          this.endRange();
+          if (this.limitReached(this.pc - 1)) break;
+        }
         continue;
       }
       this.exec(blk, line);
       if (line === this.rangeEnd) this.endRange();
-      if (this.mb.full()) {
-        this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
-        this.hitLimit = true;
-        break;
-      }
+      if (this.limitReached(line)) break;
     }
+  }
+
+  /** 이동 한도에 닿았으면 그 줄에 한 번 경고하고 true(읽기를 멈춘다) */
+  protected limitReached(line: number): boolean {
+    if (!this.mb.full()) return false;
+    this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
+    this.hitLimit = true;
+    return true;
   }
 
   /** 식의 FIX·FUP를 Fanuc 매크로 B처럼(소수 버림·올림 — 음수도 절댓값 기준). LinuxCNC 등은 floor·ceil */
@@ -4111,11 +4119,8 @@ export class Runner extends NcEmitter {
 
   finish(opts: GcodeOptions): NcProgram {
     if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
-    // 블록 사이 검사가 닿지 않은 곳(위 끝맺음, 지우는 블록에서 끝나는 G70 범위)에서 한도에 막혔어도 경고는 남긴다
-    if (this.mb.overflow && !this.hitLimit) {
-      this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
-      this.hitLimit = true;
-    }
+    // 블록 사이 검사가 닿지 않는 위 끝맺음에서 한도에 막히거나 정확히 닿아도 경고는 남긴다
+    if (!this.hitLimit) this.limitReached(this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
