@@ -167,8 +167,6 @@ class SiemensRunner extends Runner {
   private zsd = new Map<number, number>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
   private inCycle = false;
-  /** 포켓 사이클 경로가 이동 한도(또는 남은 이동 수만큼의 반복)를 넘어 멈췄는지 — 그 줄에서 읽기를 멈춘다 */
-  private cycleOverflow = false;
 
   constructor(src: NcSource, opts: GcodeOptions, head: () => string) {
     super(src, opts, 'siemens', head);
@@ -312,11 +310,7 @@ class SiemensRunner extends Runner {
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
       }
       this.afterLine(line);
-      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
-        this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
-        this.hitLimit = true;
-        break;
-      }
+      if (this.limitReached(line)) break;
     }
   }
 
@@ -1453,26 +1447,22 @@ class SiemensRunner extends Runner {
       this.w.add(`${name} 앞에 MCALL 드릴 사이클이 없음 — 자리만 지나감`, line);
     }
     const s = this.scale;
-    const pts: [number, number][] = [];
     const num = Math.max(0, Math.round(a[5] ?? 0));
-    if (name === 'HOLES1') {
-      const x0 = (a[0] ?? 0) * s;
-      const y0 = (a[1] ?? 0) * s;
-      const ang = (a[2] ?? 0) * DEG;
-      const fdis = (a[3] ?? 0) * s;
-      const dbh = (a[4] ?? 0) * s;
-      for (let k = 0; k < num; k++) pts.push([x0 + (fdis + k * dbh) * Math.cos(ang), y0 + (fdis + k * dbh) * Math.sin(ang)]);
-    } else {
-      const cx = (a[0] ?? 0) * s;
-      const cy = (a[1] ?? 0) * s;
-      const r = (a[2] ?? 0) * s;
-      const sta = a[3] ?? 0;
-      const inda = a[4] ? a[4] : num > 0 ? 360 / num : 0;
-      for (let k = 0; k < num; k++) pts.push([cx + r * Math.cos((sta + k * inda) * DEG), cy + r * Math.sin((sta + k * inda) * DEG)]);
-    }
+    const p0 = (a[0] ?? 0) * s;
+    const p1 = (a[1] ?? 0) * s;
+    const ang = (a[2] ?? 0) * DEG;
+    const fdis = (a[3] ?? 0) * s;
+    const dbh = (a[4] ?? 0) * s;
+    const r = (a[2] ?? 0) * s;
+    const sta = a[3] ?? 0;
+    const inda = a[4] ? a[4] : num > 0 ? 360 / num : 0;
     const [a0, a1] = PLANE_AXES[this.plane]!;
     const b = new Block();
-    for (const [u, v] of pts) {
+    // NUM이 아주 크면 이동 한도에서 멈추도록 자리를 모아 두지 않는다
+    const more = this.blockLoop();
+    for (let k = 0; k < num && more(); k++) {
+      const u = name === 'HOLES1' ? p0 + (fdis + k * dbh) * Math.cos(ang) : p0 + r * Math.cos((sta + k * inda) * DEG);
+      const v = name === 'HOLES1' ? p1 + (fdis + k * dbh) * Math.sin(ang) : p1 + r * Math.sin((sta + k * inda) * DEG);
       // 지금 높이에서 급속으로 자리 잡고 사이클
       b.reset();
       b.set(6, 0, true);
@@ -1758,7 +1748,7 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
-    if (stop) this.cycleOverflow = true;
+    if (stop) this.mb.overflow = true;
     this.known = 7;
   }
 

@@ -41,7 +41,7 @@ import {
   type NcProgram,
   type NcRotaryOptions,
 } from './model';
-import { g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
+import { G7X_MAX_RUNS, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
@@ -1013,11 +1013,10 @@ export class Runner extends NcEmitter {
   protected repeatLeft = new Map<string, number>();
   protected blocks = 0;
   protected maxBlocks: number;
-  protected maxMoves: number;
   protected hitLimit = false;
 
   constructor(src: NcSource, opts: GcodeOptions, dialect: NcDialect, head: () => string) {
-    super(src, opts.initialPosition);
+    super(src, opts.initialPosition, opts.maxMoves);
     this.o = opts;
     this.dialect = dialect;
     // Okuma OSP: CALL O…·VC 변수·NLAP·RTS 등은 읽지 않으므로 띠와 경고로 알린다(G15 H는 작업 좌표계로 읽음)
@@ -1075,7 +1074,6 @@ export class Runner extends NcEmitter {
     this.checkSpindle = dialect !== 'grbl';
     this.peck = opts.peckClearance ?? (this.displayInch ? 0.02 : 0.5);
     this.arcAbs = !!opts.arcCenterAbsolute;
-    this.maxMoves = opts.maxMoves ?? 8_000_000;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 5_000_000);
     if (opts.workOffsets)
       for (const [k, v] of Object.entries(opts.workOffsets)) {
@@ -1149,17 +1147,25 @@ export class Runner extends NcEmitter {
         }
       }
       if (blk.blockDelete && this.o.blockDelete) {
-        if (line === this.rangeEnd) this.endRange();
+        if (line === this.rangeEnd) {
+          // G70의 범위가 지우는 블록에서 끝남: 시작점으로 돌아오는 이동은 G70 줄의 것이다
+          this.endRange();
+          if (this.limitReached(this.pc - 1)) break;
+        }
         continue;
       }
       this.exec(blk, line);
       if (line === this.rangeEnd) this.endRange();
-      if (this.mb.count >= this.maxMoves) {
-        this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
-        this.hitLimit = true;
-        break;
-      }
+      if (this.limitReached(line)) break;
     }
+  }
+
+  /** 이동 한도에 닿았으면(또는 G7x 구간 상한으로 멈췄으면) 그 줄에 한 번 경고하고 true(읽기를 멈춘다) */
+  protected limitReached(line: number): boolean {
+    if (!this.mb.full()) return false;
+    if (!this.hitLimit) this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
+    this.hitLimit = true;
+    return true;
   }
 
   /** 식의 FIX·FUP를 Fanuc 매크로 B처럼(소수 버림·올림 — 음수도 절댓값 기준). LinuxCNC 등은 floor·ceil */
@@ -2419,12 +2425,15 @@ export class Runner extends NcEmitter {
     const out = [0, 0, 0];
     // 측정용 곡선 정의(조정점은 표시 좌표, 매듭은 LinuxCNC 열린 균일): 조각 끝 매개변수와 함께 남긴다
     const rec = this.splineBegin(0);
+    // 조각 수는 조정점 하나에 4,096개까지라 G5.3 한 블록이 이동 한도를 넘게 만들 수 있다
+    const more = this.blockLoop();
     nurbsSegments(n.x, n.y, n.w, n.order, tol, (x, y, k, u) => {
       q[0] = x;
       q[1] = y;
       this.toDisplay(q, out);
       this.emit(MOVE_FEED, out[0]!, out[1]!, out[2]!, n.lines[k]!);
       this.splineStep(rec, u);
+      return more();
     });
     if (rec) {
       const ctrl: number[] = [];
@@ -2656,6 +2665,7 @@ export class Runner extends NcEmitter {
     const L1 = AXIS_LETTER[p1]!;
     const s0 = this.axScale[p0]!;
     const s1 = this.axScale[p1]!;
+    const more = this.blockLoop();
     if (this.xf) {
       // 좌표 변환: 프로그램 좌표에서 구멍 자리·높이를 정하고 옮긴다
       const rP = this.absolute ? this.cr : this.initLevelProg + this.cr;
@@ -2665,7 +2675,7 @@ export class Runner extends NcEmitter {
       // 공구 축이 기울면(G68.2·Siemens ROT X/Y) 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다
       const tilted = !this.xfPlane(cp).keeps;
       const map = (v: number[]): void => this.toDisplay(v, v);
-      for (let k = 0; k < reps; k++) {
+      for (let k = 0; k < reps && more(); k++) {
         if (k > 0 && this.polarAgain) this.polarAgain();
         const q = Array.from(this.progPos());
         if (blk.has[L0]) q[p0] = this.incAxis(blk, p0) ? q[p0]! + blk.val[L0]! * s0 : blk.val[L0]! * s0;
@@ -2692,7 +2702,7 @@ export class Runner extends NcEmitter {
       rD = this.initLevel + this.cr;
       zD = rD + this.cz;
     }
-    for (let k = 0; k < reps; k++) {
+    for (let k = 0; k < reps && more(); k++) {
       if (k > 0 && this.polarAgain) this.polarAgain();
       let x = this.pos[p0]!;
       let y = this.pos[p1]!;
@@ -2853,7 +2863,8 @@ export class Runner extends NcEmitter {
         bottom[1] = w[1]!;
         bottom[2] = w[2]!;
       }
-      this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
+      // 이동 한도에 막혀 바닥에 닿지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
+      if (this.holeDrawn(first, bottom)) this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
     }
   }
 
@@ -2881,19 +2892,21 @@ export class Runner extends NcEmitter {
     const c = this.progPos();
     const cu = c[a0]!;
     const cv = c[a1]!;
-    const pts: [number, number][] = [];
-    for (let k = 0; k < L; k++) {
+    // 자리마다 절대 좌표 블록으로 고정 사이클을 부른다(R·Z·Q 등은 사이클의 모달 값). L이 아주 크면 이동 한도에서 멈추도록 자리를 모아 두지 않는다
+    const b = new Block();
+    const more = this.blockLoop();
+    for (let k = 0; k < L && more(); k++) {
+      let u: number;
+      let v: number;
       if (g === 720) {
         const t = (J * Math.PI) / 180;
-        pts.push([cu + (k + 1) * I * Math.cos(t), cv + (k + 1) * I * Math.sin(t)]);
+        u = cu + (k + 1) * I * Math.cos(t);
+        v = cv + (k + 1) * I * Math.sin(t);
       } else {
         const ang = ((J + k * (g === 700 ? 360 / L : K)) * Math.PI) / 180;
-        pts.push([cu + I * Math.cos(ang), cv + I * Math.sin(ang)]);
+        u = cu + I * Math.cos(ang);
+        v = cv + I * Math.sin(ang);
       }
-    }
-    // 자리마다 절대 좌표 블록으로 고정 사이클을 부른다(R·Z·Q 등은 사이클의 모달 값)
-    const b = new Block();
-    for (const [u, v] of pts) {
       b.reset();
       b.set(AXIS_LETTER[a0]!, u / this.axScale[a0]!, true);
       b.set(AXIS_LETTER[a1]!, v / this.axScale[a1]!, true);
@@ -2953,7 +2966,8 @@ export class Runner extends NcEmitter {
     const cy = this.pos[1]!;
     let z = this.pos[2]!;
     const zStep = blk.has[LZ] ? blk.val[LZ]! * this.axScale[2]! : 0;
-    for (let n = 0; n < loops; n++) {
+    const more = this.blockLoop();
+    for (let n = 0; n < loops && more(); n++) {
       if (blk.has[LZ]) z = this.absolute ? zStep + this.off[2]! : z + zStep;
       this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
       for (const r of path) {
@@ -3329,7 +3343,8 @@ export class Runner extends NcEmitter {
       const P = Math.max(1, Math.round(blk.has[LP] ? blk.val[LP]! : 1));
       if (dia && (D !== 0 || E !== 0)) this.w.add(`${name}: 지름 모드(G7)에서 D·E는 반지름 거리로 봄(설명서에 정해지지 않음)`, line);
       const mid = [this.pos[0]!, this.pos[2]!];
-      for (let pass = P; pass >= 1; pass--) {
+      const more = this.blockLoop();
+      for (let pass = P; pass >= 1 && more(); pass--) {
         if (pass < P) this.lgo(MOVE_RAPID, mid[0]!, mid[1]!, line);
         this.followG7x(g7xOffset(els, ((pass - 1) * (D - E)) / P + E, k), line);
       }
@@ -3342,8 +3357,27 @@ export class Runner extends NcEmitter {
       const poly = g7xPolyline(off, Math.PI / 90);
       const s = (1 - m) as 0 | 1;
       const dir = -side;
-      const plan = g7xRough(poly.pts, S, s, dir, I, R, part);
-      for (const mv of plan.moves) this.lgo(mv.rapid ? MOVE_RAPID : MOVE_FEED, mv.v, mv.u, line);
+      // 층마다 쌓으면서 간다: 길이 0 이동은 쌓이지 않으므로 넘침은 쌓은 결과로만 안다. 계획을 끝까지 만들지 못했으면(구간 상한) 그 뒤는 읽지 않는다
+      const plan = g7xRough(
+        poly.pts,
+        S,
+        s,
+        dir,
+        I,
+        R,
+        part,
+        undefined,
+        (rapid, u, v) => {
+          this.lgo(rapid ? MOVE_RAPID : MOVE_FEED, v, u, line);
+          return !this.mb.full();
+        },
+        G7X_MAX_RUNS,
+      );
+      if (plan.capped && !this.mb.full()) {
+        this.w.add(`구간이 ${G7X_MAX_RUNS}개를 넘어 나머지는 읽지 않음`, line);
+        this.hitLimit = true;
+        this.mb.overflow = true;
+      }
       if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
       let path = off;
       if (part) {
@@ -3543,7 +3577,8 @@ export class Runner extends NcEmitter {
     };
     if (code === 730) {
       const [ri, rk, nd] = this.g73;
-      for (let k = 1; k <= nd; k++) {
+      const more = this.blockLoop();
+      for (let k = 1; k <= nd && more(); k++) {
         const f = nd > 1 ? (nd - k) / (nd - 1) : 0;
         follow(ri * f, rk * f);
         back();
@@ -3619,14 +3654,9 @@ export class Runner extends NcEmitter {
     const m0 = zPeck ? xs : zs;
     const m1 = zPeck ? xt : zt;
     const at = (peck: number, move: number): [number, number] => (zPeck ? [move, peck] : [peck, move]);
-    const positions: number[] = [];
-    if (shift > 0 && Math.abs(m1 - m0) > 1e-9) {
-      const dir = Math.sign(m1 - m0);
-      for (let v = m0; dir * (v - m1) < 1e-9; v += dir * shift) positions.push(v);
-      if (Math.abs(positions[positions.length - 1]! - m1) > 1e-9) positions.push(m1);
-    } else positions.push(m1);
     const dir = Math.sign(s1 - s0) || -1;
-    for (const mv of positions) {
+    /** 옮긴 자리 mv 하나를 쫀다 */
+    const peckAt = (mv: number): void => {
       let p = at(s0, mv);
       this.lgo(MOVE_RAPID, p[0], p[1], line);
       let d = s0;
@@ -3643,7 +3673,18 @@ export class Runner extends NcEmitter {
       }
       p = at(s0, mv);
       this.lgo(MOVE_RAPID, p[0], p[1], line);
-    }
+    };
+    if (shift > 0 && Math.abs(m1 - m0) > 1e-9) {
+      // 옮기는 양이 아주 작으면 자리가 매우 많다(좌표에 더해도 값이 안 바뀌면 끝나지 않는다) — 자리를 모아 두지 않고 쪼면서 한도를 본다
+      const sg = Math.sign(m1 - m0);
+      const more = this.blockLoop();
+      let last = m0;
+      for (let v = m0; sg * (v - m1) < 1e-9 && more(); v += sg * shift) {
+        peckAt(v);
+        last = v;
+      }
+      if (Math.abs(last - m1) > 1e-9) peckAt(m1);
+    } else peckAt(m1);
     const home = at(s0, m0);
     this.lgo(MOVE_RAPID, home[0], home[1], line);
     this.known = 7;
@@ -3654,6 +3695,8 @@ export class Runner extends NcEmitter {
     const xs = this.pos[0]!;
     const zs = this.pos[2]!;
     const passes: number[] = [];
+    // 절입이 끝난 뒤 같은 깊이로 되풀이하는 다듬질 횟수(Fanuc 첫 블록 P의 m)
+    let again = 0;
     let xt: number;
     let zt: number;
     let taper = 0;
@@ -3698,15 +3741,18 @@ export class Runner extends NcEmitter {
         passes.push(xt + sg * (k - d));
         if (d >= k) break;
       }
-      for (let m = 1; m < this.thread.m; m++) passes.push(xt);
-      if (!passes.length) passes.push(xt);
+      again = Math.max(0, this.thread.m - 1);
+      if (!passes.length && !again) passes.push(xt);
     }
-    for (const x of passes) {
+    const pass = (x: number): void => {
       this.lgo(MOVE_RAPID, x + taper, zs, line);
       this.lgo(MOVE_FEED, x, zt, line);
       this.lgo(MOVE_RAPID, xs, zt, line);
       this.lgo(MOVE_RAPID, xs, zs, line);
-    }
+    };
+    for (const x of passes) pass(x);
+    const more = this.blockLoop();
+    for (let m = 0; m < again && more(); m++) pass(xt);
     this.known = 7;
   }
 
@@ -4078,6 +4124,8 @@ export class Runner extends NcEmitter {
 
   finish(opts: GcodeOptions): NcProgram {
     if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
+    // 블록 사이 검사가 닿지 않는 위 끝맺음에서 한도에 막히거나 정확히 닿아도 경고는 남긴다
+    this.limitReached(this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
@@ -4106,9 +4154,9 @@ export function nurbsKnots(n: number, k: number): number[] {
  * NURBS 곡선(조정점 xs·ys, 가중치 ws, 계수 order = 차수 + 1, 매듭은 nurbsKnots)을 직선 조각으로 나눈다.
  * 매듭 구간마다 조각의 1/4·1/2·3/4 점이 현에서 tol보다 멀면 반으로 나눈다(12번까지 — 4차 이상은 한 번은 나눔).
  * emit(x, y, k, u): 조각 끝점과 그 조각 가운데에 가장 가까운 그레빌 점의 조정점 번호(줄 번호를 고르는 데 쓴다 — 같으면 뒤 점), 조각 끝 매개변수(측정용 곡선 정의).
- * 마지막 끝점은 마지막 조정점 그대로
+ * 마지막 끝점은 마지막 조정점 그대로. emit이 false를 돌려주면 거기서 멈춘다(이동 한도)
  */
-export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number, u: number) => void): void {
+export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: readonly number[], order: number, tol: number, emit: (x: number, y: number, k: number, u: number) => boolean | void): void {
   const n = xs.length - 1;
   const p = order - 1;
   if (n < 1 || p < 1 || n < p) return;
@@ -4159,7 +4207,9 @@ export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: 
   let gi = 0;
   const minDepth = p >= 4 ? 1 : 0;
   const last = knots[n + 1]!;
+  let stopped = false;
   const piece = (s: number, a: number, ax: number, ay: number, b: number, bx: number, by: number, depth: number): void => {
+    if (stopped) return;
     let worst = 0;
     let mx = 0;
     let my = 0;
@@ -4179,11 +4229,11 @@ export function nurbsSegments(xs: readonly number[], ys: readonly number[], ws: 
     }
     const mid = (a + b) / 2;
     while (gi < n && Math.abs(grev[gi + 1]! - mid) <= Math.abs(grev[gi]! - mid)) gi++;
-    emit(bx, by, gi, b);
+    if (emit(bx, by, gi, b) === false) stopped = true;
   };
   const pa = [xs[0]!, ys[0]!];
   const pb = [0, 0];
-  for (let s = p; s <= n; s++) {
+  for (let s = p; s <= n && !stopped; s++) {
     const u0 = knots[s]!;
     const u1 = knots[s + 1]!;
     if (!(u1 > u0)) continue;

@@ -115,7 +115,6 @@ class HRunner extends NcEmitter {
   /** TOOL CALL DR(반지름 덧값) */
   private toolDR = 0;
   private maxBlocks: number;
-  private maxMoves: number;
   // ── DIN/ISO(%이름 G71 * 꼴) ──
   private iso = false;
   private isoAbs = true;
@@ -125,10 +124,9 @@ class HRunner extends NcEmitter {
   private isoSeenStart = false;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
-    super(src, opts.initialPosition);
+    super(src, opts.initialPosition, opts.maxMoves);
     this.o = opts;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
-    this.maxMoves = opts.maxMoves ?? 8_000_000;
     this.multi = jobFileLines(src) !== null;
     // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)
     for (let i = 0; i < Math.min(src.lineCount, 50); i++) {
@@ -216,7 +214,7 @@ class HRunner extends NcEmitter {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, b.line);
       }
-      if (this.mb.count >= this.maxMoves) {
+      if (this.mb.full()) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, b.line);
         break;
       }
@@ -974,7 +972,7 @@ class HRunner extends NcEmitter {
     try {
       for (const p of pts) {
         // 한 블록에서 이동 한도를 넘지 않게(넘으면 run이 경고하고 멈춘다)
-        if (this.mb.count >= this.maxMoves) break;
+        if (this.mb.full()) break;
         lift();
         this.emit(fmax ? MOVE_RAPID : MOVE_FEED, p.x + sh[0]!, p.y + sh[1]!, this.pos[2]!, line, FLAG_CYCLE);
         this.known = 7;
@@ -1068,7 +1066,8 @@ class HRunner extends NcEmitter {
       top[da] = rD;
       const bottom = [top[0]!, top[1]!, top[2]!];
       bottom[da] = zD;
-      this.pushHoleOut(top, bottom, line, c.n, first);
+      // 이동 한도에 막혀 바닥에 닿지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
+      if (this.holeDrawn(first, bottom)) this.pushHoleOut(top, bottom, line, c.n, first);
     }
     this.feed = saveFeed;
   }
@@ -1080,18 +1079,33 @@ class HRunner extends NcEmitter {
       return;
     }
     const Q = (k: string, d = 0): number => this.q.get(k) ?? d;
-    const pts: [number, number][] = [];
+    const [p0, p1, da] = PLANE_AXES[this.plane]!;
+    const clear = Q('Q203') + this.shift[da]! + Math.max(Math.abs(Q('Q200', 2)), Math.abs(Q('Q204')));
+    const t = [0, 0, 0];
+    const visit = (u: number, v: number): void => {
+      t[p0] = this.pos[p0]!;
+      t[p1] = this.pos[p1]!;
+      t[da] = Math.max(this.pos[da]!, clear);
+      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
+      t[p0] = u + this.shift[p0]!;
+      t[p1] = v + this.shift[p1]!;
+      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
+      this.known = 7;
+      this.cycleCall(line);
+    };
+    // 점 수(Q241·Q242 × Q243)가 아주 크면 이동 한도에서 멈추도록 점을 모아 두지 않는다
+    const more = this.blockLoop();
     if (n === 221) {
       const cols = Math.max(1, Math.round(Q('Q242', 1)));
       const rows = Math.max(1, Math.round(Q('Q243', 1)));
       const rot = (Q('Q224') * Math.PI) / 180;
       const x0 = Q('Q225');
       const y0 = Q('Q226');
-      for (let j = 0; j < rows; j++)
-        for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows && !this.mb.overflow; j++)
+        for (let i = 0; i < cols && more(); i++) {
           const dx = i * Q('Q237');
           const dy = j * Q('Q238');
-          pts.push([x0 + dx * Math.cos(rot) - dy * Math.sin(rot), y0 + dx * Math.sin(rot) + dy * Math.cos(rot)]);
+          visit(x0 + dx * Math.cos(rot) - dy * Math.sin(rot), y0 + dx * Math.sin(rot) + dy * Math.cos(rot));
         }
     } else {
       const cx = Q('Q216');
@@ -1103,24 +1117,10 @@ class HRunner extends NcEmitter {
       let step = Q('Q247');
       const full = Math.abs(Math.abs(a1 - a0) - 360) < 1e-9;
       if (!step) step = cnt > 1 ? (a1 - a0) / (full ? cnt : cnt - 1) : 0;
-      for (let k = 0; k < cnt; k++) {
+      for (let k = 0; k < cnt && more(); k++) {
         const a = ((a0 + k * step) * Math.PI) / 180;
-        pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+        visit(cx + r * Math.cos(a), cy + r * Math.sin(a));
       }
-    }
-    const [p0, p1, da] = PLANE_AXES[this.plane]!;
-    const clear = Q('Q203') + this.shift[da]! + Math.max(Math.abs(Q('Q200', 2)), Math.abs(Q('Q204')));
-    const t = [0, 0, 0];
-    for (const [u, v] of pts) {
-      t[p0] = this.pos[p0]!;
-      t[p1] = this.pos[p1]!;
-      t[da] = Math.max(this.pos[da]!, clear);
-      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
-      t[p0] = u + this.shift[p0]!;
-      t[p1] = v + this.shift[p1]!;
-      this.emit(MOVE_RAPID, t[0]!, t[1]!, t[2]!, line, FLAG_CYCLE);
-      this.known = 7;
-      this.cycleCall(line);
     }
   }
 
@@ -1880,6 +1880,10 @@ class HRunner extends NcEmitter {
       }
     }
     levels.push(zEnd);
+    // 이동 한도: 층 × 고리는 한 블록 안에서 돌아 run의 블록 사이 검사가 닿지 않는다(겹침 Q370·공구 반지름이 아주 작으면 고리가 아주 많다).
+    // 고리·줄 목록도 남은 이동 수까지만 모은다(고리 하나는 이동 하나 이상이라 그만큼이면 한도에 닿는다)
+    const more = this.blockLoop();
+    const room = Math.max(0, this.maxMoves - this.mb.count);
     const F = MOVE_FEED;
     const Rp = MOVE_RAPID;
     let w = this.pos[a2]!;
@@ -1957,16 +1961,17 @@ class HRunner extends NcEmitter {
           }
           const m = Math.min(hx, hy);
           const loops: number[] = [];
-          for (let e = 0; e < m - 1e-9; e += step0) loops.push(e);
+          for (let e = 0; e < m - 1e-9 && loops.length < room; e += step0) loops.push(e);
           loops.push(m);
           go(Rp, ...P(0, 0), clear);
           go(Rp, ...P(0, 0), safe);
-          for (const d of levels) {
+          for (let l = 0; l < levels.length && more(); l++) {
+            const d = levels[l]!;
             goL(F, 0, 0);
             this.feed = fPlunge;
             go(F, ...P(0, 0), d);
             this.feed = fMill;
-            for (let k = 0; k < loops.length; k++) {
+            for (let k = 0; k < loops.length && more(); k++) {
               const e = loops[k]!;
               const last = k === loops.length - 1;
               rectLoop(hx - m + e, hy - m + e, last ? rc - r - al : 0, climb);
@@ -1982,15 +1987,16 @@ class HRunner extends NcEmitter {
           const by = Math.max(Q('Q425', Wy), Wy) / 2 + r;
           const span = Math.max(bx - hx, by - hy, 0);
           const loops: number[] = [];
-          for (let e = span; e > 1e-9; e -= step0) loops.push(e);
+          for (let e = span; e > 1e-9 && loops.length < room; e -= step0) loops.push(e);
           loops.push(0);
           go(Rp, ...P(bx + r + setup, 0), clear);
           go(Rp, ...P(bx + r + setup, 0), safe);
-          for (const d of levels) {
+          for (let l = 0; l < levels.length && more(); l++) {
+            const d = levels[l]!;
             this.feed = fPlunge;
             go(F, ...P(bx + r + setup, 0), d);
             this.feed = fMill;
-            for (let k = 0; k < loops.length; k++) {
+            for (let k = 0; k < loops.length && more(); k++) {
               const e = loops[k]!;
               rectLoop(hx + e, hy + e, k === loops.length - 1 ? rc + r + al : 0, !climb);
             }
@@ -2040,16 +2046,17 @@ class HRunner extends NcEmitter {
             break;
           }
           const radii: number[] = [];
-          for (let e = step0; e < rr - 1e-9; e += step0) radii.push(e);
+          for (let e = step0; e < rr - 1e-9 && radii.length < room; e += step0) radii.push(e);
           radii.push(Math.max(0, rr));
           go(Rp, cu, cv, clear);
           go(Rp, cu, cv, safe);
-          for (const d of levels) {
+          for (let l = 0; l < levels.length && more(); l++) {
+            const d = levels[l]!;
             goL(F, 0, 0);
             this.feed = fPlunge;
             go(F, cu, cv, d);
             this.feed = fMill;
-            for (const rk of radii) circleLoop(rk, climb);
+            for (let k = 0; k < radii.length && more(); k++) circleLoop(radii[k]!, climb);
           }
           if (al > 0 && Q('Q215') !== 1) circleLoop(D / 2 - r, climb);
           goL(F, 0, 0);
@@ -2057,16 +2064,17 @@ class HRunner extends NcEmitter {
           const rf = D / 2 + r + al;
           const rb = Math.max(Q('Q222', D), D) / 2 + r;
           const radii: number[] = [];
-          for (let e = rb; e > rf + 1e-9; e -= step0) radii.push(e);
+          for (let e = rb; e > rf + 1e-9 && radii.length < room; e -= step0) radii.push(e);
           radii.push(rf);
           const start = rb + r + setup;
           go(Rp, cu + start, cv, clear);
           go(Rp, cu + start, cv, safe);
-          for (const d of levels) {
+          for (let l = 0; l < levels.length && more(); l++) {
+            const d = levels[l]!;
             this.feed = fPlunge;
             go(F, cu + start, cv, d);
             this.feed = fMill;
-            for (const rk of radii) circleLoop(rk, !climb);
+            for (let k = 0; k < radii.length && more(); k++) circleLoop(radii[k]!, !climb);
             goL(F, start, 0);
           }
         }
@@ -2090,18 +2098,20 @@ class HRunner extends NcEmitter {
           break;
         }
         const widths: number[] = [];
-        for (let e = step0 / 2; e < rr - 1e-9; e += step0) widths.push(e);
+        for (let e = step0 / 2; e < rr - 1e-9 && widths.length < room; e += step0) widths.push(e);
         if (rr > 1e-9) widths.push(rr);
         const s = climb ? 1 : -1;
         go(Rp, ...P(-half, 0), clear);
         go(Rp, ...P(-half, 0), safe);
-        for (const d of levels) {
+        for (let l = 0; l < levels.length && more(); l++) {
+          const d = levels[l]!;
           goL(F, -half, 0);
           this.feed = fPlunge;
           go(F, ...P(-half, 0), d);
           this.feed = fMill;
           goL(F, half, 0);
-          for (const e of widths) {
+          for (let k = 0; k < widths.length && more(); k++) {
+            const e = widths[k]!;
             // 경기장 꼴: 오른쪽 반원 → 위 직선 → 왼쪽 반원 → 아래 직선
             goL(F, half, -s * e);
             arcL(half, 0, s * Math.PI, half, s * e);
@@ -2123,18 +2133,20 @@ class HRunner extends NcEmitter {
         const step = Number.isFinite(step0) ? step0 : Math.abs(Wy) / 10 || 1;
         const sgnW = Wy < 0 ? -1 : 1;
         const rows: number[] = [];
-        for (let e = 0; e < Math.abs(Wy) - 1e-9; e += step) rows.push(v0 + sgnW * e);
+        for (let e = 0; e < Math.abs(Wy) - 1e-9 && rows.length < room; e += step) rows.push(v0 + sgnW * e);
         rows.push(v0 + Wy);
         const uA = u0 - r - setup;
         const uB = u0 + Lx + r + setup;
         go(Rp, uA, rows[0]!, clear);
         go(Rp, uA, rows[0]!, safe);
-        for (const d of levels) {
+        for (let l = 0; l < levels.length && more(); l++) {
+          const d = levels[l]!;
           go(Rp, uA, rows[0]!, safe);
           this.feed = fPlunge;
           go(F, uA, rows[0]!, d);
           this.feed = fMill;
-          rows.forEach((v, k) => {
+          for (let k = 0; k < rows.length && more(); k++) {
+            const v = rows[k]!;
             const fwd = strategy === 1 || k % 2 === 0;
             const [from, to] = fwd ? [uA, uB] : [uB, uA];
             if (strategy === 1 && k > 0) {
@@ -2143,7 +2155,7 @@ class HRunner extends NcEmitter {
               go(F, from, v, d);
             } else go(F, from, v);
             go(F, to, v);
-          });
+          }
         }
         break;
       }
