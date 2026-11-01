@@ -1059,15 +1059,15 @@ class HRunner extends NcEmitter {
     this.dwell(dwellBottom);
     if (c.n === 201 || c.n === 206 || c.n === 207 || c.n === 209 || c.n === 2 || c.n === 17) go(MOVE_FEED, rD);
     go(MOVE_RAPID, clear);
-    // 이동 한도에 막혀 끝까지 그리지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
-    if (this.mb.count > first && !this.mb.overflow) {
+    if (this.mb.count > first) {
       const top = [0, 0, 0];
       top[p0] = this.pos[p0]!;
       top[p1] = this.pos[p1]!;
       top[da] = rD;
       const bottom = [top[0]!, top[1]!, top[2]!];
       bottom[da] = zD;
-      this.pushHoleOut(top, bottom, line, c.n, first);
+      // 이동 한도에 막혀 바닥에 닿지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
+      if (this.holeDrawn(first, bottom)) this.pushHoleOut(top, bottom, line, c.n, first);
     }
     this.feed = saveFeed;
   }

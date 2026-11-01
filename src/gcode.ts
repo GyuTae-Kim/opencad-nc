@@ -2847,8 +2847,7 @@ export class Runner extends NcEmitter {
         go(MOVE_DRILL, zD);
         go(MOVE_RAPID, clear);
     }
-    // 이동 한도에 막혀 끝까지 그리지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
-    if (this.mb.count > first && !this.mb.overflow) {
+    if (this.mb.count > first) {
       if (map) {
         map(top);
         map(bottom);
@@ -2864,7 +2863,8 @@ export class Runner extends NcEmitter {
         bottom[1] = w[1]!;
         bottom[2] = w[2]!;
       }
-      this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
+      // 이동 한도에 막혀 바닥에 닿지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
+      if (this.holeDrawn(first, bottom)) this.mb.pushHole(top, bottom, line, this.tool, code / 10, first);
     }
   }
 

@@ -112,6 +112,8 @@ export class NcEmitter {
   protected tol = 0.002;
   /** 이동 수 한도: mb가 이 수를 넘게 쌓지 않고(mb.overflow), 해석기는 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"을 남기고 읽기를 멈춘다 */
   protected maxMoves: number;
+  /** 이동 한도에 막혀 길이 있는 이동을 버렸는지(mb.overflow는 길이 0 이동이 막혀도 켜진다) */
+  private movesLost = false;
 
   protected tools = new Map<number, NcTool>();
   protected toolInfo = new Map<number, { diameter?: number; name?: string }>();
@@ -407,7 +409,11 @@ export class NcEmitter {
    * 막힌 뒤에는 run이 멈추므로 지금 자리를 읽는 블록이 없고, 시간·길이·범위는 쌓인 이동으로만 센다
    */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
-    if (this.mb.full()) return false;
+    if (this.mb.full()) {
+      // 길이 0 이동은 막혀도 빠지는 것이 없다
+      if (arcIdx >= 0 || Math.hypot(x - this.pos[0]!, y - this.pos[1]!, z - this.pos[2]!) >= 1e-12) this.movesLost = true;
+      return false;
+    }
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     if (this.corner) {
       // 뒤 요소가 원호면 다듬은 만큼 줄어든 길이가 돌아온다
@@ -441,7 +447,10 @@ export class NcEmitter {
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx, this.modalState(), this.tlc ? this.hNum : -1, this.comp ? this.dNum : -1);
-    if (i < 0) return false;
+    if (i < 0) {
+      this.movesLost = true;
+      return false;
+    }
     const endHigh = this.machHigh;
     let est = false;
     if (endHigh !== 0 || this.machLast !== 0) {
@@ -853,6 +862,18 @@ export class NcEmitter {
     if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.dropArc(idx);
   }
 
+  /**
+   * 이동 first부터의 구멍을 구멍 표에 넣어도 되는지: 버린 이동이 없으면 그대로 넣고(길이 0 꼬리만 막혀도 다 그린 구멍이다), 버렸으면 쌓인 이동의 끝점이
+   * 바닥 bottom(프로그램 좌표면 출력 변환을 걸어 본다)에 닿았을 때만 넣는다 — 복귀만 잘린 구멍은 남고 바닥 전에 잘린 구멍은 빠진다
+   */
+  protected holeDrawn(first: number, bottom: ArrayLike<number>): boolean {
+    if (!this.movesLost) return true;
+    const b = this.outPoint(bottom);
+    const p = this.mb.points;
+    for (let k = (first + 1) * 3; k <= this.mb.count * 3; k += 3) if (Math.hypot(p[k]! - b[0]!, p[k + 1]! - b[1]!, p[k + 2]! - b[2]!) < 1e-6) return true;
+    return false;
+  }
+
   /** 구멍(드릴 사이클) — 출력 변환 중이면 옮겨서 */
   protected pushHoleOut(top: ArrayLike<number>, bottom: ArrayLike<number>, line: number, cycle: number, first: number): void {
     this.mb.pushHole(this.outPoint(top), this.outPoint(bottom), line, this.tool, cycle, first);
@@ -1003,7 +1024,10 @@ export class NcEmitter {
       // 출발점만 추정: 이송은 첫 조각에, 추정 급속은 끝점이 실제인 마지막 조각에 FLAG_START_EST
       const startOnly = startEst && this.machHigh === 0 && (estFlag ? k === n : k === 1);
       const i = this.mb.push(pieceKind, w[0]!, w[1]!, w[2]!, line, this.tool, this.feed, sp, startOnly ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
-      if (i < 0) break;
+      if (i < 0) {
+        this.movesLost = true;
+        break;
+      }
       len += Math.hypot(w[0]! - lx, w[1]! - ly, w[2]! - lz);
       lx = w[0]!;
       ly = w[1]!;
