@@ -203,7 +203,7 @@ describe('한 블록 안 반복의 이동 한도', () => {
     expect(three.slice(-3)).toEqual([13, 13, 13]);
   });
 
-  it('g7xRough: maxMoves까지만 쌓고 capped, 주지 않으면 그대로', () => {
+  it('g7xRough: 이동을 넘겨받는 함수가 false를 돌려주면 거기서 멈춘다, 주지 않으면 그대로 모은다', () => {
     // 톱니 윤곽(u = Z, v = X): 층마다 구간이 많다
     const pts: number[] = [0, 5];
     for (let k = 1; k <= 41; k++) pts.push(-k * 0.1, k % 2 ? 9 : 5);
@@ -211,12 +211,41 @@ describe('한 블록 안 반복의 이동 한도', () => {
     const free = g7xRough(pts, S, 1, -1, 0.01, 0.1, 0);
     expect(free.capped).toBe(false);
     expect(free.moves.length).toBeGreaterThan(5000);
-    const cut = g7xRough(pts, S, 1, -1, 0.01, 0.1, 0, undefined, 1000);
-    expect(cut.capped).toBe(true);
-    expect(cut.moves.length).toBeLessThanOrEqual(1000);
-    // 위 층부터 같은 층을 깎는다(구간을 그만큼만 모으므로 뒤쪽 포켓 차례는 예전과 다를 수 있다 — 어차피 그 줄에서 읽기를 멈춘다)
-    expect(cut.moves.slice(0, 4)).toEqual(free.moves.slice(0, 4));
-    expect(g7xRough(pts, S, 1, -1, 0.01, 0.1, 0, undefined, free.moves.length * 4).capped).toBe(false);
+    const got: { rapid: boolean; u: number; v: number }[] = [];
+    const cut = g7xRough(pts, S, 1, -1, 0.01, 0.1, 0, undefined, (rapid, u, v) => {
+      got.push({ rapid, u, v });
+      return got.length < 3000;
+    });
+    expect(cut.capped).toBe(false);
+    expect(cut.moves).toEqual([]);
+    // 끊어도 전체 계획의 앞부분이다(포켓 차례 포함 — 열린 구간이 앞이라 3,000개면 포켓까지 들어간다)
+    expect(got).toEqual(free.moves.slice(0, 3000));
+  });
+
+  it('g7xRough: 구간 상한은 메모리 보호이고 그 part에서 이동을 만드는 구간만 센다', () => {
+    const pts: number[] = [0, 5];
+    for (let k = 1; k <= 41; k++) pts.push(-k * 0.1, k % 2 ? 9 : 5);
+    const S: [number, number] = [2, 9.5];
+    const rough = (part: 0 | 1 | 2, maxRuns?: number) => g7xRough(pts, S, 1, -1, 0.01, 0.1, part, undefined, undefined, maxRuns);
+    const all = rough(0);
+    const open = rough(1);
+    const pocket = rough(2);
+    const opens = open.moves.length / 4;
+    const pockets = (pocket.moves.length - 2) / 5;
+    expect(opens).toBeGreaterThan(10);
+    expect(pockets).toBeGreaterThan(100);
+    expect(all.moves.length).toBe(open.moves.length + pocket.moves.length);
+    // G7x.1은 포켓을, G7x.2는 열린 구간을 세지 않는다: 만드는 구간 수와 같은 상한이면 그대로
+    expect(rough(1, opens).capped).toBe(false);
+    expect(rough(1, opens).moves).toEqual(open.moves);
+    expect(rough(2, pockets).capped).toBe(false);
+    expect(rough(2, pockets).moves).toEqual(pocket.moves);
+    expect(rough(0, opens + pockets).capped).toBe(false);
+    expect(rough(0, opens + pockets).moves).toEqual(all.moves);
+    // 상한을 넘으면 알린다
+    expect(rough(0, 20).capped).toBe(true);
+    expect(rough(2, 20).capped).toBe(true);
+    expect(rough(1, 2).capped).toBe(true);
   });
 
   it('nurbsSegments: emit이 false면 거기서 멈추고, 값을 돌려주지 않으면 끝까지', () => {
@@ -294,6 +323,10 @@ describe('이동을 쌓는 자리의 한도', () => {
     ['Siemens POCKET3', siemens('G17 G90 G71\nT1 D1\nG0 X0 Y0 Z50\nPOCKET3(10, 0, 2, -4, 40, 30, 5, 0, 0, 0, 2, 0, 0, 500, 100, 0, 11, 0)\nG0 X99\nM30'), false],
     ['선반 G71', lathe('G21 G18\nG0 X40 Z5\nG71 U2 R0.5\nG71 P10 Q20 U0 W0 F0.2\nN10 G1 X10 Z0\nG1 Z-10\nN20 G1 X20\nG0 X99\nM30'), false],
     ['LinuxCNC G71 원호 윤곽', llathe(`G18 G21 G8\nG0 X15 Z2\n${SUB100}\nG71 Q100 D0.5 I2 R0.5 F0.2\nG0 X99\nM2`), false],
+    ['LinuxCNC G71 톱니', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71 Q100 D0 I0.5 R0.1 F0.2\nG0 X99\nM2`), false],
+    ['LinuxCNC G71.1 톱니', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71.1 Q100 D0 I0.2 R0.1 F0.2\nG0 X99\nM2`), false],
+    ['LinuxCNC G71.2 톱니', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71.2 Q100 D0 I0.5 R0.1 F0.2\nG0 X99\nM2`), false],
+    ['LinuxCNC G71 물러남 0(길이 0 계획 이동)', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71 Q100 D0 I0.5 R0 F0.2\nG0 X99\nM2`), false],
   ];
 
   const ends = (p: NcProgram): number[][] => {
@@ -316,6 +349,8 @@ describe('이동을 쌓는 자리의 한도', () => {
       expect(m.count, label).toBe(Math.min(limit, n));
       // 경고는 한 번(한도가 전체보다 크면 없음)
       expect(p.warnings.filter((w) => w.includes(OVER(limit))).length, label).toBe(limit <= n ? 1 : 0);
+      // 한도가 전체보다 하나만 커도 전체와 같다(경고까지)
+      if (limit > n) expect(p.warnings, label).toEqual(full.warnings);
       const e = ends(p);
       for (let i = 0; i < m.count; i++) {
         // 뒤 블록은 실행하지 않았다: 줄·종류가 전체 경로의 앞부분 그대로
@@ -444,6 +479,178 @@ describe('이동을 쌓는 자리의 한도', () => {
   });
 });
 
+/**
+ * 선반 거친 깎기는 쌓은 결과로만 멈춘다: 길이 0 계획 이동은 쌓이지 않고, G7x.1의 포켓과 G7x.2의 열린 구간은 이동을 만들지 않으므로
+ * 자리가 남았는데 잘리면 안 된다. 잘릴 때는 전체 경로의 앞부분이 한도까지 쌓인다
+ */
+describe('선반 G71·G71.1·G71.2 한도', () => {
+  const FREE = 8_000_000;
+  const run = (text: string, maxMoves = FREE): NcProgram => parseGcode(text, { dialect: 'linuxcnc', lathe: true, initialPosition: [30, 0, 30], maxMoves });
+  const over = (p: NcProgram): string[] => p.warnings.filter((w) => w.includes('개를 넘어 나머지는 읽지 않음'));
+  const program = (code: string, I: string, R = '0.1', n = 40): string => `G18 G21 G8\nG0 X9.5 Z2\n${teeth(n)}\n${code} Q100 D0 I${I} R${R} F0.2\nG0 X99\nM2`;
+  const samePrefix = (p: NcProgram, full: NcProgram, label: string): void => {
+    for (let i = 0; i < p.moves.count; i++) {
+      expect(p.moves.line[i], `${label} 이동 ${i}`).toBe(full.moves.line[i]);
+      expect(p.moves.kind[i], `${label} 이동 ${i}`).toBe(full.moves.kind[i]);
+      const a = moveEnd(p.moves, i);
+      const b = moveEnd(full.moves, i);
+      for (let k = 0; k < 3; k++) expect(a[k], `${label} 이동 ${i}`).toBe(b[k]);
+    }
+  };
+
+  it.each([
+    ['G71', '0.05', '0.1'],
+    ['G71.1', '0.05', '0.1'],
+    ['G71.2', '0.05', '0.1'],
+    ['G71', '0.05', '0'],
+    ['G71.2', '0.05', '0'],
+  ])('%s I%s R%s: 한도 n + 1은 전체와 같고, 작은 한도는 전체 경로의 앞부분', (code, I, R) => {
+    const text = program(code, I, R);
+    const full = run(text);
+    const n = full.moves.count;
+    expect(over(full)).toEqual([]);
+    for (const L of [n + 1, n + 2, n + 10, Math.ceil(n * 1.25), n * 2, n * 3]) {
+      const p = run(text, L);
+      expect(p.moves.count, `한도 ${L}`).toBe(n);
+      expect(p.warnings, `한도 ${L}`).toEqual(full.warnings);
+      expect(Array.from(p.moves.points), `한도 ${L}`).toEqual(Array.from(full.moves.points));
+    }
+    const atN = run(text, n);
+    expect(atN.moves.count).toBe(n);
+    expect(over(atN).length).toBe(1);
+    for (const L of [1, 2, 3, 5, 50, 285, 300, Math.floor(n / 4), Math.floor(n / 2), n - 1]) {
+      if (L >= n) continue;
+      const p = run(text, L);
+      expect(p.moves.count, `한도 ${L}`).toBe(L);
+      expect(over(p).length, `한도 ${L}`).toBe(1);
+      samePrefix(p, full, `한도 ${L}`);
+    }
+  });
+
+  it('G71.1 작은 윤곽: 전체 27이동, 한도 28·29에서 잘리지 않는다', () => {
+    const text = 'G18 G21\nG0 X12 Z2\no300 sub\nG1 X5 Z0\nG1 X8 Z-6\nG1 X6 Z-10\nG1 Z-14\nG1 X10 Z-18\no300 endsub\nG71.1 Q300 I1 R0.5 F0.2\nM2';
+    const full = run(text);
+    expect(full.moves.count).toBe(27);
+    for (const L of [28, 29, 30, 60]) {
+      const p = run(text, L);
+      expect(p.moves.count, `한도 ${L}`).toBe(27);
+      expect(p.warnings, `한도 ${L}`).toEqual(full.warnings);
+    }
+  });
+
+  it('긴 프로그램 뒤에 오는 평범한 G71.1도 남은 자리만큼 쌓는다', () => {
+    const text = `G18 G21 G8\n${teeth(6)}\nG0 X9.5 Z2\nG71.1 Q100 D0 I0.2 R0.1 F0.2\nG0 X99\nM2`;
+    const full = run(text);
+    for (const extra of [1, 3, 10, 30]) {
+      const p = run(text, full.moves.count + extra);
+      expect(p.moves.count, `여유 ${extra}`).toBe(full.moves.count);
+      expect(over(p), `여유 ${extra}`).toEqual([]);
+    }
+  });
+
+  it('기본 한도: 층이 1만 개인 G71.1 톱니 윤곽도 끝까지 그린다(한도에 닿지 않는다)', () => {
+    const p = run(program('G71.1', '0.0004', '0.1', 500));
+    expect(p.moves.count).toBe(40_004);
+    expect(over(p)).toEqual([]);
+    expect(moveEnd(p.moves, p.moves.count - 1)[0]).toBe(99);
+  });
+
+  it('G71 톱니 I0.01, 한도 2000: 포켓까지 전체 경로의 앞부분이 한도까지', () => {
+    const text = program('G71', '0.01');
+    const full = run(text);
+    expect(full.moves.count).toBeGreaterThan(30_000);
+    const p = run(text, 2000);
+    expect(p.moves.count).toBe(2000);
+    expect(over(p).length).toBe(1);
+    samePrefix(p, full, '한도 2000');
+  });
+
+  it('길이 0 계획 이동이 많아도 시간 안에 끝나고 한도로 잘못 멈추지 않는다', () => {
+    // 층 1만 개, 물러남 0, 층 사이 1e-13: 층을 옮기는 이동과 물러나는 이동은 길이 0이라 쌓이지 않는다
+    const text = 'G18 G21 G8\nG0 X12 Z2\no100 sub\nG1 X5 Z0\nG1 X5 Z-10\nG1 X15 Z-20\no100 endsub\nG71 Q100 D0 I0.0000000000001 R0 F0.2\nG0 X99\nM2';
+    const t0 = performance.now();
+    const full = run(text);
+    const planned = 40_000;
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(full.moves.count).toBeLessThan(planned);
+    expect(over(full)).toEqual([]);
+    const p = run(text, full.moves.count + 1);
+    expect(p.moves.count).toBe(full.moves.count);
+    expect(over(p)).toEqual([]);
+  });
+});
+
+describe('한도와 블록 실행', () => {
+  const FREE = 8_000_000;
+  const over = (p: NcProgram): string[] => p.warnings.filter((w) => w.includes('개를 넘어 나머지는 읽지 않음'));
+
+  it('지우는 블록에서 끝나는 G70이 한도에 닿으면 G70 줄에서 멈추고 다음 블록을 실행하지 않는다', () => {
+    const text = 'G21 G18\nG0 X40 Z5\nG71 U2 R0.5\nG71 P10 Q20 U0 W0 F0.2\nN10 G1 X10 Z0\nG1 Z-10\n/N20 G1 X20\nG70 P10 Q20\nT0202\nG4 P5000\nG0 X99\nM30';
+    const go = (maxMoves: number): NcProgram => parseGcode(text, { dialect: 'fanuc', lathe: true, blockDelete: true, initialPosition: [50, 0, 50], maxMoves });
+    const full = go(FREE);
+    expect(full.moves.count).toBe(39);
+    expect(full.stats.toolChanges).toBe(1);
+    for (const L of [37, 38]) {
+      const p = go(L);
+      expect(p.moves.count, `한도 ${L}`).toBe(L);
+      expect(p.stats.toolChanges, `한도 ${L}`).toBe(0);
+      expect(p.stats.dwellTime, `한도 ${L}`).toBe(0);
+      expect(over(p), `한도 ${L}`).toEqual([`8번 줄: 이동이 ${L}개를 넘어 나머지는 읽지 않음`]);
+    }
+  });
+
+  it('끝맺음(G5.3 없는 NURBS)에서 한도에 정확히 닿아도 경고한다', () => {
+    const text = 'G21 G17 G90\nG0 X0 Y0 Z1\nG1 F100\nG5.2 X10 Y10 L3\nX20 Y0\nX30 Y10\nX40 Y0\nX50 Y10';
+    const go = (maxMoves: number): NcProgram => parseGcode(text, { dialect: 'linuxcnc', initialPosition: [0, 0, 50], maxMoves });
+    const full = go(FREE);
+    expect(full.moves.count).toBe(6);
+    expect(over(full)).toEqual([]);
+    expect(over(go(7))).toEqual([]);
+    const p = go(6);
+    expect(p.moves.count).toBe(6);
+    expect(over(p).length).toBe(1);
+    expect(over(go(5)).length).toBe(1);
+  });
+
+  it('한도에서 잘린 쪼기 구멍은 구멍 표에 끝까지 뚫린 것으로 남지 않는다', () => {
+    const lowest = (p: NcProgram): number => {
+      let z = Infinity;
+      for (let i = 0; i < p.moves.count; i++) z = Math.min(z, moveEnd(p.moves, i)[2]);
+      return z;
+    };
+    const cases: [string, Run][] = [
+      ['G83', fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG83 X0 Y0 Z-10 R1 Q2 F100\nG80\nG0 X99\nM2')],
+      ['CYCL 200', cyc(200, 'Q200=2 Q201=-10 Q206=100 Q202=2 Q203=+0 Q204=20')],
+    ];
+    for (const [name, go] of cases) {
+      const full = go({ maxMoves: FREE });
+      expect(full.holes.count, name).toBe(1);
+      const n = full.moves.count;
+      for (let L = 1; L < n; L++) {
+        const p = go({ maxMoves: L });
+        for (let h = 0; h < p.holes.count; h++) expect(lowest(p), `${name} 한도 ${L}`).toBeLessThanOrEqual(p.holes.bottom[h * 3 + 2]! + 1e-9);
+      }
+      expect(go({ maxMoves: n + 1 }).holes.count, name).toBe(1);
+    }
+  });
+
+  it('쌓지 못한 드릴의 휴지는 시간에 넣지 않는다', () => {
+    const go = fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG82 X0 Y0 Z-10 R1 P9000 F100\nG80\nM2');
+    const sum = (p: NcProgram): number => {
+      let t = 0;
+      for (let i = 0; i < p.moves.count; i++) t += p.moves.time[i]!;
+      return t;
+    };
+    const p = go({ maxMoves: 2 });
+    expect(p.stats.dwellTime).toBe(0);
+    expect(sum(p)).toBeCloseTo(p.stats.time, 3);
+    const q = go({ maxMoves: 3 });
+    expect(q.stats.dwellTime).toBe(9);
+    expect(sum(q)).toBeCloseTo(q.stats.time, 3);
+    expect(go({ maxMoves: FREE }).stats.dwellTime).toBe(9);
+  });
+});
+
 describe('MPR 구멍 줄 개수 AN', () => {
   const head = `[H\nVERSION="4.0 Alpha"\nINCH="0"\n<100 \\WerkStck\\\nLA="200"\nBR="100"\nDI="19"\n`;
   const vert = (an: string, x = 50): string => `<102 \\BohrVert\\\nXA="${x}"\nYA="50"\nTI="10"\nDU="8"\nAN="${an}"\nAB="1"\nWI="0"\n`;
@@ -468,6 +675,22 @@ describe('MPR 구멍 줄 개수 AN', () => {
     const ok = parseMpr(`${head}${vert('60000')}${vert('40000', 60)}!\n`);
     expect(count(ok)).toBe(100_000);
     expect(ok.warnings.some((w) => w.includes('거기까지 그림'))).toBe(false);
+  });
+
+  it('꺼진 구멍 줄은 켜진 구멍의 한도를 쓰지 않는다, 꺼진 줄끼리도 파일 전체로 막는다', () => {
+    const off = (an: string, x = 50): string => vert(an, x).replace('DU="8"', 'DU="8"\nEN="0"');
+    const on = (p: ReturnType<typeof parseMpr>): number[] => p.operations.flatMap((o) => ('holes' in o ? [o.holes.length] : []));
+    const p = parseMpr(`${head}${off('100000')}${vert('5', 60)}!\n`);
+    expect(on(p)).toEqual([100_000, 5]);
+    expect(p.stats.holes).toBe(5);
+    expect(p.stats.disabled).toBe(1);
+    expect(p.warnings.filter((w) => w.includes('거기까지 그림'))).toEqual([]);
+    const q = parseMpr(`${head}${vert('100000', 60)}${off('7')}!\n`);
+    expect(on(q)).toEqual([100_000, 7]);
+    const big = parseMpr(`${head}${off('2000000000')}${off('2000000000', 60)}${vert('5', 70)}!\n`);
+    expect(on(big)).toEqual([100_000, 0, 5]);
+    expect(big.stats.holes).toBe(5);
+    expect(big.warnings.filter((w) => w.includes('구멍이 100000개를 넘어 거기까지 그림')).length).toBe(1);
   });
 
   it('새 경고는 네 언어로 옮긴다', () => {
