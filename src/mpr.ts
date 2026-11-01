@@ -239,6 +239,9 @@ const MACRO_KIND: Record<string, MprOperation['kind'] | 'workpiece' | 'freePocke
   easyedge: 'edge',
 };
 
+/** 파일 전체 구멍 수 한도(Heidenhain PATTERN DEF 가공 위치 한도와 같은 값) */
+const HOLE_MAX = 100_000;
+
 /** MPR 글·바이트를 읽는다 */
 export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOptions = {}): MprPart {
   let text: string;
@@ -533,6 +536,14 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
   // 가공
   const operations: MprOperation[] = [];
   const stats: MprPart['stats'] = { holes: 0, drillOps: 0, contourOps: 0, grooves: 0, pockets: 0, disabled: 0, other: 0 };
+  // 구멍 줄의 개수 AN은 파일 값이라 아주 큰 값 한 줄이 메모리를 다 쓸 수 있다 — 파일 전체 구멍 수를 HOLE_MAX까지만(넘으면 경고하고 거기까지 그린다)
+  let holeRoom = HOLE_MAX;
+  const holeCount = (an: number, line: number): number => {
+    if (an > holeRoom) w.add(`구멍이 ${HOLE_MAX}개를 넘어 거기까지 그림`, line);
+    const n = Math.min(an, holeRoom);
+    if (n > 0) holeRoom -= n;
+    return n;
+  };
   for (const m of macros) {
     const kind = MACRO_KIND[m.name.toLowerCase()];
     if (kind === 'workpiece') continue;
@@ -570,7 +581,8 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         const shift = mi === 1 ? -((an - 1) * ab) / 2 : 0;
         // UfluBohr는 아랫면(Z 0)에서 위로, BohrVert는 윗면에서 아래로
         const fromBottom = m.name.toLowerCase() === 'uflubohr';
-        for (let k = 0; k < an; k++) {
+        const count = holeCount(an, m.line);
+        for (let k = 0; k < count; k++) {
           const d = shift + k * ab;
           holes.push({ start: [x0 + d * Math.cos(wi), y0 + d * Math.sin(wi), fromBottom ? 0 : thick], dir: [0, 0, fromBottom ? 1 : -1], depth });
         }
@@ -613,7 +625,8 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
         const holes: MprHole[] = [];
         const lim = workpiece ? (dir[0] !== 0 ? workpiece.length : workpiece.width) : Infinity;
         const depth = Math.min(ti, lim);
-        for (let k = 0; k < an; k++) holes.push({ start: [x0 + step[0] * k * ab, y0 + step[1] * k * ab, z0], dir, depth });
+        const count = holeCount(an, m.line);
+        for (let k = 0; k < count; k++) holes.push({ start: [x0 + step[0] * k * ab, y0 + step[1] * k * ab, z0], dir, depth });
         operations.push({ ...base, kind: 'drillH', holes, diameter: du, depth: ti, through: depth < ti, mode: p.BM });
         if (enabled) {
           stats.drillOps++;

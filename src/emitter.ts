@@ -110,6 +110,10 @@ export class NcEmitter {
   protected displayInch = false;
   protected rapidFeed = 10000;
   protected tol = 0.002;
+  /** 이동 수 한도: 닿으면 그 뒤 이동은 쌓지 않고, 해석기가 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"을 남기고 읽기를 멈춘다 */
+  protected maxMoves = 8_000_000;
+  /** 한 블록 안의 반복이 이동 한도(또는 남은 이동 수만큼의 반복)를 넘어 멈췄는지 — 그 줄에서 읽기를 멈춘다 */
+  protected cycleOverflow = false;
 
   protected tools = new Map<number, NcTool>();
   protected toolInfo = new Map<number, { diameter?: number; name?: string }>();
@@ -383,8 +387,27 @@ export class NcEmitter {
     return ok;
   }
 
-  /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다 */
+  /**
+   * 한 블록 안에서 파일 값이 횟수를 정하는 반복(구멍·층·고리·조각)의 문지기: 돌 때마다 부르고 false면 멈춘다(38차 Siemens 포켓과 같은 꼴).
+   * 블록 사이 검사는 그 블록이 끝나야 닿으므로, 아주 큰 반복 수나 아주 작은 절입·간격 한 줄이 한도를 넘게 만들지 않게 여기서 본다.
+   * 이동 한도에 닿았거나, 돈 횟수가 남은 이동 수를 넘으면(길이 0 이동만 만드는 반복) cycleOverflow를 켠다
+   */
+  protected blockLoop(): () => boolean {
+    const budget = Math.max(0, this.maxMoves - this.mb.count);
+    let steps = 0;
+    return () => {
+      if (!this.cycleOverflow && (this.mb.count >= this.maxMoves || ++steps > budget)) this.cycleOverflow = true;
+      return !this.cycleOverflow;
+    };
+  }
+
+  /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다. 이동 한도에 닿은 뒤에는 넣지 않는다(그 줄에서 읽기를 멈춘다) */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
+    if (this.cycleOverflow) return false;
+    if (this.mb.count >= this.maxMoves) {
+      this.cycleOverflow = true;
+      return false;
+    }
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     if (this.corner) {
       // 뒤 요소가 원호면 다듬은 만큼 줄어든 길이가 돌아온다

@@ -344,7 +344,9 @@ interface Run {
  * 층은 시작점에서 I씩, 윤곽의 가장 깊은 점 앞까지. 층마다 살이 있는 구간(윤곽이 그 층보다 깊은 곳)을 찾아,
  * 시작점 쪽으로 열린 구간(윤곽 시작에서 이어짐)은 시작 자리에서 급속으로 층에 들어가 구간 끝까지 이송하고 R만큼 45°로 물러나 시작 자리로 돌아온다.
  * 포켓 구간은 열린 구간을 다 깎은 뒤, 바로 위 층에서 그 구간을 품는 구간(깎은 곳)의 R 위를 따라 들어가 깎는다(깊이 우선).
- * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다
+ * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다.
+ * maxMoves = 남은 이동 수: 층이 많고 윤곽이 톱니처럼 오르내려 층마다 구간이 많으면 한 블록의 이동이 아주 많아지므로, 이동을 그만큼까지만 쌓고
+ * 구간도 그 안에서만 모은다(구간 하나는 이동 넷 이상). 넘으면 capped = true
  */
 export function g7xRough(
   pts: readonly number[],
@@ -355,11 +357,13 @@ export function g7xRough(
   R: number,
   part: 0 | 1 | 2,
   maxLevels = 10000,
-): { moves: G7xMove[]; pockets: boolean; levels: number } {
+  maxMoves = Infinity,
+): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean } {
   const c = (1 - s) as 0 | 1;
   const n = pts.length / 2;
   const moves: G7xMove[] = [];
-  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0 };
+  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false };
+  let capped = false;
   let ext = 0;
   let deepest = -Infinity;
   for (let i = 0; i < n; i++) {
@@ -372,7 +376,8 @@ export function g7xRough(
   const up = -dir;
   const at = (lev: number, cv: number): [number, number] => (s === 1 ? [cv, lev] : [lev, cv]);
   const go = (rapid: boolean, p: [number, number]): void => {
-    moves.push({ rapid, u: p[0], v: p[1] });
+    if (moves.length >= maxMoves) capped = true;
+    else moves.push({ rapid, u: p[0], v: p[1] });
   };
   const cAt = (t: number): number => {
     const i = Math.min(n - 2, Math.floor(t));
@@ -386,8 +391,13 @@ export function g7xRough(
     levels.push(lev);
   }
   // 층마다 살이 있는 구간
+  let runCount = 0;
   const runs: Run[][] = levels.map((lev, li) => {
     const out: Run[] = [];
+    if (runCount * 4 >= maxMoves) {
+      capped = true;
+      return out;
+    }
     const f = (i: number): number => (pts[i * 2 + s]! - lev) * dir;
     let t0 = -1;
     if (f(0) > tol) t0 = 0;
@@ -405,6 +415,7 @@ export function g7xRough(
       }
     }
     if (t0 >= 0) out.push(mkRun(t0, n - 1, li));
+    runCount += out.length;
     return out;
   });
   function mkRun(t0: number, t1: number, level: number): Run {
@@ -456,5 +467,5 @@ export function g7xRough(
     goC(true, at(S[s]!, s === 1 ? cur.u : cur.v));
     goC(true, at(S[s]!, S[c]!));
   }
-  return { moves, pockets: pockets && part !== 1, levels: levels.length };
+  return { moves, pockets: pockets && part !== 1, levels: levels.length, capped };
 }
