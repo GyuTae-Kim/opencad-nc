@@ -40,7 +40,10 @@ export interface G7xMove {
 }
 
 const TAU = Math.PI * 2;
-/** 거친 깎기 구간 수 상한(메모리 보호 — 구간 하나는 이동 넷 이상이라 기본 이동 한도 800만 개보다 적게 멈추지 않는다) */
+/**
+ * 거친 깎기 구간 수 상한(메모리 보호 — 200만 구간이면 힙만 약 700 MB). 쌓이는 이동은 구간마다 넷 안팎이지만 물러남 R0이면 길이 0 이동이 빠져 셋 남짓이라
+ * 이동 한도 800만 개보다 먼저 닿을 수 있다. 닿으면 뒤 층을 보지 않으므로 해석기는 구간 경고를 남기고 그 줄에서 읽기를 멈춘다
+ */
 export const G7X_MAX_RUNS = 2_000_000;
 
 export function g7xLine(su: number, sv: number, eu: number, ev: number): G7xEl {

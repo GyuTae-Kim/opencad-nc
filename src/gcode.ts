@@ -1160,10 +1160,10 @@ export class Runner extends NcEmitter {
     }
   }
 
-  /** 이동 한도에 닿았으면 그 줄에 한 번 경고하고 true(읽기를 멈춘다) */
+  /** 이동 한도에 닿았으면(또는 G7x 구간 상한으로 멈췄으면) 그 줄에 한 번 경고하고 true(읽기를 멈춘다) */
   protected limitReached(line: number): boolean {
     if (!this.mb.full()) return false;
-    this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
+    if (!this.hitLimit) this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
     this.hitLimit = true;
     return true;
   }
@@ -3371,9 +3371,13 @@ export class Runner extends NcEmitter {
           this.lgo(rapid ? MOVE_RAPID : MOVE_FEED, v, u, line);
           return !this.mb.full();
         },
-        Math.max(G7X_MAX_RUNS, Math.ceil(this.maxMoves / 4)),
+        G7X_MAX_RUNS,
       );
-      if (plan.capped) this.mb.overflow = true;
+      if (plan.capped && !this.mb.full()) {
+        this.w.add(`구간이 ${G7X_MAX_RUNS}개를 넘어 나머지는 읽지 않음`, line);
+        this.hitLimit = true;
+        this.mb.overflow = true;
+      }
       if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
       let path = off;
       if (part) {
@@ -4121,7 +4125,7 @@ export class Runner extends NcEmitter {
   finish(opts: GcodeOptions): NcProgram {
     if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
     // 블록 사이 검사가 닿지 않는 위 끝맺음에서 한도에 막히거나 정확히 닿아도 경고는 남긴다
-    if (!this.hitLimit) this.limitReached(this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
+    this.limitReached(this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {
