@@ -302,6 +302,51 @@ N40 M30`);
   });
 });
 
+describe('이동 한도(한 블록 안의 층·고리·나선 바퀴)', () => {
+  const LIMIT = 2000;
+  const limited = (call: string, maxMoves = LIMIT): { p: NcProgram; ms: number } => {
+    const t0 = performance.now();
+    const p = parseSiemens(makeSource(head() + call + '\nG0 X100'), { initialPosition: [0, 0, 50], toolTable: D10, maxMoves });
+    return { p, ms: performance.now() - t0 };
+  };
+  const over = (p: NcProgram, n = LIMIT): number => p.warnings.filter((w) => w.includes(`이동이 ${n}개를 넘어 나머지는 읽지 않음`)).length;
+
+  it('절입이 작아 층이 많으면 한도에서 멈추고 한 번 경고, 다음 줄은 읽지 않는다', () => {
+    // 깊이 12를 0.001씩: 층 12,000개 × 이동 17개 — 블록 사이에서만 한도를 보면 한 블록에서 20만 개를 넘게 만든다
+    const { p } = limited('POCKET3(10, 0, 2, -10, 40, 30, 5, 0, 0, 0, 0.001, 0, 0, 500, 100, 0, 11, 0)');
+    expect(p.moves.count).toBeLessThanOrEqual(LIMIT);
+    expect(over(p)).toBe(1);
+    expect(end(p, p.moves.count - 1)[0]).not.toBe(100);
+  });
+
+  it('아주 작은 _MID·_MIDA·_DP1, 아주 큰 깊이·크기, 길이 0 층도 시간 안에 한도 안에서 멈춘다', () => {
+    const calls = [
+      'POCKET3(10, 0, 2, -10, 40, 30, 5, 0, 0, 0, 0.000001, 0, 0, 500, 100, 0, 11, 0)',
+      'POCKET3(10, 0, 2, -1000000000000, 40, 30, 5, 0, 0, 0, 1, 0, 0, 500, 100, 0, 11, 0)',
+      'POCKET3(10, 0, 2, -5, 40, 30, 5, 0, 0, 0, 0, 0, 0, 500, 100, 0, 11, 0.000001)',
+      'POCKET3(10, 0, 2, -5, 1000000000000, 1000000000000, 0, 0, 0, 0, 0, 0, 0, 500, 100, 0, 11, 0)',
+      'POCKET4(10, 0, 2, -10, 15, 0, 0, 0, 0, 0, 300, 100, 0, 21, 0, 0, 0, 3, 0.000001)',
+      // 공구 반지름 = 포켓 반지름(고리 없음)·절입 1e-12: 층마다 이동이 거의 없어도 반복 수로 멈춘다
+      'POCKET4(10, 0, 2, -10, 5, 0, 0, 0.000000000001, 0, 0, 300, 100, 0, 1, 0)',
+    ];
+    for (const call of calls) {
+      const { p, ms } = limited(call);
+      expect(ms, call).toBeLessThan(2000);
+      expect(p.moves.count, call).toBeLessThanOrEqual(LIMIT);
+      expect(over(p), call).toBe(1);
+    }
+  });
+
+  it('한도 안에 드는 포켓은 그대로(반복 수로 일찍 멈추지 않는다)', () => {
+    const call = 'POCKET3(5, 0, 0.5, -17.5, 60, 40, 8, 60, 40, 0, 4, 0.75, 0.2, 1000, 750, 0, 11, 5)';
+    const full = limited(call, 8_000_000).p;
+    const fit = limited(call, full.moves.count + 1).p;
+    expect(fit.moves.count).toBe(full.moves.count);
+    expect(over(fit, full.moves.count + 1)).toBe(0);
+    expect(end(fit, fit.moves.count - 1)).toEqual([100, 40, 5]);
+  });
+});
+
 describe('POCKET 없는 프로그램·번역', () => {
   it('사이클 설정 _ZSD 대입만으로는 이동이 바뀌지 않는다', () => {
     const base = 'G71 G17 G90 T1 D1 S1000 M3\nG0 X0 Y0 Z10\nG1 Z-1 F100\nG2 X20 Y0 CR=10\nG0 Z10\nM30';

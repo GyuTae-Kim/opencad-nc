@@ -167,6 +167,8 @@ class SiemensRunner extends Runner {
   private zsd = new Map<number, number>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
   private inCycle = false;
+  /** 포켓 사이클 경로가 이동 한도(또는 남은 이동 수만큼의 반복)를 넘어 멈췄는지 — 그 줄에서 읽기를 멈춘다 */
+  private cycleOverflow = false;
 
   constructor(src: NcSource, opts: GcodeOptions, head: () => string) {
     super(src, opts, 'siemens', head);
@@ -310,7 +312,7 @@ class SiemensRunner extends Runner {
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
       }
       this.afterLine(line);
-      if (this.mb.count >= this.maxMoves) {
+      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
         this.hitLimit = true;
         break;
@@ -1505,6 +1507,8 @@ class SiemensRunner extends Runner {
    *   적지만 같은 절의 설명(하향·상향을 고른다)과 같은 판의 스페인어판(6FC5398-3BP10-0EA0, "1: Fresado en oposición")대로 상향
    * - 경고하고 그리는 것: 블랭크 치수(_AP1·_AP2·_AD — 온 포켓으로), POCKET4 나선 가공(_VARI 1xxx — 층마다 평면으로), 공구 반지름 모름(0으로)
    * - 그리지 않는 것: 깊이·크기 없음, 공구가 포켓보다 큼(알람 61105), _VARI가 맞지 않음(알람 61002)
+   * - 이동 한도(maxMoves)는 층·고리·나선 바퀴를 돌 때마다 본다(아주 작은 _MID·_MIDA·_DP1이나 아주 큰 깊이·크기 한 줄이 한 블록에서
+   *   한도를 넘게 만들지 않게). 넘으면 그 자리에서 멈추고, 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
    * 이동은 블록으로 Runner에 넘겨 프레임(TRANS·ROT·MIRROR·SCALE)·평면(G17~G19)을 그대로 따르고, 고정 사이클 이동(FLAG_CYCLE)으로 표시한다.
    * 앞의 G 모드(이동 꼴)·이송은 사이클 뒤 그대로다(설명서 3.2절)
    */
@@ -1601,20 +1605,26 @@ class SiemensRunner extends Runner {
     const up = rfp >= dp ? 1 : -1;
     const safe = rfp + up * sdis;
     const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
-    /** from에서 to까지 _MID 이하 같은 절입의 층(가장 적은 수) */
-    const levels = (from: number, to: number): number[] => {
+    // 이동 한도: 층·고리·나선 바퀴는 한 블록 안에서 돌아 run의 블록 사이 검사가 닿지 않으므로 여기서도 본다.
+    // 반복(층·고리·바퀴) 한 번은 보통 이동을 하나 넘게 만들므로 반복 수도 남은 이동 수까지만 — 길이 0 이동만 만드는
+    // 아주 작은 절입·간격도 멈춘다. 멈추면 run이 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
+    const budget = Math.max(0, this.maxMoves - this.mb.count);
+    let steps = 0;
+    let stop = false;
+    const go = (): boolean => {
+      if (!stop && (this.mb.count >= this.maxMoves || ++steps > budget)) stop = true;
+      return !stop;
+    };
+    /** from에서 to까지 _MID 이하 같은 절입의 층 수(가장 적은 수 — 배열로 만들지 않는다: 아주 작은 _MID면 매우 크다) */
+    const levelCount = (from: number, to: number): number => {
       const total = up * (from - to);
-      if (!(total > 1e-9)) return [to];
-      const n = mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
-      return Array.from({ length: n }, (_, k) => (k === n - 1 ? to : from - (up * total * (k + 1)) / n));
+      return total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
     };
-    /** 0에서 m까지 _MIDA 이하(없으면 공구 지름 × 0.8) 같은 간격 */
+    /** n층 가운데 k번째(0부터) 깊이 */
+    const levelAt = (from: number, to: number, n: number, k: number): number => (k >= n - 1 ? to : from - ((from - to) * (k + 1)) / n);
+    /** 0에서 m까지 _MIDA 이하(없으면 공구 지름 × 0.8) 같은 간격의 칸 수 */
     const maxW = mida > 0 ? mida : 1.6 * r;
-    const widths = (m: number): number[] => {
-      if (!(m > 1e-9)) return [Math.max(0, m)];
-      const n = maxW > 0 ? Math.max(1, Math.ceil(m / maxW - 1e-9)) : 1;
-      return Array.from({ length: n + 1 }, (_, k) => (m * k) / n);
-    };
+    const widthCount = (m: number): number => (maxW > 0 ? Math.max(1, Math.ceil(m / maxW - 1e-9)) : 1);
 
     // ── 블록으로 그리기(프로그램 좌표, 중심 (cu, cv)·긴 축 각 ang의 지역 좌표) ──
     const [a0, a1, a2] = PLANE_AXES[this.plane]!;
@@ -1623,6 +1633,7 @@ class SiemensRunner extends Runner {
     const P = (lu: number, lv: number): [number, number] => [cu + lu * ca - lv * sa, cv + lu * sa + lv * ca];
     const b = new Block();
     const move = (g: 0 | 1 | 2 | 3, p: [number, number] | null, w: number | null, f: number, c?: [number, number]): void => {
+      if (stop) return;
       b.reset();
       b.set(6, g, true);
       if (p) {
@@ -1641,6 +1652,7 @@ class SiemensRunner extends Runner {
       }
       if (g !== 0 && f > 0) b.set(LET('F'), f, true);
       this.exec(b, line);
+      if (this.mb.count >= this.maxMoves) stop = true;
     };
     const lin = (lu: number, lv: number, f = ffp1): void => move(1, P(lu, lv), null, f);
     const arc = (lcu: number, lcv: number, lu: number, lv: number, w: number | null, f: number): void => move(ccw ? 3 : 2, P(lu, lv), w, f, P(lcu, lcv));
@@ -1680,11 +1692,13 @@ class SiemensRunner extends Runner {
       const ey = hy - al;
       if (ex < -1e-9 || ey < -1e-9) return;
       const m = Math.min(ex, ey);
-      const es = widths(m);
-      for (let k = 0; k < es.length; k++) {
-        const e = es[k]!;
+      // 폭이 0이면 고리 하나(모서리 있는 마지막 고리), 아니면 0·m/n·…·m의 n + 1개
+      const flat = !(m > 1e-9);
+      const n = flat ? 0 : widthCount(m);
+      for (let k = 0; k <= n && go(); k++) {
+        const e = flat ? Math.max(0, m) : (m * k) / n;
         if (!p3 && e <= 1e-9) continue;
-        loop(ex - m + e, ey - m + e, k === es.length - 1 ? rc - al : 0);
+        loop(ex - m + e, ey - m + e, k === n ? rc - al : 0);
       }
       lin(0, 0);
     };
@@ -1695,7 +1709,7 @@ class SiemensRunner extends Runner {
         // 나선: 긴 축 + 쪽 자리에서 정수 바퀴로 d까지, 그 깊이에서 한 바퀴 더
         lin(rad1, 0, ffd);
         const turns = Math.max(1, Math.ceil((up * (cur - d)) / dp1 - 1e-9));
-        for (let k = 1; k <= turns; k++) {
+        for (let k = 1; k <= turns && go(); k++) {
           const w1 = cur - (up * (cur - d) * (k - 0.5)) / turns;
           const w2 = cur - (up * (cur - d) * k) / turns;
           arc(0, 0, -rad1, 0, w1, ffd);
@@ -1718,8 +1732,10 @@ class SiemensRunner extends Runner {
       move(0, P(0, 0), null, 0);
       move(0, null, safe, 0);
       if (units === 1) {
-        for (const d of levels(top, dp + up * fald)) {
-          plunge(d);
+        const to = dp + up * fald;
+        const n = levelCount(top, to);
+        for (let k = 0; k < n && go(); k++) {
+          plunge(levelAt(top, to, n, k));
           solid(fal);
         }
       } else {
@@ -1742,6 +1758,7 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
+    if (stop) this.cycleOverflow = true;
     this.known = 7;
   }
 
