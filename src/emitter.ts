@@ -1079,7 +1079,8 @@ export class NcEmitter {
   }
 
   protected dwell(sec: number): void {
-    if (!(sec > 0)) return;
+    // 이동 한도에 막힌 뒤의 휴지는 쌓지 못한 이동의 것이다
+    if (!(sec > 0) || this.mb.overflow) return;
     this.dwellTime += sec;
     if (this.mb.count > 0) this.mb.time[this.mb.count - 1] = this.mb.time[this.mb.count - 1]! + sec;
     this.toolAcc().time += sec;

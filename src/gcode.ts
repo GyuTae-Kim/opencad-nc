@@ -2847,7 +2847,8 @@ export class Runner extends NcEmitter {
         go(MOVE_DRILL, zD);
         go(MOVE_RAPID, clear);
     }
-    if (this.mb.count > first) {
+    // 이동 한도에 막혀 끝까지 그리지 못한 구멍은 구멍 표에 넣지 않는다(뚫린 깊이가 다르다)
+    if (this.mb.count > first && !this.mb.overflow) {
       if (map) {
         map(top);
         map(bottom);
