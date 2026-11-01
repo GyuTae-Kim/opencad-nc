@@ -430,6 +430,11 @@ function grow<T extends Float64Array | Float32Array | Uint32Array | Int32Array |
 /** 이동·호·구멍을 형식 배열에 쌓는다(두 배씩 늘린다) */
 export class MoveBuilder {
   count = 0;
+  /**
+   * 이동 한도에 막혔는지: 넣지 못한 이동이 있거나 한 블록 안 반복이 남은 이동 수를 넘어 멈췄다. 해석기는 이것을 보고 그 줄에서 읽기를 멈추고 한 번 경고한다.
+   * 이동은 push로만 쌓이므로 한도는 push에서 지킨다 — 한 이동이 여러 이동이 되는 어떤 길(모서리, 회전축 감기, 도그레그, 조각으로 나눈 곡선)도 넘지 못한다
+   */
+  overflow = false;
   private cap: number;
   kind: Uint8Array;
   points: Float64Array;
@@ -460,7 +465,12 @@ export class MoveBuilder {
   holeCycle = new Uint16Array(64);
   holeMove = new Uint32Array(64);
 
-  constructor(start: ArrayLike<number> = [0, 0, 0], cap = 1024) {
+  constructor(
+    start: ArrayLike<number> = [0, 0, 0],
+    cap = 1024,
+    /** 이동 수 한도 */
+    readonly limit = Infinity,
+  ) {
     this.cap = cap;
     this.kind = new Uint8Array(cap);
     this.points = new Float64Array((cap + 1) * 3);
@@ -518,8 +528,15 @@ export class MoveBuilder {
     this.cap = n;
   }
 
-  /** 이동 하나를 더한다(시작점은 마지막 점). 이동 번호를 돌려준다 */
+  /** 더 쌓을 수 없는지(한도에 닿았으면 overflow를 켠다) */
+  full(): boolean {
+    if (this.count >= this.limit) this.overflow = true;
+    return this.overflow;
+  }
+
+  /** 이동 하나를 더한다(시작점은 마지막 점). 이동 번호를 돌려준다. 더 쌓을 수 없으면 넣지 않고 -1 */
   push(kind: number, x: number, y: number, z: number, line: number, tool: number, feed: number, spindle: number, flags: number, wcs: number, arc = -1, modal = 0, h = -1, d = -1): number {
+    if (this.full()) return -1;
     this.ensure();
     const i = this.count;
     this.modal[i] = modal;
@@ -557,6 +574,20 @@ export class MoveBuilder {
     this.arcPlane[i] = plane;
     this.arcSweep[i] = sweep;
     return i;
+  }
+
+  /**
+   * 이동으로 넣지 못한 호 a를 표에서 뺀다. a 뒤의 호는 이 호를 넣는 사이 앞에 끼운 모서리 둥글리기뿐이고 마지막 이동이 그 호다 —
+   * 맨 뒤 호만 지우면 그 호가 지워지므로 한 칸 당기고 이동의 호 번호를 고친다
+   */
+  dropArc(a: number): void {
+    const n = --this.arcCount;
+    if (a >= n) return;
+    this.arcCenter.copyWithin(a * 3, (a + 1) * 3, (n + 1) * 3);
+    this.arcPlane.copyWithin(a, a + 1, n + 1);
+    this.arcSweep.copyWithin(a, a + 1, n + 1);
+    const m = this.count - 1;
+    if (m >= 0 && this.arc[m]! > a) this.arc[m] = this.arc[m]! - 1;
   }
 
   pushHole(top: ArrayLike<number>, bottom: ArrayLike<number>, line: number, tool: number, cycle: number, move: number): void {

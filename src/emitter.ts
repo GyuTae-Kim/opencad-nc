@@ -110,10 +110,8 @@ export class NcEmitter {
   protected displayInch = false;
   protected rapidFeed = 10000;
   protected tol = 0.002;
-  /** 이동 수 한도: 닿으면 그 뒤 이동은 쌓지 않고, 해석기가 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"을 남기고 읽기를 멈춘다 */
-  protected maxMoves = 8_000_000;
-  /** 한 블록 안의 반복이 이동 한도(또는 남은 이동 수만큼의 반복)를 넘어 멈췄는지 — 그 줄에서 읽기를 멈춘다 */
-  protected cycleOverflow = false;
+  /** 이동 수 한도: mb가 이 수를 넘게 쌓지 않고(mb.overflow), 해석기는 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"을 남기고 읽기를 멈춘다 */
+  protected maxMoves: number;
 
   protected tools = new Map<number, NcTool>();
   protected toolInfo = new Map<number, { diameter?: number; name?: string }>();
@@ -311,7 +309,7 @@ export class NcEmitter {
   /** 지금까지 지난 점의 축별 최댓값(안전 높이 추정용) */
   private seenMax = [-Infinity, -Infinity, -Infinity];
 
-  constructor(src: NcSource, start?: readonly number[]) {
+  constructor(src: NcSource, start?: readonly number[], maxMoves?: number) {
     this.src = src;
     if (start) {
       this.pos[0] = start[0]!;
@@ -319,7 +317,8 @@ export class NcEmitter {
       this.pos[2] = start[2]!;
       this.known = 7;
     }
-    this.mb = new MoveBuilder(this.pos, 1024);
+    this.maxMoves = maxMoves ?? 8_000_000;
+    this.mb = new MoveBuilder(this.pos, 1024, this.maxMoves);
   }
 
   protected flags(): number {
@@ -390,29 +389,30 @@ export class NcEmitter {
   /**
    * 한 블록 안에서 파일 값이 횟수를 정하는 반복(구멍·층·고리·조각)의 문지기: 돌 때마다 부르고 false면 멈춘다(38차 Siemens 포켓과 같은 꼴).
    * 블록 사이 검사는 그 블록이 끝나야 닿으므로, 아주 큰 반복 수나 아주 작은 절입·간격 한 줄이 한도를 넘게 만들지 않게 여기서 본다.
-   * 이동 한도에 닿았거나, 돈 횟수가 남은 이동 수를 넘으면(길이 0 이동만 만드는 반복) cycleOverflow를 켠다
+   * 이동 한도에 닿았거나, 돈 횟수가 남은 이동 수를 넘으면(길이 0 이동만 만드는 반복) mb.overflow를 켠다
    */
   protected blockLoop(): () => boolean {
     const budget = Math.max(0, this.maxMoves - this.mb.count);
     let steps = 0;
     return () => {
-      if (!this.cycleOverflow && (this.mb.count >= this.maxMoves || ++steps > budget)) this.cycleOverflow = true;
-      return !this.cycleOverflow;
+      if (!this.mb.full() && ++steps > budget) this.mb.overflow = true;
+      return !this.mb.overflow;
     };
   }
 
-  /** 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다. 이동 한도에 닿은 뒤에는 넣지 않는다(그 줄에서 읽기를 멈춘다) */
+  /**
+   * 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다.
+   * 한도는 mb.push가 지키고, 여기서는 한도에 막힌 이동이 상태를 바꾸지 않게 앞에서 돌려보낸다: 자리가 없으면 예약한 모서리도 건드리지 않고(앞 이동을 줄이지 않는다),
+   * 모서리의 호·모따기가 마지막 자리를 쓰면 쌓인 경로는 전체 경로의 앞부분 그대로 그 접점에서 끝난다
+   */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
-    if (this.cycleOverflow) return false;
-    if (this.mb.count >= this.maxMoves) {
-      this.cycleOverflow = true;
-      return false;
-    }
+    if (this.mb.full()) return false;
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     if (this.corner) {
       // 뒤 요소가 원호면 다듬은 만큼 줄어든 길이가 돌아온다
       const l = this.applyCorner(kind, x, y, z, extraFlags, arcIdx);
       if (l >= 0) arcLen = l;
+      if (this.mb.full()) return false;
     }
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     // 도그레그 급속(여러 축이 함께 움직이는 급속, 위치를 알 때만)
@@ -441,6 +441,7 @@ export class NcEmitter {
     const wcs = extraFlags & FLAG_MACHINE ? 255 : this.wcs;
     const sp = this.spindleDir === 4 ? -this.speed : this.spindleDir === 3 ? this.speed : 0;
     const i = this.mb.push(kind, x, y, z, line, this.tool, this.feed, sp, this.flags() | extraFlags, wcs, arcIdx, this.modalState(), this.tlc ? this.hNum : -1, this.comp ? this.dNum : -1);
+    if (i < 0) return false;
     const endHigh = this.machHigh;
     let est = false;
     if (endHigh !== 0 || this.machLast !== 0) {
@@ -819,7 +820,14 @@ export class NcEmitter {
     const e = [x, y, z];
     const idx = this.mb.pushArc(c[0]!, c[1]!, c[2]!, plane, sweep);
     const len = arcLength(s, e, c, plane, sweep);
-    if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.mb.arcCount--;
+    if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.dropArc(idx);
+  }
+
+  /** 이동으로 넣지 못한 호를 표에서 뺀다(앞에 끼운 모서리 둥글리기의 호는 남긴다) */
+  private dropArc(idx: number): void {
+    this.mb.dropArc(idx);
+    const seg = this.lastSeg;
+    if (seg && seg.arc > idx) seg.arc--;
   }
 
   /** 출력 변환 중의 호: 평면을 지키면 중심·방향을 옮긴 호로, 아니면 직선 조각으로 */
@@ -842,7 +850,7 @@ export class NcEmitter {
     const sw = sweep * info.sign;
     const idx = this.mb.pushArc(cd[0]!, cd[1]!, cd[2]!, plane, sw);
     const len = arcLength(sd, ed, cd, plane, sw);
-    if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.mb.arcCount--;
+    if (!this.emit(MOVE_ARC, x, y, z, line, extraFlags, idx, len)) this.dropArc(idx);
   }
 
   /** 구멍(드릴 사이클) — 출력 변환 중이면 옮겨서 */
@@ -972,6 +980,7 @@ export class NcEmitter {
     let ly = this.mb.lastY();
     let lz = this.mb.lastZ();
     let len = 0;
+    let done = 0;
     const ang = [0, 0, 0];
     for (let k = 1; k <= n; k++) {
       const f = k / n;
@@ -991,16 +1000,20 @@ export class NcEmitter {
       ang[1] = a0[1]! + dA[1]! * f;
       ang[2] = a0[2]! + dA[2]! * f;
       this.wrapPoint(qx, qy, qz, ang, w);
+      // 출발점만 추정: 이송은 첫 조각에, 추정 급속은 끝점이 실제인 마지막 조각에 FLAG_START_EST
+      const startOnly = startEst && this.machHigh === 0 && (estFlag ? k === n : k === 1);
+      const i = this.mb.push(pieceKind, w[0]!, w[1]!, w[2]!, line, this.tool, this.feed, sp, startOnly ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
+      if (i < 0) break;
       len += Math.hypot(w[0]! - lx, w[1]! - ly, w[2]! - lz);
       lx = w[0]!;
       ly = w[1]!;
       lz = w[2]!;
-      // 출발점만 추정: 이송은 첫 조각에, 추정 급속은 끝점이 실제인 마지막 조각에 FLAG_START_EST
-      const startOnly = startEst && this.machHigh === 0 && (estFlag ? k === n : k === 1);
-      const i = this.mb.push(pieceKind, lx, ly, lz, line, this.tool, this.feed, sp, startOnly ? flags | FLAG_START_EST : flags, wcs, -1, modal, hN, dN);
       this.mb.time[i] = t / n;
       acc.moveCount++;
+      done = k;
     }
+    // 이동 한도에 막혔으면 쌓은 조각만큼만 센다(그 뒤로는 이 자리를 읽는 블록이 없다)
+    if (done < n) t = (t * done) / n;
     if (kind === MOVE_RAPID) {
       this.rapidLen += len;
       this.rapidTime += t;

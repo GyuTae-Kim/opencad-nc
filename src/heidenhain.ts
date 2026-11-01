@@ -124,10 +124,9 @@ class HRunner extends NcEmitter {
   private isoSeenStart = false;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
-    super(src, opts.initialPosition);
+    super(src, opts.initialPosition, opts.maxMoves);
     this.o = opts;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
-    this.maxMoves = opts.maxMoves ?? 8_000_000;
     this.multi = jobFileLines(src) !== null;
     // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)
     for (let i = 0; i < Math.min(src.lineCount, 50); i++) {
@@ -215,7 +214,7 @@ class HRunner extends NcEmitter {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, b.line);
       }
-      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
+      if (this.mb.full()) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, b.line);
         break;
       }
@@ -973,7 +972,7 @@ class HRunner extends NcEmitter {
     try {
       for (const p of pts) {
         // 한 블록에서 이동 한도를 넘지 않게(넘으면 run이 경고하고 멈춘다)
-        if (this.mb.count >= this.maxMoves || this.cycleOverflow) break;
+        if (this.mb.full()) break;
         lift();
         this.emit(fmax ? MOVE_RAPID : MOVE_FEED, p.x + sh[0]!, p.y + sh[1]!, this.pos[2]!, line, FLAG_CYCLE);
         this.known = 7;
@@ -1101,7 +1100,7 @@ class HRunner extends NcEmitter {
       const rot = (Q('Q224') * Math.PI) / 180;
       const x0 = Q('Q225');
       const y0 = Q('Q226');
-      for (let j = 0; j < rows && !this.cycleOverflow; j++)
+      for (let j = 0; j < rows && !this.mb.overflow; j++)
         for (let i = 0; i < cols && more(); i++) {
           const dx = i * Q('Q237');
           const dy = j * Q('Q238');

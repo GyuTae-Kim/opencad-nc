@@ -1016,7 +1016,7 @@ export class Runner extends NcEmitter {
   protected hitLimit = false;
 
   constructor(src: NcSource, opts: GcodeOptions, dialect: NcDialect, head: () => string) {
-    super(src, opts.initialPosition);
+    super(src, opts.initialPosition, opts.maxMoves);
     this.o = opts;
     this.dialect = dialect;
     // Okuma OSP: CALL O…·VC 변수·NLAP·RTS 등은 읽지 않으므로 띠와 경고로 알린다(G15 H는 작업 좌표계로 읽음)
@@ -1074,7 +1074,6 @@ export class Runner extends NcEmitter {
     this.checkSpindle = dialect !== 'grbl';
     this.peck = opts.peckClearance ?? (this.displayInch ? 0.02 : 0.5);
     this.arcAbs = !!opts.arcCenterAbsolute;
-    this.maxMoves = opts.maxMoves ?? 8_000_000;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 5_000_000);
     if (opts.workOffsets)
       for (const [k, v] of Object.entries(opts.workOffsets)) {
@@ -1153,7 +1152,7 @@ export class Runner extends NcEmitter {
       }
       this.exec(blk, line);
       if (line === this.rangeEnd) this.endRange();
-      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
+      if (this.mb.full()) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
         this.hitLimit = true;
         break;
@@ -3351,7 +3350,7 @@ export class Runner extends NcEmitter {
       const dir = -side;
       const plan = g7xRough(poly.pts, S, s, dir, I, R, part, undefined, Math.max(0, this.maxMoves - this.mb.count));
       for (const mv of plan.moves) this.lgo(mv.rapid ? MOVE_RAPID : MOVE_FEED, mv.v, mv.u, line);
-      if (plan.capped) this.cycleOverflow = true;
+      if (plan.capped) this.mb.overflow = true;
       if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
       let path = off;
       if (part) {
@@ -4098,6 +4097,11 @@ export class Runner extends NcEmitter {
 
   finish(opts: GcodeOptions): NcProgram {
     if (this.nurbs) this.nurbsFallback('G5.3 없이 프로그램이 끝남', this.nurbs.lines[this.nurbs.lines.length - 1]!);
+    // 블록 사이 검사가 닿지 않은 곳(위 끝맺음, 지우는 블록에서 끝나는 G70 범위)에서 한도에 막혔어도 경고는 남긴다
+    if (this.mb.overflow && !this.hitLimit) {
+      this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, this.mb.count ? this.mb.line[this.mb.count - 1]! : -1);
+      this.hitLimit = true;
+    }
     if (this.stack.length > 1 && !this.hitLimit && !this.ended) this.w.add('부프로그램 안에서 프로그램이 끝남(M99 없음)');
     // 소수점 없는 큰 좌표가 절반 넘으면 최소 입력 단위(0.001)로 쓴 프로그램일 수 있다고 알린다
     if (!opts.integerUnits && (this.dialect === 'fanuc' || this.dialect === 'iso' || this.dialect === 'haas') && this.intBig >= 3 && this.intBig * 2 >= this.axisWords) {

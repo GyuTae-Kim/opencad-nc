@@ -310,7 +310,7 @@ class SiemensRunner extends Runner {
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
       }
       this.afterLine(line);
-      if (this.mb.count >= this.maxMoves || this.cycleOverflow) {
+      if (this.mb.full()) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, line);
         this.hitLimit = true;
         break;
@@ -1752,7 +1752,7 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
-    if (stop) this.cycleOverflow = true;
+    if (stop) this.mb.overflow = true;
     this.known = 7;
   }
 

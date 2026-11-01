@@ -8,7 +8,7 @@ import { languages, translate } from '../site/i18n.mjs';
 import { nurbsSegments, parseGcode } from '../src/gcode';
 import { parseHeidenhain } from '../src/heidenhain';
 import { g7xRough } from '../src/lathe-g7x';
-import { moveEnd, type NcProgram } from '../src/model';
+import { MoveBuilder, moveEnd, type NcProgram } from '../src/model';
 import { parseMpr } from '../src/mpr';
 import { parseSiemens } from '../src/siemens';
 import { makeSource } from '../src/text';
@@ -254,6 +254,193 @@ describe('한 블록 안 반복의 이동 한도', () => {
       ['Heidenhain CALL LBL REP', parseHeidenhain('0 BEGIN PGM P MM\n1 LBL 1\n2 L X+1 FMAX\n3 L X+2 FMAX\n4 CALL LBL 1 REP 2000000000/2000000000\n99 END PGM P MM\n', { maxBlocks: 20000 })],
     ];
     for (const [name, p] of blocks) expect(p.warnings.some((w) => w.includes('실행 블록이')), name).toBe(true);
+  });
+});
+
+/**
+ * 이동을 쌓는 자리의 한도: 한 이동이 여러 이동이 되는 길(모서리 다듬기, 회전축 감기, 도그레그, 곡선을 나눈 조각)도 한도를 넘지 않는다.
+ * 프로그램마다 한도 1부터 전체 이동 수 + 1까지 모두 돌려, 이동 수·경고·멈춘 줄·값·호 표·시간을 본다
+ */
+describe('이동을 쌓는 자리의 한도', () => {
+  const FREE = 8_000_000;
+  const sie = (mid: string): Run => siemens(`G17 G90 G71\nG0 X0 Y0 Z0\n${mid}\nG0 X99\nM30`);
+  const rot = (text: string): Run => (o) => parseGcode(text, { dialect: 'fanuc', initialPosition: [0, 0, 50], rotary: true, ...o });
+  const dog = (text: string): Run => (o) => parseGcode(text, { dialect: 'fanuc', initialPosition: [0, 0, 50], machine: { dogleg: true }, ...o });
+
+  /** 뒤 이동이 없어 다듬지 못한 모서리가 끝에 남을 수 있는 프로그램은 true(그 마지막 이동만 끝점이 전체 경로와 다르다) */
+  const PROGRAMS: [string, Run, boolean][] = [
+    ['Siemens RND 직선-직선', sie('G1 X10 Y0 RND=2 F100\nG1 X10 Y10\nG1 X20 Y10'), true],
+    ['Siemens CHF 직선-직선', sie('G1 X10 Y0 CHF=2 F100\nG1 X10 Y10\nG1 X20 Y10'), true],
+    ['Siemens CHR 직선-직선', sie('G1 X10 Y0 CHR=2 F100\nG1 X10 Y10\nG1 X20 Y10'), true],
+    ['Siemens RND 직선-원호', sie('G1 X10 Y0 RND=2 F100\nG3 X20 Y10 I10 J0\nG1 X30 Y10'), true],
+    ['Siemens CHF 직선-원호', sie('G1 X10 Y0 CHF=2 F100\nG3 X20 Y10 I10 J0\nG1 X30 Y10'), true],
+    ['Siemens RND 원호-원호', sie('G2 X10 Y10 I10 J0 RND=1 F100\nG2 X20 Y20 I10 J0\nG1 X30 Y20'), true],
+    ['Siemens RNDM 모달', sie('RNDM=2\nG1 X10 Y0 F100\nG1 X10 Y10\nG1 X20 Y10\nRNDM=0'), true],
+    ['Heidenhain RND', heidenhain('1 L X+0 Y+0 Z+0 FMAX\n2 L X+10 Y+0 F100\n3 RND R2\n4 L X+10 Y+10\n5 L X+20 Y+10\n6 L X+99 FMAX'), true],
+    ['Heidenhain CHF', heidenhain('1 L X+0 Y+0 Z+0 FMAX\n2 L X+10 Y+0 F100\n3 CHF 2\n4 L X+10 Y+10\n5 L X+20 Y+10\n6 L X+99 FMAX'), true],
+    ['Heidenhain RND 좌표 회전', heidenhain('1 L X+0 Y+0 Z+0 FMAX\n2 CYCL DEF 10.0 DREHUNG\n3 CYCL DEF 10.1 ROT+30\n4 L X+10 Y+0 F100\n5 RND R2\n6 L X+10 Y+10\n7 L X+20 Y+10\n8 L X+99 FMAX'), true],
+    ['Heidenhain RND 직선-원호 좌표 회전', heidenhain('1 L X+0 Y+0 Z+0 FMAX\n2 CYCL DEF 10.0 DREHUNG\n3 CYCL DEF 10.1 ROT+30\n4 L X+10 Y+0 F100\n5 RND R2\n6 CC X+20 Y+0\n7 C X+20 Y+10 DR-\n8 L X+99 FMAX'), true],
+    ['회전축 직선', rot('G21\nG0 X0 Y0 Z10\nG1 X10 A90 F100\nG1 X20\nG0 X99\nM30'), false],
+    ['회전축 호', rot('G21\nG0 X0 Y0 Z10\nG2 X20 Y0 I10 J0 A90 F100\nG1 X30\nG0 X99\nM30'), false],
+    ['회전축 급속', rot('G21\nG0 X0 Y0 Z10\nG0 X10 A90\nG1 X20 F100\nG0 X99\nM30'), false],
+    ['회전축 Siemens 모서리는 그대로', (o) => parseSiemens(makeSource('G17 G90 G71\nG0 X0 Y0 Z10 A0\nG1 X10 RND=2 F100\nG1 Y10 A90\nG0 X99\nM30'), { initialPosition: [0, 0, 50], rotary: true, ...o }), false],
+    ['도그레그 급속', dog('G21\nG0 X0 Y0 Z10\nG0 X10 Y20 Z30\nG1 X20 F100\nG0 X99\nM30'), false],
+    ['좌표 회전 평면과 다른 평면의 원호(조각)', siemens('G17 G90 G71\nG0 X0 Y0 Z10\nROT X30\nG2 X0 Y0 I10 F100\nROT\nG0 X99\nM30'), false],
+    ['Heidenhain 출력 변환 평면과 다른 원호(조각)', heidenhain('1 TOOL CALL 1 Z S1000\n2 L X+10 Y+0 Z+0 FMAX\n3 CYCL DEF 10.0 DREHUNG\n4 CYCL DEF 10.1 ROT+30\n5 TOOL CALL 2 Y S1000\n6 CC Z+0 X+0\n7 C Z+0 X-10 DR+ F100\n8 L X+99 FMAX'), false],
+    ['LinuxCNC G5 스플라인', linuxcnc('G21 G17 G90\nG0 X0 Y0 Z1\nG5 I30 J30 P-30 Q30 X60 Y0 F100\nG0 X99\nM2'), false],
+    ['LinuxCNC G5.2 NURBS', linuxcnc('G21 G17 G90\nG0 X0 Y0 Z1\nG1 F100\nG5.2 X10 Y100 L3\nX20 Y-100\nX30 Y100\nX40 Y-100\nX50 Y0\nG5.3\nG0 X99\nM2'), false],
+    ['G83 쪼기', fanuc('G21 G90 G17\nG0 X0 Y0 Z5\nG83 X0 Y0 Z-10 R1 Q2 F100\nG80\nG0 X99\nM2'), false],
+    ['Heidenhain 251', cyc(251, `${P251} Q370=0.5`), false],
+    ['Siemens POCKET3', siemens('G17 G90 G71\nT1 D1\nG0 X0 Y0 Z50\nPOCKET3(10, 0, 2, -4, 40, 30, 5, 0, 0, 0, 2, 0, 0, 500, 100, 0, 11, 0)\nG0 X99\nM30'), false],
+    ['선반 G71', lathe('G21 G18\nG0 X40 Z5\nG71 U2 R0.5\nG71 P10 Q20 U0 W0 F0.2\nN10 G1 X10 Z0\nG1 Z-10\nN20 G1 X20\nG0 X99\nM30'), false],
+    ['LinuxCNC G71 원호 윤곽', llathe(`G18 G21 G8\nG0 X15 Z2\n${SUB100}\nG71 Q100 D0.5 I2 R0.5 F0.2\nG0 X99\nM2`), false],
+  ];
+
+  const ends = (p: NcProgram): number[][] => {
+    const out: number[][] = [];
+    for (let i = 0; i < p.moves.count; i++) out.push(moveEnd(p.moves, i));
+    return out;
+  };
+  const OVER = (n: number): string => `이동이 ${n}개를 넘어 나머지는 읽지 않음`;
+
+  it.each(PROGRAMS)('한도마다: %s', (name, run, cornerEnd) => {
+    const full = run({ maxMoves: FREE });
+    const n = full.moves.count;
+    expect(n, name).toBeGreaterThan(2);
+    const fe = ends(full);
+    for (let limit = 1; limit <= n + 1; limit++) {
+      const label = `${name} 한도 ${limit}`;
+      const p = run({ maxMoves: limit });
+      const m = p.moves;
+      // 이동 수는 어떤 경우에도 한도를 넘지 않고, 전체 이동이 한도보다 많으면 한도까지 꼭 찬다
+      expect(m.count, label).toBe(Math.min(limit, n));
+      // 경고는 한 번(한도가 전체보다 크면 없음)
+      expect(p.warnings.filter((w) => w.includes(OVER(limit))).length, label).toBe(limit <= n ? 1 : 0);
+      const e = ends(p);
+      for (let i = 0; i < m.count; i++) {
+        // 뒤 블록은 실행하지 않았다: 줄·종류가 전체 경로의 앞부분 그대로
+        expect(m.line[i], `${label} 이동 ${i} 줄`).toBe(full.moves.line[i]);
+        expect(m.kind[i], `${label} 이동 ${i} 종류`).toBe(full.moves.kind[i]);
+        const last = i === m.count - 1;
+        if (last && cornerEnd) continue;
+        for (let a = 0; a < 3; a++) expect(e[i]![a]!, `${label} 이동 ${i} 끝점`).toBeCloseTo(fe[i]![a]!, 6);
+        // 호 표: 번호가 표 안이고 값이 그대로
+        if (m.arc[i]! >= 0) {
+          expect(m.arc[i]!, `${label} 이동 ${i} 호 번호`).toBeLessThan(p.arcs.count);
+          expect(p.arcs.sweep[m.arc[i]!]!, `${label} 이동 ${i} 중심각`).toBeCloseTo(full.arcs.sweep[full.moves.arc[i]!]!, 9);
+          for (let a = 0; a < 3; a++) expect(p.arcs.center[m.arc[i]! * 3 + a]!, `${label} 이동 ${i} 중심`).toBeCloseTo(full.arcs.center[full.moves.arc[i]! * 3 + a]!, 9);
+        }
+      }
+      // 쓰지 않는 호가 표에 남지 않는다
+      const used = new Set<number>();
+      for (let i = 0; i < m.count; i++) if (m.arc[i]! >= 0) used.add(m.arc[i]!);
+      expect(p.arcs.count, `${label} 호 표`).toBe(used.size);
+      // 시간·공구 이동 수는 쌓인 이동만큼(조각 일부만 쌓여도)
+      let t = 0;
+      for (let i = 0; i < m.count; i++) t += m.time[i]!;
+      expect(Math.abs(t - p.stats.time), `${label} 시간`).toBeLessThan(1e-5 * (1 + p.stats.time));
+      expect(p.stats.moveCount, `${label} 이동 수`).toBe(m.count);
+      expect(p.tools.reduce((s, x) => s + x.moveCount, 0), `${label} 공구 이동 수`).toBe(m.count);
+      // 범위는 쌓인 이동을 담는다
+      for (const q of e) for (let a = 0; a < 3; a++) {
+        expect(q[a]!, `${label} 범위`).toBeGreaterThanOrEqual(p.bounds!.min[a]! - 1e-6);
+        expect(q[a]!, `${label} 범위`).toBeLessThanOrEqual(p.bounds!.max[a]! + 1e-6);
+      }
+    }
+  });
+
+  it('나눠 그리는 원호 프로그램은 조각 길을 지난다(시험이 그 길을 보는지)', () => {
+    const tilted = PROGRAMS.filter(([name]) => name.includes('(조각)'));
+    expect(tilted.length).toBe(2);
+    for (const [name, run] of tilted) {
+      const p = run({ maxMoves: FREE });
+      expect(p.moves.count, name).toBeGreaterThan(36);
+      expect(p.warnings.some((w) => w.includes('다른 평면의 원호는 직선 조각으로 그림')), name).toBe(true);
+    }
+  });
+
+  it('남은 자리 하나에서 모서리: 앞 이동을 접점까지 줄이고 둥근 호로 끝난다(다음 이동은 넣지 않는다)', () => {
+    const run = sie('G1 X10 Y0 RND=2 F100\nG1 X10 Y10\nG1 X20 Y10');
+    const p = run({ maxMoves: 3 });
+    expect(p.moves.count).toBe(3);
+    const near = (q: number[], x: number, y: number): void => {
+      expect(q[0]).toBeCloseTo(x, 9);
+      expect(q[1]).toBeCloseTo(y, 9);
+    };
+    near(ends(p)[1]!, 8, 0);
+    near(ends(p)[2]!, 10, 2);
+    expect(p.warnings.filter((w) => w.includes(OVER(3)))).toEqual([`4번 줄: ${OVER(3)}`]);
+  });
+
+  it('남은 자리 하나에서 뒤 요소가 원호면 그 호는 표에서 빠지고 모서리 호는 제 값을 지킨다', () => {
+    const run = sie('G1 X10 Y0 RND=2 F100\nG3 X20 Y10 I10 J0\nG1 X30 Y10');
+    const full = run({ maxMoves: FREE });
+    const p = run({ maxMoves: 3 });
+    expect(p.moves.count).toBe(3);
+    expect(p.arcs.count).toBe(1);
+    expect(p.moves.arc[2]).toBe(0);
+    expect(p.arcs.sweep[0]).toBeCloseTo(full.arcs.sweep[full.moves.arc[2]!]!, 12);
+    // 원호-원호: 앞 원호는 접점까지 줄고 둥근 호가 표의 다음 자리로 당겨진다
+    const both = sie('G2 X10 Y10 I10 J0 RND=1 F100\nG2 X20 Y20 I10 J0\nG1 X30 Y20');
+    const whole = both({ maxMoves: FREE });
+    expect(whole.arcs.count).toBe(3);
+    const q = both({ maxMoves: 3 });
+    expect(q.arcs.count).toBe(2);
+    expect([q.moves.arc[1], q.moves.arc[2]]).toEqual([0, 1]);
+    expect(q.arcs.sweep[1]).toBeCloseTo(whole.arcs.sweep[whole.moves.arc[2]!]!, 12);
+  });
+
+  it('모서리를 보류한 채 한도에 닿으면 프로그램이 끝날 때처럼 모서리 그대로 끝난다', () => {
+    const p = sie('G1 X10 Y0 RND=2 F100\nG1 X10 Y10')({ maxMoves: 2 });
+    expect(p.moves.count).toBe(2);
+    expect(ends(p)[1]!.slice(0, 2)).toEqual([10, 0]);
+    expect(p.warnings.filter((w) => w.includes(OVER(2))).length).toBe(1);
+  });
+
+  it('회전축 이동이 여러 조각이면 남은 자리만큼 쌓고 길이·시간도 그만큼만 센다', () => {
+    const run = rot('G21\nG0 X0 Y0 Z10\nG1 X10 A90 F100\nG1 X20\nG0 X99\nM30');
+    const full = run({ maxMoves: FREE });
+    const p = run({ maxMoves: 11 });
+    expect(p.moves.count).toBe(11);
+    // 급속 하나 + 45조각 가운데 10조각
+    expect(full.moves.count).toBe(48);
+    let t = 0;
+    for (let i = 1; i < 11; i++) t += full.moves.time[i]!;
+    expect(p.stats.feedTime).toBeCloseTo(t, 3);
+    expect(p.stats.feedLength).toBeLessThan(full.stats.feedLength);
+    expect(p.warnings.filter((w) => w.includes(OVER(11)))).toEqual([`3번 줄: ${OVER(11)}`]);
+  });
+
+  it('블록 사이 검사가 닿지 않는 끝맺음(G5.3 없는 NURBS)도 한도에 막히면 경고한다', () => {
+    const run = linuxcnc('G21 G17 G90\nG0 X0 Y0 Z1\nG1 F100\nG5.2 X10 Y10 L3\nX20 Y0\nX30 Y10\nX40 Y0\nX50 Y10');
+    const full = run({ maxMoves: FREE });
+    expect(full.moves.count).toBeGreaterThan(4);
+    const p = run({ maxMoves: 3 });
+    expect(p.moves.count).toBe(3);
+    expect(p.warnings.filter((w) => w.includes(OVER(3))).length).toBe(1);
+  });
+
+  it('MoveBuilder: 한도에서 push를 받지 않고 overflow를 켠다, dropArc는 뒤 호를 당기고 그 이동의 번호를 고친다', () => {
+    const b = new MoveBuilder([0, 0, 0], 2, 3);
+    expect(b.push(0, 1, 0, 0, 0, 0, 0, 0, 0, 0)).toBe(0);
+    expect(b.full()).toBe(false);
+    b.pushArc(0, 0, 0, 0, 1);
+    const a = b.pushArc(5, 0, 0, 0, 2);
+    const c = b.pushArc(7, 0, 0, 0, 3);
+    expect(b.push(1, 2, 0, 0, 0, 0, 0, 0, 0, 0, c)).toBe(1);
+    b.dropArc(a);
+    expect(b.arcCount).toBe(2);
+    expect(b.arc[1]).toBe(a);
+    expect(b.arcSweep[a]).toBe(3);
+    expect(b.arcCenter[a * 3]).toBe(7);
+    b.dropArc(b.arcCount - 1);
+    expect(b.arcCount).toBe(1);
+    expect(b.push(0, 3, 0, 0, 0, 0, 0, 0, 0, 0)).toBe(2);
+    expect(b.overflow).toBe(false);
+    expect(b.push(0, 4, 0, 0, 0, 0, 0, 0, 0, 0)).toBe(-1);
+    expect(b.count).toBe(3);
+    expect(b.overflow).toBe(true);
+    expect(b.lastX()).toBe(3);
   });
 });
 
