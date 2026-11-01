@@ -402,8 +402,9 @@ export class NcEmitter {
 
   /**
    * 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다.
-   * 한도는 mb.push가 지키고, 여기서는 한도에 막힌 이동이 상태를 바꾸지 않게 앞에서 돌려보낸다: 자리가 없으면 예약한 모서리도 건드리지 않고(앞 이동을 줄이지 않는다),
-   * 모서리의 호·모따기가 마지막 자리를 쓰면 쌓인 경로는 전체 경로의 앞부분 그대로 그 접점에서 끝난다
+   * 한도는 mb.push가 지킨다(넣지 못하면 false). 머리의 검사는 막힌 뒤에 아무것도 바꾸지 않게 한다 — 자리가 없으면 예약한 모서리도 건드리지 않고(앞 이동을 줄이지 않는다)
+   * 쌓지 않은 이동으로 경고를 남기지 않는다. 모서리의 호·모따기가 마지막 자리를 쓰면 이 이동은 push에서 막혀, 쌓인 경로는 전체 경로의 앞부분 그대로 그 접점에서 끝난다.
+   * 막힌 뒤에는 run이 멈추므로 지금 자리를 읽는 블록이 없고, 시간·길이·범위는 쌓인 이동으로만 센다
    */
   protected emit(kind: number, x: number, y: number, z: number, line: number, extraFlags = 0, arcIdx = -1, arcLen = -1): boolean {
     if (this.mb.full()) return false;
@@ -412,7 +413,6 @@ export class NcEmitter {
       // 뒤 요소가 원호면 다듬은 만큼 줄어든 길이가 돌아온다
       const l = this.applyCorner(kind, x, y, z, extraFlags, arcIdx);
       if (l >= 0) arcLen = l;
-      if (this.mb.full()) return false;
     }
     if (this.rotAxis !== null && !this.rotOff && this.rotActive()) return this.emitRot(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
     // 도그레그 급속(여러 축이 함께 움직이는 급속, 위치를 알 때만)
