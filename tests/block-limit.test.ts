@@ -555,6 +555,40 @@ describe('선반 G71·G71.1·G71.2 한도', () => {
     expect(moveEnd(p.moves, p.moves.count - 1)[0]).toBe(99);
   });
 
+  describe('포켓이 8,750층 겹친 톱니(X 9 아래 층마다 골 셋)', () => {
+    const text = program('G71', '0.0004', '0.1', 6);
+
+    it('스택을 넘기지 않고 끝까지 그린다', () => {
+      const p = run(text);
+      expect(over(p)).toEqual([]);
+      expect(p.moves.count).toBeGreaterThan(140_000);
+      expect(moveEnd(p.moves, p.moves.count - 1)[0]).toBe(99);
+    });
+
+    it.each(['G71.2', 'G71'])('%s R0도 끝까지 그린다', (code) => {
+      const p = run(program(code, '0.0004', '0', 6));
+      expect(over(p)).toEqual([]);
+      expect(moveEnd(p.moves, p.moves.count - 1)[0]).toBe(99);
+    });
+
+    it('깊은 곳에서 이동 한도에 닿으면 전체 경로의 앞부분에서 경고 하나로 멈춘다', () => {
+      const full = run(text);
+      const L = full.moves.count - 20_000;
+      const p = run(text, L);
+      expect(p.moves.count).toBe(L);
+      expect(over(p).length).toBe(1);
+      expect(Array.from(p.moves.points.subarray(0, (L + 1) * 3))).toEqual(Array.from(full.moves.points.subarray(0, (L + 1) * 3)));
+    });
+
+    it('구간 상한에 닿으면 뒤 층을 보지 않고 capped로 끝난다', () => {
+      const xs = [5, 9, 5, 9, 5, 9, 5, 15];
+      const plan = g7xRough(xs.flatMap((x, i) => [-i * 0.1, x]), [2, 9.5], 1, -1, 0.0004, 0.1, 0, undefined, undefined, 36_000);
+      expect(plan.capped).toBe(true);
+      expect(plan.pockets).toBe(true);
+      expect(plan.moves.length).toBeGreaterThan(140_000);
+    });
+  });
+
   it('G71 톱니 I0.01, 한도 2000: 포켓까지 전체 경로의 앞부분이 한도까지', () => {
     const text = program('G71', '0.01');
     const full = run(text);
