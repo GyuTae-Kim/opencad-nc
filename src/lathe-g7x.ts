@@ -460,21 +460,15 @@ export function g7xRough(
     }
   });
   if (part !== 1 && roots.length && !stopped) {
-    // 깊이 우선 차례를 먼저 펴고 이동은 그 차례로 낸다(이동을 넘기는 쪽의 호출이 재귀 위에 쌓이지 않게)
-    const order: Run[] = [];
-    const visit = (r: Run): void => {
-      order.push(r);
-      for (const k of r.kids) visit(k);
-    };
-    roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level);
-    for (const r of roots) visit(r);
+    // 깊이 우선으로 돌며 이동을 낸다. 포켓은 층 수만큼 겹치므로(1만 층 가까이면 재귀는 스택을 넘긴다) 갈 구간을 배열에 쌓고, 뒤에서 꺼내니 뒤집어 넣어 앞 구간부터 간다
+    const stack = roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level).reverse();
     let cur = last;
     const goC = (rapid: boolean, p: [number, number]): void => {
       go(rapid, p);
       cur = { u: p[0], v: p[1] };
     };
-    for (const r of order) {
-      if (stopped) break;
+    while (stack.length && !stopped) {
+      const r = stack.pop()!;
       const lev = levels[r.level]!;
       const cl = r.level === 0 ? S[s]! : levels[r.level - 1]! + up * R;
       const cc = s === 1 ? cur.u : cur.v;
@@ -483,6 +477,7 @@ export function g7xRough(
       goC(false, at(lev, r.a));
       goC(false, at(lev, r.b));
       goC(false, at(lev + up * R, r.b - tdir * R));
+      for (let i = r.kids.length - 1; i >= 0; i--) stack.push(r.kids[i]!);
     }
     goC(true, at(S[s]!, s === 1 ? cur.u : cur.v));
     goC(true, at(S[s]!, S[c]!));
