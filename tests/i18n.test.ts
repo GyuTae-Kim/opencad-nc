@@ -50,6 +50,8 @@ describe('language URLs and UI presentation', () => {
       expect(translate('woodWOP MPR 읽는 중', code), code).toContain('woodWOP MPR');
     }
     expect(translate('G-code 읽는 중', 'de')).not.toMatch(/^Reading/);
+    // 도구 모음(OpenCAD 도구를 모은 쪽)을 도구 막대(toolbar)로 옮긴 말 — 제목 줄 단추 설명(다른 OpenCAD 앱과 같은 말)
+    expect(['en', 'ja', 'zh-CN', 'de'].map((code) => translate('OpenCAD 도구 모음', code))).toEqual(['OpenCAD Tool List', 'OpenCADツールのリスト', 'OpenCAD 工具列表', 'OpenCAD-Toolliste']);
   });
   it('translates every piece of a " · "-joined sentence, even when a short pattern would swallow the rest', () => {
     const hangul = /[가-힣]/;
