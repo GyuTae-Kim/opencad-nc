@@ -20,10 +20,11 @@
  * 선반 윤곽 거친 깎기 CYCLE95는 윤곽 부프로그램(이름·표지 구간)을 읽어 구간마다 층·언더컷·다듬질(44차 — cycle95 참고),
  * 평면 밀링 CYCLE71은 층마다 한 방향·오가는 길(44차 — cycle71 참고). DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
  * 선반 모드의 지름·반지름 지정(45차 — Fundamentals 설명서 8.3.6~8.3.7절): DIAMON·DIAM90·DIAMOF·DIAMCYCOF와 X·I의 DAC·DIC·RAC·RIC(setDiam·xs·cMul 참고).
+ * 나사 깎기 CYCLE97은 깊이를 나눈 패스마다 시작 자리 → 깊이 → 나사 이송 → 물러남(45차 — cycle97 참고).
  * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE72·CYCLE93 등), 시스템 변수($…), 배열 변수, 축별 지름 지정(DIAMONA 등).
  */
 import { ExprError } from './expr';
-import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
+import { Block, Runner, THREAD_PASS_MAX, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
 import { G7X_MAX_LEVELS, cycle95Rough, g7xCorners, g7xLine, g7xOffset, g7xPolyline, g7xSide, polyMonotonic, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { FLAG_CYCLE, JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
 import { sourceLine, type NcSource } from './text';
@@ -57,6 +58,11 @@ const DIAM_WORDS: ReadonlySet<string> = new Set(['DIAMON', 'DIAM90', 'DIAMOF', '
 /** 축 값 함수: 축별 절대·증분과 지름·반지름(DAC·DIC·RAC·RIC는 선반 모드만 — 밀링은 읽지 않는 함수 그대로) */
 const AXFN = /^(AC|IC|DC|ACP|ACN|CAC|CIC|CDC|CACP|CACN)\s*\(/;
 const AXFN_LATHE = /^(AC|IC|DC|ACP|ACN|CAC|CIC|CDC|CACP|CACN|DAC|DIC|RAC|RIC)\s*\(/;
+/** CYCLE97 MPIT(미터 나사 크기 M3~M60)의 피치(mm): 사이클 설명서에 표가 없어 ISO 261 미터 보통 나사(1·2 선택 크기)의 피치로 정함 */
+const MPIT_COARSE: ReadonlyMap<number, number> = new Map([
+  [3, 0.5], [3.5, 0.6], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [22, 2.5],
+  [24, 3], [27, 3], [30, 3.5], [33, 3.5], [36, 4], [39, 4], [42, 4.5], [45, 4.5], [48, 5], [52, 5], [56, 5.5], [60, 5.5],
+]);
 /** 평면 두 축의 프로그램 좌표 */
 type P2 = readonly [number, number];
 /** 밀링 사이클 이동 도구(cycleMover): 반복 문지기·G0~G3 블록 이동·멈췄는지 */
@@ -1390,6 +1396,7 @@ class SiemensRunner extends Runner {
       else if (c.name === 'SLOT1' || c.name === 'SLOT2' || c.name === 'LONGHOLE') this.slot(c.name, c.args, line);
       else if (c.name === 'CYCLE95') this.cycle95(c.args, c.strs[0], line);
       else if (c.name === 'CYCLE71') this.cycle71(c.args, line);
+      else if (c.name === 'CYCLE97') this.cycle97(c.args, line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
     }
@@ -2839,6 +2846,152 @@ class SiemensRunner extends Runner {
       if (end) break;
     }
     return { els, corners, blocks };
+  }
+
+  // ── 나사 깎기 CYCLE97(45차) ──
+  /**
+   * CYCLE97(PIT, MPIT, SPL, FPL, DM1, DM2, APP, ROP, TDEP, FAL, IANG, NSP, NRC, NID, VARI, NUMT, _VRT) — 설명서(6FC5398-3BP20-0BA0, 2006-11) 4.7절 327~334쪽.
+   * 지금 평면(G18이면 긴 축 Z·가로 축 X)에서 원통·테이퍼 나사를 깊이를 나눠 여러 번 깎는 길을 그린다(나사 이송 G33은 피치를 회전당 이송으로 한 이송 직선).
+   * - 자리(331쪽): 나사 시작 SPL·끝 FPL(긴 축), 지름 DM1·DM2(매개변수 이름대로 늘 지름 — 반으로, 29군과 상관없이). 사이클 시작은 SPL에서 APP만큼 앞,
+   *   끝은 FPL에서 ROP만큼 뒤(테이퍼는 같은 직선을 늘임). 가로 축 시작 자리는 나사 지름에서 _VRT(0이면 1 mm — 334쪽)만큼 바깥나사는 바깥·안나사는 안
+   * - 깊이(331쪽): 다듬질 여유 FAL을 뺀 TDEP를 NRC번 — VARI 1·2는 같은 절입, 3·4는 같은 절삭 단면(V 꼴 단면은 깊이²에 비례하므로 누적 깊이 ∝ √k로 셈).
+   *   FAL이 있으면 한 번에 TDEP까지 다듬질, 그 뒤 NID번 같은 깊이로 빈 패스(330쪽 차례). NUMT(0이면 1)줄이면 온 차례를 줄마다 되풀이(333쪽 — 단면 길은 같음)
+   * - VARI(333쪽): 1 바깥·같은 절입, 2 안·같은 절입, 3 바깥·같은 단면, 4 안·같은 단면, 그 밖은 알람 61002(그리지 않음)
+   * - 길이·가로 나사(334쪽): 테이퍼 각 45도 이하면 길이 나사(긴 축으로 깎고 가로 축으로 절입), 넘으면 가로 나사(가로 축으로 깎고 긴 축으로 절입 — 바깥은
+   *   음의 쪽으로, CYCLE95와 같게 정함)
+   * - IANG(331~332쪽): 0이면 깎는 방향에 수직 절입, 양수면 한쪽 측면을 따라, 음수면 양 측면 번갈아(원통 나사만 — 테이퍼면 한쪽). 측면 절입은 패스마다
+   *   깊이 × tan IANG만큼 깎는 방향으로 옮긴다(정한 것 — 설명서는 그림만). 번갈아면 거친 깎기만 번갈고 다듬질·빈 패스는 가운데
+   * - 피치(330쪽): PIT, 없으면 MPIT(M3~M60 — 설명서에 표가 없어 ISO 261 미터 보통 나사 피치, MPIT_COARSE). 둘이 다르거나 MPIT가 범위 밖이면 알람 61001,
+   *   둘 다 없으면 그리지 않음
+   * - 길(정한 것 — 설명서는 차례만): 사이클 시작 자리로 G0(두 축 함께), 패스마다 시작 자리 → 깊이로 G0 → 끝까지 이송(피치, 회전당) → _VRT 밖으로 G0 →
+   *   다음 패스 시작 자리, 끝나면 사이클 시작 자리. NSP(시작 각)·NUMT의 각 어긋남은 단면에 보이지 않는다
+   */
+  private cycle97(a: (number | undefined)[], line: number): void {
+    const vari = Math.round(a[14] ?? 0);
+    if (vari < 1 || vari > 4) {
+      this.w.add(`CYCLE97: 가공 종류(VARI = ${vari})가 맞지 않음(알람 61002) — 그리지 않음`, line);
+      return;
+    }
+    // 피치(프로그램 단위)
+    const pit = Math.abs(a[0] ?? 0);
+    const mpit = Math.abs(a[1] ?? 0);
+    let pitch = pit;
+    if (mpit > 0) {
+      const mm = MPIT_COARSE.get(mpit);
+      const fromM = mm === undefined ? undefined : this.blockInch ? mm / 25.4 : mm;
+      if (mpit < 3 || mpit > 60 || (pit > 0 && fromM !== undefined && Math.abs(fromM - pit) > 1e-9 * Math.max(1, pit))) {
+        this.w.add(`CYCLE97: 나사 피치가 맞지 않음(PIT = ${a[0] ?? 0}, MPIT = ${a[1]})(알람 61001) — 그리지 않음`, line);
+        return;
+      }
+      if (!(pit > 0)) {
+        if (fromM === undefined) this.w.add(`CYCLE97: 나사 크기 MPIT = ${a[1]}의 피치를 몰라 나사 이송 없이 그림`, line);
+        else pitch = fromM;
+      }
+    } else if (!(pit > 0)) {
+      this.w.add('CYCLE97: 나사 피치(PIT·MPIT)가 없음 — 그리지 않음', line);
+      return;
+    }
+    const s = this.scale;
+    const tdep = Math.abs(a[8] ?? 0) * s;
+    if (!(tdep > 0)) {
+      this.w.add('CYCLE97: 나사 깊이(TDEP)가 없음 — 그리지 않음', line);
+      return;
+    }
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    // (u, v) = 평면 두 축(표시 단위, 프로그램 좌표 — 가로 축은 반지름)
+    const u1 = (a[2] ?? 0) * s;
+    const u2 = (a[3] ?? 0) * s;
+    const v1 = ((a[4] ?? 0) * s) / 2;
+    const v2 = ((a[5] ?? 0) * s) / 2;
+    const ext = Math.max(1, Math.abs(u1), Math.abs(u2), Math.abs(v1), Math.abs(v2));
+    const tol = 1e-9 * ext;
+    if (Math.hypot(u2 - u1, v2 - v1) <= tol) {
+      this.w.add('CYCLE97: 나사 시작과 끝(SPL·FPL·DM1·DM2)이 같음 — 그리지 않음', line);
+      return;
+    }
+    // 테이퍼 각 45도 넘으면 가로 나사: (c, q) = 깎는 축·절입 축
+    const face = Math.abs(v2 - v1) > Math.abs(u2 - u1) + tol;
+    const [c1, c2, q1, q2] = face ? [v1, v2, u1, u2] : [u1, u2, v1, v2];
+    const dirC = Math.sign(c2 - c1);
+    const slope = (q2 - q1) / (c2 - c1);
+    const cs = c1 - dirC * Math.abs(a[6] ?? 0) * s;
+    const ce = c2 + dirC * Math.abs(a[7] ?? 0) * s;
+    const qs = q1 + slope * (cs - c1);
+    const qe = q1 + slope * (ce - c1);
+    const sI = vari === 2 || vari === 4 ? 1 : -1;
+    const vrt = (a[16] ?? 0) !== 0 ? Math.abs(a[16]!) * s : this.displayInch ? 1 / 25.4 : 1;
+    // 깊이: 거친 깎기 NRC번(같은 절입·같은 단면) → 다듬질(FAL) → 빈 패스 NID번
+    let fal = Math.abs(a[9] ?? 0) * s;
+    if (fal > tdep) {
+      this.w.add('CYCLE97: 다듬질 여유(FAL)가 나사 깊이(TDEP)보다 큼 — 거친 깎기 없이 다듬질만 그림', line);
+      fal = tdep;
+    }
+    const rough = tdep - fal;
+    const nrc0 = Math.round(Math.abs(a[12] ?? 0));
+    if (nrc0 < 1 && rough > 0) this.w.add('CYCLE97: 거친 깎기 횟수(NRC)가 없어 한 번으로 봄', line);
+    const nrc = Math.max(1, nrc0);
+    const depths: number[] = [];
+    if (rough > 0) for (let k = 1; k <= Math.min(nrc, THREAD_PASS_MAX + 1); k++) depths.push(vari <= 2 ? (rough * k) / nrc : rough * Math.sqrt(k / nrc));
+    const nRough = depths.length;
+    if (fal > 0) depths.push(tdep);
+    for (let k = Math.min(Math.round(Math.abs(a[13] ?? 0)), THREAD_PASS_MAX + 1); k > 0; k--) depths.push(tdep);
+    const numt = Math.max(1, Math.min(Math.round(Math.abs(a[15] ?? 0)), THREAD_PASS_MAX + 1));
+    // 측면 절입: 패스마다 깊이 × tan IANG만큼 깎는 방향으로(번갈아면 거친 깎기만 양쪽)
+    const iang = a[10] ?? 0;
+    const alt = iang < 0 && Math.abs(slope) <= 1e-12;
+    const tn = Math.tan(Math.min(Math.abs(iang), 89) * DEG);
+    const shift = (k: number, d: number): number => (!iang ? 0 : alt ? (k < nRough ? (k % 2 === 0 ? 1 : -1) * dirC * d * tn : 0) : dirC * d * tn);
+
+    const { go, move, stopped } = this.cycleMover(line);
+    let pc = NaN;
+    let pq = NaN;
+    const put = (g: 0 | 1, c: number, q: number, f = 0): void => {
+      if (Math.abs(c - pc) <= tol && Math.abs(q - pq) <= tol) return;
+      pc = c;
+      pq = q;
+      const [u, v] = face ? [q, c] : [c, q];
+      move(g, [u / this.axScale[a0]!, v / this.axScale[a1]!], null, f);
+    };
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed, feedMode: this.feedMode };
+    const liftS = qs - sI * vrt;
+    const liftE = qe - sI * vrt;
+    let passes = 0;
+    let cap = false;
+    this.inCycle = true;
+    try {
+      put(0, cs, liftS);
+      turns: for (let t = 0; t < numt; t++)
+        for (let k = 0; k < depths.length; k++) {
+          if (++passes > THREAD_PASS_MAX) {
+            cap = true;
+            break turns;
+          }
+          if (!go()) break turns;
+          const d = depths[k]!;
+          const e = shift(k, d);
+          put(0, cs + e, liftS);
+          put(0, cs + e, qs + sI * d);
+          // 나사 이송(G33): 피치를 회전당 이송으로
+          if (pitch > 0) this.feedMode = 95;
+          put(1, ce + e, qe + sI * d, pitch);
+          this.feedMode = save.feedMode;
+          put(0, ce + e, liftE);
+          if (stopped()) break turns;
+        }
+      put(0, cs, liftS);
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+      this.feedMode = save.feedMode;
+    }
+    if (cap) this.guardStop(`CYCLE97: 패스가 ${THREAD_PASS_MAX}번을 넘어 그 뒤 패스는 건너뜀`, line);
+    this.w.add('CYCLE97: 물러나는 길(나사 끝에서 _VRT 밖으로 G0, 다음 패스 시작으로 G0)은 정해 그림', line);
+    if (iang) this.w.add('CYCLE97: 측면 절입(IANG)은 패스마다 깊이 × tan IANG만큼 깎는 방향으로 옮겨 그림 — 설명서는 그림만 있어 정한 것', line);
+    if (face) this.w.add('CYCLE97: 가로 나사(테이퍼 각 45도 넘음)는 바깥 나사를 긴 축 음의 쪽으로 절입하는 것으로 정해 그림', line);
+    if (stopped()) this.mb.overflow = true;
+    this.known = 7;
   }
 
   /** 작업 좌표계 이름(G505~G599) */

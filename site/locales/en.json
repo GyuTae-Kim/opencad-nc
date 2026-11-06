@@ -1277,5 +1277,17 @@
   "CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음": "CYCLE71: tool radius unknown, so the width infeed (_MIDA) cannot be determined — not drawn",
   "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: retraction travel (_FDP) is 0 — the manual requires a value greater than 0 (drawn with 0)",
   "지름·반지름 지정(DIAMON·DIAMOF) 전의 X를 지름으로 봄 — 컨트롤러 기본값(기계 데이터 MD20150)에 따라 반지름일 수 있음": "X before a diameter/radius setting (DIAMON, DIAMOF) is read as a diameter — depending on the control default (machine data MD20150) it may be a radius",
-  "DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — {0}은(는) 절대·증분으로만 봄": "DAC, DIC, RAC and RIC are read as diameter or radius only for the transverse axis X and for I, I1 — {0} is read as absolute or incremental only"
+  "DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — {0}은(는) 절대·증분으로만 봄": "DAC, DIC, RAC and RIC are read as diameter or radius only for the transverse axis X and for I, I1 — {0} is read as absolute or incremental only",
+  "CYCLE97: 가공 종류(VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE97: invalid machining type (VARI = {0}) (alarm 61002) — not drawn",
+  "CYCLE97: 나사 피치가 맞지 않음(PIT = {0}, MPIT = {1})(알람 61001) — 그리지 않음": "CYCLE97: invalid thread pitch (PIT = {0}, MPIT = {1}) (alarm 61001) — not drawn",
+  "CYCLE97: 나사 피치(PIT·MPIT)가 없음 — 그리지 않음": "CYCLE97: no thread pitch (PIT, MPIT) — not drawn",
+  "CYCLE97: 나사 크기 MPIT = {0}의 피치를 몰라 나사 이송 없이 그림": "CYCLE97: the pitch of thread size MPIT = {0} is unknown — drawn without the thread feed",
+  "CYCLE97: 나사 깊이(TDEP)가 없음 — 그리지 않음": "CYCLE97: no thread depth (TDEP) — not drawn",
+  "CYCLE97: 나사 시작과 끝(SPL·FPL·DM1·DM2)이 같음 — 그리지 않음": "CYCLE97: the thread start and end points (SPL, FPL, DM1, DM2) are the same — not drawn",
+  "CYCLE97: 다듬질 여유(FAL)가 나사 깊이(TDEP)보다 큼 — 거친 깎기 없이 다듬질만 그림": "CYCLE97: the finishing allowance (FAL) is larger than the thread depth (TDEP) — only the finishing cut is drawn, without roughing",
+  "CYCLE97: 거친 깎기 횟수(NRC)가 없어 한 번으로 봄": "CYCLE97: no number of roughing cuts (NRC) — one cut assumed",
+  "CYCLE97: 패스가 {0}번을 넘어 그 뒤 패스는 건너뜀": "CYCLE97: more than {0} passes — the remaining passes are skipped",
+  "CYCLE97: 물러나는 길(나사 끝에서 _VRT 밖으로 G0, 다음 패스 시작으로 G0)은 정해 그림": "CYCLE97: the retraction path (G0 out by _VRT at the thread end, G0 to the next pass start) is drawn as decided",
+  "CYCLE97: 측면 절입(IANG)은 패스마다 깊이 × tan IANG만큼 깎는 방향으로 옮겨 그림 — 설명서는 그림만 있어 정한 것": "CYCLE97: flank infeed (IANG) is drawn by shifting each pass toward the cutting direction by depth × tan IANG — decided, since the manual only shows figures",
+  "CYCLE97: 가로 나사(테이퍼 각 45도 넘음)는 바깥 나사를 긴 축 음의 쪽으로 절입하는 것으로 정해 그림": "CYCLE97: a face thread (taper angle over 45 degrees) is drawn with the outside thread fed toward the negative longitudinal axis — decided"
 }
