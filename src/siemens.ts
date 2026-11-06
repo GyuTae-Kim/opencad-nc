@@ -1425,13 +1425,13 @@ class SiemensRunner extends Runner {
     const rtp = (a[0] ?? 0) * s;
     const rfp = (a[1] ?? 0) * s;
     const sdis = Math.abs(a[2] ?? 0) * s;
-    let dp: number;
-    if (a[3] !== undefined) dp = a[3] * s;
-    else if (a[4] !== undefined) dp = rfp - Math.abs(a[4]) * s;
-    else {
+    const depth = this.cycleDepth(a, 3, rtp, rfp, s);
+    if (!depth) {
       this.w.add(`${name}에 깊이(DP·DPR)가 없음`, line);
       return;
     }
+    this.depthDiffers(name, depth, line);
+    const dp = depth.d;
     const up = rfp >= dp ? 1 : -1;
     const code: Record<string, number> = { CYCLE81: 810, CYCLE82: 820, CYCLE83: 830, CYCLE84: 840, CYCLE840: 840, CYCLE85: 850, CYCLE86: 860, CYCLE87: 860, CYCLE88: 880, CYCLE89: 890 };
     let c = code[name] ?? 810;
@@ -1868,7 +1868,7 @@ class SiemensRunner extends Runner {
    * - 자리: 원 중심 (CPA, CPO)·반지름 RAD, k번째는 STA1 + k × INDA(INDA = 0이면 360 / NUM). LONGHOLE·SLOT1은 긴 축이 반지름 방향이고 안쪽 끝이 원에 닿아
    *   바깥으로 LENG(끝에서 끝)만큼(설명서 그림), 너비는 LONGHOLE = 공구 지름, SLOT1 = WID. SLOT2는 원 위를 따라 STA1에서 반시계로 AFSL(양 끝 반원 중심 사이 각),
    *   너비 WID. AFSL이 360 이상이면 고리 홈(설명서: NUM = 1, AFSL = 369)
-   * - 깊이: DPR이 있으면 DPR(둘 다 있으면 DPR — CYCLE81 설명), 없으면 DP. _ZSD[1] = 0이면 기준면 + 안전 거리부터, 1이면 기준면부터 MID 이하의 같은 절입으로
+   * - 깊이: DPR이 0이 아니면 DPR(둘 다 있으면 DPR, DP와 다르면 알림 — CYCLE81 설명, cycleDepth), 아니면 DP. _ZSD[1] = 0이면 기준면 + 안전 거리부터, 1이면 기준면부터 MID 이하의 같은 절입으로
    *   가장 적은 층(MID = 0이면 한 번)
    * - LONGHOLE(설명서 순서): 후퇴 면에서 가까운 끝 위로 → 기준면 + 안전 거리 → 끝마다 다음 깊이로 G1(FFD) 진입하며 FFP1로 왕복 → 후퇴 면 →
    *   다음 구멍의 가까운 끝(가장 짧은 길). 마지막 구멍 뒤 그 자리에서 후퇴 면으로(독일어판 — 영어판은 그림을 가리키는데 그림이 없다)
@@ -1892,14 +1892,13 @@ class SiemensRunner extends Runner {
     const rtp = at(0);
     const rfp = at(1);
     const sdis = Math.abs(at(2));
-    // 깊이: 상대 깊이 DPR은 기준면에서 후퇴 면 반대쪽으로(둘 다 있으면 DPR)
-    let dp: number;
-    if (a[4] !== undefined) dp = rfp - (rtp >= rfp ? 1 : -1) * Math.abs(a[4]);
-    else if (a[3] !== undefined) dp = a[3];
-    else {
+    // 깊이: 상대 깊이 DPR은 기준면에서 후퇴 면 반대쪽으로(둘 다 있으면 DPR — cycleDepth)
+    const depth = this.cycleDepth(a, 3, rtp, rfp, 1);
+    if (!depth) {
       this.w.add(`${name}: 깊이(DP·DPR)가 없음 — 그리지 않음`, line);
       return;
     }
+    const dp = depth.d;
     const num = Math.round(at(5));
     // LONGHOLE·SLOT1은 LENG(길이), SLOT2는 AFSL(각)
     const size = Math.abs(at(6));
@@ -1967,6 +1966,7 @@ class SiemensRunner extends Runner {
         return;
       }
     }
+    this.depthDiffers(name, depth, line);
     // 가공 방향: SLOT1 = POCKET3와 같음(0 하향·1 상향 — 주축 방향으로 셈, 2 G2, 3 G3), SLOT2는 2·3만
     let dirc = cdir;
     if (!long && (s2 ? dirc !== 2 && dirc !== 3 : dirc < 0 || dirc > 3)) {
