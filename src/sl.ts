@@ -698,6 +698,12 @@ export interface SlRegion {
   loopTree?: SlTree | null;
   /** 50차: 마지막 떨어진 곡선 셈에서 남은 조각은 있는데(길이 합이 크기의 1/1000 넘게) 닫힌 고리가 하나도 없었으면 그 길이 합, 아니면 0 */
   unclosed?: number;
+  /**
+   * 53차 기준점(원점에서 아주 먼 윤곽 — SHIFT_RATIO): 있으면 pockets·islands·loops와 나무는 이만큼 뺀 자리다.
+   * 자리를 받고 내는 공개 함수(slInside·slNear·slDist·slOffset·slLevels·slSegmentFree)는 들어온 자리에서 빼고 낸 고리에 더한다
+   */
+  ou?: number;
+  ov?: number;
 }
 
 /** 셈한 일을 더할 자리(R.work) */
@@ -716,6 +722,11 @@ function inContour(R: SlRegion, els: readonly SlEl[], T: SlTree | null | undefin
 
 /** 점이 가공 면 안인지: 포켓 안(교집합이면 두 포켓 모두 안 — 포켓이 없으면 어디든)이고 어느 섬 안도 아님 */
 export function slInside(R: SlRegion, u: number, v: number): boolean {
+  return R.ou === undefined ? inside(R, u, v) : inside(R, u - R.ou, v - R.ov!);
+}
+
+/** slInside의 속(R의 자리 — 기준점을 뺀 자리) */
+function inside(R: SlRegion, u: number, v: number): boolean {
   if (R.pockets.length) {
     const inP = (p: SlLoop, i: number): boolean => inContour(R, p, R.pocketTrees?.[i], u, v);
     if (R.inter ? !R.pockets.every(inP) : !R.pockets.some(inP)) return false;
@@ -727,6 +738,11 @@ export function slInside(R: SlRegion, u: number, v: number): boolean {
  * 경계까지 거리가 t보다 가까운지(49차) — slDist(R, u, v, t) < t와 같은 답. 경계 고리 나무가 있으면 상자가 t 안인 요소만 본다
  */
 export function slNear(R: SlRegion, u: number, v: number, t: number): boolean {
+  return R.ou === undefined ? near(R, u, v, t) : near(R, u - R.ou, v - R.ov!, t);
+}
+
+/** slNear의 속(R의 자리) */
+function near(R: SlRegion, u: number, v: number, t: number): boolean {
   const c = counter(R);
   if (R.loopTree) return treeNear(R.loopTree, u, v, t, c);
   for (const l of R.loops)
@@ -739,6 +755,10 @@ export function slNear(R: SlRegion, u: number, v: number, t: number): boolean {
 
 /** 경계까지 거리 */
 export function slDist(R: SlRegion, u: number, v: number, stopBelow = -Infinity): number {
+  if (R.ou !== undefined) {
+    u -= R.ou;
+    v -= R.ov!;
+  }
   let d = Infinity;
   for (const l of R.loops)
     for (const e of l) {
@@ -751,10 +771,26 @@ export function slDist(R: SlRegion, u: number, v: number, stopBelow = -Infinity)
   return d;
 }
 
-/** 윤곽(포켓·섬)들로 가공 면과 그 경계를 만든다 */
-export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]): SlRegion {
-  const pockets = contours.filter((c) => c.pocket).map((c) => c.els);
-  const islands = contours.filter((c) => !c.pocket).map((c) => c.els);
+/**
+ * 53차: 좌표 크기(윤곽 둘레 상자의 가장 큰 |좌표|)가 윤곽 크기의 이 배보다 크면 둘레 상자 가운데(기준점)를 빼고 셈한다(slRegion).
+ * 판정 여유(eps·tolD)는 윤곽 크기 × 10⁻⁹인데 좌표의 반올림은 좌표 크기 × 2⁻⁵²라, 좌표/크기가 10⁶쯤이면 반올림이 여유만큼 커져
+ * 고리를 잃거나 단계가 끊겼다(52차 합성 160경우 중 22경우 — 0.1 mm 윤곽이 10⁶ mm 자리 등). 여유를 좌표 크기로 키우면 작은 윤곽의
+ * 판정이 틀어진다. 10⁴이면 반올림이 여유의 450분의 1로 틀어짐이 시작한 10⁶보다 100배 아래이고, 보통 프로그램(윤곽 수 mm 이상·좌표 수천 mm
+ * 이하 — 비 10³ 아래)은 넘지 않아 예전 길 그대로(바이트까지 같은 결과). 넘으면 먼 축의 빼기는 정확하고(Sterbenz — 좌표가 기준점의 절반~두 배)
+ * 결과를 되돌릴 때 좌표 크기의 반올림(10⁶ mm에서 1.2 × 10⁻¹⁰ mm)만 더해진다
+ */
+const SHIFT_RATIO = 1e4;
+
+/** 요소를 (du, dv)만큼 옮긴 것(직선의 cu·cv는 쓰지 않아 그대로) */
+function moveEl(e: SlEl, du: number, dv: number): SlEl {
+  return e.arc ? { ...e, su: e.su + du, sv: e.sv + dv, eu: e.eu + du, ev: e.ev + dv, cu: e.cu + du, cv: e.cv + dv } : { ...e, su: e.su + du, sv: e.sv + dv, eu: e.eu + du, ev: e.ev + dv };
+}
+
+/** R의 자리(기준점을 뺀 자리)로 셈한 고리들을 프로그램 자리로 */
+const toWorld = (R: SlRegion, loops: SlLoop[]): SlLoop[] => (R.ou === undefined ? loops : loops.map((l) => l.map((e) => moveEl(e, R.ou!, R.ov!))));
+
+/** 윤곽들의 둘레 상자 [u 최소, v 최소], [u 최대, v 최대] */
+function contoursBox(contours: readonly { els: SlLoop }[]): [number[], number[]] {
   let lo = [Infinity, Infinity];
   let hi = [-Infinity, -Infinity];
   for (const c of contours)
@@ -763,6 +799,30 @@ export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]):
       lo = [Math.min(lo[0]!, b[0]), Math.min(lo[1]!, b[1])];
       hi = [Math.max(hi[0]!, b[2]), Math.max(hi[1]!, b[3])];
     }
+  return [lo, hi];
+}
+
+/** 윤곽(포켓·섬)들로 가공 면과 그 경계를 만든다. 53차: 원점에서 아주 먼 윤곽(SHIFT_RATIO)은 기준점(둘레 상자 가운데)을 빼고 셈한다 */
+export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]): SlRegion {
+  const [lo, hi] = contoursBox(contours);
+  const scale = Number.isFinite(lo[0]!) ? Math.max(Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!), 1e-6) : 1;
+  // 유한하지 않은 좌표는 견줌이 거짓이라 예전 길
+  if (Math.max(Math.abs(lo[0]!), Math.abs(lo[1]!), Math.abs(hi[0]!), Math.abs(hi[1]!)) > scale * SHIFT_RATIO) {
+    const ou = (lo[0]! + hi[0]!) / 2;
+    const ov = (lo[1]! + hi[1]!) / 2;
+    const R = regionOf(contours.map((c) => ({ els: c.els.map((e) => moveEl(e, -ou, -ov)), pocket: c.pocket })));
+    R.ou = ou;
+    R.ov = ov;
+    return R;
+  }
+  return regionOf(contours, lo, hi);
+}
+
+/** slRegion의 속(윤곽 자리 그대로 — 둘레 상자를 이미 셈했으면 받는다) */
+function regionOf(contours: readonly { els: SlLoop; pocket: boolean }[], lo0?: number[], hi0?: number[]): SlRegion {
+  const pockets = contours.filter((c) => c.pocket).map((c) => c.els);
+  const islands = contours.filter((c) => !c.pocket).map((c) => c.els);
+  const [lo, hi] = lo0 && hi0 ? [lo0, hi0] : contoursBox(contours);
   const scale = Number.isFinite(lo[0]!) ? Math.max(Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!), 1e-6) : 1;
   const eps = Math.max(scale * 1e-9, 1e-12);
   // 두 포켓의 교집합: 첫 포켓의 시작점이 둘째 포켓 안
@@ -779,8 +839,8 @@ export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]):
     const m = at(p, 0.5);
     const t = tanAt(p, 0.5);
     const d = Math.min(delta, slElLen(p) * 0.25);
-    const left = slInside(R, m[0] - t[1] * d, m[1] + t[0] * d);
-    const right = slInside(R, m[0] + t[1] * d, m[1] - t[0] * d);
+    const left = inside(R, m[0] - t[1] * d, m[1] + t[0] * d);
+    const right = inside(R, m[0] + t[1] * d, m[1] - t[0] * d);
     if (left && !right) keep.push(p);
     else if (right && !left) keep.push(slReverse([p])[0]!);
   }
@@ -796,7 +856,7 @@ export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]):
  * 하나도 없으면 빈 배열(공구가 윤곽보다 큼). plain은 시험용(offsetUpTo)
  */
 export function slOffset(R: SlRegion, d: number, plain = false): SlLoop[] {
-  return offsetUpTo(R, d, Infinity, plain)!;
+  return toWorld(R, offsetUpTo(R, d, Infinity, plain)!);
 }
 
 /**
@@ -1275,7 +1335,7 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
   for (const p of pieces) {
     if (cnt.work > workLimit) return null;
     const m = at(p, 0.5);
-    if (!slNear(R, m[0], m[1], d - tolD) && slInside(R, m[0], m[1])) keep.push(p);
+    if (!near(R, m[0], m[1], d - tolD) && inside(R, m[0], m[1])) keep.push(p);
   }
   const tol = R.eps * 1e3;
   let c = chain(keep, tol);
@@ -1387,6 +1447,15 @@ export function slRound(loop: readonly SlEl[], rad: number, eps: number): SlLoop
 
 /** 선분 p → q가 거리 d인 고리들(levels0 — 가공 면 경계에서 d 떨어진 곡선)을 가로지르지 않고 그 안에 있는지(공구가 경계를 깎아 들어가지 않음) */
 export function slSegmentFree(R: SlRegion, levels0: readonly SlLoop[], d: number, pu: number, pv: number, qu: number, qv: number): boolean {
+  if (R.ou === undefined) return segmentFree(R, levels0, d, pu, pv, qu, qv);
+  // 53차: 기준점을 뺀 자리로(고리는 slLevels가 프로그램 자리로 낸 것)
+  const ou = R.ou;
+  const ov = R.ov!;
+  return segmentFree(R, levels0.map((l) => l.map((e) => moveEl(e, -ou, -ov))), d, pu - ou, pv - ov, qu - ou, qv - ov);
+}
+
+/** slSegmentFree의 속(R의 자리) */
+function segmentFree(R: SlRegion, levels0: readonly SlLoop[], d: number, pu: number, pv: number, qu: number, qv: number): boolean {
   const len = Math.hypot(qu - pu, qv - pv);
   if (len <= R.eps * 10) return true;
   const seg = g7xLine(pu, pv, qu, qv);
@@ -1411,7 +1480,7 @@ export function slSegmentFree(R: SlRegion, levels0: readonly SlLoop[], d: number
   for (const f of [0.25, 0.5, 0.75]) {
     const u = pu + (qu - pu) * f;
     const v = pv + (qv - pv) * f;
-    if (!slInside(R, u, v) || slNear(R, u, v, d - tolD)) return false;
+    if (!inside(R, u, v) || near(R, u, v, d - tolD)) return false;
   }
   return true;
 }
@@ -1430,6 +1499,14 @@ export function slLevels(
   work = 2_000_000,
   evals = Infinity,
 ): { levels: SlLoop[][]; capped: false | 'rings' | 'work' | 'open' } {
+  const L = levelsOf(R, d0, step, maxLevels, work, evals);
+  // 53차: 기준점을 뺀 자리로 셈했으면 프로그램 자리로
+  if (R.ou !== undefined) L.levels = L.levels.map((ls) => toWorld(R, ls));
+  return L;
+}
+
+/** slLevels의 속(R의 자리) */
+function levelsOf(R: SlRegion, d0: number, step: number, maxLevels: number, work: number, evals: number): { levels: SlLoop[][]; capped: false | 'rings' | 'work' | 'open' } {
   const levels: SlLoop[][] = [];
   let spent = 0;
   const n0 = R.loops.reduce((s, l) => s + l.length, 0);
