@@ -2737,9 +2737,9 @@ class HRunner extends NcEmitter {
         const p = plan(r);
         if (!p) break;
         if (n === 22) this.slRoughR = r;
-        // 층 하나의 이동(어림): 고리마다 요소 + 잇기(들어 올려 옮기면 4), 첫 고리로 들어가기
-        const zs = n === 22 ? passes(bottom, Math.abs(Q('Q10')), p.order.reduce((s, l) => s + l.length + 4, 2)) : [bottom];
         const pl = plunges(p);
+        // 층 하나의 이동(위 한계): 첫 고리로 잇기(들어 올려 옮기면 3)·내려가기 4 + 고리마다 요소 + 앞 고리에서 잇기(곧게 1, 들어 올려 옮기면 3)
+        const zs = n === 22 ? passes(bottom, Math.abs(Q('Q10')), p.order.reduce((s, l, i) => s + l.length + (i === 0 ? 0 : pl[i] ? 3 : 1), 4)) : [bottom];
         const first = p.order[0]![0]!;
         toClear();
         go(Rp, first.su, first.sv);
@@ -2798,8 +2798,8 @@ class HRunner extends NcEmitter {
         }
         loops = loops.map((l) => slStartLongest(q8 > 0 ? slRound(l, q8, R.eps) : l, R.eps)).map((l) => (flip ? slReverse(l) : l));
         const bottom = surface + depth;
-        // 층 하나의 이동(어림): 고리마다 요소 + 들어가고 나오는 호·옮기기 6
-        const zs = passes(bottom, Math.abs(Q('Q10')), loops.reduce((s, l) => s + l.length + 6, 0));
+        // 층 하나의 이동(위 한계): 고리마다 요소 + 접근 자리로·내려가기·들어가는 호·나오는 호 4
+        const zs = passes(bottom, Math.abs(Q('Q10')), loops.reduce((s, l) => s + l.length + 4, 0));
         const side = flip ? -1 : 1;
         const tolD = Math.max(R.scale, d) * 1e-7;
         const free = (u: number, v: number): boolean => slInside(R, u, v) && !slNear(R, u, v, d - tolD);
@@ -3029,7 +3029,7 @@ class HRunner extends NcEmitter {
       });
       if (depart && more()) E.out();
     };
-    // 층 하나의 이동(어림): 조각 요소 + 옮기기·내려가기 4씩 + 접근·이탈 4
+    // 층 하나의 이동(위 한계): 조각 요소 + 올라 옮겨 내려가기 4씩 + 접근·이탈·물러나기 4
     const per = T.runs.reduce((s, l) => s + l.length + 4, 4);
     const zs = this.slPasses(C, line, surface, up, bottom, Math.abs(Q('Q10')), per);
     this.feed = fMill;
