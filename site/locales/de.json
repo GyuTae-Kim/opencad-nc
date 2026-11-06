@@ -1320,5 +1320,7 @@
   "CYCLE72: 거친 깎기 끝(_DP + _FALD)이 시작 높이보다 위 — 깎을 층이 없음": "CYCLE72: Schruppende (_DP + _FALD) liegt über der Starthöhe — keine Ebenen zu bearbeiten",
   "CYCLE72: 다듬질 여유(_FAL)를 둔 윤곽이 남지 않음 — 그리지 않음": "CYCLE72: Nach dem Schlichtaufmaß (_FAL) bleibt keine Kontur übrig — nicht gezeichnet",
   "CYCLE72: 반경 보정(G41·G42)이 켜진 채 부름 — 사이클이 보정을 다시 고르고 끝에서 끔(G40)": "CYCLE72: Aufruf bei aktiver Werkzeugradiuskorrektur (G41 · G42) — der Zyklus wählt die Korrektur neu und schaltet sie am Ende ab (G40)",
-  "CYCLE72: 층 사이 길(물러남 끝에서 들어 올리고 보정을 끈 공구 중심 자리로, 다음 층 접근 시작으로)과 3D 물러남 높이(_SDIS)는 정해 그림": "CYCLE72: Wege zwischen den Ebenen (Anheben am Abfahrende, mit abgewählter Korrektur zum Werkzeugmittelpunkt, dann zum nächsten Anfahrbeginn) und die Höhe beim 3D-Abfahren (_SDIS) festgelegt gezeichnet"
+  "CYCLE72: 층 사이 길(물러남 끝에서 들어 올리고 보정을 끈 공구 중심 자리로, 다음 층 접근 시작으로)과 3D 물러남 높이(_SDIS)는 정해 그림": "CYCLE72: Wege zwischen den Ebenen (Anheben am Abfahrende, mit abgewählter Korrektur zum Werkzeugmittelpunkt, dann zum nächsten Anfahrbeginn) und die Höhe beim 3D-Abfahren (_SDIS) festgelegt gezeichnet",
+  "한 축 대칭(G51.1·음수 배율) 아래의 반경 보정(G41/G42) — 보정 쪽은 프로그램 그대로 셈(뒤집는 근거를 찾지 못함)": "Werkzeugradiuskorrektur (G41/G42) unter Spiegelung einer Achse (G51.1, negativer Maßstab) — Korrekturseite wie programmiert berechnet (keine Quelle für eine Umkehrung gefunden)",
+  "{0}: 첨자가 [공구 번호, 날 번호] 꼴이 아님 — 무시함": "{0}: Index hat nicht die Form [Werkzeugnummer, Schneidennummer] — ignoriert"
 }

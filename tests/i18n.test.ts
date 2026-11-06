@@ -39,6 +39,8 @@ describe('language URLs and UI presentation', () => {
         // 32차: 거리(distance)를 길거리로, 선반(lathe)을 책꽂이로, 보정(compensation)을 교정(calibration)으로, 현(chord)을 화음으로, 판(panel)을 회로 기판으로,
         // 합성(synthetic)을 작곡으로, "선반 모드에서만 읽음"을 읽기 전용으로, 휴지(dwell)를 공회전으로, 회전축 감기를 코일 감기로, 주속 일정(constant surface speed)을 일정표로 옮긴 말
         expect(value, `${code}: ${key}`).not.toMatch(/通り|棚|搁板|Regal|shelf|Kalibrier|calibrat|校正|Akkord|Platine|komposition|只读|Leerlauf|空闲|Wicklung|スケジュール|速度表|schedule/);
+        // 47차: "…로 봄"(~로 여김)의 봄을 계절 봄(春)으로 옮긴 말
+        expect(value, `${code}: ${key}`).not.toMatch(/春|Frühling|\bspring\b/);
       }
     expect(translate('거리', 'ja')).toBe('距離');
     expect(translate('선반 프로그램으로 보임', 'en')).toBe('Appears to be a lathe program');
