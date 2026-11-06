@@ -1239,5 +1239,8 @@
   "{0}: 홈끼리 겹침(알람 61104) — 그리지 않음": "{0}: slots overlap each other (alarm 61104) — not drawn",
   "{0}: 가공 방향(CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: invalid milling direction (CDIR = {1}) — drawn as down-cut (climb) milling",
   "{0}: 정삭 회전수(SSF)는 반영하지 않음": "{0}: the finishing spindle speed (SSF) is not applied",
-  "SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림": "SLOT1: no insertion angle for oscillation (_STA2) — drawn as a vertical infeed"
+  "SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림": "SLOT1: no insertion angle for oscillation (_STA2) — drawn as a vertical infeed",
+  "{0}: DP와 DPR이 달라 DPR 깊이로 그림": "{0}: DP and DPR differ — drawn to the DPR depth",
+  "POCKET1: 길이·너비(LENG·WID)가 없음 — 그리지 않음": "POCKET1: no length or width (LENG, WID) — not drawn",
+  "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: no pocket radius (PRAD) — not drawn"
 }
