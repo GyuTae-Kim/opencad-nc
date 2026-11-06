@@ -2340,7 +2340,8 @@ class SiemensRunner extends Runner {
     const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
     const to = units === 1 ? dp + up * fald : dp;
     const total = up * (top - to);
-    const nL = units === 2 ? 1 : total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
+    // 거친 깎기의 끝(_DP + _FALD)이 시작 높이보다 위면 깎을 것이 없다(층 없이 후퇴 면으로)
+    const nL = units === 2 ? 1 : total < -1e-9 ? 0 : total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
     const levelAt = (k: number): number => (units === 2 || k >= nL - 1 ? to : top - ((top - to) * (k + 1)) / nL);
     const { go, move, stopped } = this.cycleMover(line);
     const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };

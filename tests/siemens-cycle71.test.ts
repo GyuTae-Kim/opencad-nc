@@ -73,9 +73,13 @@ describe('Siemens CYCLE71', () => {
     expect([r3(e[0]), r3(e[1])]).toEqual(P(0, 55));
   });
 
-  it('_ZSD[1] = 1이면 기준면부터, _LENG·_WID 부호가 면이 놓이는 쪽', () => {
+  it('_ZSD[1] = 1이면 기준면부터, _LENG·_WID 부호가 면이 놓이는 쪽, 바닥 여유가 깊이보다 크면 거친 깎기 층이 없음', () => {
     const z = run(EX(31, '', '_ZSD[1]=1\n'));
     expect(levels(z)).toEqual([-5.5, -11]);
+    // 깊이 0·안전 거리 0인데 바닥 여유 1: 깎을 것이 없어 이송 없이 후퇴 면으로(시작 높이 아래로 내려갔다 오르지 않음)
+    const none = run('G71 G17 G90\nT1 D1\nG0 X0 Y0 Z20\nCYCLE71(10, 0, 0, 0, 0, 0, 60, 40, 0, 6, 10, 5, 1, 1000, 31, 0)\nM30');
+    expect(feeds(none)).toEqual([]);
+    expect(warns(none)).toEqual([]);
     const neg = run('G71 G17 G90\nT1 D1\nG0 X0 Y0 Z20\nCYCLE71(10, 0, 2, -5, 0, 0, -60, -40, 0, 0, 10, 5, 0, 1000, 11, 0)\nM30');
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
     for (const i of feeds(neg))
