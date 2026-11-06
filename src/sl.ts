@@ -155,6 +155,9 @@ interface SlTree {
   eb: Float64Array;
   /** 마디 상자 4개씩. 마디는 앞 차례로 — 안 마디의 왼쪽 자식은 바로 다음 마디, 오른쪽 자식은 kid */
   nb: Float64Array;
+  /** 마디 캡슐: 선분 끝 A·B(4개씩)와 반지름 — 마디의 모든 요소가 선분 AB에서 반지름 안 */
+  ca: Float64Array;
+  cr: Float64Array;
   /** 잎이면 요소 [lo, hi), 안 마디면 lo = -1·hi = 오른쪽 자식 */
   lo: Int32Array;
   hi: Int32Array;
@@ -171,6 +174,8 @@ function slTree(src: readonly SlEl[]): SlTree {
   const idx = new Int32Array(n);
   for (let i = 0; i < n; i++) idx[i] = i;
   const nb: number[] = [];
+  const ca: number[] = [];
+  const cr: number[] = [];
   const lo: number[] = [];
   const hi: number[] = [];
   let big = 1;
@@ -196,6 +201,33 @@ function slTree(src: readonly SlEl[]): SlTree {
       cb[3] = Math.max(cb[3]!, cv);
     }
     nb.push(...nbb);
+    // 캡슐(선분 AB + 반지름): 상자 긴 축으로 가장 앞·뒤 끝점을 잇고, 요소마다 AB에서 가장 먼 거리를 반지름으로(곡선 조각은 상자보다 훨씬 얇다)
+    const cax = nbb[2]! - nbb[0]! >= nbb[3]! - nbb[1]! ? 0 : 1;
+    let A = [0, 0];
+    let Bp = [0, 0];
+    let amin = Infinity;
+    let amax = -Infinity;
+    for (let k = a; k < b; k++) {
+      const e = src[idx[k]!]!;
+      for (const q of [
+        [e.su, e.sv],
+        [e.eu, e.ev],
+      ]) {
+        const s = q[cax]!;
+        if (s < amin) {
+          amin = s;
+          A = q;
+        }
+        if (s > amax) {
+          amax = s;
+          Bp = q;
+        }
+      }
+    }
+    let rad = 0;
+    for (let k = a; k < b; k++) rad = Math.max(rad, capBound(src[idx[k]!]!, A[0]!, A[1]!, Bp[0]!, Bp[1]!));
+    ca.push(A[0]!, A[1]!, Bp[0]!, Bp[1]!);
+    cr.push(rad);
     if (b - a <= TREE_LEAF) {
       lo[id] = a;
       hi[id] = b;
@@ -216,7 +248,32 @@ function slTree(src: readonly SlEl[]): SlTree {
     els.push(src[idx[k]!]!);
     eb.set(boxes[idx[k]!]!, k * 4);
   }
-  return { els, eb, nb: Float64Array.from(nb), lo: Int32Array.from(lo), hi: Int32Array.from(hi), m: big * 1e-7 };
+  return { els, eb, nb: Float64Array.from(nb), ca: Float64Array.from(ca), cr: Float64Array.from(cr), lo: Int32Array.from(lo), hi: Int32Array.from(hi), m: big * 1e-7 };
+}
+
+/** 점 (u, v)에서 선분 AB까지 거리의 제곱 */
+function segDist2(u: number, v: number, au: number, av: number, bu: number, bv: number): number {
+  const du = bu - au;
+  const dv = bv - av;
+  const l2 = du * du + dv * dv;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((u - au) * du + (v - av) * dv) / l2)) : 0;
+  const x = u - au - du * t;
+  const y = v - av - dv * t;
+  return x * x + y * y;
+}
+const segDist = (u: number, v: number, au: number, av: number, bu: number, bv: number): number => Math.sqrt(segDist2(u, v, au, av, bu, bv));
+
+/**
+ * 요소의 모든 점이 선분 AB에서 이 거리 안(넉넉한 위 한계): 직선은 두 끝 가운데 먼 쪽(선분까지 거리는 직선 위에서 볼록),
+ * 반원 이하 원호는 두 끝의 먼 쪽 + 활 높이(호의 점은 현에 수직으로 올린 자리 — 현의 점은 두 끝보다 멀지 않음), 그보다 큰 원호는 중심 + 반지름
+ */
+function capBound(e: SlEl, au: number, av: number, bu: number, bv: number): number {
+  const ends = Math.max(segDist(e.su, e.sv, au, av, bu, bv), segDist(e.eu, e.ev, au, av, bu, bv));
+  if (!e.arc) return ends;
+  const r = arcR(e);
+  const sw = Math.abs(e.sweep);
+  if (sw <= Math.PI) return ends + r * (1 - Math.cos(sw / 2));
+  return segDist(e.cu, e.cv, au, av, bu, bv) + r;
 }
 
 /** 점에서 상자(b의 k번째)까지 거리의 제곱이 lim2보다 큰지 */
@@ -230,7 +287,8 @@ function boxFar(b: Float64Array, k: number, u: number, v: number, lim2: number):
 function treeNear(T: SlTree, u: number, v: number, t: number, cnt: { work: number }): boolean {
   // 거리는 0 이상이라 t ≤ 0이면 없다(모든 요소를 본 셈과 같은 답)
   if (!(t > 0)) return false;
-  const lim2 = (t + T.m) ** 2;
+  const lim = t + T.m;
+  const lim2 = lim * lim;
   const stack = [0];
   let seen = 0;
   try {
@@ -238,6 +296,9 @@ function treeNear(T: SlTree, u: number, v: number, t: number, cnt: { work: numbe
       const id = stack.pop()!;
       seen++;
       if (boxFar(T.nb, id, u, v, lim2)) continue;
+      // 캡슐로도 멀면 건너뜀(마디 요소의 모든 점이 캡슐 안): 선분까지 거리 > lim + 반지름 — 제곱으로 견줌
+      const cl = lim + T.cr[id]!;
+      if (segDist2(u, v, T.ca[id * 4]!, T.ca[id * 4 + 1]!, T.ca[id * 4 + 2]!, T.ca[id * 4 + 3]!) > cl * cl) continue;
       if (T.lo[id]! >= 0) {
         for (let k = T.lo[id]!; k < T.hi[id]!; k++) {
           if (boxFar(T.eb, k, u, v, lim2)) continue;

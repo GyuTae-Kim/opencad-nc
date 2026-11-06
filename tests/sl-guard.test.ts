@@ -83,8 +83,8 @@ describe('SL 사이클 층 × 고리 이동 한도(사이클 한 번 100만 개)
 
 describe('SL 옆 간격 고리 셈의 일 한도', () => {
   it('요소가 아주 많은 원꼴 윤곽 + 작은 공구: 고리 셈이 한도를 넘으면 바깥 고리까지만 그리고 알린다', () => {
-    // 1600각형(반지름 40) · 공구 0.5 · 간격 0.5 → 고리 79개를 다 셈하려면 요소 수의 제곱만큼 일이 든다
-    const src = prog(poly(1600), 0.5, { Q1: -5 }, rough(-5));
+    // 1600각형(반지름 40) · 공구 0.5 · 겹침 Q2 0.5(간격 0.25) → 고리 158개를 다 셈하려면 가운데 가까운 고리마다 거의 모든 요소를 봐야 한다
+    const src = prog(poly(1600), 0.5, { Q1: -5, Q2: 0.5 }, rough(-5));
     const t0 = performance.now();
     const p = parseHeidenhain(src);
     const ms = performance.now() - t0;
@@ -92,7 +92,7 @@ describe('SL 옆 간격 고리 셈의 일 한도', () => {
     expect(plain(p.warnings)[0]).toMatch(/^CYCL DEF 22: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 \d+겹까지만 그림$/);
     const rings = Number(/고리 (\d+)겹/.exec(p.warnings[0]!)![1]);
     expect(rings).toBeGreaterThan(5);
-    expect(rings).toBeLessThan(79);
+    expect(rings).toBeLessThan(158);
     // 그린 고리는 모두 벽에서 공구 반지름 이상 안쪽(가장 안쪽 고리는 중심에서 멀다 — 안쪽은 그리지 않음)
     let rMin = Infinity;
     for (let i = 0; i < p.moves.count; i++)
@@ -103,7 +103,7 @@ describe('SL 옆 간격 고리 셈의 일 한도', () => {
         expect(rr).toBeLessThanOrEqual(40 - 0.5 + 1e-4);
         rMin = Math.min(rMin, rr);
       }
-    expect(rMin).toBeGreaterThan(40 - 0.5 - 0.5 * (rings + 1));
+    expect(rMin).toBeGreaterThan(40 - 0.5 - 0.25 * (rings + 1));
     // 한도는 일(셈 수)로 정해 기계 빠르기와 상관없이 같은 결과 — 여기서는 시간이 넉넉히 짧음만 본다
     expect(ms).toBeLessThan(30_000);
   });
