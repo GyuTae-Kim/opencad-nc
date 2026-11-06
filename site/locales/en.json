@@ -1222,5 +1222,14 @@
   "POCKET4: 나선 가공(_VARI 1xxx)은 층마다 평면 가공으로 그림": "POCKET4: helical machining (_VARI 1xxx) is drawn as plane-wise machining at each depth",
   "{0}: 가공 방향(_CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: invalid milling direction (_CDIR = {1}) — drawn as down-cut (climb) milling",
   "{0}: 나선 진입 반지름·깊이(_RAD1·_DP1)가 없어 수직 이송으로 그림": "{0}: no helix radius or depth (_RAD1, _DP1) — drawn as a vertical infeed",
-  "POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림": "POCKET3: oscillating insertion on the longitudinal axis (_VARI 3X) is drawn as a vertical infeed"
+  "POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림": "POCKET3: oscillating insertion on the longitudinal axis (_VARI 3X) is drawn as a vertical infeed",
+  "{0}: 깊이(DP·DPR)가 없음 — 그리지 않음": "{0}: no depth (DP, DPR) — not drawn",
+  "{0}: 가공 종류(VARI = {1})가 맞지 않음 — 그리지 않음": "{0}: invalid machining type (VARI = {1}) — not drawn",
+  "{0}: 개수(NUM)가 없음 — 그리지 않음": "{0}: no count (NUM) — not drawn",
+  "{0}: 홈 크기({1})가 맞지 않음 — 그리지 않음": "{0}: invalid slot size ({1}) — not drawn",
+  "{0}: 공구가 홈보다 큼(알람 61105) — 그리지 않음": "{0}: tool is larger than the slot (alarm 61105) — not drawn",
+  "{0}: 홈끼리 겹침(알람 61104) — 그리지 않음": "{0}: slots overlap each other (alarm 61104) — not drawn",
+  "{0}: 가공 방향(CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: invalid milling direction (CDIR = {1}) — drawn as down-cut (climb) milling",
+  "{0}: 정삭 회전수(SSF)는 반영하지 않음": "{0}: the finishing spindle speed (SSF) is not applied",
+  "SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림": "SLOT1: no insertion angle for oscillation (_STA2) — drawn as a vertical infeed"
 }

@@ -1222,5 +1222,14 @@
   "POCKET4: 나선 가공(_VARI 1xxx)은 층마다 평면 가공으로 그림": "POCKET4: Helixbearbeitung (_VARI 1xxx) wird je Zustellung als ebenenweise Bearbeitung gezeichnet",
   "{0}: 가공 방향(_CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: ungültige Fräsrichtung (_CDIR = {1}) — im Gleichlauf gezeichnet",
   "{0}: 나선 진입 반지름·깊이(_RAD1·_DP1)가 없어 수직 이송으로 그림": "{0}: kein Helixradius bzw. keine Helixtiefe (_RAD1, _DP1) — als senkrechte Zustellung gezeichnet",
-  "POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림": "POCKET3: Pendelndes Eintauchen auf der Längsachse (_VARI 3X) wird als senkrechte Zustellung gezeichnet"
+  "POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림": "POCKET3: Pendelndes Eintauchen auf der Längsachse (_VARI 3X) wird als senkrechte Zustellung gezeichnet",
+  "{0}: 깊이(DP·DPR)가 없음 — 그리지 않음": "{0}: keine Tiefe (DP, DPR) — nicht gezeichnet",
+  "{0}: 가공 종류(VARI = {1})가 맞지 않음 — 그리지 않음": "{0}: ungültige Bearbeitungsart (VARI = {1}) — nicht gezeichnet",
+  "{0}: 개수(NUM)가 없음 — 그리지 않음": "{0}: keine Anzahl (NUM) — nicht gezeichnet",
+  "{0}: 홈 크기({1})가 맞지 않음 — 그리지 않음": "{0}: ungültige Nutmaße ({1}) — nicht gezeichnet",
+  "{0}: 공구가 홈보다 큼(알람 61105) — 그리지 않음": "{0}: Werkzeug ist größer als die Nut (Alarm 61105) — nicht gezeichnet",
+  "{0}: 홈끼리 겹침(알람 61104) — 그리지 않음": "{0}: Nuten überschneiden sich (Alarm 61104) — nicht gezeichnet",
+  "{0}: 가공 방향(CDIR = {1})이 맞지 않아 하향으로 그림": "{0}: ungültige Fräsrichtung (CDIR = {1}) — im Gleichlauf gezeichnet",
+  "{0}: 정삭 회전수(SSF)는 반영하지 않음": "{0}: die Schlichtdrehzahl (SSF) wird nicht berücksichtigt",
+  "SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림": "SLOT1: kein Eintauchwinkel für das Pendeln (_STA2) — als senkrechte Zustellung gezeichnet"
 }
