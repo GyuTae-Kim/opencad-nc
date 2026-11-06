@@ -5,6 +5,7 @@
  * 기대 값은 설명서 수치에서 손으로 셈한 것(공구 중심 = 윤곽에서 공구 반지름 + 여유만큼 안쪽). 모두 직접 만든 작은 합성 프로그램
  */
 import { describe, expect, it } from 'vitest';
+import { languages, translate } from '../site/i18n.mjs';
 import { parseHeidenhain } from '../src/heidenhain';
 import { MOVE_ARC, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, moveEnd, moveStart, type NcProgram } from '../src/model';
 
@@ -477,5 +478,41 @@ N99999999 %SLI G71 *
     const ca = cutEnds(a, movesAt(a, lineOf(plain, '8 CYCL CALL'))).map((q) => q.map(r3));
     const cb = cutEnds(b, movesAt(b, lineOf(iso, 'N70 G79'))).map((q) => q.map(r3));
     expect(cb).toEqual(ca);
+  });
+
+  it('새 경고 글은 네 언어 사전에 있다', () => {
+    const texts = [
+      'CYCL DEF 14: 윤곽 LBL 8이 없음',
+      'CYCL DEF 14: 윤곽 LBL 3을 읽는 블록이 너무 많아 멈춤',
+      "CYCL DEF 14: 윤곽 LBL 7의 'TOOL' 블록은 읽지 않음",
+      'CYCL DEF 14: 윤곽 LBL 7에 끝(LBL 0)이 없음',
+      'CYCL DEF 14: 윤곽 LBL 7의 공구 축 좌표는 쓰지 않음(윤곽은 작업 평면 안)',
+      'CYCL DEF 14: 윤곽 LBL 7에 윤곽 요소가 없음',
+      'RND: 윤곽 처음·끝 모서리는 그대로 그림',
+      'CYCL DEF 14: 윤곽 LBL 1의 RND·CHF 2개는 값이 앞뒤 요소보다 커서 모서리 그대로 그림',
+      'CYCL DEF 14: 윤곽 LBL 1이 넓이 없는 윤곽이라 빼고 그림',
+      'CYCL DEF 14: 윤곽 LBL 7에 RL·RR이 없어 포켓으로 봄',
+      'CYCL DEF 14: 윤곽 요소가 16384개를 넘어 그리지 않음',
+      'CYCL DEF 22: 앞에 CYCL DEF 14(윤곽)가 없어 그리지 않음',
+      'CYCL DEF 23: 앞에 CYCL DEF 20(윤곽 자료)이 없어 그리지 않음',
+      'CYCL DEF 22: 윤곽이 가공할 면을 이루지 않아 그리지 않음',
+      'CYCL DEF 22: 윤곽 경계 가운데 잇지 못한 조각 2개는 빼고 그림',
+      'CYCL DEF 21: 포켓 없이 섬만 있어 그리지 않음',
+      'CYCL DEF 24: 안전 높이(Q7)가 안전 거리(Q5 + Q6)보다 아래라 안전 거리로 셈',
+      'CYCL DEF 22: 공구가 윤곽보다 커서 그리지 않음',
+      'CYCL DEF 22: 옆 간격 고리가 2000개를 넘어 그 안쪽은 그리지 않음',
+      'CYCL DEF 21: 거친 깎기 공구(Q13)의 반지름을 몰라 0으로 셈',
+      'CYCL DEF 22: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 전체를 거친 깎기로 그림',
+      'CYCL DEF 22: Q19(왕복 진입 이송)는 공구 표의 ANGLE을 몰라 곧게 들어가는 것으로 그림',
+      'CYCL DEF 22: 깊이(Q1)가 바닥 여유(Q4)보다 얕아 그리지 않음',
+      'CYCL DEF 24: 사이클 20에 옆 여유(Q3)가 없어 그리지 않음 — 컨트롤러는 "Tool radius too large" 오류로 멈춤',
+      'CYCL DEF 24: Q14 + 공구 반지름이 사이클 20의 Q3 + 거친 깎기 공구 반지름보다 작지 않음',
+      'CYCL DEF 21: 쪼기가 10000번을 넘어 바닥에 닿기 전에 멈춤',
+      'CYCL DEF 22: 층이 9999개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감',
+    ];
+    for (const { code } of languages.filter((l: { code: string }) => l.code !== 'ko'))
+      for (const t of texts) expect(translate(t, code), `${code}: ${t}`).not.toMatch(/[가-힣]/);
+    expect(translate('CYCL DEF 14: 윤곽 LBL 8이 없음', 'en')).toBe('CYCL DEF 14: contour LBL 8 not found');
+    expect(translate('CYCL DEF 22: 포켓 없이 섬만 있어 그리지 않음', 'de')).toBe('CYCL DEF 22: nur Inseln, keine Tasche — nicht gezeichnet');
   });
 });
