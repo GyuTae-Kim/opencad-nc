@@ -12,6 +12,8 @@
  * G7x.1이 멈추는 자리 = 윤곽이 시작점 쪽으로 오르다 처음 다시 내려가는 꼭짓점. 다른 NC 해석기 코드를 보지 않고 일반 기하로 짰다.
  *
  * Fanuc 선반 G71·G72 II형(43차, g71Type2)도 같은 층·구간 셈(levelRuns)을 쓴다 — 근거는 FANUC Series 0i-F 선반 조작 설명서(B-64604EN-1/01) 4.2.1·4.2.2절.
+ * Siemens CYCLE95(44차, cycle95Rough)는 윤곽 요소·모서리(g7xCorners)·떨어진 곡선(g7xOffset·g7xSide)·점열(g7xPolyline)·단조 검사(polyMonotonic)를 함께 쓰고,
+ * 층은 구간(언더컷)마다 다시 고르게 나눈다(설명서가 그렇게 셈 — 아래 설명).
  */
 import { cornerCut, cornerElem, cornerIntersections, type CornerElem } from './corner';
 
@@ -27,10 +29,13 @@ export interface G7xEl {
   sweep: number;
 }
 
-/** 요소 at의 끝(다음 요소와 만나는 모서리)에 넣을 둥글리기(A)·모따기(C)와 그 크기 */
+/**
+ * 요소 at의 끝(다음 요소와 만나는 모서리)에 넣을 둥글리기(A)·모따기(C)와 그 크기. chamferLeg·chamferHyp는 Siemens 윤곽의 CHR(모서리에서 자르는 길이)·
+ * CHF(모따기 선 길이)다(44차 CYCLE95 — corner.ts와 같은 뜻). chamfer(LinuxCNC C)는 같은 크기 둥글리기의 두 접점을 잇는다
+ */
 export interface G7xCorner {
   at: number;
-  kind: 'round' | 'chamfer';
+  kind: 'round' | 'chamfer' | 'chamferLeg' | 'chamferHyp';
   size: number;
 }
 
@@ -103,7 +108,7 @@ export function g7xCorners(els: readonly G7xEl[], corners: readonly G7xCorner[])
       failed++;
       continue;
     }
-    const r = cornerCut(ca, cb, A.eu, A.ev, 'round', c.size);
+    const r = cornerCut(ca, cb, A.eu, A.ev, c.kind === 'chamferLeg' || c.kind === 'chamferHyp' ? c.kind : 'round', c.size);
     if (!r.ok) {
       if (r.reason !== 'straight') failed++;
       continue;
@@ -623,4 +628,178 @@ export function g71Type2(
   // 시작점으로 돌아간다(설명서 4.2.1 (5))
   moveTo(S[s]!, S[c]!);
   return { moves, pockets, levels: levels.length, capped, levelCap };
+}
+
+/** CYCLE95 거친 깎기 이동 꼴: 0 = 급속, 1 = 거친 깎기 이송(FF1), 2 = 언더컷에 윤곽을 따라 들어가는 이송(FF2) */
+export type C95Kind = 0 | 1 | 2;
+
+/**
+ * Siemens CYCLE95 거친 깎기(44차 — SINUMERIK 840D sl/840D/840Di sl/840Di/810D 사이클 프로그래밍 설명서 6FC5398-3BP20-0BA0, 2006-11, 4.5절 309~322쪽).
+ * 방향 잡은 2차원 좌표: p = 깎아 나가는 축(커지는 쪽으로 깎음), q = 절입 깊이(커지는 쪽이 살 안). pts = 다듬질 여유를 더한 윤곽 점열(p가 줄지 않음 —
+ * 걸친 윤곽은 부르는 쪽이 거른다), top = 가장 얕은 깊이(블랭크 겉), p0 = 시작 자리의 p(윤곽 시작에서 _VRT 앞), mid = 최대 절입, vrt = 물러남(_VRT).
+ * 시작 자리 (p0, top − vrt)에서 시작해 거기로 돌아온다. 설명서에서 온 것(313~316쪽):
+ * - 첫 구간: 블랭크 겉에서 윤곽 시작 깊이까지를 MID 이하의 같은 절입으로 나눈 층(316쪽 보기: 39 mm를 MID 5로 8번 4.875 mm — 마지막 층이 윤곽 시작 깊이).
+ *   층마다 시작 자리에서 G0으로 들어가 축과 나란히 FF1로 윤곽과 만나는 자리까지, 윤곽을 따라 앞 층 깊이까지 FF1로 깎아 오르고(남는 모서리 없음 — 316쪽),
+ *   _VRT만큼 두 축으로 물러나 G0으로 돌아온다
+ * - 언더컷(윤곽이 다시 깊어지는 곳)은 구간마다 절입을 새로 고르게 나눈다(316쪽: 구간 2는 36 mm를 8번 4.5 mm, 구간 3은 7 mm를 2번 3.5 mm — 구간 위는 그 언더컷을
+ *   가르는 봉우리 깊이, 바닥은 그 구간 첫 골의 바닥). 층마다 축 하나씩 G0으로 다가가 윤곽을 따라 FF2로 들어가고(313쪽), 축과 나란히 FF1, 앞 층까지 깎아 오르고 물러난다
+ * - 거친 깎기가 끝나면 시작 자리로 축 하나씩 돌아간다
+ * 여기서 정한 것(설명서는 그림으로만): 물러남은 FF1로 두 축 _VRT, 언더컷 층 사이는 물러난 높이에서 축과 나란히 G0으로 다음에 붙을 자리 위로 가 _VRT 위에서
+ * FF2로 윤곽에 붙음(설명서의 "사이클 안 안전 거리"는 _VRT로 봄), 앞 층까지 깎아 오르다 윤곽이 다시 깊어지면 거기서 멈춤, 구간 차례 = 윤곽 차례(깊이 우선).
+ * emit이 false를 돌려주면 멈춘다. 층이 maxLevels를 넘으면 그 뒤 층·구간은 보지 않고 levelCap
+ */
+export function cycle95Rough(
+  pts: readonly number[],
+  top: number,
+  p0: number,
+  mid: number,
+  vrt: number,
+  emit: (kind: C95Kind, p: number, q: number) => boolean,
+  maxLevels = G7X_MAX_LEVELS,
+): { levels: number; sections: number; levelCap: boolean } {
+  const n = pts.length / 2;
+  const out = { levels: 0, sections: 0, levelCap: false };
+  if (n < 2 || !(mid > 0)) return out;
+  const P = (i: number): number => pts[i * 2]!;
+  const Q = (i: number): number => pts[i * 2 + 1]!;
+  let ext = Math.max(1, Math.abs(top), Math.abs(p0), Math.abs(vrt));
+  for (let i = 0; i < n; i++) ext = Math.max(ext, Math.abs(P(i)), Math.abs(Q(i)));
+  const tol = 1e-9 * ext;
+  let cp = p0;
+  let cq = top - vrt;
+  let stopped = false;
+  const go = (k: C95Kind, p: number, q: number): void => {
+    if (stopped || (Math.abs(p - cp) <= tol && Math.abs(q - cq) <= tol)) return;
+    cp = p;
+    cq = q;
+    if (!emit(k, p, q)) stopped = true;
+  };
+  /** 매개변수 t(점 번호 + 비율)의 점 */
+  const at = (t: number): [number, number] => {
+    const i = Math.min(n - 2, Math.floor(t));
+    const f = t - i;
+    return [P(i) + (P(i + 1) - P(i)) * f, Q(i) + (Q(i + 1) - Q(i)) * f];
+  };
+  /** t0부터 처음으로 깊이 L에 닿는 자리(내려가는 벽). 없으면 -1 */
+  const down = (t0: number, L: number): number => {
+    let qa = at(t0)[1];
+    if (qa >= L - tol) return t0;
+    let ta = t0;
+    for (let i = Math.floor(t0); i + 1 < n; i++) {
+      const qb = Q(i + 1);
+      if (qb >= L - tol) return ta + (i + 1 - ta) * Math.min(1, Math.max(0, qb !== qa ? (L - qa) / (qb - qa) : 1));
+      ta = i + 1;
+      qa = qb;
+    }
+    return -1;
+  };
+  /** t0 뒤 처음으로 윤곽이 깊이 L보다 얕아지는 자리(오르는 벽의 깊이 L인 점). 없으면 윤곽 끝 */
+  const rise = (t0: number, L: number): number => {
+    let qa = at(t0)[1];
+    let ta = t0;
+    for (let i = Math.floor(t0); i + 1 < n; i++) {
+      const qb = Q(i + 1);
+      if (qb < L - tol) return ta + (i + 1 - ta) * Math.min(1, Math.max(0, (qa - L) / (qa - qb)));
+      ta = i + 1;
+      qa = qb;
+    }
+    return n - 1;
+  };
+  /** 지금 자리(윤곽 위 t)에서 윤곽을 따라 깊이 lp까지 FF1로 깎아 오른다. 윤곽이 다시 깊어지면 거기서 멈춘다 */
+  const climb = (t: number, lp: number): void => {
+    for (let i = Math.floor(t) + 1; i < n && !stopped; i++) {
+      if (cq <= lp + tol) return;
+      const qp = Q(i);
+      if (qp > cq + tol) return;
+      if (qp < lp) {
+        go(1, cp + ((P(i) - cp) * (cq - lp)) / (cq - qp), lp);
+        return;
+      }
+      go(1, P(i), qp);
+    }
+  };
+  /** 축 하나씩 G0으로: 얕은 쪽으로는 깊이 먼저, 깊은 쪽으로는 p 먼저(깎은 곳 위로만 지나게) */
+  const moveTo = (p: number, q: number): void => {
+    if (q < cq - tol) {
+      go(0, cp, q);
+      go(0, p, q);
+    } else {
+      go(0, p, cq);
+      go(0, p, q);
+    }
+  };
+  type Sec = { tl: number; a: number; root: boolean };
+  let budget = maxLevels;
+  const stack: Sec[] = [{ tl: 0, a: top, root: true }];
+  while (stack.length && !stopped && !out.levelCap) {
+    const sec = stack.pop()!;
+    const a = sec.a;
+    // 이 구간 첫 골의 바닥: 첫 구간은 윤곽 시작 깊이, 언더컷은 봉우리에서 깊어지기를 멈추는 데까지
+    let tb = sec.tl;
+    let b = Q(tb);
+    if (!sec.root)
+      while (tb + 1 < n && Q(tb + 1) >= Q(tb) - tol) {
+        tb++;
+        b = Math.max(b, Q(tb));
+      }
+    const nL = b - a > tol ? Math.max(1, Math.ceil((b - a) / mid - 1e-9)) : 0;
+    const take = Math.min(nL, budget);
+    if (take < nL) out.levelCap = true;
+    budget -= take;
+    out.levels += take;
+    if (take > 0) out.sections++;
+    let prev = a;
+    let entry = sec.tl;
+    for (let k = 1; k <= take && !stopped; k++) {
+      const L = k === nL ? b : a + ((b - a) * k) / nL;
+      let r: number;
+      let back: number;
+      if (sec.root) {
+        go(0, p0, L);
+        r = rise(0, L);
+        back = p0;
+      } else {
+        // 앞 층에서 윤곽에 붙은 자리 위로 다가가 윤곽을 따라 이 층까지 들어간다(FF2)
+        const E = at(entry);
+        moveTo(E[0], E[1] - vrt);
+        go(2, E[0], E[1]);
+        const d = down(entry, L);
+        if (d < 0) break;
+        for (let i = Math.floor(entry) + 1; i < d - 1e-12 && !stopped; i++) go(2, P(i), Q(i));
+        const D = at(d);
+        go(2, D[0], L);
+        r = rise(d, L);
+        entry = d;
+        back = D[0];
+      }
+      go(1, at(r)[0], L);
+      climb(r, prev);
+      go(1, cp - vrt, cq - vrt);
+      go(0, back, cq);
+      prev = L;
+    }
+    // 이 구간 안의 언더컷: 첫 골 뒤 윤곽이 지금까지 가장 얕은 깊이(봉우리)에서 다시 깊어지는 곳마다 하나(그 봉우리가 구간 위)
+    const kids: Sec[] = [];
+    let m = b;
+    let j = tb;
+    while (j + 1 < n) {
+      const qn = Q(j + 1);
+      if (!sec.root && qn <= a + tol) break;
+      if (qn > m + tol && Q(j) <= m + tol) {
+        kids.push({ tl: j, a: Q(j), root: false });
+        let e = j + 1;
+        while (e < n && Q(e) > Q(j) + tol) e++;
+        if (e >= n) break;
+        m = Math.min(m, Q(e));
+        j = e;
+        continue;
+      }
+      j++;
+      m = Math.min(m, Q(j));
+    }
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
+  }
+  // 시작 자리로 축 하나씩(313쪽)
+  moveTo(p0, top - vrt);
+  return out;
 }

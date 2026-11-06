@@ -17,11 +17,13 @@
  * 후퇴 면·기준면이 맞지 않는 사이클(알람 61101)은 그리지 않음(planeAlarm, 43차). 후퇴 면이 기준면 아래인 드릴 사이클(위로 뚫음)은
  * 그 이동을 급속 안전 검사에서 뺀다(markFromBelow — emitter.ts, 43차).
  * 홈 사이클 LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)는 층마다 왕복·홈 둘레 고리(40차 — slot 참고).
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE71·CYCLE95 등),
- * 시스템 변수($…), 배열·문자열 변수.
+ * 선반 윤곽 거친 깎기 CYCLE95는 윤곽 부프로그램(이름·표지 구간)을 읽어 구간마다 층·언더컷·다듬질(44차 — cycle95 참고).
+ * DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE71·CYCLE93 등), 시스템 변수($…), 배열 변수.
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
+import { G7X_MAX_LEVELS, cycle95Rough, g7xCorners, g7xLine, g7xOffset, g7xPolyline, g7xSide, polyMonotonic, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { FLAG_CYCLE, JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
 import { sourceLine, type NcSource } from './text';
 
@@ -41,6 +43,8 @@ const IGNORE_WORDS = new Set([
 ]);
 /** 무시하는 주소(값을 읽고 버린다) */
 const IGNORE_ADDR = new Set(['SPOS', 'SPOSA', 'OFFN', 'ACC', 'FA', 'FL', 'SF', 'H', 'E', 'Q', 'U', 'V', 'W', 'O', 'SPI', 'OVR', 'SCC', 'LIMS', 'CTOL', 'OTOL', 'ATOL', 'ADIS', 'ADISPOS', 'FFWON', 'FFWOF', 'DITS', 'DITE', 'DISCL', 'DISR', 'DISRP', 'FAD', 'PM', 'PR', 'LF', 'DIAMCYCOF']);
+/** CYCLE95 윤곽 안에서 읽지 않는 블록(흐름·호출·프레임 — 윤곽 모양을 바꿀 수 있어 그리지 않음) */
+const CONTOUR_SKIP = new Set(['IF', 'ELSE', 'ENDIF', 'WHILE', 'ENDWHILE', 'FOR', 'ENDFOR', 'REPEAT', 'REPEATB', 'UNTIL', 'LOOP', 'ENDLOOP', 'GOTOF', 'GOTOB', 'GOTO', 'GOTOC', 'CALL', 'PCALL', 'MCALL', 'TRANS', 'ATRANS', 'ROT', 'AROT', 'SCALE', 'ASCALE', 'MIRROR', 'AMIRROR']);
 /** 지원하지 않는 사이클(그리지 않음) */
 const UNSUPPORTED_CYCLE = /^(?:POCKET\d|SLOT\d|LONGHOLE|CYCLE7\d|CYCLE9\d|CYCLE6\d+|CYCLE899|CYCLE952|CYCLE930|CYCLE940|CYCLE951|CYCLE99|CYCLE98|CYCLE97|CYCLE96|CYCLE95|CYCLE92|CYCLE90|CYCLE802|CYCLE801|CYCLE90\d?|E_\w+|F_\w+)$/;
 
@@ -177,6 +181,8 @@ class SiemensRunner extends Runner {
   private warnedWord = new Set<string>();
   /** 사이클 설정 _ZSD[n](38차 — 프로그램이 대입한 것만, 없으면 0) */
   private zsd = new Map<number, number>();
+  /** DEF STRING 변수의 글 값(44차 — CYCLE95 윤곽 이름 NPP에만 쓴다) */
+  private strVars = new Map<string, string>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
   private inCycle = false;
 
@@ -774,12 +780,12 @@ class SiemensRunner extends Runner {
         this.w.add(`배열 변수 ${name}[…]는 읽지 않음`);
       }
       let v = 0;
+      let text = '';
       if (sc.eat('=')) {
         if (numeric) v = this.expr(sc);
-        else {
-          sc.str();
-        }
+        else text = sc.str() ?? '';
       }
+      if (type === 'STRING') this.strVars.set(name, text);
       if (numeric) {
         const top = this.sStack[this.sStack.length - 1];
         if (top && top.kind === 'sub' && top.locals) top.locals.set(name, type === 'INT' ? Math.trunc(v) : v);
@@ -851,16 +857,25 @@ class SiemensRunner extends Runner {
     this.modalCall = { kind: 'sub', name };
   }
 
-  /** ( 식, 빈칸, … ) — 빈 자리는 undefined */
-  private args(sc: Scan): (number | undefined)[] {
+  /**
+   * ( 식, 빈칸, … ) — 빈 자리는 undefined. strs를 주면 글 값 자리("…" 또는 DEF STRING 변수 이름)의 글을 같은 차례에 적는다(44차 CYCLE95 NPP).
+   * 주지 않으면 글 변수는 예전처럼 식으로 읽는다
+   */
+  private args(sc: Scan, strs?: (string | undefined)[]): (number | undefined)[] {
     const out: (number | undefined)[] = [];
     if (!sc.eat('(')) return out;
     if (sc.eat(')')) return out;
     for (;;) {
       sc.ws();
+      const sv = strs ? /^([A-Z_][A-Z0-9_]*)\s*(?=[,)])/.exec(sc.s.slice(sc.i)) : null;
       if (sc.peek() === ',' || sc.peek() === ')') out.push(undefined);
       else if (sc.peek() === '"') {
-        sc.str();
+        const s = sc.str();
+        if (strs) strs[out.length] = s;
+        out.push(undefined);
+      } else if (sv && this.strVars.has(sv[1]!)) {
+        sc.i += sv[0].length;
+        strs![out.length] = this.strVars.get(sv[1]!);
         out.push(undefined);
       } else out.push(this.expr(sc));
       if (sc.eat(')')) break;
@@ -951,7 +966,7 @@ class SiemensRunner extends Runner {
     const gs: number[] = [];
     const ms: number[] = [];
     const idents: string[] = [];
-    const calls: { name: string; args: (number | undefined)[] }[] = [];
+    const calls: { name: string; args: (number | undefined)[]; strs: (string | undefined)[] }[] = [];
     let lCall: number | undefined;
     let pRep: number | undefined;
     while (!sc.end()) {
@@ -993,7 +1008,8 @@ class SiemensRunner extends Runner {
           continue;
         }
         if (sc.peek() === '(') {
-          calls.push({ name: id, args: this.args(sc) });
+          const strs: (string | undefined)[] = [];
+          calls.push({ name: id, args: this.args(sc, id === 'CYCLE95' ? strs : undefined), strs });
           continue;
         }
         if (id === '_ZSD' && sc.peek() === '[') {
@@ -1316,6 +1332,7 @@ class SiemensRunner extends Runner {
       else if (this.sections.has(c.name)) this.callSub(c.name, 1, c.args, line, false);
       else if (c.name === 'POCKET1' || c.name === 'POCKET2' || c.name === 'POCKET3' || c.name === 'POCKET4') this.pocket(c.name, c.args, line);
       else if (c.name === 'SLOT1' || c.name === 'SLOT2' || c.name === 'LONGHOLE') this.slot(c.name, c.args, line);
+      else if (c.name === 'CYCLE95') this.cycle95(c.args, c.strs[0], line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
     }
@@ -1355,6 +1372,7 @@ class SiemensRunner extends Runner {
     if (sc.peek() === '"') {
       const s = sc.str()!;
       if (name === 'T') words.push({ name, str: s });
+      else if (this.strVars.has(name)) this.strVars.set(name, s);
       else if (this.isVar(name)) {
         /* 글 변수: 무시 */
       } else this.warnOnce(name, `Siemens 낱말 '${name}'은(는) 무시함`, line);
@@ -2237,6 +2255,374 @@ class SiemensRunner extends Runner {
     this.markIfFromBelow(first, rfp * this.scale, dp * this.scale, PLANE_AXES[this.plane]![2]!);
     if (stopped()) this.mb.overflow = true;
     this.known = 7;
+  }
+
+  // ── 선반 윤곽 거친 깎기 CYCLE95(44차) ──
+  /**
+   * CYCLE95(NPP, MID, FALZ, FALX, FAL, FF1, FF2, FF3, VARI, DT, DAM, _VRT) — 설명서(6FC5398-3BP20-0BA0, 2006-11) 4.5절 309~322쪽, 사이클 설정 _ZSD[0]은 4.2절 293쪽.
+   * 지금 평면(G18이면 긴 축 Z·가로 축 X — 292쪽)에서 윤곽 부프로그램 NPP를 읽어 축과 나란히 거친 깎기(cycle95Rough — lathe-g7x.ts)·다듬질을 그린다.
+   * - NPP(314~315쪽): 프로그램 이름(%_N_이름_SPF·PROC·함께 연 파일 — 부프로그램 규칙), "표지1:표지2"(부른 프로그램 안 구간 — 표지나 N 번호),
+   *   "이름:표지1:표지2"(그 프로그램 안 구간). 경로·_N_·_SPF는 떼고 찾는다. 못 찾으면 경고(함께 열 파일 띠)
+   * - 윤곽(320쪽): G0~G3 직선·원호와 RND·CHF·CHR, 한 좌표와 ANG(윤곽 정의 — 한 블록 꼴만). 평면에서 움직이는 블록이 3개보다 적으면 알람 10933,
+   *   첫 이동 블록에 G0~G3이 없거나 반경 보정 중이면 알람 15800(그리지 않음). 윤곽 시작 = 첫 블록의 자리(두 좌표를 다 적어야 함 — 321쪽)
+   * - VARI(317~319쪽): 1~12·201~212(그 밖은 알람 61002). 1~4 거친 깎기, 5~8 다듬질, 9~12 온 가공 × 길이·가로 × 바깥·안. 바깥은 음의 쪽으로, 안은 양의 쪽으로
+   *   절입. 길이 가공은 가로 축으로, 가로 가공은 긴 축으로 절입(319쪽). 백의 자리(0 = 겹쳐 둥글리기, 2 = 앞 교점까지 둥글리기)는 같은 길로 그린다
+   * - 깎는 방향(321쪽): 거친 깎기·온 가공은 첫 점과 끝 점 가운데 더 깊은 쪽에서 시작(윤곽을 뒤집어도 같은 길), 다듬질만은 프로그램 차례.
+   *   최대 지름(가장 얕은 점)이 시작·끝에 없으면 끝에서 축과 나란한 직선을 그 깊이까지 더해 언더컷으로 깎는다(320쪽 — 거친 깎기만)
+   * - 다듬질 여유(316쪽): FALZ·FALX(축별)와 FAL(윤곽 따라)을 모두 더한다 — 축별 여유는 윤곽을 시작 쪽·바깥으로 옮김(정한 것), FAL은 떨어진 곡선.
+   *   MID는 _ZSD[0] = 0이면 절입 축의 프로그램 단위(지름 지정이면 지름 — 316쪽 보기가 지름 차로 셈), 1이면 반지름, 2이면 지름. FALX·FAL은 반지름 값으로 본다(정한 것)
+   * - _VRT(319쪽): 물러남, 0이면 1 mm. 시작 자리(322쪽) = 절입 축은 가장 얕은 윤곽 + 여유 + _VRT, 다른 축은 윤곽 시작 + 여유 + _VRT 앞 — 두 축 함께 G0
+   * - 다듬질(314쪽): 시작 자리로 G0, 윤곽 시작보다 여유 + 공구 끝 반지름 + 1 mm 앞으로 G0, G1(FF3)로 윤곽 시작, 윤곽을 FF3, 시작 자리로 G0
+   * 그리지 않는 것(경고): 걸친 윤곽(321쪽 — 설명서도 깎을 수 없다고 함, 거친 깎기만 뺌), MID 없음(거친 깎기만 뺌), DT·DAM 칩 끊기, 공구 끝 반지름 보정
+   */
+  private cycle95(a: (number | undefined)[], npp: string | undefined, line: number): void {
+    if (!npp || !npp.trim()) {
+      this.w.add('CYCLE95: 윤곽 이름(NPP)이 없음 — 그리지 않음', line);
+      return;
+    }
+    const vari = Math.round(a[8] ?? 0);
+    const lo = vari % 100;
+    const hi = Math.floor(vari / 100);
+    if (!((hi === 0 || hi === 2) && lo >= 1 && lo <= 12)) {
+      this.w.add(`CYCLE95: 가공 종류(VARI = ${vari})가 맞지 않음(알람 61002) — 그리지 않음`, line);
+      return;
+    }
+    if (this.comp) {
+      this.w.add('CYCLE95: 반경 보정(G41·G42)이 켜져 있음(알람 15800) — 그리지 않음', line);
+      return;
+    }
+    const range = this.contourRange(npp, line);
+    if (!range) return;
+    const prof = this.readContour(range[0], range[1], line);
+    if (!prof) return;
+    if (prof.blocks < 3) {
+      this.w.add('CYCLE95: 윤곽 이동 블록이 3개보다 적음(알람 10933) — 그리지 않음', line);
+      return;
+    }
+    const cut = g7xCorners(prof.els, prof.corners);
+    if (cut.failed) this.w.add('CYCLE95: 모서리 둥글리기·모따기(RND·CHF·CHR)를 넣을 수 없음 — 모서리 그대로 그림', line);
+    const raw = cut.els;
+    if (!raw.length) {
+      this.w.add('CYCLE95: 윤곽 점이 모자람 — 그리지 않음', line);
+      return;
+    }
+    const s = this.scale;
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    // 가공 꼴: mode 0 거친 깎기·1 다듬질·2 온 가공, kind 0 길이 바깥·1 가로 바깥·2 길이 안·3 가로 안
+    const mode = Math.floor((lo - 1) / 4);
+    const kind = (lo - 1) % 4;
+    const facing = kind === 1 || kind === 3;
+    const sI = kind >= 2 ? 1 : -1;
+    // (u, v) = 평면 두 축(표시 단위, 프로그램 좌표 — X는 반지름). 깎는 축 ci, 절입 축은 다른 하나
+    const ci = facing ? 1 : 0;
+    const cutAx = ci === 0 ? a0 : a1;
+    const infAx = ci === 0 ? a1 : a0;
+    const zsd0 = Math.round(this.zsd.get(0) ?? 0);
+    const mid = Math.abs(a[1] ?? 0) * (zsd0 === 1 ? s : zsd0 === 2 && infAx === 0 ? s / 2 : this.axScale[infAx]!);
+    const falz = Math.abs(a[2] ?? 0) * s;
+    const falx = Math.abs(a[3] ?? 0) * s;
+    const fal = Math.abs(a[4] ?? 0) * s;
+    const ff1 = a[5] ?? 0;
+    const ff2 = a[6] ?? 0;
+    const ff3 = a[7] ?? 0;
+    const vrt = (a[11] ?? 0) !== 0 ? Math.abs(a[11]!) * s : this.displayInch ? 1 / 25.4 : 1;
+    // 축별 여유: 깎는 축은 시작 쪽, 절입 축은 바깥(G18 길이 가공 = FALZ·FALX, 가로 가공 = FALX·FALZ)
+    const allowCut = facing ? falx : falz;
+    const allowInf = facing ? falz : falx;
+    let ext = 1;
+    for (const e of raw) ext = Math.max(ext, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    const tol = 1e-7 * ext;
+    const iOf = (u: number, v: number): number => (ci === 0 ? v : u);
+    const cOf = (u: number, v: number): number => (ci === 0 ? u : v);
+    const lastRaw = raw[raw.length - 1]!;
+    const reverse = mode !== 1 && sI * iOf(lastRaw.eu, lastRaw.ev) > sI * iOf(raw[0]!.su, raw[0]!.sv) + tol;
+    const els = reverse ? raw.map((e) => ({ ...e, su: e.eu, sv: e.ev, eu: e.su, ev: e.sv, sweep: -e.sweep })).reverse() : raw;
+    const cdir = Math.sign(cOf(els[els.length - 1]!.eu, els[els.length - 1]!.ev) - cOf(els[0]!.su, els[0]!.sv));
+    if (!cdir || Math.abs(cOf(els[els.length - 1]!.eu, els[els.length - 1]!.ev) - cOf(els[0]!.su, els[0]!.sv)) <= tol) {
+      this.w.add(`CYCLE95: 윤곽이 깎는 축(${AX[cutAx]})으로 움직이지 않음 — 그리지 않음`, line);
+      return;
+    }
+    // 방향 잡은 좌표(p = 깎아 나가는 쪽, q = 절입 깊이)와 되돌림
+    const det = ci === 0 ? cdir * sI : -cdir * sI;
+    const toPQ = (u: number, v: number): [number, number] => (ci === 0 ? [cdir * u, sI * v] : [cdir * v, sI * u]);
+    const fromPQ = (p: number, q: number): [number, number] => (ci === 0 ? [cdir * p, sI * q] : [sI * q, cdir * p]);
+    const elsO: G7xEl[] = els.map((e) => {
+      const [su, sv] = toPQ(e.su, e.sv);
+      const [eu, ev] = toPQ(e.eu, e.ev);
+      const [cu, cv] = e.arc ? toPQ(e.cu, e.cv) : [0, 0];
+      return { arc: e.arc, su, sv, eu, ev, cu, cv, sweep: e.arc ? e.sweep * det : 0 };
+    });
+    const polyRaw = g7xPolyline(elsO, Math.PI / 90).pts;
+    let roughOk = mode !== 1;
+    if (roughOk && !(mid > 0)) {
+      this.w.add('CYCLE95: 절입 깊이(MID)가 없어 거친 깎기를 그리지 않음', line);
+      roughOk = false;
+    }
+    if (roughOk && polyMonotonic(polyRaw, 0, tol) !== 1) {
+      this.w.add(`CYCLE95: 윤곽이 깎는 축(${AX[cutAx]})으로 되돌아감(걸친 윤곽 — 설명서: CYCLE95로 깎을 수 없음) — 거친 깎기를 그리지 않음`, line);
+      roughOk = false;
+    }
+    // 가장 얕은 점이 시작·끝이 아니면 끝에서 축과 나란한 직선을 더한다(320쪽)
+    let qMin = Infinity;
+    for (let i = 1; i < polyRaw.length; i += 2) qMin = Math.min(qMin, polyRaw[i]!);
+    const pEnd = polyRaw[polyRaw.length - 2]!;
+    const qEnd = polyRaw[polyRaw.length - 1]!;
+    const roughEls = elsO.slice();
+    if (polyRaw[1]! > qMin + tol && qEnd > qMin + tol) roughEls.push(g7xLine(pEnd, qEnd, pEnd, qMin));
+    // 다듬질 여유: FAL은 바깥으로 떨어진 곡선, 축별 여유는 옮김
+    let off = roughEls;
+    if (fal > 0) off = g7xOffset(roughEls, fal, g7xSide(roughEls, [(polyRaw[0]! + pEnd) / 2, qMin - 10 * ext], 0).k);
+    off = off.map((e) => ({ ...e, su: e.su - allowCut, eu: e.eu - allowCut, cu: e.cu - allowCut, sv: e.sv - allowInf, ev: e.ev - allowInf, cv: e.cv - allowInf }));
+    const poly = g7xPolyline(off, Math.PI / 90).pts;
+    let top = Infinity;
+    for (let i = 1; i < poly.length; i += 2) top = Math.min(top, poly[i]!);
+    const p0 = poly[0]! - vrt;
+    const S: [number, number] = [p0, top - vrt];
+
+    const { go, move, stopped } = this.cycleMover(line);
+    const putUV = (g: 0 | 1 | 2 | 3, u: number, v: number, f: number, c?: [number, number]): void =>
+      move(g, [u / this.axScale[a0]!, v / this.axScale[a1]!], null, f, c ? [c[0] / s, c[1] / s] : undefined);
+    const put = (g: 0 | 1, p: number, q: number, f = 0): void => {
+      const [u, v] = fromPQ(p, q);
+      putUV(g, u, v, f);
+    };
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    this.inCycle = true;
+    try {
+      // 계산한 시작 자리로 두 축 함께 G0(313쪽)
+      put(0, S[0], S[1]);
+      if (roughOk) {
+        const plan = cycle95Rough(poly, top, p0, mid, vrt, (k, p, q) => {
+          if (!go()) return false;
+          put(k === 0 ? 0 : 1, p, q, k === 2 ? ff2 : ff1);
+          return !stopped();
+        });
+        if (plan.levelCap) this.guardStop(`CYCLE95: 층이 ${G7X_MAX_LEVELS}개를 넘어 그 뒤 층은 건너뜀`, line);
+        if (plan.levels) this.w.add('CYCLE95: 물러나는 길과 언더컷으로 옮겨 가는 길은 설명서 그림으로 정해 그림', line);
+        if (plan.sections > 1 && allowCut > 0)
+          this.w.add(`CYCLE95: 언더컷이 있는데 축 방향 여유 ${facing ? 'FALX' : 'FALZ'}가 0이 아님 — 윤곽을 시작 쪽으로 옮겨 그려 언더컷의 내려가는 벽은 여유만큼 파고들 수 있음`, line);
+      }
+      if (mode !== 0 && !stopped()) {
+        // 다듬질(314쪽): 시작 자리 → 윤곽 시작보다 여유 + 공구 끝 반지름 + 1 mm 앞 → G1(FF3) 윤곽 시작 → 윤곽 → 시작 자리
+        const rn = this.toolRadiusFor(this.dNum >= 0 ? this.dNum : undefined) ?? 0;
+        const [ps, qs] = toPQ(els[0]!.su, els[0]!.sv);
+        put(0, S[0], S[1]);
+        put(0, ps - (allowCut + rn + (this.displayInch ? 1 / 25.4 : 1)), qs);
+        put(1, ps, qs, ff3);
+        for (const e of els) {
+          if (!go()) break;
+          if (e.arc) putUV(e.sweep > 0 ? 3 : 2, e.eu, e.ev, ff3, [e.cu, e.cv]);
+          else putUV(1, e.eu, e.ev, ff3);
+        }
+        put(0, S[0], S[1]);
+      }
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+    }
+    if (mode !== 1 && Math.abs(a[10] ?? 0) > 0) this.w.add('CYCLE95: 칩 끊기(DT·DAM)는 그리지 않음', line);
+    if (stopped()) this.mb.overflow = true;
+    this.known = 7;
+  }
+
+  /**
+   * CYCLE95 윤곽 NPP의 줄 범위(설명서 315쪽): "이름"(그 프로그램 몸통 — 다음 머리 줄 앞까지), "표지1:표지2"(부른 프로그램 안 — 표지1 줄부터 표지2 줄까지),
+   * "이름:표지1:표지2"(그 프로그램 안). 표지는 이름표(LABEL:)나 N 번호. 경로·_N_·_SPF는 뗀다. 못 찾으면 경고하고 null
+   */
+  private contourRange(npp: string, line: number): [number, number] | null {
+    const parts = npp.split(':').map((p) => p.trim().toUpperCase());
+    const prog = (p: string): string => p.replace(/^.*\//, '').replace(/^_N_/, '').replace(/(?:_SPF|_MPF|\.SPF|\.MPF)$/, '');
+    let lo = 0;
+    let hi = this.src.lineCount - 1;
+    if (parts.length === 1 || parts.length === 3) {
+      const name = prog(parts[0]!);
+      const sec = this.sections.get(name);
+      if (!sec) {
+        this.missingProgram(name, `CYCLE95: 윤곽 ${name}을(를) 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
+        return null;
+      }
+      lo = sec.line + 1;
+      for (const h of this.sectionLines.keys()) if (h >= lo && h - 1 < hi) hi = h - 1;
+      if (parts.length === 1) return [lo, hi];
+    } else if (parts.length !== 2) {
+      this.w.add(`CYCLE95: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
+      return null;
+    }
+    const find = (name: string, from: number, to: number): number => {
+      const nm = /^N(\d+)$/.exec(name);
+      const list = (nm ? this.nLines.get(+nm[1]!) : this.labels.get(name)) ?? [];
+      return list.find((l) => l >= from && l <= to) ?? -1;
+    };
+    const k = parts.length - 2;
+    const s = k === 0 ? this.findTarget(parts[0]!, line, 'FB') : find(parts[1]!, lo, hi);
+    const e = s < 0 ? -1 : find(parts[k + 1]!, s, hi);
+    if (s < 0 || e < 0) {
+      this.w.add(`CYCLE95: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
+      return null;
+    }
+    return [s, e];
+  }
+
+  /**
+   * CYCLE95 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 평면 두 축(a0, a1)의 요소로(표시 단위, 프로그램 좌표 — 지름 지정 X는 반지름). 첫 이동 블록의 자리가 윤곽 시작.
+   * G0~G3(G0은 직선), G90·G91, 축별 AC·IC, 원호 CR·I·J·K(I=AC 절대 중심), RND·CHF·CHR, 한 좌표 + ANG를 읽고, M17·M2·M30·RET에서 끝난다.
+   * 읽지 않는 꼴(흐름·호출·프레임·CIP·CT·AR·극좌표·두 블록 윤곽 정의)과 읽을 수 없는 식은 경고하고 null(그리지 않음)
+   */
+  private readContour(s: number, e: number, line: number): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+    const cur = this.progPos();
+    let u = cur[a0]!;
+    let v = cur[a1]!;
+    let abs = this.absolute;
+    let mot = -1;
+    let blocks = 0;
+    let first = true;
+    const els: G7xEl[] = [];
+    const corners: G7xCorner[] = [];
+    const bad = (what: string): null => {
+      this.w.add(`CYCLE95: 윤곽의 ${what}은(는) 읽지 않음 — 그리지 않음`, line);
+      return null;
+    };
+    const L0 = AX[a0]!;
+    const L1 = AX[a1]!;
+    for (let i = s; i <= e; i++) {
+      if (i > s && this.sectionLines.has(i)) break;
+      let t = splitLine(sourceLine(this.src, i)).code.trim();
+      if (!t || t.startsWith('%')) continue;
+      if (t.startsWith('/')) {
+        if (this.o.blockDelete) continue;
+        t = t.replace(/^\/\d?\s*/, '');
+      }
+      t = t.replace(/^N\d+\s*/, '').replace(/^[A-Z_][A-Z0-9_]*\s*:(?!=)\s*/, '');
+      if (!t) continue;
+      const kw = /^[A-Z_]+/.exec(t)?.[0] ?? '';
+      if (kw === 'RET') break;
+      if (kw === 'PROC' || kw === 'DEF') continue;
+      if (CONTOUR_SKIP.has(kw)) return bad(kw);
+      const sc = new Scan(t);
+      const words = new Map<string, { v: number; mode?: 'AC' | 'IC' }>();
+      let gMot = -1;
+      let end = false;
+      try {
+        while (!sc.end()) {
+          const c = sc.peek();
+          if (c === '"') {
+            sc.str();
+            continue;
+          }
+          if (!/[A-Z_$]/.test(c)) throw new ExprError(`알 수 없는 글자 '${c}'`);
+          if (/[A-Z]/.test(c) && /[0-9.+\-]/.test(sc.s[sc.i + 1] ?? '') && !/^[A-Z]\d+\s*=(?!=)/.test(sc.s.slice(sc.i))) {
+            sc.i++;
+            const val = sc.number();
+            if (val === undefined) throw new ExprError(`${c} 뒤에 수 없음`);
+            if (c === 'G') {
+              const gi = Math.round(val * 10);
+              if (gi === 0 || gi === 10 || gi === 20 || gi === 30) gMot = gi;
+              else if (gi === 900 || gi === 910) abs = gi === 900;
+              else if (gi === 410 || gi === 420 || (gi >= 1100 && gi <= 1120) || ((gi === 170 || gi === 180 || gi === 190) && (gi - 170) / 10 !== this.plane)) return bad(`G${val}`);
+            } else if (c === 'M') {
+              if (val === 17 || val === 2 || val === 30) end = true;
+            } else words.set(c, { v: val });
+            continue;
+          }
+          const id = sc.ident();
+          sc.ws();
+          if (sc.s[sc.i] === '=' && sc.s[sc.i + 1] !== '=') {
+            sc.i++;
+            sc.ws();
+            const m = /^(AC|IC)\s*\(/.exec(sc.s.slice(sc.i));
+            if (m) {
+              sc.i += m[0].length;
+              const val = this.expr(sc);
+              if (!sc.eat(')')) throw new ExprError(') 없음');
+              words.set(id, { v: val, mode: m[1] as 'AC' | 'IC' });
+            } else words.set(id, { v: this.expr(sc) });
+            continue;
+          }
+          if (id === 'CIP' || id === 'CT' || /^A?(?:TRANS|ROT|SCALE|MIRROR)$/.test(id)) return bad(id);
+          // 그 밖의 낱말(DIAMON·SOFT 등)은 윤곽 모양과 상관없어 건너뛴다
+        }
+      } catch (err) {
+        if (!(err instanceof ExprError)) throw err;
+        this.w.add(`CYCLE95: 윤곽 블록을 읽을 수 없음 — ${err.message}`, line);
+        return null;
+      }
+      for (const k of ['AR', 'AP', 'RP', 'TURN', 'I1', 'J1', 'K1', 'ANG1', 'ANG2']) if (words.has(k)) return bad(k);
+      if (gMot >= 0) mot = gMot;
+      const w0 = words.get(L0);
+      const w1 = words.get(L1);
+      const ang = words.get('ANG');
+      if (w0 || w1 || ang) {
+        blocks++;
+        if (first && gMot < 0) {
+          this.w.add('CYCLE95: 윤곽 첫 이동 블록에 G0~G3이 없음(알람 15800) — 그리지 않음', line);
+          return null;
+        }
+        const val = (w: { v: number; mode?: 'AC' | 'IC' }, ax: number, c0: number): number => {
+          const inc = w.mode === 'IC' || (w.mode !== 'AC' && !abs);
+          return inc ? c0 + w.v * this.axScale[ax]! : w.v * this.axScale[ax]!;
+        };
+        let nu = w0 ? val(w0, a0, u) : u;
+        let nv = w1 ? val(w1, a1, v) : v;
+        if (ang) {
+          // 윤곽 정의(한 블록): 한 좌표와 첫 축에서 잰 각(Programming Guide) — 두 좌표·좌표 없음은 두 블록 꼴이라 읽지 않음
+          if (first || !w0 === !w1) return bad('ANG');
+          const cs = Math.cos(ang.v * DEG);
+          const sn = Math.sin(ang.v * DEG);
+          if (w0) {
+            if (Math.abs(cs) < 1e-9) return bad('ANG');
+            nv = v + ((nu - u) * sn) / cs;
+          } else {
+            if (Math.abs(sn) < 1e-9) return bad('ANG');
+            nu = u + ((nv - v) * cs) / sn;
+          }
+        }
+        if (first) {
+          if (!(w0 && w1)) this.w.add('CYCLE95: 윤곽 첫 블록에 두 축 좌표가 다 있어야 함 — 없는 축은 지금 자리로 봄', line);
+          first = false;
+        } else if (Math.hypot(nu - u, nv - v) > 1e-9) {
+          if (mot === 20 || mot === 30) {
+            const ccw = mot === 30;
+            const cr = words.get('CR');
+            let cu: number;
+            let cv: number;
+            if (cr) {
+              const R = cr.v * this.scale;
+              const du = nu - u;
+              const dv = nv - v;
+              const d = Math.hypot(du, dv);
+              const rr = Math.max(Math.abs(R), d / 2);
+              const h = Math.sqrt(Math.max(0, rr * rr - (d * d) / 4));
+              const side = (ccw ? 1 : -1) * (R < 0 ? -1 : 1);
+              cu = u + du / 2 - (side * h * dv) / d;
+              cv = v + dv / 2 + (side * h * du) / d;
+            } else {
+              const k0 = words.get(CENTER[a0]!);
+              const k1 = words.get(CENTER[a1]!);
+              if (!k0 && !k1) {
+                this.w.add('CYCLE95: 윤곽 원호에 중심(I·J·K)·반지름(CR)이 없음 — 그리지 않음', line);
+                return null;
+              }
+              cu = k0 ? (k0.mode === 'AC' ? k0.v * this.scale : u + k0.v * this.scale) : u;
+              cv = k1 ? (k1.mode === 'AC' ? k1.v * this.scale : v + k1.v * this.scale) : v;
+            }
+            let sw = Math.atan2(nv - cv, nu - cu) - Math.atan2(v - cv, u - cu);
+            if (ccw) while (sw <= 0) sw += Math.PI * 2;
+            else while (sw >= 0) sw -= Math.PI * 2;
+            els.push({ arc: true, su: u, sv: v, eu: nu, ev: nv, cu, cv, sweep: sw });
+          } else els.push(g7xLine(u, v, nu, nv));
+          const rnd = words.get('RND');
+          const cn = rnd ?? words.get('CHF') ?? words.get('CHR');
+          if (cn && cn.v > 0) corners.push({ at: els.length - 1, kind: rnd ? 'round' : words.has('CHF') ? 'chamferHyp' : 'chamferLeg', size: cn.v * this.scale });
+        }
+        u = nu;
+        v = nv;
+      }
+      if (end) break;
+    }
+    return { els, corners, blocks };
   }
 
   /** 작업 좌표계 이름(G505~G599) */
