@@ -1442,8 +1442,17 @@ class SiemensRunner extends Runner {
     this.cqI = this.cqJ = this.cqK = 0;
     if (name === 'CYCLE82' || name === 'CYCLE84' || name === 'CYCLE840' || name === 'CYCLE85' || name === 'CYCLE86' || name === 'CYCLE88' || name === 'CYCLE89') this.cp = dtb(5);
     if (name === 'CYCLE83') {
-      // FDEP(5) 첫 깊이 절대 · FDPR(6) 첫 깊이(기준면에서) · DAM(7) 줄이는 양 · DTB(8) · VARI(11) 0 = 칩 끊기, 1 = 칩 빼기
-      const first = a[5] !== undefined ? Math.abs(rfp - a[5] * s) : a[6] !== undefined ? Math.abs(a[6]) * s : 0;
+      // FDEP(5) 첫 깊이 절대 · FDPR(6) 첫 깊이(기준면에서) · DAM(7) 줄이는 양 · DTB(8) · VARI(11) 0 = 칩 끊기, 1 = 칩 빼기.
+      // 42차: 둘 다 있으면 상대 값 FDPR — 설명서 2.1.5절 52쪽("FDPR은 사이클에서 DPR과 같은 구실")과 5.3절 364쪽(CYCLE83 알림
+      // "1. drilling depth: according to the value for the relative depth" — DP·DPR과 같은 규칙). FDEP와 다르면 알린다.
+      // 빠진 매개변수는 0(1.2절 17쪽)이라 FDPR = 0은 적지 않은 것과 같다(FDEP). 같으면 FDEP 값 그대로(전과 같은 경로)
+      const fdep = a[5] !== undefined ? Math.abs(rfp - a[5] * s) : undefined;
+      const fdpr = a[6] !== undefined && a[6] !== 0 ? Math.abs(a[6]) * s : undefined;
+      let first = fdep ?? fdpr ?? 0;
+      if (fdep !== undefined && fdpr !== undefined && Math.abs(fdep - fdpr) > 1e-9 * Math.max(1, fdpr)) {
+        first = fdpr;
+        this.w.add(`${name}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림`, line);
+      }
       const dam = Math.abs(a[7] ?? 0) * s;
       this.cp = dtb(8);
       if (first > 0) {
