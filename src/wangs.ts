@@ -32,7 +32,7 @@
  * 공구가 원을 다 채우면(T35 도어 컵처럼 공구 폭 ≥ 지름) 한 번에 뚫는 구멍으로, 닫힌 empty 경로는 포켓으로 본다.
  * 모르는 요소는 위치를 알면 점으로, 모르면 목록에만 넣는다.
  */
-import { ExprError, evalMprExpr } from './expr';
+import { ExprError, evalMprExpr, PANEL_VALUE_MAX } from './expr';
 import { NcWarnings, type PathPoint } from './model';
 import type { MprBoxOp, MprContourOp, MprDrillOp, MprHole, MprOperation, MprOtherOp, MprPart, MprVariable, MprWorkpiece, PanelFace, PrismArcs } from './mpr';
 import { decodeXmlBytes, parseXml, xmlAttr, xmlChild, xmlChildren, xmlField, xmlRootName, XmlError, type XmlElement } from './xml';
@@ -120,10 +120,11 @@ class Numbers {
     const e = (raw ?? '').trim();
     if (!e) return undefined;
     const n = Number(e);
-    if (Number.isFinite(n)) return n;
+    // 53차: 글자 그대로 쓴 수도 식 값과 같은 한도(PANEL_VALUE_MAX — 넘으면 읽을 수 없는 값으로 알림)
+    if (Number.isFinite(n)) return Math.abs(n) < PANEL_VALUE_MAX ? n : undefined;
     try {
       const v = evalMprExpr(e, this.lookup);
-      return Number.isFinite(v) && Math.abs(v) < 1e7 ? v : undefined;
+      return Number.isFinite(v) && Math.abs(v) < PANEL_VALUE_MAX ? v : undefined;
     } catch (err) {
       if (!(err instanceof ExprError)) throw err;
       return undefined;

@@ -21,7 +21,7 @@
  * 기하(corner.ts — 원호 중심은 그대로, 원호 위 모따기 점은 모서리에서 현 길이)로.
  * 변수는 정의 차례대로 계산하고, 뒤에 정의된 변수를 쓰는 식은 다시 돌며 푼다. 모르는 매크로는 XA·YA가 있으면 위치만 남긴다.
  */
-import { ExprError, evalMprExpr } from './expr';
+import { ExprError, evalMprExpr, PANEL_TOO_BIG, PANEL_VALUE_MAX } from './expr';
 import { cornerCut, cornerElem } from './corner';
 import { NcWarnings, type NcWarningItem, type PathPoint } from './model';
 import { guessEncoding } from './text';
@@ -357,14 +357,16 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     if (k.startsWith('_') && v !== '' && Number.isFinite(n)) setEnv(k, n);
   }
   const lookup = { get: (name: string): number | undefined => env.get(name) ?? envLower.get(name.toLowerCase()) };
-  const evalExpr = (expr: string, line: number, what: string): number | undefined => {
+  // max: 53차 판재 값 한도(1e308 같은 값이 화면 좌표에서 무한이 되었다 — 구멍 개수 AN은 파일 전체 HOLE_MAX가 따로 막아 한도 없이)
+  const evalExpr = (expr: string, line: number, what: string, max = PANEL_VALUE_MAX): number | undefined => {
     const e = expr.trim();
     if (e === '') return undefined;
     const n = Number(e);
-    if (Number.isFinite(n)) return n;
+    if (Number.isFinite(n) && Math.abs(n) < max) return n;
     try {
-      const v = evalMprExpr(e, lookup);
+      const v = Number.isFinite(n) ? n : evalMprExpr(e, lookup);
       if (!Number.isFinite(v)) throw new ExprError('값이 수가 아님');
+      if (!(Math.abs(v) < max)) throw new ExprError(PANEL_TOO_BIG);
       return v;
     } catch (err) {
       if (!(err instanceof ExprError)) throw err;
@@ -377,10 +379,10 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     const e = expr.trim();
     if (e === '') return undefined;
     const n = Number(e);
-    if (Number.isFinite(n)) return n;
+    if (Number.isFinite(n)) return Math.abs(n) < PANEL_VALUE_MAX ? n : undefined;
     try {
       const v = evalMprExpr(e, lookup);
-      return Number.isFinite(v) ? v : undefined;
+      return Number.isFinite(v) && Math.abs(v) < PANEL_VALUE_MAX ? v : undefined;
     } catch (err) {
       if (!(err instanceof ExprError)) throw err;
       return undefined;
@@ -427,7 +429,7 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
     const L = Number(header._BSX);
     const B = Number(header._BSY);
     const D = Number(header._BSZ);
-    if (L > 0 && B > 0 && D > 0) workpiece = { length: L, width: B, thickness: D, line: -1 };
+    if (L > 0 && B > 0 && D > 0 && Math.max(L, B, D) < PANEL_VALUE_MAX) workpiece = { length: L, width: B, thickness: D, line: -1 };
     else w.add('공작물(WerkStck) 크기를 알 수 없음');
   }
   const thick = workpiece?.thickness ?? 0;
@@ -555,7 +557,7 @@ export function parseMpr(input: Uint8Array | ArrayBuffer | string, opts: MprOpti
       if (v === undefined || v === '') return dflt;
       // "STANDARD"는 woodWOP의 기본값 표시(이송 F_·회전 S_·공구 TNO 등 — 기계·공구 자료의 값을 씀): 식이 아니므로 기본값으로
       if (/^\s*standard\s*$/i.test(v)) return dflt;
-      return evalExpr(v, m.line, `${m.name} ${key}`) ?? dflt;
+      return evalExpr(v, m.line, `${m.name} ${key}`, key === 'AN' ? Infinity : PANEL_VALUE_MAX) ?? dflt;
     };
     let enabled = true;
     if (p['??'] !== undefined && num('??', 1) === 0) enabled = false;

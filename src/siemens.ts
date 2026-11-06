@@ -24,7 +24,7 @@
  * 윤곽 밀링 CYCLE72는 CYCLE95와 같은 윤곽 찾기로 층마다 접근 → 윤곽 → 물러남을 그리고, 반경 보정은 사이클이 낸 G41·G42·G40 블록으로 보정 구간에 적는다(46차 — cycle72 참고).
  * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE76·CYCLE93 등), 시스템 변수($…), 배열 변수, 축별 지름 지정(DIAMONA 등).
  */
-import { ExprError } from './expr';
+import { EXPR_DEPTH_MAX, EXPR_TOO_DEEP, ExprError } from './expr';
 import { Block, Runner, THREAD_PASS_MAX, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
 import { G7X_MAX_LEVELS, cycle95Rough, g7xCorners, g7xLine, g7xOffset, g7xPolyline, g7xSide, polyMonotonic, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { FLAG_CYCLE, JOB_FILE_MARK, MOVE_ARC, MOVE_FEED, PLANE_AXES, type NcProgram } from './model';
@@ -89,6 +89,8 @@ function splitLine(raw: string): { code: string; comment: string } {
 /** 식·낱말 읽기 */
 class Scan {
   i = 0;
+  /** 53차: 식 겹침(unary에 들어갈 때 하나씩 — EXPR_DEPTH_MAX) */
+  depth = 0;
   constructor(readonly s: string) {}
   ws(): void {
     while (this.i < this.s.length && (this.s[this.i] === ' ' || this.s[this.i] === '\t' || this.s[this.i] === '\r')) this.i++;
@@ -376,6 +378,11 @@ class SiemensRunner extends Runner {
         this.hitLimit = true;
         break;
       }
+      // 53차: 이동 없이 도는 끝없는 고리
+      if (this.idleStop(line)) {
+        this.hitLimit = true;
+        break;
+      }
       // 다른 프로그램(부프로그램 머리·PROC·함께 연 파일)이 시작하는 줄
       if (this.sectionLines.has(line) && line !== this.mainHeader) {
         if (this.chainedHeads.has(line)) continue;
@@ -388,6 +395,11 @@ class SiemensRunner extends Runner {
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
+        // 53차: 깨진 블록이 든 끝없는 고리
+        if (this.badBlockStop(line)) {
+          this.hitLimit = true;
+          break;
+        }
       }
       this.afterLine(line);
       if (this.limitReached(line)) break;
@@ -600,8 +612,12 @@ class SiemensRunner extends Runner {
     return v;
   }
   private notExpr(sc: Scan): number {
-    if (sc.eatWord('NOT')) return this.notExpr(sc) === 0 ? 1 : 0;
-    return this.cmpExpr(sc);
+    // NOT NOT … x: 뒤집기 수만큼(53차 — 되부르지 않고, 같은 값)
+    let n = 0;
+    while (sc.eatWord('NOT')) n++;
+    let v = this.cmpExpr(sc);
+    for (let k = 0; k < n; k++) v = v === 0 ? 1 : 0;
+    return v;
   }
   private cmpExpr(sc: Scan): number {
     const a = this.addExpr(sc);
@@ -645,9 +661,15 @@ class SiemensRunner extends Runner {
     }
   }
   private unary(sc: Scan): number {
-    if (sc.eat('-')) return -this.unary(sc);
-    if (sc.eat('+')) return this.unary(sc);
-    return this.primary(sc);
+    // 53차: 겹침 한도(괄호·함수 인수·R[…]은 primary → expr → … → unary로 다시 들어온다)
+    if (++sc.depth > EXPR_DEPTH_MAX) throw new ExprError(EXPR_TOO_DEEP);
+    try {
+      if (sc.eat('-')) return -this.unary(sc);
+      if (sc.eat('+')) return this.unary(sc);
+      return this.primary(sc);
+    } finally {
+      sc.depth--;
+    }
   }
   private primary(sc: Scan): number {
     sc.ws();

@@ -11,7 +11,7 @@ import type { NcProgram } from './model';
 import { looksLikeMpr, parseMpr, type MprOptions, type MprPart } from './mpr';
 import { mprToScene, ncToScene, type MprSceneOptions, type NcSceneOptions } from './scene';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, type PanelFileKind } from './extensions';
-import { makeSource } from './text';
+import { detectionHead, makeSource } from './text';
 import { combineNcJob, type NcJob, type NcJobFile } from './job';
 import { looksLikeKdtXml, looksLikePgi, parseKdtXml, parsePgi, type PanelReadOptions } from './wangs';
 
@@ -42,7 +42,8 @@ function ext(name: string): string {
  * .xml은 확장자만으로 정하지 않는다(뿌리가 <KDTPanelFormat>일 때만). G-code처럼 보이지도 않으면 null.
  */
 export function detectNcFormat(name: string, data: Uint8Array | string): NcFileKind | null {
-  const head = typeof data === 'string' ? data.slice(0, 65536) : new TextDecoder('latin1').decode(data.subarray(0, 65536));
+  // 53차: 긴 공백은 줄여 본다(detectionHead — 판별 정규식이 빈 줄 수만 개에서 아주 느렸다)
+  const head = detectionHead(typeof data === 'string' ? data.slice(0, 65536) : new TextDecoder('latin1').decode(data.subarray(0, 65536)));
   if (looksLikeMpr(head)) return 'mpr';
   if (looksLikePgi(head)) return 'pgi';
   if (looksLikeKdtXml(head)) return 'xml';

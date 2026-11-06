@@ -11,6 +11,7 @@
 import { isPanelKind, type PanelFileKind } from './extensions';
 import { detectGcodeDialect } from './gcode';
 import { JOB_FILE_MARK } from './model';
+import { detectionHead } from './text';
 
 /** 판재 형식(MPR·PGI·XML)은 잇지 않는다(파일 하나가 판 하나) */
 export type JobKind = 'gcode' | 'heidenhain' | PanelFileKind;
@@ -103,7 +104,7 @@ export function combineNcJob(files: NcJobFile[], kindOf: (name: string, bytes: U
     mi = best < 0 ? 0 : best;
   }
   const m = info[mi]!;
-  const semicolon = m.kind === 'heidenhain' || detectGcodeDialect(m.text.slice(0, 65536)) === 'siemens';
+  const semicolon = m.kind === 'heidenhain' || detectGcodeDialect(detectionHead(m.text.slice(0, 65536))) === 'siemens';
   const parts: Uint8Array[] = [];
   const order: string[] = [m.f.name];
   const skipped: string[] = [];
