@@ -389,6 +389,15 @@ export class NcEmitter {
   }
 
   /**
+   * 구멍·사이클 하나 안의 고정 횟수 안전장치(쪼기·층·원·나사 절입 — 아주 작은 절입이 끝나지 않게 막는다)에 닿았을 때 그 줄에 경고를 남긴다.
+   * 그린 자리는 그대로 둔다. 이동 한도에 이미 닿았으면 남기지 않는다(쌓지 못해 멈춘 것이라 한도 경고가 맡는다)
+   */
+  protected guardStop(msg: string, line: number): void {
+    if (this.mb.overflow || this.mb.count >= this.mb.limit) return;
+    this.w.add(msg, line);
+  }
+
+  /**
    * 한 블록 안에서 파일 값이 횟수를 정하는 반복(구멍·층·고리·조각)의 문지기: 돌 때마다 부르고 false면 멈춘다(38차 Siemens 포켓과 같은 꼴).
    * 블록 사이 검사는 그 블록이 끝나야 닿으므로, 아주 큰 반복 수나 아주 작은 절입·간격 한 줄이 한도를 넘게 만들지 않게 여기서 본다.
    * 이동 한도에 닿았거나, 돈 횟수가 남은 이동 수를 넘으면(길이 0 이동만 만드는 반복) mb.overflow를 켠다

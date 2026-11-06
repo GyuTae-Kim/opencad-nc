@@ -13,7 +13,8 @@
  * 기계 좌표 쪽 이동 SUPA·G53·G153·G74·G75(위치를 모르면 안전 높이 규칙), 단위 G70/G71/G700/G710, G4 F(초)·S(회전).
  * CT(접선 원호, 모달)는 앞 요소에 접하는 원호로, RND·RNDM·CHF·CHR은 앞뒤가 직선인 모서리를 다듬는다(원호와 만나면 그대로, 경고).
  * 포켓 사이클 POCKET3(사각)·POCKET4(원)는 층마다 중심에서 바깥으로 고리 경로(38차 — pocket 참고)와 사이클 설정 _ZSD[1]·[2]·[9] 대입.
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(POCKET1·POCKET2·SLOT·CYCLE95 등),
+ * 홈 사이클 LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)는 층마다 왕복·홈 둘레 고리(40차 — slot 참고).
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(POCKET1·POCKET2·CYCLE95 등),
  * 시스템 변수($…), 배열·문자열 변수.
  */
 import { ExprError } from './expr';
@@ -41,6 +42,14 @@ const IGNORE_ADDR = new Set(['SPOS', 'SPOSA', 'OFFN', 'ACC', 'FA', 'FL', 'SF', '
 const UNSUPPORTED_CYCLE = /^(?:POCKET\d|SLOT\d|LONGHOLE|CYCLE7\d|CYCLE9\d|CYCLE6\d+|CYCLE899|CYCLE952|CYCLE930|CYCLE940|CYCLE951|CYCLE99|CYCLE98|CYCLE97|CYCLE96|CYCLE95|CYCLE92|CYCLE90|CYCLE802|CYCLE801|CYCLE90\d?|E_\w+|F_\w+)$/;
 
 type Word = { name: string; value?: number; str?: string; mode?: 'AC' | 'IC' };
+/** 평면 두 축의 프로그램 좌표 */
+type P2 = readonly [number, number];
+/** 밀링 사이클 이동 도구(cycleMover): 반복 문지기·G0~G3 블록 이동·멈췄는지 */
+interface CycleMover {
+  go(): boolean;
+  move(g: 0 | 1 | 2 | 3, p: P2 | null, w: number | null, f: number, c?: P2): void;
+  stopped(): boolean;
+}
 
 /** 줄 글을 주석과 코드로(따옴표 밖 ;부터 주석, 코드는 따옴표 밖만 대문자) */
 function splitLine(raw: string): { code: string; comment: string } {
@@ -1303,6 +1312,7 @@ class SiemensRunner extends Runner {
       } else if (c.name === 'CYCLE800') this.warnOnce('CYCLE800', 'CYCLE800 기울인 평면은 지원하지 않음(변환 없이 그림)', line);
       else if (this.sections.has(c.name)) this.callSub(c.name, 1, c.args, line, false);
       else if (c.name === 'POCKET3' || c.name === 'POCKET4') this.pocket(c.name, c.args, line);
+      else if (c.name === 'SLOT1' || c.name === 'SLOT2' || c.name === 'LONGHOLE') this.slot(c.name, c.args, line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
     }
@@ -1420,6 +1430,7 @@ class SiemensRunner extends Runner {
       c = Math.round(a[11] ?? 1) === 0 ? 730 : 830;
     }
     this.retractR = false;
+    this.peckName = name;
     if (!this.xfPlane(this.plane).keeps) {
       // 기울인 프레임(ROT X/Y): 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다(공구 축도 기운다)
       const q = this.progPos();
@@ -1434,6 +1445,7 @@ class SiemensRunner extends Runner {
       this.drillAt(c, p0, p1, da, this.pos[p0]!, this.pos[p1]!, rD, zD, line);
     }
     this.peckFirstExtra = 0;
+    this.peckName = undefined;
     [this.cq, this.cp, this.cqI, this.cqJ, this.cqK] = [saveQ[0], saveQ[1], saveQ[2], saveQ[3], saveQ[4]];
     this.retractR = !!saveQ[5];
     this.initLevel = saveQ[6];
@@ -1598,13 +1610,7 @@ class SiemensRunner extends Runner {
     // 이동 한도: 층·고리·나선 바퀴는 한 블록 안에서 돌아 run의 블록 사이 검사가 닿지 않으므로 여기서도 본다.
     // 반복(층·고리·바퀴) 한 번은 보통 이동을 하나 넘게 만들므로 반복 수도 남은 이동 수까지만 — 길이 0 이동만 만드는
     // 아주 작은 절입·간격도 멈춘다. 멈추면 run이 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
-    const budget = Math.max(0, this.maxMoves - this.mb.count);
-    let steps = 0;
-    let stop = false;
-    const go = (): boolean => {
-      if (!stop && (this.mb.count >= this.maxMoves || ++steps > budget)) stop = true;
-      return !stop;
-    };
+    const { go, move, stopped } = this.cycleMover(line);
     /** from에서 to까지 _MID 이하 같은 절입의 층 수(가장 적은 수 — 배열로 만들지 않는다: 아주 작은 _MID면 매우 크다) */
     const levelCount = (from: number, to: number): number => {
       const total = up * (from - to);
@@ -1617,34 +1623,10 @@ class SiemensRunner extends Runner {
     const widthCount = (m: number): number => (maxW > 0 ? Math.max(1, Math.ceil(m / maxW - 1e-9)) : 1);
 
     // ── 블록으로 그리기(프로그램 좌표, 중심 (cu, cv)·긴 축 각 ang의 지역 좌표) ──
-    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
     const ca = Math.cos(ang);
     const sa = Math.sin(ang);
     const P = (lu: number, lv: number): [number, number] => [cu + lu * ca - lv * sa, cv + lu * sa + lv * ca];
-    const b = new Block();
-    const move = (g: 0 | 1 | 2 | 3, p: [number, number] | null, w: number | null, f: number, c?: [number, number]): void => {
-      if (stop) return;
-      b.reset();
-      b.set(6, g, true);
-      if (p) {
-        b.set(LET(AX[a0]!), p[0], true);
-        b.set(LET(AX[a1]!), p[1], true);
-        b.axAbs |= (1 << a0) | (1 << a1);
-      }
-      if (w !== null) {
-        b.set(LET(AX[a2]!), w, true);
-        b.axAbs |= 1 << a2;
-      }
-      if (c) {
-        b.set(LET(CENTER[a0]!), c[0], true);
-        b.set(LET(CENTER[a1]!), c[1], true);
-        b.cAbs = (1 << a0) | (1 << a1);
-      }
-      if (g !== 0 && f > 0) b.set(LET('F'), f, true);
-      this.exec(b, line);
-      if (this.mb.count >= this.maxMoves) stop = true;
-    };
-    const lin = (lu: number, lv: number, f = ffp1): void => move(1, P(lu, lv), null, f);
+    const lin =(lu: number, lv: number, f = ffp1): void => move(1, P(lu, lv), null, f);
     const arc = (lcu: number, lcv: number, lu: number, lv: number, w: number | null, f: number): void => move(ccw ? 3 : 2, P(lu, lv), w, f, P(lcu, lcv));
     const s = ccw ? 1 : -1;
     /** 공구 중심 고리 하나(반너비 ex·ey, 모서리 er) — 오른쪽 가운데에서 시작해 가공 방향으로 */
@@ -1748,7 +1730,370 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
-    if (stop) this.mb.overflow = true;
+    if (stopped()) this.mb.overflow = true;
+    this.known = 7;
+  }
+
+  /**
+   * 밀링 사이클(POCKET3·4, SLOT1·2, LONGHOLE)의 이동 도구: 프로그램 좌표(평면 두 축 p·공구 축 w·원호 중심 c — 모두 절대)로 G0~G3 블록을 만들어
+   * Runner에 넘기므로 프레임(TRANS·ROT·MIRROR·SCALE)·평면(G17~G19)을 그대로 따른다. 층·고리·홈·바퀴를 돌 때마다 go()로 이동 한도를 본다 —
+   * 반복 한 번은 보통 이동을 하나 넘게 만들므로 반복 수도 남은 이동 수까지만(길이 0 이동만 만드는 아주 작은 절입·간격도 멈춘다).
+   * 멈췄으면(stopped) 부른 쪽이 mb.overflow를 켜 run이 그 줄에서 "이동이 …개를 넘어 나머지는 읽지 않음"으로 읽기를 멈춘다
+   */
+  private cycleMover(line: number): CycleMover {
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const budget = Math.max(0, this.maxMoves - this.mb.count);
+    let steps = 0;
+    let stop = false;
+    const b = new Block();
+    return {
+      go: (): boolean => {
+        if (!stop && (this.mb.count >= this.maxMoves || ++steps > budget)) stop = true;
+        return !stop;
+      },
+      move: (g, p, w, f, c): void => {
+        if (stop) return;
+        b.reset();
+        b.set(6, g, true);
+        if (p) {
+          b.set(LET(AX[a0]!), p[0], true);
+          b.set(LET(AX[a1]!), p[1], true);
+          b.axAbs |= (1 << a0) | (1 << a1);
+        }
+        if (w !== null) {
+          b.set(LET(AX[a2]!), w, true);
+          b.axAbs |= 1 << a2;
+        }
+        if (c) {
+          b.set(LET(CENTER[a0]!), c[0], true);
+          b.set(LET(CENTER[a1]!), c[1], true);
+          b.cAbs = (1 << a0) | (1 << a1);
+        }
+        if (g !== 0 && f > 0) b.set(LET('F'), f, true);
+        this.exec(b, line);
+        if (this.mb.count >= this.maxMoves) stop = true;
+      },
+      stopped: () => stop,
+    };
+  }
+
+  // ── 홈·긴 구멍 사이클 ──
+  /**
+   * LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)(40차): SINUMERIK 840D sl/840D/840Di sl/840Di/810D 사이클 프로그래밍 설명서
+   * (6FC5398-3BP20-0BA0, 2006-11 — 3.2절 사이클 설정, 3.4 LONGHOLE, 3.5 SLOT1, 3.6 SLOT2, 2.1 CYCLE81의 DP·DPR. 2008-01 독일어판 6FC5398-3BP20-1AA0도 같음)의 매개변수 차례·뜻대로.
+   * LONGHOLE(RTP, RFP, SDIS, DP, DPR, NUM, LENG, CPA, CPO, RAD, STA1, INDA, FFD, FFP1, MID)
+   * SLOT1(RTP, RFP, SDIS, DP, DPR, NUM, LENG, WID, CPA, CPO, RAD, STA1, INDA, FFD, FFP1, MID, CDIR, FAL, VARI, MIDF, FFP2, SSF, _FALD, _STA2)
+   * SLOT2(RTP, RFP, SDIS, DP, DPR, NUM, AFSL, WID, CPA, CPO, RAD, STA1, INDA, FFD, FFP1, MID, CDIR, FAL, VARI, MIDF, FFP2, SSF, _FFCP)
+   * - 자리: 원 중심 (CPA, CPO)·반지름 RAD, k번째는 STA1 + k × INDA(INDA = 0이면 360 / NUM). LONGHOLE·SLOT1은 긴 축이 반지름 방향이고 안쪽 끝이 원에 닿아
+   *   바깥으로 LENG(끝에서 끝)만큼(설명서 그림), 너비는 LONGHOLE = 공구 지름, SLOT1 = WID. SLOT2는 원 위를 따라 STA1에서 반시계로 AFSL(양 끝 반원 중심 사이 각),
+   *   너비 WID. AFSL이 360 이상이면 고리 홈(설명서: NUM = 1, AFSL = 369)
+   * - 깊이: DPR이 있으면 DPR(둘 다 있으면 DPR — CYCLE81 설명), 없으면 DP. _ZSD[1] = 0이면 기준면 + 안전 거리부터, 1이면 기준면부터 MID 이하의 같은 절입으로
+   *   가장 적은 층(MID = 0이면 한 번)
+   * - LONGHOLE(설명서 순서): 후퇴 면에서 가까운 끝 위로 → 기준면 + 안전 거리 → 끝마다 다음 깊이로 G1(FFD) 진입하며 FFP1로 왕복 → 후퇴 면 →
+   *   다음 구멍의 가까운 끝(가장 짧은 길). 마지막 구멍 뒤 그 자리에서 후퇴 면으로(독일어판 — 영어판은 그림을 가리키는데 그림이 없다)
+   * - SLOT1·SLOT2 황삭: 공구 지름이 너비의 반보다 작으면 가운데가 남는다(설명서 — 보지 않음)는 설명에 맞춰 층마다 홈 둘레 고리 하나
+   *   (반너비 = 너비/2 − FAL − 공구 반지름, FAL이 너무 크면 줄임)로 깎는다(정한 것). 진입은 층마다 같은 자리(설명서)인데 어디인지 적지 않아 가까운 끝 반원의 중심으로
+   *   정했다. 너비 − 2 × FAL = 공구 지름이면 설명서대로 LONGHOLE처럼 양 끝에서 번갈아 진입하며 왕복. SLOT1의 바닥 여유 _FALD만큼 위까지
+   * - 정삭(VARI 일의 자리 0·2): 후퇴 없이 안전 높이로 올라가 MIDF 이하 층마다(0이면 바닥 한 번) 홈 윤곽 한 바퀴(FFP2, 없으면 FFP1). 공구 지름 = 너비면 바닥만(중심선 한 번)
+   * - 진입(SLOT1 VARI 십의 자리): 0 수직 G0, 1 수직 G1(FFD), 3 = 홈 가운데 축 위 왕복(LENG − WID 길이, _STA2 이하 각, FFD — 진입 자리에서 끝나게 시작 끝을 고름).
+   *   LONGHOLE·SLOT2는 G1(FFD)
+   * - SLOT2: 홈 사이 옮김은 VARI 십의 자리 0 = 후퇴 면에서 G0 직선, 1 = 후퇴 면 높이에서 원을 따라(_FFCP). 일의 자리 3 = 가장자리만 정삭(MID 층마다 윤곽 한 바퀴,
+   *   설명서의 부드러운 접근은 그리지 않고 곧게 들어감). 가공 방향 CDIR은 2(G2)·3(G3)
+   * - 그리지 않는 것(경고): 깊이·개수·크기가 없거나 맞지 않음, 공구가 홈보다 큼(알람 61105), 홈끼리 겹침(알람 61104), VARI가 맞지 않음(알람 61102)
+   * - 반영하지 않는 것(경고): SSF(정삭 회전수)
+   * 이동은 cycleMover로 프레임·평면을 따르고, 홈·층·왕복 행정마다 이동 한도를 본다. 앞의 G 모드·이송은 사이클 뒤 그대로다(설명서 3.2절)
+   */
+  private slot(name: 'LONGHOLE' | 'SLOT1' | 'SLOT2', a: (number | undefined)[], line: number): void {
+    const long = name === 'LONGHOLE';
+    const s1 = name === 'SLOT1';
+    const s2 = name === 'SLOT2';
+    const at = (k: number): number => a[k] ?? 0;
+    const rtp = at(0);
+    const rfp = at(1);
+    const sdis = Math.abs(at(2));
+    // 깊이: 상대 깊이 DPR은 기준면에서 후퇴 면 반대쪽으로(둘 다 있으면 DPR)
+    let dp: number;
+    if (a[4] !== undefined) dp = rfp - (rtp >= rfp ? 1 : -1) * Math.abs(a[4]);
+    else if (a[3] !== undefined) dp = a[3];
+    else {
+      this.w.add(`${name}: 깊이(DP·DPR)가 없음 — 그리지 않음`, line);
+      return;
+    }
+    const num = Math.round(at(5));
+    // LONGHOLE·SLOT1은 LENG(길이), SLOT2는 AFSL(각)
+    const size = Math.abs(at(6));
+    // CPA 자리(SLOT은 앞에 WID가 있다)
+    const k0 = long ? 7 : 8;
+    const wid = long ? 0 : Math.abs(at(7));
+    const cpa = at(k0);
+    const cpo = at(k0 + 1);
+    const rad = Math.abs(at(k0 + 2));
+    const sta1 = at(k0 + 3);
+    const inda = at(k0 + 4) || (num > 0 ? 360 / num : 0);
+    const ffd = at(k0 + 5);
+    const ffp1 = at(k0 + 6);
+    const mid = Math.abs(at(k0 + 7));
+    const cdir = Math.round(at(16));
+    const fal = long ? 0 : Math.abs(at(17));
+    const vari = long ? 1 : Math.round(at(18));
+    const midf = long ? 0 : Math.abs(at(19));
+    const ffp2 = (long ? 0 : at(20)) || ffp1;
+    const ssf = long ? 0 : at(21);
+    const fald = s1 ? Math.abs(at(22)) : 0;
+    const sta2 = s1 ? Math.abs(at(23)) : 0;
+    const ffcp = s2 ? at(22) : 0;
+    const units = vari % 10;
+    const tens = Math.floor(vari / 10) % 10;
+    if (!long && !(vari >= 0 && vari < 100 && (s1 ? units <= 2 && (tens === 0 || tens === 1 || tens === 3) : units <= 3 && tens <= 1))) {
+      this.w.add(`${name}: 가공 종류(VARI = ${vari})가 맞지 않음 — 그리지 않음`, line);
+      return;
+    }
+    if (!(num > 0)) {
+      this.w.add(`${name}: 개수(NUM)가 없음 — 그리지 않음`, line);
+      return;
+    }
+    const rd = this.toolRadiusFor(this.dNum >= 0 ? this.dNum : undefined);
+    if (rd === undefined) this.w.add(`${name}: 공구 반지름을 몰라 반지름 0으로 그림`, line);
+    // 프로그램 단위 공구 반지름(toolRadiusFor는 표시 단위)
+    const r = (rd ?? 0) / this.scale;
+    // 홈 반너비(LONGHOLE = 공구 반지름)와 반지름 방향 양 끝 반원 중심의 거리(LONGHOLE·SLOT1)
+    const hw = long ? r : wid / 2;
+    const e1 = rad + hw;
+    const e2 = rad + size - hw;
+    const ring = s2 && size >= 360;
+    if (!(size > 0) || (!long && !(wid > 0)) || (s1 && size < wid - 1e-9) || (s2 && !(rad > hw + 1e-9))) {
+      this.w.add(`${name}: 홈 크기(${long ? 'LENG' : s1 ? 'LENG·WID' : 'AFSL·WID·RAD'})가 맞지 않음 — 그리지 않음`, line);
+      return;
+    }
+    if (long ? size < 2 * r - 1e-9 : 2 * r > wid + 1e-9) {
+      this.w.add(`${name}: 공구가 홈보다 큼(알람 61105) — 그리지 않음`, line);
+      return;
+    }
+    const angOf = (k: number): number => sta1 + k * inda;
+    if (num > 1) {
+      // 홈끼리 겹침(알람 61104): 시작 각을 0~360으로 접어 이웃끼리 본다(반지름 방향 홈은 안쪽 끝끼리 가장 가깝다)
+      const st = Array.from({ length: num }, (_, k) => ((angOf(k) % 360) + 360) % 360).sort((x, y) => x - y);
+      let clash = ring;
+      for (let k = 0; k < num && !clash; k++) {
+        const gap = (k + 1 < num ? st[k + 1]! : st[0]! + 360) - st[k]!;
+        if (s2) {
+          const free = gap - size;
+          clash = free < -1e-9 || 2 * rad * Math.sin((free * DEG) / 2) < wid - 1e-9;
+        } else clash = e1 * Math.sin((Math.min(gap, 360 - gap) * DEG) / 2) < hw - 1e-9;
+      }
+      if (clash) {
+        this.w.add(`${name}: 홈끼리 겹침(알람 61104) — 그리지 않음`, line);
+        return;
+      }
+    }
+    // 가공 방향: SLOT1 = POCKET3와 같음(0 하향·1 상향 — 주축 방향으로 셈, 2 G2, 3 G3), SLOT2는 2·3만
+    let dirc = cdir;
+    if (!long && (s2 ? dirc !== 2 && dirc !== 3 : dirc < 0 || dirc > 3)) {
+      this.w.add(`${name}: 가공 방향(CDIR = ${cdir})이 맞지 않아 하향으로 그림`, line);
+      dirc = 0;
+    }
+    const ccw = dirc === 2 ? false : dirc === 3 ? true : dirc === 1 ? this.spindleDir === 4 : this.spindleDir !== 4;
+    const finishing = units === 0 || units === 2;
+    if (ssf && finishing) this.w.add(`${name}: 정삭 회전수(SSF)는 반영하지 않음`, line);
+    const oscillate = s1 && tens === 3;
+    if (oscillate && !(sta2 > 0)) this.w.add('SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림', line);
+    // 마무리 여유(너비와 공구로 허용되는 것보다 크면 그 최대로 — 설명서)와 황삭 고리·정삭 윤곽의 반너비
+    const falE = Math.min(fal, Math.max(0, hw - r));
+    const hr = hw - falE - r;
+    const hf = hw - r;
+    const up = rfp >= dp ? 1 : -1;
+    const safe = rfp + up * sdis;
+    const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
+    /** from에서 to까지 step 이하 같은 절입의 층 수(가장 적은 수, step = 0이면 한 번) */
+    const levelCount = (from: number, to: number, step: number): number => {
+      const total = up * (from - to);
+      return total > 1e-9 && step > 0 ? Math.max(1, Math.ceil(total / step - 1e-9)) : 1;
+    };
+    const levelAt = (from: number, to: number, n: number, k: number): number => (k >= n - 1 ? to : from - ((from - to) * (k + 1)) / n);
+    const C: P2 = [cpa, cpo];
+    const onRay = (deg: number, rr: number): P2 => [cpa + rr * Math.cos(deg * DEG), cpo + rr * Math.sin(deg * DEG)];
+    const dist = (p: P2, q: P2): number => Math.hypot(p[0] - q[0], p[1] - q[1]);
+    const [a0, a1] = PLANE_AXES[this.plane]!;
+
+    const { go, move, stopped } = this.cycleMover(line);
+    /** 홈 k 하나: 가까운 끝 E에서 들어가 층마다 깎고, 끝난 평면 자리를 돌려준다 */
+    const cutSlot = (k: number, last: P2): P2 => {
+      const al = angOf(k);
+      // 축 위 양 끝(반원 중심): LONGHOLE·SLOT1은 반지름 방향 안쪽·바깥쪽, SLOT2는 원 위 시작·끝 각
+      const A = s2 ? onRay(al, rad) : onRay(al, e1);
+      const B = s2 ? (ring ? A : onRay(al + size, rad)) : onRay(al, e2);
+      const eA = dist(last, A) <= dist(last, B);
+      const E = eA ? A : B;
+      const O = eA ? B : A;
+      /** 중심선을 따라 지금 끝(atE)에서 다른 끝으로(SLOT2는 원호, 고리면 한 바퀴) */
+      const traverse = (atE: boolean, f: number): void => {
+        const to = atE ? O : E;
+        if (!s2) return move(1, to, null, f);
+        if (ring) {
+          const half = onRay(al + 180, rad);
+          move(ccw ? 3 : 2, half, null, f, C);
+          return move(ccw ? 3 : 2, A, null, f, C);
+        }
+        // 시작 끝(A)에서 끝(B)으로는 반시계
+        move((atE ? eA : !eA) ? 3 : 2, to, null, f, C);
+      };
+      /** 진입 끝(E)에서 반너비 hh의 홈 둘레 한 바퀴(가공 방향 ccw)를 돌고 E로 돌아온다 */
+      const loop = (hh: number, f: number): void => {
+        if (s2) return arcLoop(hh, f);
+        const L = dist(E, O);
+        const d: P2 = L > 1e-9 ? [(O[0] - E[0]) / L, (O[1] - E[1]) / L] : [Math.cos(al * DEG), Math.sin(al * DEG)];
+        const n: P2 = [-d[1], d[0]];
+        const pt = (p: P2, sd: number, sn: number): P2 => [p[0] + sd * d[0] + sn * n[0], p[1] + sd * d[1] + sn * n[1]];
+        const S = pt(E, -hh, 0);
+        move(1, S, null, f);
+        if (L <= 1e-9) {
+          move(ccw ? 3 : 2, pt(E, hh, 0), null, f, E);
+          move(ccw ? 3 : 2, S, null, f, E);
+        } else {
+          const g = ccw ? 3 : 2;
+          const sn = ccw ? -1 : 1;
+          move(g, pt(E, 0, sn * hh), null, f, E);
+          move(1, pt(O, 0, sn * hh), null, f);
+          move(g, pt(O, 0, -sn * hh), null, f, O);
+          move(1, pt(E, 0, -sn * hh), null, f);
+          move(g, S, null, f, E);
+        }
+        move(1, E, null, f);
+      };
+      /** SLOT2: 원 위 홈 둘레(바깥 원호·끝 반원·안쪽 원호·끝 반원). 고리 홈이면 바깥 원과 안쪽 원 */
+      const arcLoop = (hh: number, f: number): void => {
+        if (ring) {
+          const o = onRay(al, rad + hh);
+          const i = onRay(al, rad - hh);
+          move(1, o, null, f);
+          move(ccw ? 3 : 2, onRay(al + 180, rad + hh), null, f, C);
+          move(ccw ? 3 : 2, o, null, f, C);
+          move(1, i, null, f);
+          move(ccw ? 2 : 3, onRay(al + 180, rad - hh), null, f, C);
+          move(ccw ? 2 : 3, i, null, f, C);
+          move(1, E, null, f);
+          return;
+        }
+        const a2 = al + size;
+        // 끝 반원 꼭대기(홈 몸통에서 먼 쪽) — A는 각이 작아지는 쪽, B는 커지는 쪽
+        const SA: P2 = [A[0] + hh * Math.sin(al * DEG), A[1] - hh * Math.cos(al * DEG)];
+        const SB: P2 = [B[0] - hh * Math.sin(a2 * DEG), B[1] + hh * Math.cos(a2 * DEG)];
+        const Ao = onRay(al, rad + hh);
+        const Ai = onRay(al, rad - hh);
+        const Bo = onRay(a2, rad + hh);
+        const Bi = onRay(a2, rad - hh);
+        // 반시계 한 바퀴(홈이 왼쪽): A 반원 꼭대기 → A 바깥 → (바깥 원호) → B 바깥 → (B 반원) → B 안쪽 → (안쪽 원호, 시계) → A 안쪽 → A 반원 꼭대기
+        type Seg = { to: P2; c: P2; g: 2 | 3 };
+        const fromA: Seg[] = [
+          { to: Ao, c: A, g: 3 },
+          { to: Bo, c: C, g: 3 },
+          { to: SB, c: B, g: 3 },
+          { to: Bi, c: B, g: 3 },
+          { to: Ai, c: C, g: 2 },
+          { to: SA, c: A, g: 3 },
+        ];
+        // 진입 끝에서 시작하도록 돌리고(B면 B 반원 꼭대기부터), 시계 방향이면 거꾸로 돈다
+        const start = eA ? SA : SB;
+        let segs = eA ? fromA : [...fromA.slice(3), ...fromA.slice(0, 3)];
+        let pts: P2[] = [start, ...segs.map((s) => s.to)];
+        if (!ccw) {
+          segs = segs.slice().reverse().map((s) => ({ ...s, g: s.g === 3 ? 2 : 3 }) as Seg);
+          pts = pts.slice().reverse();
+        }
+        move(1, start, null, f);
+        segs.forEach((s, i) => move(s.g, pts[i + 1]!, null, f, s.c));
+        move(1, E, null, f);
+      };
+      /** 지금 높이(cur)에서 깊이 d까지 진입(끝 end에서) — SLOT1 왕복 진입은 다른 끝 other와 사이를 오가며 */
+      let cur = safe;
+      const infeed = (d: number, end: P2, other: P2): void => {
+        if (oscillate && sta2 > 0) {
+          const L = dist(end, other);
+          const drop = Math.abs(cur - d);
+          if (L > 1e-9 && drop > 1e-12) {
+            const strokes = Math.max(1, Math.ceil(drop / (L * Math.tan(Math.min(sta2, 89.9) * DEG)) - 1e-9));
+            // 마지막 행정이 end에서 끝나게: 홀수면 다른 끝에서 시작
+            if (strokes % 2 === 1) move(1, other, null, ffd);
+            for (let i = 1; i <= strokes && go(); i++) move(1, (strokes - i) % 2 === 0 ? end : other, cur - ((cur - d) * i) / strokes, ffd);
+            cur = d;
+            return;
+          }
+        }
+        move(s1 && tens === 0 ? 0 : 1, null, d, ffd);
+        cur = d;
+      };
+      let atE = true;
+      const narrow = hr <= 1e-9;
+      if (units !== 2 && units !== 3) {
+        // 황삭: 바닥 여유(_FALD)만큼 위까지 MID 층
+        const to = dp + up * fald;
+        const n = levelCount(top, to, mid);
+        for (let i = 0; i < n && go(); i++) {
+          const lev = levelAt(top, to, n, i);
+          if (narrow) {
+            // 공구 지름 = 홈 너비(LONGHOLE·SLOT): 양 끝에서 번갈아 진입하며 중심선 왕복
+            infeed(lev, atE ? E : O, atE ? O : E);
+            traverse(atE, ffp1);
+            if (!ring) atE = !atE;
+          } else {
+            infeed(lev, E, O);
+            loop(hr, ffp1);
+          }
+        }
+      }
+      if (finishing || units === 3) {
+        // 정삭: 안전 높이로 올라가 진입 끝에서 층마다 윤곽 한 바퀴(가장자리만 정삭은 MID, 그 밖은 MIDF 층 — 0이면 바닥 한 번)
+        if (units === 0) {
+          move(0, null, safe, 0);
+          cur = safe;
+        }
+        const here = atE ? E : O;
+        if (hf <= 1e-9) {
+          // 공구 지름 = 홈 너비: 바닥만(중심선 한 번)
+          move(1, null, dp, ffd);
+          cur = dp;
+          traverse(atE, ffp2);
+          if (!ring) atE = !atE;
+        } else {
+          // 왕복 황삭이 다른 끝에서 끝났으면 안전 높이에서 진입 끝으로
+          if (here !== E) move(0, E, null, 0);
+          atE = true;
+          const step = units === 3 ? mid : midf;
+          const n = levelCount(top, dp, step);
+          for (let i = 0; i < n && go(); i++) {
+            move(1, null, levelAt(top, dp, n, i), ffd);
+            loop(hf, ffp2);
+          }
+        }
+      }
+      return atE ? E : O;
+    };
+
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    this.inCycle = true;
+    try {
+      let last: P2 = [this.progCoord(a0), this.progCoord(a1)];
+      // 후퇴 면으로 올라가(공구 축) 홈마다: 후퇴 면에서 진입 끝 위로 → 기준면 + 안전 거리 → 깎기 → 후퇴 면
+      move(0, null, rtp, 0);
+      for (let k = 0; k < num && go(); k++) {
+        const al = angOf(k);
+        const A = s2 ? onRay(al, rad) : onRay(al, e1);
+        const B = s2 ? (ring ? A : onRay(al + size, rad)) : onRay(al, e2);
+        const E = dist(last, A) <= dist(last, B) ? A : B;
+        // SLOT2 VARI 1x: 홈 사이는 후퇴 면 높이에서 원을 따라 _FFCP로(INDA 방향)
+        if (k > 0 && s2 && tens === 1) move(inda >= 0 ? 3 : 2, E, null, ffcp, C);
+        else move(0, E, null, 0);
+        move(0, null, safe, 0);
+        last = cutSlot(k, last);
+        move(0, null, rtp, 0);
+      }
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+    }
+    if (stopped()) this.mb.overflow = true;
     this.known = 7;
   }
 

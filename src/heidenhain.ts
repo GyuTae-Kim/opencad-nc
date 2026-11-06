@@ -20,7 +20,7 @@ import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, 
 const TAU = Math.PI * 2;
 import type { Box3 } from 'opencad-viewer3d/types';
 import { makeSource, sourceLine, type NcSource } from './text';
-import { isSource, jobFileLines } from './gcode';
+import { isSource, jobFileLines, PECK_MAX } from './gcode';
 
 export interface HeidenhainOptions {
   name?: string;
@@ -56,6 +56,8 @@ const PATTERN_ITEM = /^(?:\/?POS|ROW|PAT|FRAME|CIRC|PITCHCIRC)\d*(?:\(.*)?$/;
 const PATTERN_MAX = 100_000;
 /** CYCL CALL에서 밀링 길을 만드는 사이클 */
 const MILL_CYCLES = new Set([208, 251, 252, 253, 256, 257, 232]);
+/** 밀링 사이클의 깊이 층 안전장치(아주 작은 Q202가 끝나지 않게): 마지막 깊이 앞 층은 이 수까지, 넘으면 그 뒤 층은 건너뛰고 바닥 층으로(경고) */
+const MILL_LEVEL_MAX = 9999;
 
 /** 한 블록: 원본 첫 줄 번호와 낱말들 */
 interface HBlock {
@@ -1047,7 +1049,7 @@ class HRunner extends NcEmitter {
       let d = surface;
       let first = true;
       let guard = 0;
-      while (up * (d - zD) > 1e-9 && guard++ < 10000) {
+      while (up * (d - zD) > 1e-9 && guard++ < PECK_MAX) {
         const next = up > 0 ? Math.max(zD, d - peck) : Math.min(zD, d + peck);
         if (!first) go(MOVE_RAPID, d + up * Math.min(setup, 0.5));
         go(MOVE_DRILL, next);
@@ -1055,6 +1057,8 @@ class HRunner extends NcEmitter {
         d = next;
         first = false;
       }
+      // 안전장치에 닿아 바닥 앞에서 멈췄다(그 깊이에서 물러나는 그대로 그린다)
+      if (up * (d - zD) > 1e-9) this.guardStop(`CYCL DEF ${c.n}: 쪼기가 ${PECK_MAX}번을 넘어 바닥에 닿기 전에 멈춤`, line);
     } else go(MOVE_DRILL, zD);
     this.dwell(dwellBottom);
     if (c.n === 201 || c.n === 206 || c.n === 207 || c.n === 209 || c.n === 2 || c.n === 17) go(MOVE_FEED, rD);
@@ -1873,12 +1877,14 @@ class HRunner extends NcEmitter {
     // 깊이 단계(윗면부터)
     const levels: number[] = [];
     if (plungeStep > 0) {
-      for (let k = 1; k < 10000; k++) {
+      for (let k = 1; k <= MILL_LEVEL_MAX; k++) {
         const d = surface - up * k * plungeStep;
         if (up * (d - zEnd) <= 1e-9) break;
         levels.push(d);
       }
     }
+    // 안전장치: 층이 더 남았으면 그 뒤 층은 건너뛰고 바닥 층으로 간다(그대로 그리고, 그린 뒤 이동 한도에 닿지 않았으면 알린다). 층은 k마다 단조라 다음 층 하나만 본다
+    const levelCap = plungeStep > 0 && up * (surface - up * (MILL_LEVEL_MAX + 1) * plungeStep - zEnd) > 1e-9;
     levels.push(zEnd);
     // 이동 한도: 층 × 고리는 한 블록 안에서 돌아 run의 블록 사이 검사가 닿지 않는다(겹침 Q370·공구 반지름이 아주 작으면 고리가 아주 많다).
     // 고리·줄 목록도 남은 이동 수까지만 모은다(고리 하나는 이동 하나 이상이라 그만큼이면 한도에 닿는다)
@@ -1934,6 +1940,7 @@ class HRunner extends NcEmitter {
       if (rr > 1e-9) arcL(0, 0, ccw ? TAU : -TAU, rr, 0);
     };
     this.feed = fMill;
+    const drawnBefore = this.mb.count;
     switch (n) {
       case 251:
       case 256: {
@@ -2160,6 +2167,8 @@ class HRunner extends NcEmitter {
         break;
       }
     }
+    // 층 안전장치: 층을 돈 사이클(208 나선은 층을 쓰지 않는다)이 이동 한도 전에 바닥 층까지 그렸으면 알린다
+    if (levelCap && n !== 208 && this.mb.count > drawnBefore) this.guardStop(`CYCL DEF ${n}: 층이 ${MILL_LEVEL_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
     go(Rp, this.pos[a0]!, this.pos[a1]!, clear);
     // 사이클 뒤 공구는 시작 자리 위(평면 위치는 CYCL CALL 자리)로
     if (n !== 232) go(Rp, cu0, cv0, clear);
