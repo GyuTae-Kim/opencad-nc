@@ -38,6 +38,7 @@ import {
   slSegmentFree,
   slStartLongest,
   slTanAt,
+  slTrain,
   type SlLoop,
 } from './sl';
 
@@ -181,6 +182,8 @@ class HRunner extends NcEmitter {
   private slRoughR: number | undefined;
   /** 49차: 이 프로그램에서 SL 고리 셈에 쓴 일(SL_EVAL_PGM까지) */
   private slEvals = 0;
+  /** 49차: 사이클 270(윤곽 트레인 자료)을 정의했는지 — Q390~Q394는 q 표에 있다 */
+  private ct270 = false;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
     super(src, opts.initialPosition, opts.maxMoves);
@@ -406,7 +409,8 @@ class HRunner extends NcEmitter {
     const big = gs.find((n) => n >= 200 && n <= 299);
     if (big !== undefined) return [`CYCL DEF ${big} ${rest || W.filter((w) => w.k !== 'G').map((w) => w.k + w.v).join(' ')}`.trim()];
     // 48차 SL 사이클: G120~G124 → 사이클 20~24(설명서 9.4~9.8절의 ISO 이름), G37 → 사이클 14(9.2절 — 표지 번호는 P01 1 P02 2 꼴의 P 값으로 읽음)
-    const sl = gs.find((n) => n >= 120 && n <= 124);
+    // 49차: G125 → 사이클 25(9.10절 292쪽). G270은 위의 200번대로 사이클 270
+    const sl = gs.find((n) => n >= 120 && n <= 125);
     if (sl !== undefined) return [`CYCL DEF ${sl - 100} ${rest || W.filter((w) => w.k !== 'G').map((w) => w.k + w.v).join(' ')}`.trim()];
     if (g(37)) return ['CYCL DEF 14.0', `CYCL DEF 14.1 ${[...t.matchAll(/P\d+\s*\+?(\d+)/gi)].map((m) => m[1]).join(' /')}`];
     if (g(79)) return [`CYCL CALL${feed}${ms.length ? ' ' + ms.join(' ') : ''}`];
@@ -871,8 +875,8 @@ class HRunner extends NcEmitter {
         else this.slLabels = [...(this.slLabels ?? []), ...slLabelWords(T.slice(3))];
         return;
       }
-      if (major >= 20 && major <= 24) {
-        // 예전 꼴 머리(CYCL DEF 20.0 CONTOUR DATA …)도 같은 사이클로
+      if (major >= 20 && major <= 25) {
+        // 예전 꼴 머리(CYCL DEF 20.0 CONTOUR DATA …)도 같은 사이클로(49차: 25 윤곽 트레인도)
         if (sub === 0) this.slDef(major);
         return;
       }
@@ -899,7 +903,12 @@ class HRunner extends NcEmitter {
       this.slLabels = slLabelWords(T.slice(3));
       return;
     }
-    if (major >= 20 && major <= 24) return this.slDef(major);
+    if (major >= 20 && major <= 25) return this.slDef(major);
+    if (major === 270) {
+      // 49차: 사이클 270 윤곽 트레인 자료(설명서 9.9절 290쪽 — 정의하면 바로 쓰고 사이클 25의 접근·이탈·보정을 정함, 지금 가공 사이클은 그대로)
+      this.ct270 = true;
+      return;
+    }
     this.cycle = { n: major, ok: false };
     this.w.add(`CYCL DEF ${num}은 지원하지 않음(호출해도 그리지 않음)`, line);
   }
@@ -1138,6 +1147,7 @@ class HRunner extends NcEmitter {
     if (!c.ok) return;
     if (MILL_CYCLES.has(c.n)) return this.millCycle(c.n, line);
     if (c.n >= 21 && c.n <= 24) return this.slCycle(c.n, line);
+    if (c.n === 25) return this.slTrainCycle(line);
     const [p0, p1, da] = PLANE_AXES[this.plane]!;
     const Q = (k: string, d: number): number => this.q.get(k) ?? d;
     let setup: number;
@@ -2324,6 +2334,30 @@ class HRunner extends NcEmitter {
 
   // ───────────────────────── SL 사이클(48차) ─────────────────────────
 
+  /**
+   * SL 사이클의 깊이 층: 윗면에서 step씩, 마지막은 bottom(step 0이면 bottom 하나). per = 층 하나의 이동 수(어림 — 49차):
+   * 층 수 × per가 SL_MOVE_MAX를 넘으면 앞 층 몇 개와 바닥 층만 남기고 알린다(넘지 않으면 9999층 안전장치만)
+   */
+  private slPasses(C: string, line: number, surface: number, up: number, bottom: number, step: number, per: number): number[] {
+    const out: number[] = [];
+    if (step > 0)
+      for (let k = 1; k <= MILL_LEVEL_MAX; k++) {
+        const d = surface - up * k * step;
+        if (up * (d - bottom) <= 1e-9) break;
+        out.push(d);
+      }
+    out.push(bottom);
+    if (out.length * per > SL_MOVE_MAX) {
+      const keep = Math.max(1, Math.floor(SL_MOVE_MAX / Math.max(per, 1)));
+      if (keep < out.length) {
+        this.guardStop(`${C}: 층 × 고리 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
+        return [...out.slice(0, keep - 1), bottom];
+      }
+    }
+    if (step > 0 && up * (surface - up * (MILL_LEVEL_MAX + 1) * step - bottom) > 1e-9) this.guardStop(`${C}: 층이 ${MILL_LEVEL_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
+    return out;
+  }
+
   /** 공구 반지름(공구 표 → TOOL DEF R, DR 없이) — 사이클 21 Q13·24 Q438의 거친 깎기 공구 */
   private toolBaseRadius(t: number): number | undefined {
     const tt = this.o.toolTable?.[t];
@@ -2334,9 +2368,10 @@ class HRunner extends NcEmitter {
    * 사이클 14의 윤곽 부프로그램(LBL n … LBL 0)을 읽어 윤곽마다 닫힌 요소 열과 포켓·섬을 돌려준다. 블록을 실행하되 이동은 그리지 않고 모은다(capMove).
    * L·C·CR·CT·CC·LP·CP·FK·RND·CHF와 Q 계산·FN만 읽고 이송·M 기능·공구 축 좌표는 쓰지 않는다(설명서 9.1절 266쪽 — 다른 블록은 읽지 않고 알림).
    * 다 읽은 뒤 지금 자리·보정·극·Q 등은 되돌린다. 윤곽 끝이 시작점과 다르면 직선으로 닫는다(설명서 예제 310쪽 섬 윤곽도 닫는 변을 적지 않음).
-   * 포켓·섬은 보정 쪽과 돌아가는 방향으로(sl.ts slIsPocket)
+   * 포켓·섬은 보정 쪽과 돌아가는 방향으로(sl.ts slIsPocket).
+   * 49차: open이면 윤곽 트레인(사이클 25)용 — 닫지 않고 넓이·포켓을 보지 않으며 처음 만난 보정(comp: RL 1·RR 2·없음 0)을 함께 돌려준다
    */
-  private slCapture(labels: readonly string[], line: number): { els: SlLoop; pocket: boolean }[] | null {
+  private slCapture(labels: readonly string[], line: number, open = false): { els: SlLoop; pocket: boolean; comp: number }[] | null {
     const save = {
       pc: this.pc,
       pos: [this.pos[0]!, this.pos[1]!, this.pos[2]!],
@@ -2352,7 +2387,7 @@ class HRunner extends NcEmitter {
       isoMot: this.isoMot,
       isoComp: this.isoComp,
     };
-    const out: { els: SlLoop; pocket: boolean }[] = [];
+    const out: { els: SlLoop; pocket: boolean; comp: number }[] = [];
     let total = 0;
     try {
       for (const lb of labels) {
@@ -2416,7 +2451,7 @@ class HRunner extends NcEmitter {
         if (closedAlready) {
           last.eu = cap.start[0];
           last.ev = cap.start[1];
-        } else els.push(g7xLine(last.eu, last.ev, cap.start[0], cap.start[1]));
+        } else if (!open) els.push(g7xLine(last.eu, last.ev, cap.start[0], cap.start[1]));
         // RND·CHF(앞 요소 끝 모서리): CHF는 두 직선 사이에만(그리기와 같은 규칙), 윤곽 처음·끝 모서리는 그대로
         const corners: G7xCorner[] = [];
         for (const c of cap.corners) {
@@ -2428,12 +2463,16 @@ class HRunner extends NcEmitter {
         const done = corners.length ? g7xCorners(els, corners) : { els, failed: 0 };
         if (done.failed) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}의 RND·CHF ${done.failed}개는 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, line);
         total += done.els.length;
+        if (open) {
+          out.push({ els: done.els, pocket: true, comp: cap.comp });
+          continue;
+        }
         if (Math.abs(slArea(done.els)) <= 1e-12 * Math.max(1, done.els.reduce((s, e) => s + slElLen(e), 0)) ** 2) {
           this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}이 넓이 없는 윤곽이라 빼고 그림`, line);
           continue;
         }
         if (!cap.comp) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}에 RL·RR이 없어 포켓으로 봄`, line);
-        out.push({ els: done.els, pocket: slIsPocket(done.els, cap.comp) });
+        out.push({ els: done.els, pocket: slIsPocket(done.els, cap.comp), comp: cap.comp });
       }
     } finally {
       this.cap = null;
@@ -2550,29 +2589,7 @@ class HRunner extends NcEmitter {
         } else go(F, e.eu, e.ev, ww);
       }
     };
-    /**
-     * 깊이 층: 윗면에서 step씩, 마지막은 bottom(step 0이면 bottom 하나). per = 층 하나의 이동 수(어림 — 49차):
-     * 층 수 × per가 SL_MOVE_MAX를 넘으면 앞 층 몇 개와 바닥 층만 남기고 알린다(넘지 않으면 9999층 안전장치만)
-     */
-    const passes = (bottom: number, step: number, per: number): number[] => {
-      const out: number[] = [];
-      if (step > 0)
-        for (let k = 1; k <= MILL_LEVEL_MAX; k++) {
-          const d = surface - up * k * step;
-          if (up * (d - bottom) <= 1e-9) break;
-          out.push(d);
-        }
-      out.push(bottom);
-      if (out.length * per > SL_MOVE_MAX) {
-        const keep = Math.max(1, Math.floor(SL_MOVE_MAX / Math.max(per, 1)));
-        if (keep < out.length) {
-          this.guardStop(`${C}: 층 × 고리 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
-          return [...out.slice(0, keep - 1), bottom];
-        }
-      }
-      if (step > 0 && up * (surface - up * (MILL_LEVEL_MAX + 1) * step - bottom) > 1e-9) this.guardStop(`${C}: 층이 ${MILL_LEVEL_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
-      return out;
-    };
+    const passes = (bottom: number, step: number, per: number): number[] => this.slPasses(C, line, surface, up, bottom, step, per);
     /** 거친 깎기·바닥 다듬질 고리 차례(반지름 rad, 첫 윤곽 시작점에서 셈 — 21과 22의 들어가는 자리가 같게) */
     const plan = (rad: number): { d0: number; outer: SlLoop[]; order: SlLoop[] } | null => {
       const d0 = Math.max(0, rad + Q('Q3'));
@@ -2783,6 +2800,194 @@ class HRunner extends NcEmitter {
         break;
       }
     }
+    if (hardStop) this.guardStop(`${C}: 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤는 그리지 않음`, line);
+    this.feed = saveFeed;
+    this.known = 7;
+  }
+
+  /**
+   * 사이클 25 윤곽 트레인(49차 — TNC 640 가공 사이클 설명서 34059x-17 9.10절 292~295쪽, 사이클 270은 9.9절 290~291쪽,
+   * 진입을 되풀이하는 차례는 같은 장 9.12절 302쪽 사이클 276의 "Cycle sequence" — 276은 25에 공구 축 좌표를 더한 것):
+   * - 사이클 14의 첫 윤곽 LBL만 쓰고(293쪽) 열린 윤곽은 닫지 않는다. 사이클 20은 쓰지 않는다(293쪽 — Q1·Q3·Q5·Q7·Q10·Q11·Q12·Q15는 이 사이클 값)
+   * - 공구 중심: 윤곽 부프로그램의 RL·RR 쪽(사이클 270이 있으면 Q391 — 290쪽)으로 공구 반지름 + Q3, R0이면 윤곽 위.
+   *   윤곽을 깎아 들어가지 않게(292쪽) 공구가 들어가지 못하는 곳은 빼고 그린다(sl.ts slTrain)
+   * - 깊이: 윗면 Q5에서 Q10씩 Q5 + Q1까지(Q1 = 0이면 실행하지 않음 — 293쪽). 층마다 Q15 = +1 하향·-1 상향(M3 공구가 진행 방향 왼쪽이면 하향),
+   *   한 축 대칭이어도 하향·상향은 그대로(292쪽). Q15 = 0이면 층마다 번갈아 왕복하고 끝과 시작에서 내려간다(302쪽), 아니면 안전 높이로 올라
+   *   시작점으로 돌아가 다음 층(302쪽)
+   * - 접근·이탈(사이클 270 Q390 — 290~291쪽): 1 접선 원호(반지름 Q392·중심각 Q393), 2 접선 직선(Q394), 3 수직(Q394), 0·4 없음. 접근 시작점에서 내려간다(302쪽)
+   * - 정해 그린 것: 사이클 25에는 안전 거리(Q6)가 없어 안전 높이 Q7에서 Q11로 내려간다. Q15 = 0의 첫 층은 하향 쪽. R0이면 Q15는 프로그램 차례로.
+   *   끝나면 공구 축으로 Q7(평면 자리는 그대로 — 293쪽 posAfterContPocket)
+   */
+  private slTrainCycle(line: number): void {
+    const C = 'CYCL DEF 25';
+    const labels = this.slLabels;
+    if (!labels?.length) {
+      this.w.add(`${C}: 앞에 CYCL DEF 14(윤곽)가 없어 그리지 않음`, line);
+      return;
+    }
+    const Q = (k: string, d = 0): number => this.q.get(k) ?? d;
+    const depth = Q('Q1');
+    if (depth === 0) {
+      this.w.add(`${C}: 깊이(Q1)가 0이라 그리지 않음`, line);
+      return;
+    }
+    if (labels.length > 1) this.w.add(`${C}: 윤곽 LBL이 여럿이라 첫 LBL ${labels[0]}만 씀`, line);
+    const cs = this.slCapture(labels.slice(0, 1), line, true);
+    if (!cs?.length) return;
+    const contour = cs[0]!;
+    let side = contour.comp === 1 ? 1 : contour.comp === 2 ? -1 : 0;
+    if (this.ct270) {
+      if (contour.comp) this.w.add(`${C}: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림`, line);
+      const q391 = Math.round(Q('Q391'));
+      side = q391 === 1 ? 1 : q391 === 2 ? -1 : 0;
+    } else if (!side) this.w.add(`${C}: 윤곽에 RL·RR이 없어 공구 중심이 윤곽 위를 감(하향·상향 Q15는 프로그램 차례로)`, line);
+    let r = this.toolRadius();
+    if (r === undefined) {
+      if (side) this.w.add(`${C}: 공구 반지름을 몰라(TOOL DEF R 없음) 반지름 0으로 그림`, line);
+      r = 0;
+    }
+    if (Q('Q18') !== 0) this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림`, line);
+    const T = slTrain(contour.els, Math.max(0, r + Q('Q3')), side);
+    if (!T.runs.length) {
+      this.w.add(`${C}: 공구가 윤곽보다 커서 그리지 않음`, line);
+      return;
+    }
+    if (T.cut) this.w.add(`${C}: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)`, line);
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const up = depth > 0 ? -1 : 1;
+    const surface = Q('Q5') + this.shift[a2]!;
+    const bottom = surface + depth;
+    let w = this.pos[a2]!;
+    const q7 = this.q.get('Q7');
+    let clear: number;
+    if (q7 === undefined) {
+      this.w.add(`${C}: 안전 높이(Q7)가 없어 지금 공구 높이로 셈`, line);
+      clear = up * (w - surface) < 0 ? w : surface;
+    } else clear = q7 + this.shift[a2]!;
+    const fPlunge = Q('Q11', this.feed || this.autoFeed);
+    const fMill = Q('Q12', this.feed || this.autoFeed);
+    const saveFeed = this.feed;
+    const loop = this.blockLoop();
+    const callStart = this.mb.count;
+    let hardStop = false;
+    const more = (): boolean => {
+      if (!loop()) return false;
+      if (this.mb.count - callStart < SL_MOVE_MAX) return true;
+      hardStop = true;
+      return false;
+    };
+    const F = MOVE_FEED;
+    const Rp = MOVE_RAPID;
+    const here = (): [number, number] => [this.pos[a0]!, this.pos[a1]!];
+    const go = (kind: number, u: number, v: number, ww = w): void => {
+      this.go3(kind, u, v, ww, line);
+      w = ww;
+    };
+    const arc = (cu: number, cv: number, sweep: number, eu: number, ev: number): void => {
+      this.arc3(cu, cv, sweep, eu, ev, w, line);
+    };
+    const toClear = (): void => {
+      if (up * (w - clear) < 0) go(Rp, ...here(), clear);
+    };
+    const mill = (l: SlLoop): void => {
+      for (const e of l) {
+        if (!more()) return;
+        if (e.arc) arc(e.cu, e.cv, e.sweep, e.eu, e.ev);
+        else go(F, e.eu, e.ev);
+      }
+    };
+    // 하향이 프로그램 차례인지(공구가 진행 방향 왼쪽 — RL). 한 축 대칭이면 화면에서 반대가 되므로 거꾸로 돌려 하향·상향을 지킨다
+    const q15 = Math.round(Q('Q15', 1));
+    const climbFwd = (side > 0) !== this.cycleMirrored();
+    const firstFwd = side === 0 ? true : q15 < 0 ? !climbFwd : climbFwd;
+    const fwdRuns = T.runs;
+    const backRuns = T.runs
+      .slice()
+      .reverse()
+      .map((l) => slReverse(l));
+    // 접근·이탈(사이클 270)
+    let kind = this.ct270 ? Math.round(Q('Q390')) : 0;
+    if (kind >= 1 && kind <= 3 && !side) {
+      this.w.add(`${C}: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음`, line);
+      kind = 0;
+    }
+    const rho = Q('Q392');
+    const beta = (Q('Q393') * Math.PI) / 180;
+    const dist = Q('Q394');
+    if ((kind === 1 && !(rho > 0 && beta > 0)) || ((kind === 2 || kind === 3) && !(dist > 0))) kind = 0;
+    /** 접근 시작점과 접근 그리기(fwd = 프로그램 차례로 도는지 — 공구가 진행 방향의 어느 쪽에 비켜 있는지가 바뀐다) */
+    const rot = (pu: number, pv: number, cu: number, cv: number, a: number): [number, number] => [cu + (pu - cu) * Math.cos(a) - (pv - cv) * Math.sin(a), cv + (pu - cu) * Math.sin(a) + (pv - cv) * Math.cos(a)];
+    const ends = (runs: SlLoop[], fwd: boolean) => {
+      // 비킨 쪽(윤곽에서 먼 쪽): 진행 방향 왼쪽이면 +1
+      const fs = side > 0 === fwd ? 1 : -1;
+      const s = runs[0]![0]!;
+      const t = slTanAt(s, 0);
+      const last = runs[runs.length - 1]!;
+      const e = last[last.length - 1]!;
+      const te = slTanAt(e, 1);
+      let A: [number, number] = [s.su, s.sv];
+      let D: [number, number] = [e.eu, e.ev];
+      let into = (): void => {};
+      let out = (): void => {};
+      if (kind === 1) {
+        const cu = s.su - fs * rho * t[1];
+        const cv = s.sv + fs * rho * t[0];
+        A = rot(s.su, s.sv, cu, cv, -fs * beta);
+        into = () => arc(cu, cv, fs * beta, s.su, s.sv);
+        const du = e.eu - fs * rho * te[1];
+        const dv = e.ev + fs * rho * te[0];
+        D = rot(e.eu, e.ev, du, dv, fs * beta);
+        out = () => arc(du, dv, fs * beta, D[0], D[1]);
+      } else if (kind === 2) {
+        A = [s.su - dist * t[0], s.sv - dist * t[1]];
+        into = () => go(F, s.su, s.sv);
+        D = [e.eu + dist * te[0], e.ev + dist * te[1]];
+        out = () => go(F, D[0], D[1]);
+      } else if (kind === 3) {
+        A = [s.su - fs * dist * t[1], s.sv + fs * dist * t[0]];
+        into = () => go(F, s.su, s.sv);
+        D = [e.eu - fs * dist * te[1], e.ev + fs * dist * te[0]];
+        out = () => go(F, D[0], D[1]);
+      }
+      return { A, into, out };
+    };
+    /** 한 층: 들어가는 자리에서 z로 내려가(fromClear면 안전 높이에서 옮겨 와서) 고리 조각들을 차례로, 조각 사이는 올라 옮긴다 */
+    const pass = (runs: SlLoop[], fwd: boolean, z: number, fromClear: boolean, approach: boolean, depart: boolean): void => {
+      const E = ends(runs, fwd);
+      runs.forEach((l, k) => {
+        if (!more()) return;
+        const s = l[0]!;
+        const P: [number, number] = k === 0 && approach ? E.A : [s.su, s.sv];
+        if (k > 0 || fromClear) {
+          toClear();
+          go(Rp, P[0], P[1]);
+        }
+        this.feed = fPlunge;
+        go(F, P[0], P[1], z);
+        this.feed = fMill;
+        if (k === 0 && approach) E.into();
+        mill(l);
+        if (k < runs.length - 1) toClear();
+      });
+      if (depart && more()) E.out();
+    };
+    // 층 하나의 이동(어림): 조각 요소 + 옮기기·내려가기 4씩 + 접근·이탈 4
+    const per = T.runs.reduce((s, l) => s + l.length + 4, 4);
+    const zs = this.slPasses(C, line, surface, up, bottom, Math.abs(Q('Q10')), per);
+    this.feed = fMill;
+    toClear();
+    for (let j = 0; j < zs.length && more(); j++) {
+      const z = zs[j]!;
+      if (q15 === 0) {
+        // 왕복: 층마다 방향을 바꾸고 끝 자리에서 그대로 내려간다(접근은 처음, 이탈은 마지막에만)
+        const fwd = j % 2 === 0 ? firstFwd : !firstFwd;
+        pass(fwd ? fwdRuns : backRuns, fwd, z, j === 0, j === 0 && kind > 0, j === zs.length - 1 && kind > 0);
+      } else {
+        pass(firstFwd ? fwdRuns : backRuns, firstFwd, z, true, kind > 0, kind > 0);
+        go(Rp, ...here(), clear);
+      }
+    }
+    go(Rp, ...here(), clear);
     if (hardStop) this.guardStop(`${C}: 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤는 그리지 않음`, line);
     this.feed = saveFeed;
     this.known = 7;

@@ -1351,5 +1351,13 @@
   "CYCL DEF {0}: 층 × 고리 이동이 {1}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감": "CYCL DEF {0}: depth levels × rings come to more than {1} moves — the remaining levels are skipped and machining goes straight to the bottom level",
   "CYCL DEF {0}: 이동이 {1}개를 넘어 그 뒤는 그리지 않음": "CYCL DEF {0}: more than {1} moves — the rest is not drawn",
   "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: computing the stepover rings went over its limit — only the outer {1} rings are drawn",
-  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: computing the stepover rings went over its limit — not drawn"
+  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: computing the stepover rings went over its limit — not drawn",
+  "CYCL DEF 25: 깊이(Q1)가 0이라 그리지 않음": "CYCL DEF 25: milling depth (Q1) is 0 — the cycle is not run (not drawn)",
+  "CYCL DEF 25: 윤곽 LBL이 여럿이라 첫 LBL {0}만 씀": "CYCL DEF 25: several contour LBLs — only the first one, LBL {0}, is used",
+  "CYCL DEF 25: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림": "CYCL DEF 25: Cycle 270 is defined — Q391 is used instead of RL/RR in the contour subprogram",
+  "CYCL DEF 25: 윤곽에 RL·RR이 없어 공구 중심이 윤곽 위를 감(하향·상향 Q15는 프로그램 차례로)": "CYCL DEF 25: no RL/RR in the contour — the tool center follows the contour (climb/up-cut Q15 follows the programmed order)",
+  "CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림": "CYCL DEF 25: machining only what the coarse roughing tool (Q18) left is not drawn — the whole contour is drawn",
+  "CYCL DEF 25: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)": "CYCL DEF 25: the tool is too large for parts of the contour — those parts are not machined (no contour damage)",
+  "CYCL DEF 25: 안전 높이(Q7)가 없어 지금 공구 높이로 셈": "CYCL DEF 25: no clearance height (Q7) — the current tool height is used",
+  "CYCL DEF 25: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF 25: without radius compensation (R0) the approach and departure (Q390) are not drawn"
 }

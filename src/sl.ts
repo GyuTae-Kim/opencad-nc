@@ -12,7 +12,7 @@
  *   가운데 점이 가공 면 안이고 경계까지 거리가 d인 것만 남겨 고리로 잇는다(가공 면 쪽이 왼쪽).
  */
 import { cornerElem, cornerIntersections } from './corner';
-import { g7xCorners, g7xLine, type G7xCorner, type G7xEl } from './lathe-g7x';
+import { g7xCorners, g7xLine, g7xOffset, type G7xCorner, type G7xEl } from './lathe-g7x';
 
 /** 요소: 직선 또는 원호(중심 cu·cv, 중심각 sweep — 반시계 +) */
 export type SlEl = G7xEl;
@@ -847,4 +847,56 @@ export function slOrder(levels: readonly SlLoop[][], from: readonly [number, num
   visit(outer.filter((_, i) => holes0.has(i)));
   visit(outer.filter((_, i) => !holes0.has(i)));
   return out;
+}
+
+/**
+ * 윤곽 트레인(49차 — 사이클 25)의 공구 중심 경로: 열린(또는 닫힌) 요소 열에서 side 쪽(1 왼쪽 RL·-1 오른쪽 RR, 0이면 윤곽 위)으로 d만큼 떨어진 길.
+ * 요소를 옮기고 모서리를 잇는 것은 g7xOffset(볼록 모서리는 꼭짓점 둘레 호, 오목 모서리는 교점까지)이고, 윤곽을 깎아 들어가지 않게
+ * (설명서 9.10절 292쪽 — 컨트롤러가 언더컷·윤곽 손상을 막음) 길을 스스로 만나는 자리에서 나눈 조각 가운데 윤곽까지 거리가 d보다
+ * 가까운 것은 뺀다(공구가 들어가지 못하는 홈은 건너 넘는다). 남은 조각을 이어진 것끼리 묶어 돌려준다(runs — 보통 하나, 뺀 곳 앞뒤가 떨어져 있으면 거기서 끊긴다).
+ * cut = 뺀 조각이 있었는지
+ */
+export function slTrain(els: readonly SlEl[], d: number, side: number): { runs: SlLoop[]; cut: boolean } {
+  let lo = [Infinity, Infinity];
+  let hi = [-Infinity, -Infinity];
+  for (const e of els) {
+    const b = box(e);
+    lo = [Math.min(lo[0]!, b[0]), Math.min(lo[1]!, b[1])];
+    hi = [Math.max(hi[0]!, b[2]), Math.max(hi[1]!, b[3])];
+  }
+  const scale = Number.isFinite(lo[0]!) ? Math.max(Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!), 1e-6) : 1;
+  const eps = Math.max(scale * 1e-9, 1e-12);
+  if (!els.length) return { runs: [], cut: false };
+  if (side === 0 || !(d > eps)) return { runs: [els.map((e) => ({ ...e }))], cut: false };
+  const off = g7xOffset(els, d, side > 0 ? 1 : -1);
+  const raw: RawEl[] = off.map((e, i) => ({ e, loop: 0, idx: i, n: off.length }));
+  const pieces = splitAll(raw, eps * 10);
+  const T = els.length >= TREE_MIN ? slTree(els) : null;
+  const cnt = { work: 0 };
+  const tolD = Math.max(scale, d) * 1e-7;
+  const near = (u: number, v: number): boolean => {
+    if (T) return treeNear(T, u, v, d - tolD, cnt);
+    for (const e of els) if (elDist(e, u, v) < d - tolD) return true;
+    return false;
+  };
+  const runs: SlLoop[] = [];
+  let cut = false;
+  let run: SlLoop | null = null;
+  const tol = eps * 1e3;
+  for (const p of pieces) {
+    if (slElLen(p) <= eps) continue;
+    const m = at(p, 0.5);
+    if (near(m[0], m[1])) {
+      // 뺀 조각(길이 스스로 만나 생긴 고리 등): 다음 남는 조각이 같은 자리에서 이어지면 그대로 잇는다
+      cut = true;
+      continue;
+    }
+    const last = run?.[run.length - 1];
+    if (run && last && Math.hypot(p.su - last.eu, p.sv - last.ev) <= tol) run.push({ ...p, su: last.eu, sv: last.ev });
+    else {
+      run = [{ ...p }];
+      runs.push(run);
+    }
+  }
+  return { runs: runs.filter((r) => r.reduce((s, e) => s + slElLen(e), 0) > eps * 100), cut };
 }
