@@ -3698,11 +3698,14 @@ export class Runner extends NcEmitter {
       this.lgo(MOVE_RAPID, p[0], p[1], line);
     };
     if (shift > 0 && Math.abs(m1 - m0) > 1e-9) {
-      // 옮기는 양이 아주 작으면 자리가 매우 많다(좌표에 더해도 값이 안 바뀌면 끝나지 않는다) — 자리를 모아 두지 않고 쪼면서 한도를 본다
+      // 옮기는 양이 아주 작으면 자리가 매우 많다(좌표에 더해도 값이 안 바뀌면 끝나지 않는다) — 자리를 모아 두지 않고 쪼면서 한도를 본다.
+      // 첫 자리는 지금 자리라 그리로 옮기는 급속이 길이 0이다: 반복 문지기는 둘째 자리부터 센다(쪼는 길이가 0이면 첫 자리가 이동을 하나도
+      // 만들지 않아, 첫 자리부터 세면 한도보다 하나 적게 쌓고 멈췄다)
       const sg = Math.sign(m1 - m0);
-      const more = this.blockLoop();
+      peckAt(m0);
       let last = m0;
-      for (let v = m0; sg * (v - m1) < 1e-9 && more(); v += sg * shift) {
+      const more = this.blockLoop();
+      for (let v = m0 + sg * shift; sg * (v - m1) < 1e-9 && more(); v += sg * shift) {
         peckAt(v);
         last = v;
       }

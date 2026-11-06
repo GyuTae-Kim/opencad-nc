@@ -327,6 +327,9 @@ describe('이동을 쌓는 자리의 한도', () => {
     ['LinuxCNC G71.1 톱니', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71.1 Q100 D0 I0.2 R0.1 F0.2\nG0 X99\nM2`), false],
     ['LinuxCNC G71.2 톱니', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71.2 Q100 D0 I0.5 R0.1 F0.2\nG0 X99\nM2`), false],
     ['LinuxCNC G71 물러남 0(길이 0 계획 이동)', llathe(`G18 G21 G8\nG0 X9.5 Z2\n${teeth(8)}\nG71 Q100 D0 I0.5 R0 F0.2\nG0 X99\nM2`), false],
+    // 쪼는 길이가 0이면 첫 자리(지금 자리)가 이동을 하나도 만들지 않는다(40차 — 예전에는 한도보다 하나 적게 쌓고 멈췄다)
+    ['선반 G74 쪼는 길이 0', lathe('G21 G18\nG0 X0 Z5\nG74 R1\nG74 X10 Z5 P1000 F0.1\nG0 X99\nM30'), false],
+    ['선반 G75 쪼는 길이 0', lathe('G21 G18\nG0 X50 Z0\nG75 R1\nG75 X50 Z-5 Q1000 F0.1\nG0 X99\nM30'), false],
   ];
 
   const ends = (p: NcProgram): number[][] => {
@@ -392,6 +395,22 @@ describe('이동을 쌓는 자리의 한도', () => {
       expect(p.moves.count, name).toBeGreaterThan(36);
       expect(p.warnings.some((w) => w.includes('다른 평면의 원호는 직선 조각으로 그림')), name).toBe(true);
     }
+  });
+
+  it('G74·G75: 첫 자리 이동이 길이 0이어도 한도까지 꼭 찬다(예전에는 하나 적게 쌓고 멈춤)', () => {
+    // G0 한 번(이동 1) 뒤 G74가 X 0(지금 자리)·5·10…으로 옮기며 쪼는 길이 0 — 자리마다 옮기는 급속 하나, 첫 자리는 길이 0
+    const run = lathe('G21 G18\nG0 X0 Z5\nG74 R1\nG74 X10 Z5 P1000 F0.1\nG0 X99\nM30');
+    const full = run({ maxMoves: FREE });
+    expect(full.moves.count).toBe(8);
+    for (const limit of [3, 4, 5]) {
+      const p = run({ maxMoves: limit });
+      expect(p.moves.count, `한도 ${limit}`).toBe(limit);
+      expect(p.warnings, `한도 ${limit}`).toEqual([`4번 줄: ${OVER(limit)}`]);
+      // 쌓인 이동은 전체 경로의 앞부분(X 반지름 0 → 1 → 2 …)
+      for (let i = 0; i < limit; i++) expect(moveEnd(p.moves, i), `한도 ${limit} 이동 ${i}`).toEqual(moveEnd(full.moves, i));
+    }
+    const g75 = lathe('G21 G18\nG0 X50 Z0\nG75 R1\nG75 X50 Z-5 Q1000 F0.1\nG0 X99\nM30');
+    expect(g75({ maxMoves: 4 }).moves.count).toBe(4);
   });
 
   it('남은 자리 하나에서 모서리: 앞 이동을 접점까지 줄이고 둥근 호로 끝난다(다음 이동은 넣지 않는다)', () => {
