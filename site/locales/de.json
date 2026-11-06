@@ -1359,5 +1359,6 @@
   "CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림": "CYCL DEF 25: nur das vom Vorräumwerkzeug (Q18) übrig gelassene Material zu bearbeiten wird nicht gezeichnet — die ganze Kontur wird gezeichnet",
   "CYCL DEF 25: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)": "CYCL DEF 25: das Werkzeug ist für Teile der Kontur zu groß — diese Teile werden nicht bearbeitet (keine Konturverletzung)",
   "CYCL DEF 25: 안전 높이(Q7)가 없어 지금 공구 높이로 셈": "CYCL DEF 25: keine Sichere Höhe (Q7) — die aktuelle Werkzeughöhe wird verwendet",
-  "CYCL DEF 25: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF 25: ohne Radiuskorrektur (R0) wird das An- und Wegfahren (Q390) nicht gezeichnet"
+  "CYCL DEF 25: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF 25: ohne Radiuskorrektur (R0) wird das An- und Wegfahren (Q390) nicht gezeichnet",
+  "CYCL DEF 14: 윤곽 안 축별 배율로 원호가 타원이 되어 끝점·중심만 옮긴 원호로 그림": "CYCL DEF 14: achsspezifische Maßfaktoren in der Kontur machen Kreisbögen zu Ellipsen — gezeichnet als Kreisbögen, bei denen nur End- und Mittelpunkte umgerechnet sind"
 }

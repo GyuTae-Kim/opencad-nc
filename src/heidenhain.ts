@@ -13,7 +13,7 @@
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
  * 지원하지 않음: PLANE·19 기울인 평면, 윤곽 트레인 25·270 등 다른 윤곽 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
  */
-import { affinePlane, composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
+import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, isIdentityAffine, rotAbout, translateAffine, ZERO3, type Affine } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
 import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcMachineOptions, type NcPlane, type NcProgram } from './model';
@@ -104,6 +104,16 @@ interface SlCapture {
   start: [number, number] | null;
   axis: boolean;
   skipped: Set<string>;
+  /**
+   * 49차: 윤곽 부프로그램 안의 좌표 변환(설명서 9.1절 266쪽 — 허용, 뒤 부프로그램에도 듣고 사이클 뒤에는 되돌림):
+   * xf0 = 사이클을 부를 때의 출력 변환, toCall = 지금 변환(mFor) 좌표를 xf0 좌표로 옮기는 변환(같으면 null)
+   */
+  xf0: Affine | null;
+  mFor: Affine | null;
+  toCall: Affine | null;
+  /** 축별 배율로 원호가 타원이 되는 것을 알렸는지와 알릴 줄(사이클을 부른 줄) */
+  oval: boolean;
+  line: number;
 }
 
 /** 한 블록: 원본 첫 줄 번호와 낱말들 */
@@ -246,18 +256,48 @@ class HRunner extends NcEmitter {
     const p = this.pos;
     const e = [x, y, z];
     if (Math.abs(e[a2]! - p[a2]!) > this.tol) cap.axis = true;
-    const su = p[a0]!;
-    const sv = p[a1]!;
-    const eu = e[a0]!;
-    const ev = e[a1]!;
-    if (cap.comp <= 0 && this.comp) cap.comp = this.comp;
+    // 49차: 윤곽 안에서 좌표 변환을 바꿨으면 지금 좌표를 사이클을 부를 때의 좌표로 옮긴다(원호는 거울이면 돌아가는 방향이 바뀜)
+    let M: Affine | null = null;
+    let sign = 1;
+    if (this.outXf !== cap.xf0) {
+      if (cap.mFor !== this.outXf || !cap.toCall) {
+        const inv0 = cap.xf0 ? invertAffine(cap.xf0) : null;
+        const cur = this.outXf;
+        cap.toCall = cur ? (inv0 ? composeAffine(inv0, cur) : cur) : inv0;
+        cap.mFor = cur;
+      }
+      M = cap.toCall && !isIdentityAffine(cap.toCall) ? cap.toCall : null;
+      if (M) {
+        const ap = affinePlane(M, this.plane);
+        sign = ap.sign;
+        if (arc && !ap.uniform && !cap.oval) {
+          cap.oval = true;
+          this.w.add('CYCL DEF 14: 윤곽 안 축별 배율로 원호가 타원이 되어 끝점·중심만 옮긴 원호로 그림', cap.line);
+        }
+      }
+    }
+    const map = (u: number, v: number): [number, number] => {
+      if (!M) return [u, v];
+      const q = [0, 0, 0];
+      q[a0] = u;
+      q[a1] = v;
+      q[a2] = p[a2]!;
+      const o = [0, 0, 0];
+      applyAffine(M, q, o);
+      return [o[a0]!, o[a1]!];
+    };
+    const [su, sv] = map(p[a0]!, p[a1]!);
+    const [eu, ev] = map(e[a0]!, e[a1]!);
+    // 보정 쪽도 사이클을 부를 때의 좌표에서(거울이면 RL·RR이 바뀜)
+    if (cap.comp <= 0 && this.comp) cap.comp = sign < 0 ? 3 - this.comp : this.comp;
     if (!cap.start) cap.start = [eu, ev];
     else if (arc) {
-      const sw = Math.max(-TAU, Math.min(TAU, arc.sweep));
-      if (cap.els.length < SL_ELEMENT_MAX + 1) cap.els.push({ arc: true, su, sv, eu, ev, cu: arc.c[a0]!, cv: arc.c[a1]!, sweep: sw });
+      const sw = Math.max(-TAU, Math.min(TAU, arc.sweep)) * sign;
+      const [cu, cv] = map(arc.c[a0]!, arc.c[a1]!);
+      if (cap.els.length < SL_ELEMENT_MAX + 1) cap.els.push({ arc: true, su, sv, eu, ev, cu, cv, sweep: sw });
     } else if (Math.hypot(eu - su, ev - sv) > 1e-12 && cap.els.length < SL_ELEMENT_MAX + 1) cap.els.push(g7xLine(su, sv, eu, ev));
-    p[a0] = eu;
-    p[a1] = ev;
+    p[a0] = e[a0]!;
+    p[a1] = e[a1]!;
     this.known = 7;
     return true;
   }
@@ -2386,6 +2426,14 @@ class HRunner extends NcEmitter {
       isoAbs: this.isoAbs,
       isoMot: this.isoMot,
       isoComp: this.isoComp,
+      // 49차: 좌표 변환(윤곽 안에서 바꿔도 사이클 뒤에는 되돌림 — 설명서 9.1절 266쪽)
+      xf: this.outXf,
+      shift: [...this.shift],
+      mirror: [...this.mirror],
+      rotDeg: this.rotDeg,
+      scaleF: this.scaleF,
+      scale26: [...this.scale26],
+      center26: [...this.center26],
     };
     const out: { els: SlLoop; pocket: boolean; comp: number }[] = [];
     let total = 0;
@@ -2396,7 +2444,7 @@ class HRunner extends NcEmitter {
           this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}이 없음`, line);
           continue;
         }
-        const cap: SlCapture = { els: [], corners: [], comp: 0, start: null, axis: false, skipped: new Set() };
+        const cap: SlCapture = { els: [], corners: [], comp: 0, start: null, axis: false, skipped: new Set(), xf0: save.xf, mFor: null, toCall: null, oval: false, line };
         this.cap = cap;
         this.comp = 0;
         this.lastDir = null;
@@ -2425,7 +2473,9 @@ class HRunner extends NcEmitter {
                 end = true;
                 break;
               }
-              if (SL_CAP_WORDS.has(t0) || t0.startsWith('*') || t0.startsWith('APPR') || t0.startsWith('DEP') || /^Q[LRS]?\d+(=|$)/.test(t0) || /^I?[XYZ][+-]/.test(t0)) {
+              // 49차: 좌표 변환(사이클 7·8·10·11·26, TRANS DATUM)도 읽는다(설명서 9.1절 266쪽 — 윤곽 안에서 허용, 뒤 부프로그램에도 들음)
+              const xfBlock = t0 === 'TRANS' || (t0 === 'CYCL' && (T[1] ?? '').toUpperCase() === 'DEF' && SL_CAP_XF.has(parseInt(T[2] ?? '', 10)));
+              if (xfBlock || SL_CAP_WORDS.has(t0) || t0.startsWith('*') || t0.startsWith('APPR') || t0.startsWith('DEP') || /^Q[LRS]?\d+(=|$)/.test(t0) || /^I?[XYZ][+-]/.test(t0)) {
                 this.exec({ line: b.line, next: b.next, text: t, toks: T });
               } else if (t0 !== 'LBL' && !/^M\d+$/.test(t0) && t0 !== 'STOP' && !cap.skipped.has(t0)) {
                 cap.skipped.add(t0);
@@ -2477,6 +2527,14 @@ class HRunner extends NcEmitter {
     } finally {
       this.cap = null;
       this.pc = save.pc;
+      // 49차: 윤곽 안에서 바꾼 좌표 변환은 사이클 뒤에 되돌린다(출력 변환을 먼저 되돌리고 자리는 아래에서 그대로)
+      this.shift = save.shift;
+      this.mirror = save.mirror;
+      this.rotDeg = save.rotDeg;
+      this.scaleF = save.scaleF;
+      this.scale26 = save.scale26;
+      this.center26 = save.center26;
+      if (this.outXf !== save.xf) this.setOutXf(save.xf);
       this.pos[0] = save.pos[0]!;
       this.pos[1] = save.pos[1]!;
       this.pos[2] = save.pos[2]!;
@@ -3011,6 +3069,8 @@ function indexOutsideQuotes(s: string, ch: string): number {
 
 /** 윤곽 부프로그램(SL 사이클)에서 읽는 블록(경로 요소·모서리·Q 계산) — 48차 */
 const SL_CAP_WORDS = new Set(['L', 'C', 'CR', 'CT', 'CC', 'LP', 'CP', 'FPOL', 'FL', 'FLT', 'FC', 'FCT', 'FSELECT', 'RND', 'CHF', 'FN']);
+/** 윤곽 부프로그램에서 읽는 좌표 변환 사이클(49차): 7 원점 이동·8 대칭·10 회전·11 배율·26 축별 배율 */
+const SL_CAP_XF = new Set([7, 8, 10, 11, 26]);
 
 /** 사이클 14의 표지 낱말(CONTOUR LABEL1 /2 /3·KONTURLABEL1 /2·DIN/ISO G37 P01 1 P02 2를 옮긴 1 /2)에서 표지 번호 */
 function slLabelWords(T: readonly string[]): string[] {

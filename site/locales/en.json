@@ -1359,5 +1359,6 @@
   "CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림": "CYCL DEF 25: machining only what the coarse roughing tool (Q18) left is not drawn — the whole contour is drawn",
   "CYCL DEF 25: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)": "CYCL DEF 25: the tool is too large for parts of the contour — those parts are not machined (no contour damage)",
   "CYCL DEF 25: 안전 높이(Q7)가 없어 지금 공구 높이로 셈": "CYCL DEF 25: no clearance height (Q7) — the current tool height is used",
-  "CYCL DEF 25: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF 25: without radius compensation (R0) the approach and departure (Q390) are not drawn"
+  "CYCL DEF 25: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF 25: without radius compensation (R0) the approach and departure (Q390) are not drawn",
+  "CYCL DEF 14: 윤곽 안 축별 배율로 원호가 타원이 되어 끝점·중심만 옮긴 원호로 그림": "CYCL DEF 14: axis-specific scaling inside the contour turns arcs into ellipses — drawn as arcs with only the end points and centers transformed"
 }
