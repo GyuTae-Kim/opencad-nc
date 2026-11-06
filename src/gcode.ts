@@ -41,7 +41,7 @@ import {
   type NcProgram,
   type NcRotaryOptions,
 } from './model';
-import { G7X_MAX_LEVELS, G7X_MAX_RUNS, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
+import { G7X_MAX_LEVELS, G7X_MAX_RUNS, g71Type2, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, polyMonotonic, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
@@ -3490,8 +3490,11 @@ export class Runner extends NcEmitter {
     }
   }
 
-  /** 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 읽어 XZ 점열(표시 좌표, X = 반지름)로. 원호는 5도로 나눈다 */
-  protected profile(s: number, e: number): number[] {
+  /**
+   * 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 읽어 XZ 점열(표시 좌표, X = 반지름)로. 원호는 5도로 나눈다.
+   * first를 주면 첫 블록(줄 s — 윤곽 시작 블록 ns)에 X(U)·Z(W)가 있는지 적는다(Fanuc G71·G72 I형·II형 고르기, 43차)
+   */
+  protected profile(s: number, e: number, first?: { x: boolean; z: boolean }): number[] {
     const b = new Block();
     const bytes = this.src.bytes;
     let x = this.pos[0]!;
@@ -3519,6 +3522,10 @@ export class Runner extends NcEmitter {
       }
       const hx = b.has[LX] || (this.fanucLathe && b.has[LU]);
       const hz = b.has[LZ] || (this.fanucLathe && b.has[LW]);
+      if (first && i === s) {
+        first.x = !!hx;
+        first.z = !!hz;
+      }
       if (!hx && !hz) continue;
       let nx = x;
       let nz = z;
@@ -3578,7 +3585,8 @@ export class Runner extends NcEmitter {
     }
     const r = this.profileRange(blk, line, name);
     if (!r) return;
-    const prof = this.profile(r[0], r[1]);
+    const first = { x: false, z: false };
+    const prof = this.profile(r[0], r[1], first);
     if (prof.length < 4) {
       this.w.add(`${name}: 윤곽 점이 모자람`, line);
       return;
@@ -3611,8 +3619,49 @@ export class Runner extends NcEmitter {
     } else {
       const d = this.roughD;
       const e = this.roughE;
+      // II형(43차 — FANUC Series 0i-F 선반 조작 설명서 B-64604EN-1/01 4.2.1절 55쪽·4.2.2절 69쪽): 윤곽 첫 블록(ns)에 두 축 X(U)·Z(W)를 지령하면 II형
+      // (움직이지 않는 축은 W0·U0), 한 축만이면 I형(지금까지의 그림). II형 윤곽은 절삭 축(G71 = Z, G72 = X)으로 한 방향으로만 바뀌어야 하고(54·68쪽 —
+      // 아니면 알람), 단계 축으로는 오목해도(포켓) 된다. 점열은 [u = Z, v = X] 짝으로 바꿔 g71Type2(lathe-g7x.ts)에 준다
+      const type2 = first.x && first.z;
+      const ax = code === 710 ? 'X' : 'Z';
+      let pts: number[] = [];
+      if (type2) {
+        pts = new Array<number>(sh.length);
+        let ext = Math.max(1, Math.abs(xs), Math.abs(zs));
+        for (let k = 0; k < n; k++) {
+          pts[k * 2] = sh[k * 2 + 1]!;
+          pts[k * 2 + 1] = sh[k * 2]!;
+          ext = Math.max(ext, Math.abs(sh[k * 2]!), Math.abs(sh[k * 2 + 1]!));
+        }
+        if (!polyMonotonic(pts, code === 710 ? 0 : 1, 1e-7 * ext)) {
+          this.w.add(`${name}: II형 윤곽의 ${code === 710 ? 'Z' : 'X'}가 한 방향으로만 바뀌지 않음(알람 ${code === 710 ? 'PS0064' : 'PS0329'}) — 그리지 않음`, line);
+          if (r[1] >= line && r[0] > line) this.pc = r[1] + 1;
+          return;
+        }
+      }
       if (!(d > 0)) {
         this.w.add(`${name}: 절입 깊이(첫 블록 ${code === 710 ? 'U' : 'W'})가 없어 다듬질 윤곽만 그림`, line);
+      } else if (type2) {
+        // 단계 축 s(G71 = X → v, G72 = Z → u), 시작점에서 윤곽 시작(A')으로 가는 단계 방향 — I형과 같은 셈
+        const s = code === 710 ? 1 : 0;
+        const S: [number, number] = [zs, xs];
+        const dir = Math.sign(pts[s]! - S[s]) || -1;
+        const plan = g71Type2(pts, S, s, dir, d, e, LATHE_LAYER_MAX, (rapid, u, v) => {
+          this.lgo(rapid ? R : F, v, u, line);
+          return !this.mb.full();
+        });
+        if (plan.capped && !this.mb.full()) {
+          this.w.add(`구간이 ${G7X_MAX_RUNS}개를 넘어 나머지는 읽지 않음`, line);
+          this.hitLimit = true;
+          this.mb.overflow = true;
+        }
+        if (plan.levelCap) this.guardStop(`${name}: 층이 ${LATHE_LAYER_MAX}개를 넘어 그 뒤 층은 건너뛰고 다듬질 윤곽으로 감`, line);
+        this.w.add(`${name}: 윤곽 첫 블록에 X·Z가 있어 II형으로 그림 — 층 끝에서 윤곽을 따라 앞 층 높이까지 깎고 ${ax}로 물러나는 길은 설명서 그림으로 정함`, line);
+        if (plan.pockets) {
+          this.w.add(`${name}: II형 포켓에 들어가는 길은 설명서에 그림으로만 있어 위 층에서 곧게 내려가게 그림`, line);
+          // 설명서 4.2.1절 60쪽 주의 2: 포켓이 있으면 Z 다듬질 여유는 보통 0(아니면 한쪽 벽을 팔 수 있음)
+          if (code === 710 && dw !== 0) this.w.add(`${name}: II형 포켓이 있는데 Z 다듬질 여유 W가 0이 아님 — 설명서는 한쪽 벽을 팔 수 있다고 함`, line);
+        }
       } else {
         // 단계 축 s(G71 = X, G72 = Z)와 절삭 축 c
         const si = code === 710 ? 0 : 1;

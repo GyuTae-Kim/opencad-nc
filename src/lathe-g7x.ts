@@ -10,6 +10,8 @@
  * - G7x.1은 오목한 곳(포켓)을 깎지 않고, G7x.2는 첫 포켓부터 G7x.1이 멈춘 자리를 이어 깎는다. 숫자 없는 G7x는 둘을 한 번에
  * 설명서가 정하지 않은 그림(여기서 정함): 층 끝에서 R만큼 45°로 물러나기, 포켓은 바로 위 층의 깎은 구간을 따라 위에서 들어가기,
  * G7x.1이 멈추는 자리 = 윤곽이 시작점 쪽으로 오르다 처음 다시 내려가는 꼭짓점. 다른 NC 해석기 코드를 보지 않고 일반 기하로 짰다.
+ *
+ * Fanuc 선반 G71·G72 II형(43차, g71Type2)도 같은 층·구간 셈(levelRuns)을 쓴다 — 근거는 FANUC Series 0i-F 선반 조작 설명서(B-64604EN-1/01) 4.2.1·4.2.2절.
  */
 import { cornerCut, cornerElem, cornerIntersections, type CornerElem } from './corner';
 
@@ -346,34 +348,23 @@ interface Run {
 }
 
 /**
- * 거친 깎기 층. pts = 떨어진 윤곽의 점열, S = 시작점(u, v), s = 단계 축(G71은 1·X, G72는 0·Z), dir = 시작점에서 살 쪽으로 가는 단계 방향(±1),
- * I = 절입(> 0), R = 물러남, part = 0(전부)·1(.1 — 포켓 빼고)·2(.2 — 포켓만).
- * 층은 시작점에서 I씩, 윤곽의 가장 깊은 점 앞까지. 층마다 살이 있는 구간(윤곽이 그 층보다 깊은 곳)을 찾아,
- * 시작점 쪽으로 열린 구간(윤곽 시작에서 이어짐)은 시작 자리에서 급속으로 층에 들어가 구간 끝까지 이송하고 R만큼 45°로 물러나 시작 자리로 돌아온다.
- * 포켓 구간은 열린 구간을 다 깎은 뒤, 바로 위 층에서 그 구간을 품는 구간(깎은 곳)의 R 위를 따라 들어가 깎는다(깊이 우선).
- * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다.
- * emit을 주면 이동을 모으지 않고 차례대로 넘긴다(false를 돌려주면 거기서 멈춘다 — 이동을 쌓는 쪽이 자리가 있는지 안다. 길이 0 이동은 쌓이지 않으므로 여기서 세어 멈추면 안 된다).
- * maxRuns = 메모리 보호: 층이 많고 윤곽이 톱니처럼 오르내리면 구간이 아주 많다. 이 part에서 이동을 만드는 구간(.1은 열린 구간, .2는 포켓)이 이 수를 넘으면
- * 뒤 층은 보지 않고 capped = true. maxLevels를 넘는 층이 남았으면 levelCap = true(그 층들은 깎지 않는다)
+ * 층과 층마다 살이 있는 구간(g7xRough·g71Type2가 함께 쓴다). 층은 시작점 S에서 I씩, 윤곽의 가장 깊은 점 앞까지(maxLevels까지 — 넘으면 levelCap).
+ * 층마다 윤곽이 그 층보다 깊은 구간을 윤곽 차례로 찾는다(part = 1이면 층의 첫 구간만). 윤곽 시작에서 이어지는 구간이 열린 구간(open)이다.
+ * 이동을 만드는 구간이 maxRuns를 넘으면 뒤 층은 보지 않고 capped
  */
-export function g7xRough(
+function levelRuns(
   pts: readonly number[],
   S: readonly [number, number],
   s: 0 | 1,
   dir: number,
   I: number,
-  R: number,
   part: 0 | 1 | 2,
-  maxLevels = G7X_MAX_LEVELS,
-  emit?: (rapid: boolean, u: number, v: number) => boolean,
-  maxRuns = G7X_MAX_RUNS,
-): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean; levelCap: boolean } {
+  maxLevels: number,
+  maxRuns: number,
+): { levels: number[]; runs: Run[][]; levelCap: boolean; capped: boolean; tol: number; tdir: number } {
   const c = (1 - s) as 0 | 1;
   const n = pts.length / 2;
-  const moves: G7xMove[] = [];
-  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false, levelCap: false };
   let capped = false;
-  let stopped = false;
   let ext = 0;
   let deepest = -Infinity;
   for (let i = 0; i < n; i++) {
@@ -383,15 +374,6 @@ export function g7xRough(
   const tol = 1e-9 * Math.max(1, ext, Math.abs(S[0]), Math.abs(S[1]));
   const c0 = pts[c]!;
   const tdir = Math.sign(pts[(n - 1) * 2 + c]! - c0) || 1;
-  const up = -dir;
-  const at = (lev: number, cv: number): [number, number] => (s === 1 ? [cv, lev] : [lev, cv]);
-  let last = { u: S[0], v: S[1] };
-  const go = (rapid: boolean, p: [number, number]): void => {
-    if (stopped) return;
-    last = { u: p[0], v: p[1] };
-    if (!emit) moves.push({ rapid, u: p[0], v: p[1] });
-    else if (!emit(rapid, p[0], p[1])) stopped = true;
-  };
   const cAt = (t: number): number => {
     const i = Math.min(n - 2, Math.floor(t));
     const f = t - i;
@@ -440,6 +422,63 @@ export function g7xRough(
     const a = cAt(t0);
     return { t0, t1, a, b: cAt(t1), open: Math.abs(a - c0) <= tol * 100, level, kids: [] };
   }
+  return { levels, runs, levelCap, capped, tol, tdir };
+}
+
+/** 포켓 구간(열리지 않은 구간)을 바로 위 층에서 품는 구간 아래에 두어 나무로: 위 층이 열린 구간이거나 없으면 뿌리 */
+function pocketTree(runs: readonly Run[][]): { roots: Run[]; pockets: boolean } {
+  const roots: Run[] = [];
+  let pockets = false;
+  runs.forEach((list, li) => {
+    for (const r of list) {
+      if (r.open) continue;
+      pockets = true;
+      const parent = li > 0 ? runs[li - 1]!.find((p) => p.t0 <= r.t0 + 1e-9 && r.t1 <= p.t1 + 1e-9) : undefined;
+      if (!parent || parent.open) roots.push(r);
+      else parent.kids.push(r);
+    }
+  });
+  return { roots, pockets };
+}
+
+/**
+ * 거친 깎기 층. pts = 떨어진 윤곽의 점열, S = 시작점(u, v), s = 단계 축(G71은 1·X, G72는 0·Z), dir = 시작점에서 살 쪽으로 가는 단계 방향(±1),
+ * I = 절입(> 0), R = 물러남, part = 0(전부)·1(.1 — 포켓 빼고)·2(.2 — 포켓만).
+ * 층은 시작점에서 I씩, 윤곽의 가장 깊은 점 앞까지. 층마다 살이 있는 구간(윤곽이 그 층보다 깊은 곳)을 찾아,
+ * 시작점 쪽으로 열린 구간(윤곽 시작에서 이어짐)은 시작 자리에서 급속으로 층에 들어가 구간 끝까지 이송하고 R만큼 45°로 물러나 시작 자리로 돌아온다.
+ * 포켓 구간은 열린 구간을 다 깎은 뒤, 바로 위 층에서 그 구간을 품는 구간(깎은 곳)의 R 위를 따라 들어가 깎는다(깊이 우선).
+ * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다.
+ * emit을 주면 이동을 모으지 않고 차례대로 넘긴다(false를 돌려주면 거기서 멈춘다 — 이동을 쌓는 쪽이 자리가 있는지 안다. 길이 0 이동은 쌓이지 않으므로 여기서 세어 멈추면 안 된다).
+ * maxRuns = 메모리 보호: 층이 많고 윤곽이 톱니처럼 오르내리면 구간이 아주 많다. 이 part에서 이동을 만드는 구간(.1은 열린 구간, .2는 포켓)이 이 수를 넘으면
+ * 뒤 층은 보지 않고 capped = true. maxLevels를 넘는 층이 남았으면 levelCap = true(그 층들은 깎지 않는다)
+ */
+export function g7xRough(
+  pts: readonly number[],
+  S: readonly [number, number],
+  s: 0 | 1,
+  dir: number,
+  I: number,
+  R: number,
+  part: 0 | 1 | 2,
+  maxLevels = G7X_MAX_LEVELS,
+  emit?: (rapid: boolean, u: number, v: number) => boolean,
+  maxRuns = G7X_MAX_RUNS,
+): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean; levelCap: boolean } {
+  const c = (1 - s) as 0 | 1;
+  const n = pts.length / 2;
+  const moves: G7xMove[] = [];
+  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false, levelCap: false };
+  let stopped = false;
+  const { levels, runs, levelCap, capped, tdir } = levelRuns(pts, S, s, dir, I, part, maxLevels, maxRuns);
+  const up = -dir;
+  const at = (lev: number, cv: number): [number, number] => (s === 1 ? [cv, lev] : [lev, cv]);
+  let last = { u: S[0], v: S[1] };
+  const go = (rapid: boolean, p: [number, number]): void => {
+    if (stopped) return;
+    last = { u: p[0], v: p[1] };
+    if (!emit) moves.push({ rapid, u: p[0], v: p[1] });
+    else if (!emit(rapid, p[0], p[1])) stopped = true;
+  };
   // 열린 구간(.1)
   if (part !== 2)
     runs.forEach((list, li) => {
@@ -452,17 +491,7 @@ export function g7xRough(
       go(true, at(lev + up * R, S[c]!));
     });
   // 포켓 구간(.2): 바로 위 층에서 품는 구간 아래에 둔다
-  const roots: Run[] = [];
-  let pockets = false;
-  runs.forEach((list, li) => {
-    for (const r of list) {
-      if (r.open) continue;
-      pockets = true;
-      const parent = li > 0 ? runs[li - 1]!.find((p) => p.t0 <= r.t0 + 1e-9 && r.t1 <= p.t1 + 1e-9) : undefined;
-      if (!parent || parent.open) roots.push(r);
-      else parent.kids.push(r);
-    }
-  });
+  const { roots, pockets } = pocketTree(runs);
   if (part !== 1 && roots.length && !stopped) {
     // 깊이 우선으로 돌며 이동을 낸다. 포켓은 층 수만큼 겹치므로(1만 층 가까이면 재귀는 스택을 넘긴다) 갈 구간을 배열에 쌓고, 뒤에서 꺼내니 뒤집어 넣어 앞 구간부터 간다
     const stack = roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level).reverse();
@@ -487,4 +516,111 @@ export function g7xRough(
     goC(true, at(S[s]!, S[c]!));
   }
   return { moves, pockets: pockets && part !== 1, levels: levels.length, capped, levelCap };
+}
+
+/** 점열이 축 m으로 한 방향으로만 바뀌는지(±1, 오고 가면 0 — tol 안의 움직임은 보지 않음). Fanuc G71·G72 II형의 단조 검사 */
+export function polyMonotonic(pts: readonly number[], m: 0 | 1, tol: number): number {
+  let sg = 0;
+  for (let i = 0; i + 1 < pts.length / 2; i++) {
+    const d = pts[(i + 1) * 2 + m]! - pts[i * 2 + m]!;
+    if (Math.abs(d) <= tol) continue;
+    if (sg && Math.sign(d) !== sg) return 0;
+    sg = Math.sign(d);
+  }
+  return sg || 1;
+}
+
+/**
+ * Fanuc 선반 G71·G72 II형 거친 깎기(43차 — FANUC Series 0i-F 선반 조작 설명서 B-64604EN-1/01 4.2.1절 52~65쪽·4.2.2절 66~69쪽).
+ * pts·S·s·dir·D(Δd 절입)·E(e 물러남)·emit·maxLevels·maxRuns는 g7xRough와 같다(층과 구간도 같은 셈 — levelRuns).
+ * 설명서에서 온 것: 층마다 절삭 축으로 깎은 뒤 공구가 윤곽을 따라 깎고 이송으로 물러난다(4.2.1 (3), 그림 (i) — 깊이 Δd만큼),
+ * 윤곽이 절삭 축과 나란해지면 거기서 단계 축으로 물러나기 시작한다(0i-F와 0i-C의 차이를 적은 주 — 매개변수 5108#0 = 0),
+ * 포켓은 시작점에서 가까운 것부터 하나씩 끝까지 깎는다(주의 1), 거친 깎기가 끝나면 시작점으로 돌아간다(4.2.1 (5) — 다듬질 윤곽은 부른 쪽이 그린다).
+ * 여기서 정한 것(설명서는 그림으로만 보임): 따라 깎는 끝은 앞 층 높이(첫 층은 시작점 높이), 물러나는 방향은 단계 축(시작점 쪽),
+ * 포켓 구간은 g7xRough처럼 바로 위 층의 깎은 곳을 따라 E 위에서 그 층으로 이송해 들어간다(설명서 그림 (o)의 점 D·간격 g — 매개변수 5134 — 는 쓰지 않음).
+ * 이동끼리 옮겨 갈 때 지금보다 높은 곳(시작점 쪽)으로 가면 단계 축 먼저, 낮은 곳으로 가면 절삭 축 먼저 급속으로 간다(깎은 곳 위로만 지나게)
+ */
+export function g71Type2(
+  pts: readonly number[],
+  S: readonly [number, number],
+  s: 0 | 1,
+  dir: number,
+  D: number,
+  E: number,
+  maxLevels = G7X_MAX_LEVELS,
+  emit?: (rapid: boolean, u: number, v: number) => boolean,
+  maxRuns = G7X_MAX_RUNS,
+): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean; levelCap: boolean } {
+  const c = (1 - s) as 0 | 1;
+  const n = pts.length / 2;
+  const moves: G7xMove[] = [];
+  if (n < 2 || !(D > 0)) return { moves, pockets: false, levels: 0, capped: false, levelCap: false };
+  const { levels, runs, levelCap, capped, tol } = levelRuns(pts, S, s, dir, D, 0, maxLevels, maxRuns);
+  const up = -dir;
+  const at = (lev: number, cv: number): [number, number] => (s === 1 ? [cv, lev] : [lev, cv]);
+  let stopped = false;
+  const cur: [number, number] = [S[0], S[1]];
+  const go = (rapid: boolean, p: [number, number]): void => {
+    if (stopped) return;
+    cur[0] = p[0];
+    cur[1] = p[1];
+    if (!emit) moves.push({ rapid, u: p[0], v: p[1] });
+    else if (!emit(rapid, p[0], p[1])) stopped = true;
+  };
+  /** 급속으로 (lev, cv)까지: 높은 곳으로는 단계 축 먼저, 낮은 곳으로는 절삭 축 먼저 */
+  const moveTo = (lev: number, cv: number): void => {
+    if (up * (lev - cur[s]) > tol) {
+      go(true, at(lev, cur[c]));
+      go(true, at(lev, cv));
+    } else {
+      go(true, at(cur[s], cv));
+      go(true, at(lev, cv));
+    }
+  };
+  /** 구간 끝(t1 — 윤곽이 층을 지나 올라가는 자리)에서 윤곽을 따라 높이 prev까지 깎아 오른다. 윤곽이 절삭 축과 나란해지거나 다시 깊어지면 멈춘다 */
+  const climb = (t1: number, prev: number): void => {
+    for (let i = Math.floor(t1) + 1; i < n && !stopped; i++) {
+      const qs = pts[i * 2 + s]!;
+      const qc = pts[i * 2 + c]!;
+      const ds = qs - cur[s];
+      if (Math.abs(ds) <= tol) {
+        if (Math.abs(qc - cur[c]) <= tol) continue;
+        break;
+      }
+      if (dir * ds > 0) break;
+      if (up * (qs - prev) >= -tol) {
+        go(false, at(prev, cur[c] + ((qc - cur[c]) * (prev - cur[s])) / ds));
+        break;
+      }
+      go(false, at(qs, qc));
+    }
+  };
+  const prevOf = (li: number): number => (li === 0 ? S[s]! : levels[li - 1]!);
+  /** 한 구간: 층에서 b까지 깎고, 윤곽을 따라 앞 층 높이까지 깎아 오른 뒤 E만큼 단계 축으로 물러난다 */
+  const cut = (r: Run): void => {
+    const lev = levels[r.level]!;
+    go(false, at(lev, r.b));
+    climb(r.t1, prevOf(r.level));
+    go(false, at(cur[s] + up * E, cur[c]));
+  };
+  // 열린 구간(시작점 쪽 — 시작점에서 가장 가까운 "포켓"): 층마다 시작 자리에서 들어간다
+  runs.forEach((list, li) => {
+    const r = list[0];
+    if (!r?.open || stopped) return;
+    moveTo(levels[li]!, S[c]!);
+    cut(r);
+  });
+  // 포켓: 시작점에서 가까운 차례로 하나씩, 깊이 우선(g7xRough와 같은 나무). 바로 위 층의 깎은 곳을 따라 E 위에서 그 층으로 이송해 들어간다
+  const { roots, pockets } = pocketTree(runs);
+  const stack = roots.sort((x, y) => x.t0 - y.t0 || x.level - y.level).reverse();
+  while (stack.length && !stopped) {
+    const r = stack.pop()!;
+    moveTo(prevOf(r.level) + (r.level === 0 ? 0 : up * E), r.a);
+    go(false, at(levels[r.level]!, r.a));
+    cut(r);
+    for (let i = r.kids.length - 1; i >= 0; i--) stack.push(r.kids[i]!);
+  }
+  // 시작점으로 돌아간다(설명서 4.2.1 (5))
+  moveTo(S[s]!, S[c]!);
+  return { moves, pockets, levels: levels.length, capped, levelCap };
 }
