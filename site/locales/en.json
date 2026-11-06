@@ -1270,5 +1270,10 @@
   "CYCLE95: 윤곽 첫 이동 블록에 G0~G3이 없음(알람 15800) — 그리지 않음": "CYCLE95: the first traversing block of the contour has no G0 to G3 (alarm 15800) — not drawn",
   "CYCLE95: 윤곽 첫 블록에 두 축 좌표가 다 있어야 함 — 없는 축은 지금 자리로 봄": "CYCLE95: the first contour block must program both axes — a missing axis is taken from the current position",
   "CYCLE95: 윤곽 원호에 중심(I·J·K)·반지름(CR)이 없음 — 그리지 않음": "CYCLE95: a contour arc has no center (I, J, K) or radius (CR) — not drawn",
-  "CYCLE95: 윤곽 블록을 읽을 수 없음": "CYCLE95: unreadable contour block"
+  "CYCLE95: 윤곽 블록을 읽을 수 없음": "CYCLE95: unreadable contour block",
+  "CYCLE71: 깊이(_DP)가 없음 — 그리지 않음": "CYCLE71: no depth (_DP) — not drawn",
+  "CYCLE71: 가공 종류(_VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE71: invalid machining type (_VARI = {0}) (alarm 61002) — not drawn",
+  "CYCLE71: 면 크기(_LENG·_WID)가 없음 — 그리지 않음": "CYCLE71: no surface size (_LENG, _WID) — not drawn",
+  "CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음": "CYCLE71: tool radius unknown, so the width infeed (_MIDA) cannot be determined — not drawn",
+  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: retraction travel (_FDP) is 0 — the manual requires a value greater than 0 (drawn with 0)"
 }

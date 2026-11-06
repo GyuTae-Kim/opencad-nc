@@ -17,9 +17,9 @@
  * 후퇴 면·기준면이 맞지 않는 사이클(알람 61101)은 그리지 않음(planeAlarm, 43차). 후퇴 면이 기준면 아래인 드릴 사이클(위로 뚫음)은
  * 그 이동을 급속 안전 검사에서 뺀다(markFromBelow — emitter.ts, 43차).
  * 홈 사이클 LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)는 층마다 왕복·홈 둘레 고리(40차 — slot 참고).
- * 선반 윤곽 거친 깎기 CYCLE95는 윤곽 부프로그램(이름·표지 구간)을 읽어 구간마다 층·언더컷·다듬질(44차 — cycle95 참고).
- * DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE71·CYCLE93 등), 시스템 변수($…), 배열 변수.
+ * 선반 윤곽 거친 깎기 CYCLE95는 윤곽 부프로그램(이름·표지 구간)을 읽어 구간마다 층·언더컷·다듬질(44차 — cycle95 참고),
+ * 평면 밀링 CYCLE71은 층마다 한 방향·오가는 길(44차 — cycle71 참고). DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE72·CYCLE93 등), 시스템 변수($…), 배열 변수.
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
@@ -1333,6 +1333,7 @@ class SiemensRunner extends Runner {
       else if (c.name === 'POCKET1' || c.name === 'POCKET2' || c.name === 'POCKET3' || c.name === 'POCKET4') this.pocket(c.name, c.args, line);
       else if (c.name === 'SLOT1' || c.name === 'SLOT2' || c.name === 'LONGHOLE') this.slot(c.name, c.args, line);
       else if (c.name === 'CYCLE95') this.cycle95(c.args, c.strs[0], line);
+      else if (c.name === 'CYCLE71') this.cycle71(c.args, line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
     }
@@ -2246,6 +2247,135 @@ class SiemensRunner extends Runner {
         last = cutSlot(k, last);
         move(0, null, rtp, 0);
       }
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+    }
+    this.markIfFromBelow(first, rfp * this.scale, dp * this.scale, PLANE_AXES[this.plane]![2]!);
+    if (stopped()) this.mb.overflow = true;
+    this.known = 7;
+  }
+
+  // ── 평면 밀링 CYCLE71(44차) ──
+  /**
+   * CYCLE71(_RTP, _RFP, _SDIS, _DP, _PA, _PO, _LENG, _WID, _STA, _MID, _MIDA, _FDP, _FALD, _FFP1, _VARI, _FDP1) — 사각 면 밀링. 설명서(6FC5398-3BP20-0BA0, 2006-11)
+   * 3.11절 156~162쪽. _RTP·_RFP·_SDIS는 CYCLE81 설명(알람 61101 — planeAlarm), _STA·_MID·_FFP1은 POCKET3 설명, _ZSD[1]은 밀링 사이클 설정을 따른다(162쪽).
+   * - 면: (_PA, _PO)에서 첫 축과 _STA만큼 돈 긴 축으로 _LENG, 그와 수직으로 _WID(부호가 놓이는 쪽 — 157·161쪽)
+   * - 순서(159쪽): 지금 높이에서 G0으로 진입 자리 → 기준면 + 안전 거리 → 가공 높이까지 G0(진입은 면 밖에서 — 156쪽). 거친 깎기(_VARI 일의 자리 1)는 _DP + _FALD까지
+   *   _MID 이하의 같은 절입으로 위에서부터 층마다(_ZSD[1] = 0이면 기준면 + 안전 거리부터, 1이면 기준면부터 — 포켓과 같음), 다듬질(2)은 _DP에서 한 번.
+   *   끝나면 지금 자리에서 후퇴 면으로(160쪽)
+   * - 길(_VARI 십의 자리): 1·3 = 긴 축과 나란히, 2·4 = 수직 축과 나란히 깎고, 1·2는 한 방향(길 끝에서 들어 올려 급속으로 다음 길 시작 — 거친 깎기는 그 층 + 안전 거리,
+   *   다듬질은 _DP + _FALD + 안전 거리까지 — 160쪽), 3·4는 오가며(길 끝에서 면 밖으로 다음 길로 옮김)
+   * - 폭 절입(159·161쪽): 첫 길은 가장자리에서 꼭 _MIDA만큼 물리도록(공구 중심 = _MIDA − 공구 반지름), 마지막 길의 공구 중심은 너비 + _FDP1 − 공구 반지름,
+   *   그 사이는 _MIDA 이하의 같은 간격. _MIDA가 0이면 공구 지름의 80 %
+   * 여기서 정한 것: 길의 양 끝은 면 가장자리에서 공구 반지름 + _FDP만큼 밖(진입이 면 밖에서 되게 — 설명서 그림은 _FDP만 보임), 오가는 길 사이 옮김은 FFP1 이송,
+   * 층 사이는 그 층 + 안전 거리로 올라 첫 길 시작에서 다시 들어감(설명서: "깊이 진입은 거친 깎기와 같은 자리").
+   * 그리지 않는 것(경고): 깊이 없음, _LENG·_WID 없음, _VARI가 맞지 않음(알람 61002), 공구 반지름·_MIDA를 몰라 폭 절입을 정할 수 없음
+   */
+  private cycle71(a: (number | undefined)[], line: number): void {
+    const at = (k: number): number => a[k] ?? 0;
+    const rtp = at(0);
+    const rfp = at(1);
+    const sdis = Math.abs(at(2));
+    if (a[3] === undefined) {
+      this.w.add('CYCLE71: 깊이(_DP)가 없음 — 그리지 않음', line);
+      return;
+    }
+    const dp = at(3);
+    if (this.planeAlarm('CYCLE71', rtp, rfp, { d: dp, rel: false }, line)) return;
+    const leng = at(6);
+    const wid = at(7);
+    const mid = Math.abs(at(9));
+    const fdp = Math.abs(at(11));
+    const fald = Math.abs(at(12));
+    const ffp1 = at(13);
+    const vari = Math.round(at(14));
+    const fdp1 = Math.abs(at(15));
+    const units = vari % 10;
+    const tens = Math.floor(vari / 10);
+    if (!(vari > 0 && (units === 1 || units === 2) && tens >= 1 && tens <= 4)) {
+      this.w.add(`CYCLE71: 가공 종류(_VARI = ${vari})가 맞지 않음(알람 61002) — 그리지 않음`, line);
+      return;
+    }
+    if (!(Math.abs(leng) > 0 && Math.abs(wid) > 0)) {
+      this.w.add('CYCLE71: 면 크기(_LENG·_WID)가 없음 — 그리지 않음', line);
+      return;
+    }
+    const rd = this.toolRadiusFor(this.dNum >= 0 ? this.dNum : undefined);
+    const r = (rd ?? 0) / this.scale;
+    const mida = Math.abs(at(10)) > 0 ? Math.abs(at(10)) : 1.6 * r;
+    if (!(mida > 0)) {
+      this.w.add('CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음', line);
+      return;
+    }
+    if (rd === undefined) this.w.add('CYCLE71: 공구 반지름을 몰라 반지름 0으로 그림', line);
+    if (!(fdp > 0)) this.w.add('CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)', line);
+    // 지역 좌표: u = 긴 축(_STA), v = 수직 축. 깎는 축 c와 폭을 옮기는 축 t(십의 자리 1·3 = u를 따라 깎음)
+    const ang = at(8) * DEG;
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const pa = at(4);
+    const po = at(5);
+    const alongU = tens === 1 || tens === 3;
+    const alt = tens === 3 || tens === 4;
+    const sgU = Math.sign(leng) || 1;
+    const sgV = Math.sign(wid) || 1;
+    const P = (c: number, t: number): P2 => {
+      const lu = alongU ? c * sgU : t * sgU;
+      const lv = alongU ? t * sgV : c * sgV;
+      return [pa + lu * ca - lv * sa, po + lu * sa + lv * ca];
+    };
+    const cLen = alongU ? Math.abs(leng) : Math.abs(wid);
+    const tLen = alongU ? Math.abs(wid) : Math.abs(leng);
+    const c0 = -(r + fdp);
+    const c1 = cLen + r + fdp;
+    const t0 = mida - r;
+    const t1 = tLen + fdp1 - r;
+    const nT = t1 > t0 + 1e-9 ? Math.max(1, Math.ceil((t1 - t0) / mida - 1e-9)) : 0;
+    const tAt = (k: number): number => (nT === 0 ? t0 : k >= nT ? t1 : t0 + ((t1 - t0) * k) / nT);
+    const up = rfp >= dp ? 1 : -1;
+    const safe = rfp + up * sdis;
+    const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
+    const to = units === 1 ? dp + up * fald : dp;
+    const total = up * (top - to);
+    const nL = units === 2 ? 1 : total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
+    const levelAt = (k: number): number => (units === 2 || k >= nL - 1 ? to : top - ((top - to) * (k + 1)) / nL);
+    const { go, move, stopped } = this.cycleMover(line);
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    const first = this.mb.count;
+    this.inCycle = true;
+    try {
+      // 지금 높이에서 진입 자리 위 → 기준면 + 안전 거리
+      move(0, P(c0, tAt(0)), null, 0);
+      move(0, null, safe, 0);
+      for (let k = 0; k < nL && go(); k++) {
+        const L = levelAt(k);
+        const lift = units === 2 ? dp + up * (fald + sdis) : L + up * sdis;
+        for (let i = 0; i <= nT && go(); i++) {
+          const back = alt && i % 2 === 1;
+          const s0 = back ? c1 : c0;
+          const s1 = back ? c0 : c1;
+          const t = tAt(i);
+          if (i === 0) {
+            move(0, P(s0, t), null, 0);
+            move(0, null, L, 0);
+          } else if (alt) move(1, P(s0, t), null, ffp1);
+          else {
+            move(0, null, lift, 0);
+            move(0, P(s0, t), null, 0);
+            move(0, null, L, 0);
+          }
+          move(1, P(s1, t), null, ffp1);
+        }
+        // 다음 층은 그 층 + 안전 거리로 올라 첫 길 시작에서
+        if (k + 1 < nL) {
+          move(0, null, lift, 0);
+          move(0, P(c0, tAt(0)), null, 0);
+        }
+      }
+      move(0, null, rtp, 0);
     } finally {
       this.inCycle = false;
       this.motion = save.motion;
