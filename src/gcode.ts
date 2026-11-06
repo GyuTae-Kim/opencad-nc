@@ -41,7 +41,7 @@ import {
   type NcProgram,
   type NcRotaryOptions,
 } from './model';
-import { G7X_MAX_RUNS, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
+import { G7X_MAX_LEVELS, G7X_MAX_RUNS, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, type G7xCorner, type G7xEl } from './lathe-g7x';
 import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
@@ -739,6 +739,14 @@ interface Frame {
 export { affine, applyAffine, composeAffine, diagAbout, invertAffine, rotAbout, ZERO3, type Affine } from './affine';
 
 const MAX_CALL_DEPTH = 64;
+/**
+ * 사이클 하나 안의 고정 횟수 안전장치(아주 작은 절입·간격이 끝나지 않게): 쪼기는 구멍(G74·G75는 자리)마다, 층은 사이클마다,
+ * G12·G13 원과 G76 절입은 블록마다. 닿으면 거기까지 그린 그대로 두고 그 줄에 경고한다(guardStop)
+ */
+export const PECK_MAX = 10000;
+export const LATHE_LAYER_MAX = 9999;
+export const RING_MAX = 1000;
+export const THREAD_PASS_MAX = 499;
 
 /** Siemens: 앞쪽 줄에서 처음 나오는 G70/G700(inch)·G71/G710(mm) */
 function prescanSiemensUnits(src: NcSource): boolean | undefined {
@@ -824,6 +832,8 @@ export class Runner extends NcEmitter {
   protected cqK = 0;
   /** 첫 절입에 더할 길이(Siemens CYCLE83은 첫 깊이를 기준면에서 잰다 — R 점까지의 안전 거리) */
   protected peckFirstExtra = 0;
+  /** 쪼기 안전장치 경고에 쓸 사이클 이름(Siemens CYCLE83 — 없으면 G73·G83) */
+  protected peckName: string | undefined;
   // ── 소수점 없는 좌표(최소 입력 단위) ──
   /** 0이 아닌 X·Y·Z 낱말 수와 그 가운데 소수점 없이 100 이상인 것 */
   protected axisWords = 0;
@@ -2770,7 +2780,7 @@ export class Runner extends NcEmitter {
         if (q > 0) {
           let d = rD;
           let guard = 0;
-          while (up * (d - zD) > 1e-9 && guard++ < 10000) {
+          while (up * (d - zD) > 1e-9 && guard++ < PECK_MAX) {
             const next = up > 0 ? Math.max(zD, d - q) : Math.min(zD, d + q);
             if (code === 830 && d !== rD) go(MOVE_RAPID, d + up * this.peck);
             go(MOVE_DRILL, next);
@@ -2781,6 +2791,8 @@ export class Runner extends NcEmitter {
               q = qb;
             }
           }
+          // 안전장치에 닿아 바닥 앞에서 멈췄다(그 깊이에서 물러나는 그대로 그린다)
+          if (up * (d - zD) > 1e-9) this.guardStop(`${this.peckName ?? `G${code / 10}`}: 쪼기가 ${PECK_MAX}번을 넘어 바닥에 닿기 전에 멈춤`, line);
           go(MOVE_RAPID, clear);
           break;
         }
@@ -2952,8 +2964,12 @@ export class Runner extends NcEmitter {
     const rk = blk.has[LK] ? Math.abs(blk.val[LK]!) * sc : r1;
     const q = blk.has[LQ] ? Math.abs(blk.val[LQ]!) * sc : 0;
     const radii: number[] = [];
+    // 원 수 안전장치: 아주 작은 Q로 원이 RING_MAX개를 넘으면 그 뒤 원은 건너뛰고 마무리 원으로 간다(그대로 그리고, 그린 뒤 알린다)
+    let ringCap = false;
     if (blk.has[LK] && q > 0) {
-      for (let r = r1; r < rk - 1e-9 && radii.length < 1000; r += q) radii.push(r);
+      let r = r1;
+      for (; r < rk - 1e-9 && radii.length < RING_MAX; r += q) radii.push(r);
+      ringCap = r < rk - 1e-9;
     } else if (blk.has[LK]) radii.push(r1);
     radii.push(rk);
     const path = radii.map((r) => r - tr!).filter((r) => r > 1e-9);
@@ -2976,6 +2992,7 @@ export class Runner extends NcEmitter {
       }
       this.emit(MOVE_FEED, cx, cy, z, line, FLAG_CYCLE);
     }
+    if (ringCap) this.guardStop(`${name}: 원이 ${RING_MAX}개를 넘어 그 뒤 원은 건너뛰고 마무리 원으로 감`, line);
     this.known = 7;
   }
 
@@ -3378,6 +3395,8 @@ export class Runner extends NcEmitter {
         this.hitLimit = true;
         this.mb.overflow = true;
       }
+      // 층 안전장치: 그 뒤 층은 깎지 않고 다듬질 윤곽으로 간다(그대로 그리고 알린다)
+      if (plan.levelCap) this.guardStop(`${name}: 층이 ${G7X_MAX_LEVELS}개를 넘어 그 뒤 층은 건너뛰고 다듬질 윤곽으로 감`, line);
       if (plan.pockets) this.w.add(`${name}: 오목한 곳(포켓)에 들어가는 차례는 설명서에 없어 위 층을 따라 내려가게 그림`, line);
       let path = off;
       if (part) {
@@ -3598,7 +3617,7 @@ export class Runner extends NcEmitter {
         const A = [sh[0]!, sh[1]!];
         const dir = Math.sign(A[si]! - sv) || -1;
         const at = (sVal: number, cVal: number): [number, number] => (si === 0 ? [sVal, cVal] : [cVal, sVal]);
-        for (let k = 1; k < 10000; k++) {
+        for (let k = 1; k <= LATHE_LAYER_MAX; k++) {
           const lev = sv + dir * k * d;
           if (dir * (lev - A[si]!) >= -1e-9) break;
           // 윤곽과 만나는 절삭 끝
@@ -3621,6 +3640,8 @@ export class Runner extends NcEmitter {
           p = at(lev - dir * e, cv0);
           this.lgo(R, p[0], p[1], line);
         }
+        // 안전장치: 층이 더 남았으면 그 뒤 층은 건너뛰고 다듬질 윤곽으로 간다(그대로 그리고 알린다). 층은 k마다 단조라 다음 층 하나만 본다
+        if (dir * (sv + dir * (LATHE_LAYER_MAX + 1) * d - A[si]!) < -1e-9) this.guardStop(`${name}: 층이 ${LATHE_LAYER_MAX}개를 넘어 그 뒤 층은 건너뛰고 다듬질 윤곽으로 감`, line);
       }
       follow(0, 0);
       back();
@@ -3661,7 +3682,7 @@ export class Runner extends NcEmitter {
       this.lgo(MOVE_RAPID, p[0], p[1], line);
       let d = s0;
       let guard = 0;
-      while (dir * (s1 - d) > 1e-9 && guard++ < 10000) {
+      while (dir * (s1 - d) > 1e-9 && guard++ < PECK_MAX) {
         const next = step > 0 ? (dir > 0 ? Math.min(s1, d + step) : Math.max(s1, d - step)) : s1;
         p = at(next, mv);
         this.lgo(MOVE_FEED, p[0], p[1], line);
@@ -3671,6 +3692,8 @@ export class Runner extends NcEmitter {
         }
         d = next;
       }
+      // 안전장치에 닿아 끝 앞에서 멈췄다(그 자리에서 시작 쪽으로 물러나는 그대로 그린다)
+      if (dir * (s1 - d) > 1e-9) this.guardStop(`G${code / 10}: 쪼기가 ${PECK_MAX}번을 넘어 바닥에 닿기 전에 멈춤`, line);
       p = at(s0, mv);
       this.lgo(MOVE_RAPID, p[0], p[1], line);
     };
@@ -3695,6 +3718,8 @@ export class Runner extends NcEmitter {
     const xs = this.pos[0]!;
     const zs = this.pos[2]!;
     const passes: number[] = [];
+    // 절입 수 안전장치(THREAD_PASS_MAX)에 닿았는지 — 아주 작은 첫 절입이면 나사 높이에 닿기 전에 멈춘다
+    let passCap = false;
     // 절입이 끝난 뒤 같은 깊이로 되풀이하는 다듬질 횟수(Fanuc 첫 블록 P의 m)
     let again = 0;
     let xt: number;
@@ -3713,11 +3738,14 @@ export class Runner extends NcEmitter {
       const deg = blk.has[LR] && blk.val[LR]! > 0 ? blk.val[LR]! : 1;
       const sg = I < 0 ? -1 : 1;
       const crest = xs + I;
-      for (let n = 1; n < 500 && J > 0; n++) {
-        const d = Math.min(K, J * Math.pow(n, 1 / deg));
+      let d = 0;
+      for (let n = 1; n <= THREAD_PASS_MAX && J > 0; n++) {
+        d = Math.min(K, J * Math.pow(n, 1 / deg));
         passes.push(crest + sg * d);
         if (d >= K) break;
       }
+      // 절입 안전장치: 나사 높이에 닿기 전에 횟수가 다 찼다(그 뒤 절입은 그리지 않는다 — 그린 뒤 알린다)
+      passCap = passes.length >= THREAD_PASS_MAX && d < K;
       if (!passes.length) passes.push(crest + sg * K);
       xt = passes[passes.length - 1]!;
     } else {
@@ -3736,11 +3764,13 @@ export class Runner extends NcEmitter {
       const k = blk.has[LP] ? this.incVal(blk, LP) : 0;
       const d1 = blk.has[LQ] ? this.incVal(blk, LQ) : k;
       const sg = xt < xs ? 1 : -1; // 바깥나사면 산(xt + k)에서 안쪽으로
-      for (let n = 1; n < 500 && d1 > 0; n++) {
-        const d = Math.min(k, Math.max(d1 * Math.sqrt(n), n > 1 ? this.thread.dmin * n : 0));
+      let d = 0;
+      for (let n = 1; n <= THREAD_PASS_MAX && d1 > 0; n++) {
+        d = Math.min(k, Math.max(d1 * Math.sqrt(n), n > 1 ? this.thread.dmin * n : 0));
         passes.push(xt + sg * (k - d));
         if (d >= k) break;
       }
+      passCap = passes.length >= THREAD_PASS_MAX && d < k;
       again = Math.max(0, this.thread.m - 1);
       if (!passes.length && !again) passes.push(xt);
     }
@@ -3751,6 +3781,7 @@ export class Runner extends NcEmitter {
       this.lgo(MOVE_RAPID, xs, zs, line);
     };
     for (const x of passes) pass(x);
+    if (passCap) this.guardStop(`G76: 나사 절입이 ${THREAD_PASS_MAX}번을 넘어 그 뒤 절입은 건너뜀`, line);
     const more = this.blockLoop();
     for (let m = 0; m < again && more(); m++) pass(xt);
     this.known = 7;

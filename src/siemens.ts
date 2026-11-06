@@ -1430,6 +1430,7 @@ class SiemensRunner extends Runner {
       c = Math.round(a[11] ?? 1) === 0 ? 730 : 830;
     }
     this.retractR = false;
+    this.peckName = name;
     if (!this.xfPlane(this.plane).keeps) {
       // 기울인 프레임(ROT X/Y): 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다(공구 축도 기운다)
       const q = this.progPos();
@@ -1444,6 +1445,7 @@ class SiemensRunner extends Runner {
       this.drillAt(c, p0, p1, da, this.pos[p0]!, this.pos[p1]!, rD, zD, line);
     }
     this.peckFirstExtra = 0;
+    this.peckName = undefined;
     [this.cq, this.cp, this.cqI, this.cqJ, this.cqK] = [saveQ[0], saveQ[1], saveQ[2], saveQ[3], saveQ[4]];
     this.retractR = !!saveQ[5];
     this.initLevel = saveQ[6];

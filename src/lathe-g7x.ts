@@ -45,6 +45,8 @@ const TAU = Math.PI * 2;
  * 이동 한도 800만 개보다 먼저 닿을 수 있다. 닿으면 뒤 층을 보지 않으므로 해석기는 구간 경고를 남기고 그 줄에서 읽기를 멈춘다
  */
 export const G7X_MAX_RUNS = 2_000_000;
+/** 거친 깎기 층 수 안전장치(아주 작은 절입 I가 끝나지 않게). 넘으면 그 뒤 층은 보지 않고 levelCap = true(해석기는 경고하고 다듬질 윤곽으로 간다) */
+export const G7X_MAX_LEVELS = 10000;
 
 export function g7xLine(su: number, sv: number, eu: number, ev: number): G7xEl {
   return { arc: false, su, sv, eu, ev, cu: 0, cv: 0, sweep: 0 };
@@ -352,7 +354,7 @@ interface Run {
  * 포켓을 깎았으면 시작점 단계로 올라가 시작 자리로 돌아온다.
  * emit을 주면 이동을 모으지 않고 차례대로 넘긴다(false를 돌려주면 거기서 멈춘다 — 이동을 쌓는 쪽이 자리가 있는지 안다. 길이 0 이동은 쌓이지 않으므로 여기서 세어 멈추면 안 된다).
  * maxRuns = 메모리 보호: 층이 많고 윤곽이 톱니처럼 오르내리면 구간이 아주 많다. 이 part에서 이동을 만드는 구간(.1은 열린 구간, .2는 포켓)이 이 수를 넘으면
- * 뒤 층은 보지 않고 capped = true
+ * 뒤 층은 보지 않고 capped = true. maxLevels를 넘는 층이 남았으면 levelCap = true(그 층들은 깎지 않는다)
  */
 export function g7xRough(
   pts: readonly number[],
@@ -362,14 +364,14 @@ export function g7xRough(
   I: number,
   R: number,
   part: 0 | 1 | 2,
-  maxLevels = 10000,
+  maxLevels = G7X_MAX_LEVELS,
   emit?: (rapid: boolean, u: number, v: number) => boolean,
   maxRuns = G7X_MAX_RUNS,
-): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean } {
+): { moves: G7xMove[]; pockets: boolean; levels: number; capped: boolean; levelCap: boolean } {
   const c = (1 - s) as 0 | 1;
   const n = pts.length / 2;
   const moves: G7xMove[] = [];
-  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false };
+  if (n < 2 || !(I > 0)) return { moves, pockets: false, levels: 0, capped: false, levelCap: false };
   let capped = false;
   let stopped = false;
   let ext = 0;
@@ -401,6 +403,8 @@ export function g7xRough(
     if (lev * dir >= deepest - tol) break;
     levels.push(lev);
   }
+  // 층 안전장치에 닿았는지(층은 k마다 단조라 다음 층 하나만 본다)
+  const levelCap = (S[s]! + dir * (maxLevels + 1) * I) * dir < deepest - tol;
   // 층마다 살이 있는 구간(.1은 층의 첫 구간만 쓴다)
   let runCount = 0;
   const runs: Run[][] = levels.map((lev, li) => {
@@ -482,5 +486,5 @@ export function g7xRough(
     goC(true, at(S[s]!, s === 1 ? cur.u : cur.v));
     goC(true, at(S[s]!, S[c]!));
   }
-  return { moves, pockets: pockets && part !== 1, levels: levels.length, capped };
+  return { moves, pockets: pockets && part !== 1, levels: levels.length, capped, levelCap };
 }
