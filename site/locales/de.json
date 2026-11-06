@@ -1352,6 +1352,8 @@
   "CYCL DEF {0}: 이동이 {1}개를 넘어 그 뒤는 그리지 않음": "CYCL DEF {0}: mehr als {1} Verfahrbewegungen — der Rest wird nicht gezeichnet",
   "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: die Berechnung der Bahnen im Seitenabstand hat ihre Grenze überschritten — nur die äußeren {1} Bahnen werden gezeichnet",
   "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: die Berechnung der Bahnen im Seitenabstand hat ihre Grenze überschritten — nicht gezeichnet",
+  "CYCL DEF {0}: 옆 간격 고리를 잇지 못해 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: die nächste Bahn im Seitenabstand ließ sich nicht zu geschlossenen Schleifen verbinden — nur die äußeren {1} Bahnen werden gezeichnet",
+  "CYCL DEF {0}: 옆 간격 고리를 잇지 못해 그리지 않음": "CYCL DEF {0}: die Bahn im Seitenabstand ließ sich nicht zu geschlossenen Schleifen verbinden — nicht gezeichnet",
   "CYCL DEF 25: 깊이(Q1)가 0이라 그리지 않음": "CYCL DEF 25: Frästiefe (Q1) ist 0 — der Zyklus wird nicht ausgeführt (nicht gezeichnet)",
   "CYCL DEF 25: 윤곽 LBL이 여럿이라 첫 LBL {0}만 씀": "CYCL DEF 25: mehrere Kontur-LBL — nur das erste, LBL {0}, wird verwendet",
   "CYCL DEF 25: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림": "CYCL DEF 25: Zyklus 270 ist definiert — statt RL/RR im Konturunterprogramm wird Q391 verwendet",

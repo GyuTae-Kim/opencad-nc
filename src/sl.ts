@@ -162,11 +162,131 @@ interface SlTree {
   lo: Int32Array;
   hi: Int32Array;
   m: number;
+  /** 50차: 마디 고리띠 조각(RING_N개씩 — ringBound) */
+  ring: Float64Array;
 }
 
 /** 잎 하나의 요소 수와 나무를 만드는 요소 수 하한(작으면 차례로 보는 것이 빠르다) */
 const TREE_LEAF = 4;
 const TREE_MIN = 24;
+
+/**
+ * 50차 마디 고리띠 조각: 중심 C(cu, cv)에서 마디의 모든 요소 점이 거리 [rmin, rmax], 방향이 가운데 방향(mu, mv)에서 반각 h 안(cosH — 쓰지 않으면 -2)이고
+ * e0·e1은 방향 범위 양 끝의 단위 벡터. 쓰지 않는 마디는 rmin = -Infinity. 원에 가까운 마디는 캡슐(현 + 활 높이)이 안쪽으로 활 높이만큼 두꺼워
+ * 원 가운데 가까운 질의를 가지치지 못한다 — 고리띠는 두께가 요소 하나의 활 높이뿐이라 가지친다
+ */
+const RING_N = 11;
+const NO_RING = [0, 0, -Infinity, Infinity, -2, 1, 0, 1, 0, 1, 0];
+
+function ringBound(src: readonly SlEl[], idx: Int32Array, a: number, b: number, A: number[], B: number[], big: number): number[] {
+  // 세 점(캡슐 두 끝 A·B와 AB에서 가장 먼 끝점 M)을 지나는 원의 중심
+  let M = A;
+  let far = -1;
+  for (let k = a; k < b; k++) {
+    const e = src[idx[k]!]!;
+    for (const q of [
+      [e.su, e.sv],
+      [e.eu, e.ev],
+    ]) {
+      const s = segDist2(q[0]!, q[1]!, A[0]!, A[1]!, B[0]!, B[1]!);
+      if (s > far) {
+        far = s;
+        M = q;
+      }
+    }
+  }
+  const bx = B[0]! - A[0]!;
+  const by = B[1]! - A[1]!;
+  const cx = M[0]! - A[0]!;
+  const cy = M[1]! - A[1]!;
+  const bb = bx * bx + by * by;
+  const cc = cx * cx + cy * cy;
+  const D = 2 * (bx * cy - by * cx);
+  if (!(Math.abs(D) > 1e-9 * (bb + cc))) return NO_RING;
+  const ox = (cy * bb - by * cc) / D;
+  const oy = (bx * cc - cx * bb) / D;
+  // 거의 곧은 마디는 중심이 아주 멀다 — 반올림이 여유를 넘지 않게 버린다(곧은 마디는 캡슐이 얇다)
+  if (!(Math.hypot(ox, oy) < 1e5 * big)) return NO_RING;
+  const cu = A[0]! + ox;
+  const cv = A[1]! + oy;
+  const wl = Math.hypot(M[0]! - cu, M[1]! - cv);
+  if (!(wl > 0)) return NO_RING;
+  const wu = (M[0]! - cu) / wl;
+  const wv = (M[1]! - cv) / wl;
+  let rmin = Infinity;
+  let rmax = 0;
+  let alo = Infinity;
+  let ahi = -Infinity;
+  const ang = (x: number, y: number): void => {
+    const pu = x - cu;
+    const pv = y - cv;
+    const g = Math.atan2(wu * pv - wv * pu, wu * pu + wv * pv);
+    alo = Math.min(alo, g);
+    ahi = Math.max(ahi, g);
+  };
+  let full = false;
+  for (let k = a; k < b; k++) {
+    const e = src[idx[k]!]!;
+    rmin = Math.min(rmin, elDist(e, cu, cv));
+    const lo0 = alo;
+    const hi0 = ahi;
+    alo = Infinity;
+    ahi = -Infinity;
+    if (!e.arc) {
+      rmax = Math.max(rmax, Math.hypot(e.su - cu, e.sv - cv), Math.hypot(e.eu - cu, e.ev - cv));
+      // 선분이 C에서 보는 방향은 두 끝 방향 사이(짧은 쪽) — 차가 π 이상이면 뒤로 감싸 방향 범위를 쓰지 않는다
+      ang(e.su, e.sv);
+      ang(e.eu, e.ev);
+    } else {
+      rmax = Math.max(rmax, Math.hypot(e.cu - cu, e.cv - cv) + arcR(e));
+      // 원호는 둘레 상자(볼록 — C가 안이면 네 귀 방향이 π 넘게 벌어짐)의 네 귀로
+      const x = box(e);
+      ang(x[0], x[1]);
+      ang(x[2], x[1]);
+      ang(x[0], x[3]);
+      ang(x[2], x[3]);
+    }
+    if (!(ahi - alo < Math.PI * 0.99)) full = true;
+    alo = Math.min(alo, lo0);
+    ahi = Math.max(ahi, hi0);
+  }
+  if (!(ahi - alo < Math.PI * 0.99)) full = true;
+  // 반올림 여유: 거리 범위를 조금 넓히고 방향 범위도 조금 넓힌다
+  const slack = (wl + big) * 1e-12;
+  rmin = Math.max(0, rmin - slack);
+  rmax += slack;
+  if (full) return [cu, cv, rmin, rmax, -2, 1, 0, 1, 0, 1, 0];
+  const h = (ahi - alo) / 2 + 1e-9;
+  const mid = (ahi + alo) / 2;
+  const rot = (g: number): [number, number] => [wu * Math.cos(g) - wv * Math.sin(g), wu * Math.sin(g) + wv * Math.cos(g)];
+  const m = rot(mid);
+  const e0 = rot(alo - 1e-9);
+  const e1 = rot(ahi + 1e-9);
+  return [cu, cv, rmin, rmax, Math.cos(h), m[0], m[1], e0[0], e0[1], e1[0], e1[1]];
+}
+
+/** 점에서 마디 고리띠 조각까지 거리의 아래 한계(고리띠가 없으면 0) */
+function ringLB(R: Float64Array, id: number, u: number, v: number): number {
+  const o = id * RING_N;
+  const rmin = R[o + 2]!;
+  if (rmin === -Infinity) return 0;
+  const cu = R[o]!;
+  const cv = R[o + 1]!;
+  const rmax = R[o + 3]!;
+  const pu = u - cu;
+  const pv = v - cv;
+  const rho = Math.hypot(pu, pv);
+  // 고리띠(방향 상관없이 — 언제나 맞는 아래 한계)
+  let lb = Math.max(rmin - rho, rho - rmax);
+  const cosH = R[o + 4]!;
+  // 방향 범위 밖이 분명하면(반올림 여유를 둠) 조각까지 거리 = 양 끝 반지름 선분까지 거리 가운데 작은 것
+  if (cosH > -2 && rho > 0 && pu * R[o + 5]! + pv * R[o + 6]! < rho * (cosH - 1e-9)) {
+    const d0 = segDist(u, v, cu + R[o + 7]! * rmin, cv + R[o + 8]! * rmin, cu + R[o + 7]! * rmax, cv + R[o + 8]! * rmax);
+    const d1 = segDist(u, v, cu + R[o + 9]! * rmin, cv + R[o + 10]! * rmin, cu + R[o + 9]! * rmax, cv + R[o + 10]! * rmax);
+    lb = Math.max(lb, Math.min(d0, d1));
+  }
+  return lb;
+}
 
 function slTree(src: readonly SlEl[]): SlTree {
   const n = src.length;
@@ -178,6 +298,7 @@ function slTree(src: readonly SlEl[]): SlTree {
   const cr: number[] = [];
   const lo: number[] = [];
   const hi: number[] = [];
+  const ring: number[] = [];
   let big = 1;
   for (const b of boxes) big = Math.max(big, Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]), Math.abs(b[3]));
   const center = (i: number, ax: number): number => (boxes[i]![ax]! + boxes[i]![ax + 2]!) / 2;
@@ -228,6 +349,7 @@ function slTree(src: readonly SlEl[]): SlTree {
     for (let k = a; k < b; k++) rad = Math.max(rad, capBound(src[idx[k]!]!, A[0]!, A[1]!, Bp[0]!, Bp[1]!));
     ca.push(A[0]!, A[1]!, Bp[0]!, Bp[1]!);
     cr.push(rad);
+    ring.push(...ringBound(src, idx, a, b, A, Bp, big));
     if (b - a <= TREE_LEAF) {
       lo[id] = a;
       hi[id] = b;
@@ -248,7 +370,17 @@ function slTree(src: readonly SlEl[]): SlTree {
     els.push(src[idx[k]!]!);
     eb.set(boxes[idx[k]!]!, k * 4);
   }
-  return { els, eb, nb: Float64Array.from(nb), ca: Float64Array.from(ca), cr: Float64Array.from(cr), lo: Int32Array.from(lo), hi: Int32Array.from(hi), m: big * 1e-7 };
+  return {
+    els,
+    eb,
+    nb: Float64Array.from(nb),
+    ca: Float64Array.from(ca),
+    cr: Float64Array.from(cr),
+    lo: Int32Array.from(lo),
+    hi: Int32Array.from(hi),
+    m: big * 1e-7,
+    ring: Float64Array.from(ring),
+  };
 }
 
 /** 점 (u, v)에서 선분 AB까지 거리의 제곱 */
@@ -299,6 +431,8 @@ function treeNear(T: SlTree, u: number, v: number, t: number, cnt: { work: numbe
       // 캡슐로도 멀면 건너뜀(마디 요소의 모든 점이 캡슐 안): 선분까지 거리 > lim + 반지름 — 제곱으로 견줌
       const cl = lim + T.cr[id]!;
       if (segDist2(u, v, T.ca[id * 4]!, T.ca[id * 4 + 1]!, T.ca[id * 4 + 2]!, T.ca[id * 4 + 3]!) > cl * cl) continue;
+      // 50차: 고리띠 조각으로도 멀면 건너뜀(원에 가까운 마디 — 원 가운데 가까운 질의)
+      if (ringLB(T.ring, id, u, v) > lim) continue;
       if (T.lo[id]! >= 0) {
         for (let k = T.lo[id]!; k < T.hi[id]!; k++) {
           if (boxFar(T.eb, k, u, v, lim2)) continue;
@@ -403,17 +537,34 @@ interface RawEl {
   n: number;
 }
 
-/** 요소들을 서로의 교점에서 나눈 조각들(cnt가 있으면 견준 짝 수를 일로 더함 — 49차) */
-function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }): SlEl[] {
+/**
+ * 50차: 요소마다 확실히 버려질 팔 — 매개변수 [0, a]와 [b, 1] 위 모든 점이 경계에서 가깝다(a ≥ b면 요소 전체, 팔이 없으면 a = -1·b = 2)
+ */
+interface SlArms {
+  a: Float64Array;
+  b: Float64Array;
+}
+
+/** 요소들을 서로의 교점에서 나눈 조각들(cnt가 있으면 견준 짝 수를 일로 더함 — 49차). arms가 있으면 버려질 팔 안의 조각은 내지 않는다(50차) */
+function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, arms?: SlArms): SlEl[] {
   const n = raw.length;
   const boxes = raw.map((r) => box(r.e));
   const order = [...Array(n).keys()].sort((a, b) => boxes[a]![0] - boxes[b]![0]);
   const cuts: number[][] = raw.map(() => []);
+  // 50차: 둘 다 모두 버려질 요소인 짝은 견주지 않는다(그 교점은 버려질 조각끼리만 나눈다). 모두 버려질 요소 뒤로는 그렇지 않은 요소로만 뛴다
+  const dead = (i: number): boolean => !!arms && arms.a[i]! >= arms.b[i]!;
+  let live: Int32Array | null = null;
+  if (arms) {
+    live = new Int32Array(n + 1);
+    live[n] = n;
+    for (let y = n - 1; y >= 0; y--) live[y] = dead(order[y]!) ? live[y + 1]! : y;
+  }
   let pairs = 0;
   for (let x = 0; x < n; x++) {
     const i = order[x]!;
     const bi = boxes[i]!;
-    for (let y = x + 1; y < n; y++) {
+    const jump = live !== null && dead(i);
+    for (let y = jump ? live![x + 1]! : x + 1; y < n; y = jump ? live![y + 1]! : y + 1) {
       const j = order[y]!;
       const bj = boxes[j]!;
       if (bj[0] > bi[2] + eps) break;
@@ -440,15 +591,24 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }): S
   }
   const out: SlEl[] = [];
   raw.forEach((r, i) => {
+    // 50차: 가운데 점(매개변수 가운데)이 버려질 팔 [0, lo]·[hi, 1] 안인 조각은 내지 않는다 — 나누는 자리는 그대로라 남는 조각은 같다
+    const lo = arms ? arms.a[i]! : -1;
+    const hi = arms ? arms.b[i]! : 2;
+    if (lo >= hi) return;
+    const keep = (t0: number, t1: number): boolean => {
+      const m = (t0 + t1) / 2;
+      return m > lo && m < hi;
+    };
     const len = slElLen(r.e);
-    const ts = cuts[i]!.filter((t) => t * len > eps && (1 - t) * len > eps).sort((a, b) => a - b);
+    // 50차: 수 배열로 차례 짓기(걸러 낸 값은 0·NaN이 없어 (a, b) => a - b와 같은 차례)
+    const ts = Float64Array.from(cuts[i]!.filter((t) => t * len > eps && (1 - t) * len > eps)).sort();
     let t0 = 0;
     for (const t of ts) {
       if ((t - t0) * len <= eps) continue;
-      out.push(part(r.e, t0, t));
+      if (keep(t0, t)) out.push(part(r.e, t0, t));
       t0 = t;
     }
-    if ((1 - t0) * len > eps) out.push(t0 === 0 ? { ...r.e } : part(r.e, t0, 1));
+    if ((1 - t0) * len > eps && keep(t0, 1)) out.push(t0 === 0 ? { ...r.e } : part(r.e, t0, 1));
   });
   // 상자 견주기는 요소 거리 셈보다 가벼워 넷을 하나로 센다
   if (cnt) cnt.work += Math.ceil(pairs / 4);
@@ -458,13 +618,16 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }): S
 /** 조각들을 끝 → 시작으로 이어 닫힌 고리로(닫히지 않은 사슬 수 = open). 갈림길에서는 가장 오른쪽으로 꺾는 조각 */
 function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: number } {
   const cell = Math.max(tol * 4, 1e-12);
-  const key = (u: number, v: number): string => `${Math.round(u / cell)},${Math.round(v / cell)}`;
-  const grid = new Map<string, number[]>();
+  // 50차: 칸 열쇠를 글자 대신 두 단계 수 표로(칸마다 넣은 차례는 그대로라 고르는 차례도 같다)
+  const grid = new Map<number, Map<number, number[]>>();
   ps.forEach((p, i) => {
-    const k = key(p.su, p.sv);
-    const g = grid.get(k);
+    const ku = Math.round(p.su / cell);
+    const kv = Math.round(p.sv / cell);
+    let col = grid.get(ku);
+    if (!col) grid.set(ku, (col = new Map()));
+    const g = col.get(kv);
     if (g) g.push(i);
-    else grid.set(k, [i]);
+    else col.set(kv, [i]);
   });
   const used = new Uint8Array(ps.length);
   const next = (cur: SlEl): number => {
@@ -475,7 +638,7 @@ function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: numbe
     let bestTurn = Infinity;
     for (let du = -1; du <= 1; du++)
       for (let dv = -1; dv <= 1; dv++)
-        for (const j of grid.get(`${cu + du},${cv + dv}`) ?? []) {
+        for (const j of grid.get(cu + du)?.get(cv + dv) ?? []) {
           if (used[j]) continue;
           const p = ps[j]!;
           if (Math.hypot(p.su - cur.eu, p.sv - cur.ev) > tol) continue;
@@ -533,6 +696,8 @@ export interface SlRegion {
   pocketTrees?: (SlTree | null)[];
   islandTrees?: (SlTree | null)[];
   loopTree?: SlTree | null;
+  /** 50차: 마지막 떨어진 곡선 셈에서 남은 조각은 있는데(길이 합이 크기의 1/1000 넘게) 닫힌 고리가 하나도 없었으면 그 길이 합, 아니면 0 */
+  unclosed?: number;
 }
 
 /** 셈한 일을 더할 자리(R.work) */
@@ -628,16 +793,188 @@ export function slRegion(contours: readonly { els: SlLoop; pocket: boolean }[]):
 
 /**
  * 가공 면 안에서 경계까지 거리가 d인 곡선(공구 중심 경로) — 고리마다 가공 면 쪽이 왼쪽. d가 0에 가까우면 경계 고리 그대로.
- * 하나도 없으면 빈 배열(공구가 윤곽보다 큼)
+ * 하나도 없으면 빈 배열(공구가 윤곽보다 큼). plain은 시험용(offsetUpTo)
  */
-export function slOffset(R: SlRegion, d: number): SlLoop[] {
-  return offsetUpTo(R, d, Infinity)!;
+export function slOffset(R: SlRegion, d: number, plain = false): SlLoop[] {
+  return offsetUpTo(R, d, Infinity, plain)!;
 }
 
-/** slOffset과 같되 셈한 일(R.work)이 workLimit을 넘으면 그만두고 null(49차 — 고리 셈 한도) */
-function offsetUpTo(R: SlRegion, d: number, workLimit: number): SlLoop[] | null {
+/**
+ * 직선 K(s) = (pu, pv) + s·(du, dv)의 s 범위 가운데 선분 AB(A = B면 점)까지 거리가 r보다 작은 곳의 둘레(캡슐 = 띠 + 두 끝 원 — 볼록이라 한 구간).
+ * 어림이라 쓰는 쪽이 두 끝을 다시 확인한다
+ */
+function capsuleSpan(pu: number, pv: number, du: number, dv: number, au: number, av: number, bu: number, bv: number, r: number): [number, number] {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const add = (x0: number, x1: number): void => {
+    if (!(x0 < x1)) return;
+    lo = Math.min(lo, x0);
+    hi = Math.max(hi, x1);
+  };
+  const qa = du * du + dv * dv;
+  const disk = (cu: number, cv: number): void => {
+    const wu = pu - cu;
+    const wv = pv - cv;
+    const qb = wu * du + wv * dv;
+    const disc = qb * qb - qa * (wu * wu + wv * wv - r * r);
+    if (!(disc > 0) || !(qa > 0)) return;
+    const sq = Math.sqrt(disc);
+    add((-qb - sq) / qa, (-qb + sq) / qa);
+  };
+  disk(au, av);
+  const eu = bu - au;
+  const ev = bv - av;
+  const le2 = eu * eu + ev * ev;
+  if (le2 > 0) {
+    disk(bu, bv);
+    // 띠: 선분에 수직인 거리 |h| < r, 선분 위로 내린 자리 0 ≤ q ≤ 1 — 둘 다 s의 일차식
+    const le = Math.sqrt(le2);
+    let s0 = -Infinity;
+    let s1 = Infinity;
+    const lin = (al: number, be: number, l: number, h: number): void => {
+      if (be === 0) {
+        if (!(al > l && al < h)) s0 = Infinity;
+        return;
+      }
+      const x0 = (l - al) / be;
+      const x1 = (h - al) / be;
+      s0 = Math.max(s0, Math.min(x0, x1));
+      s1 = Math.min(s1, Math.max(x0, x1));
+    };
+    lin((-ev * (pu - au) + eu * (pv - av)) / le, (-ev * du + eu * dv) / le, -r, r);
+    lin((eu * (pu - au) + ev * (pv - av)) / le2, (eu * du + ev * dv) / le2, 0, 1);
+    add(s0, s1);
+  }
+  return [Math.max(0, lo), Math.min(1, hi)];
+}
+
+/**
+ * 50차: 떨어진 곡선의 날 요소 가운데 직선마다 확실히 버려질 팔(SlArms) — 그 위 모든 점이 어떤 경계 요소에서 lim = t − μ보다 가깝다.
+ * 그 팔에 가운데 점이 있는 조각은 slNear(…, t)가 참이라 버려지므로 만들지도 묻지도 않는다(답은 같다).
+ * 증인 요소: 날 요소의 출처 이웃(옮긴 요소 i면 i ± 1, 모서리 잇기 i → j면 i·j)과, 경계 고리를 따라 거리가 줄어드는 쪽으로 걸어 찾은 가까운 요소
+ * (앞 날 요소에서 찾은 자리부터 — 원꼴 윤곽 가운데 고리는 맞은편 요소가 가깝다)와 그 이웃. 증인마다 날 요소가 그 캡슐(반지름 t − 2μ) 안인 범위를 어림하고
+ * 범위 두 끝에서 실제 거리가 lim보다 가까운지 확인한다 — 직선 위에서 선분·점까지 거리는 볼록이라 두 끝이 가까우면 사이도 가깝다.
+ * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 팔이 없다
+ */
+function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: Int32Array, t: number, mu: number, cnt: { work: number }): SlArms {
+  const n = raw.length;
+  const A = new Float64Array(n).fill(-1);
+  const B = new Float64Array(n).fill(2);
+  const r = t - 2 * mu;
+  const lim = t - mu;
+  if (!(r > 0)) return { a: A, b: B };
+  const carry = new Int32Array(R.loops.length).fill(-1);
+  const ivs: [number, number][] = [];
+  const tried: number[] = [];
+  for (let q = 0; q < n; q++) {
+    const K = raw[q]!.e;
+    if (K.arc) continue;
+    const du = K.eu - K.su;
+    const dv = K.ev - K.sv;
+    if (!(Math.hypot(du, dv) > R.eps)) continue;
+    const k = raw[q]!.loop;
+    const loop = R.loops[k]!;
+    const m = loop.length;
+    ivs.length = 0;
+    tried.length = 0;
+    // 범위 [s0, s1]의 두 끝에서 거리 f가 lim보다 가까우면 넣는다
+    const check = (s: [number, number], f: (u: number, v: number) => number): void => {
+      if (!(s[0] <= s[1])) return;
+      cnt.work += 2;
+      const p = at(K, s[0]);
+      const p1 = at(K, s[1]);
+      if (f(p[0], p[1]) < lim && f(p1[0], p1[1]) < lim) ivs.push(s);
+    };
+    const point = (u: number, v: number): void => check(capsuleSpan(K.su, K.sv, du, dv, u, v, u, v, r), (x, y) => Math.hypot(x - u, y - v));
+    const witness = (idx: number): void => {
+      const w = ((idx % m) + m) % m;
+      if (tried.includes(w)) return;
+      tried.push(w);
+      const e = loop[w]!;
+      cnt.work++;
+      if (!e.arc) {
+        check(capsuleSpan(K.su, K.sv, du, dv, e.su, e.sv, e.eu, e.ev, r), (x, y) => elDist(e, x, y));
+        return;
+      }
+      const sw = Math.abs(e.sweep);
+      if (sw <= Math.PI) {
+        const sag = arcR(e) * (1 - Math.cos(sw / 2));
+        if (r - sag > 0) check(capsuleSpan(K.su, K.sv, du, dv, e.su, e.sv, e.eu, e.ev, r - sag), (x, y) => segDist(x, y, e.su, e.sv, e.eu, e.ev) + sag);
+      }
+      point(e.su, e.sv);
+      point(e.eu, e.ev);
+    };
+    // 덮인 앞쪽 [0, a]와 뒤쪽 [b, 1]
+    let a = -1;
+    let b = 2;
+    const arms = (): void => {
+      ivs.sort((x, y) => x[0] - y[0]);
+      a = -1;
+      for (const s of ivs) {
+        if (a < 0 ? s[0] <= 0 : s[0] <= a) a = Math.max(a, s[1]);
+        else break;
+      }
+      const byEnd = ivs.slice().sort((x, y) => y[1] - x[1]);
+      b = 2;
+      for (const s of byEnd) {
+        if (b > 1 ? s[1] >= 1 : s[1] >= b) b = Math.min(b, s[0]);
+        else break;
+      }
+    };
+    if (srcB[q]! < 0) {
+      witness(srcA[q]! - 1);
+      witness(srcA[q]! + 1);
+    } else {
+      witness(srcA[q]!);
+      witness(srcB[q]!);
+    }
+    arms();
+    if (a < b) {
+      // 덮이지 않은 곳의 가운데에서 경계 고리를 따라 거리가 줄어드는 쪽으로 걷는다(앞 날 요소에서 찾은 자리부터)
+      const p = at(K, (Math.max(a, 0) + Math.min(b, 1)) / 2);
+      let w = carry[k]! >= 0 ? carry[k]! : srcA[q]!;
+      let fw = elDist(loop[w]!, p[0], p[1]);
+      cnt.work++;
+      for (let step = 0; step < m; step++) {
+        const w1 = (w + 1) % m;
+        const w0 = (w + m - 1) % m;
+        const f1 = elDist(loop[w1]!, p[0], p[1]);
+        const f0 = elDist(loop[w0]!, p[0], p[1]);
+        cnt.work += 2;
+        if (f1 < fw && f1 <= f0) {
+          w = w1;
+          fw = f1;
+        } else if (f0 < fw) {
+          w = w0;
+          fw = f0;
+        } else break;
+      }
+      carry[k] = w;
+      if (fw < lim) {
+        const before = ivs.length;
+        witness(w);
+        witness(w - 1);
+        witness(w + 1);
+        if (ivs.length > before) arms();
+      }
+    }
+    A[q] = a;
+    B[q] = b;
+  }
+  return { a: A, b: B };
+}
+
+/**
+ * slOffset과 같되 셈한 일(R.work)이 workLimit을 넘으면 그만두고 null(49차 — 고리 셈 한도).
+ * plain이면 50차 버려질 팔(deadArms)을 셈하지 않고 모든 조각을 묻는다(같은 답 — 시험에서 견줄 때)
+ */
+function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): SlLoop[] | null {
+  R.unclosed = 0;
   if (!(d > R.eps)) return R.loops.map((l) => l.map((e) => ({ ...e })));
   const raw: RawEl[] = [];
+  // 50차: 날 요소마다 출처 경계 요소(옮긴 요소 i면 [i, -1], 모서리 잇기 i → j면 [i, j])
+  const srcA: number[] = [];
+  const srcB: number[] = [];
   R.loops.forEach((loop, k) => {
     const n = loop.length;
     const moved: (SlEl | null)[] = loop.map((e) => {
@@ -659,6 +996,8 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number): SlLoop[] | null 
       const A = moved[i];
       if (!A) continue;
       out.push(A);
+      srcA.push(i);
+      srcB.push(-1);
       // 다음 옮긴 요소(점으로 준 원호는 건너뛴다)
       let j = (i + 1) % n;
       let skipped = false;
@@ -684,20 +1023,35 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number): SlLoop[] | null 
         while (sw < -TAU) sw += TAU;
         out.push({ arc: true, su: A.eu, sv: A.ev, eu: B.su, ev: B.sv, cu: pu, cv: pv, sweep: sw });
       } else out.push(g7xLine(A.eu, A.ev, B.su, B.sv));
+      srcA.push(i);
+      srcB.push(j);
     }
     out.forEach((e, i) => raw.push({ e, loop: k, idx: i, n: out.length }));
   });
   if (!raw.length) return [];
   const cnt = counter(R);
-  const pieces = splitAll(raw, R.eps * 10, cnt);
   const tolD = Math.max(R.scale, d) * 1e-7;
+  // 50차: 확실히 버려질 팔(μ는 반올림을 덮는 여유 — 좌표 크기·윤곽 크기의 10억분의 1)
+  let arms: SlArms | undefined;
+  if (!plain) {
+    let big = 0;
+    for (const l of R.loops) for (const e of l) big = Math.max(big, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    arms = deadArms(R, raw, Int32Array.from(srcA), Int32Array.from(srcB), d - tolD, Math.max(R.scale, d, big) * 1e-9, cnt);
+  }
+  const pieces = splitAll(raw, R.eps * 10, cnt, arms);
   const keep: SlEl[] = [];
   for (const p of pieces) {
     if (cnt.work > workLimit) return null;
     const m = at(p, 0.5);
     if (!slNear(R, m[0], m[1], d - tolD) && slInside(R, m[0], m[1])) keep.push(p);
   }
-  return chain(keep, R.eps * 1e3).loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100);
+  const loops = chain(keep, R.eps * 1e3).loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100);
+  if (!loops.length && keep.length) {
+    let len = 0;
+    for (const p of keep) len += slElLen(p);
+    if (len > R.scale * 1e-3) R.unclosed = len;
+  }
+  return loops;
 }
 
 /** 고리 위에서 점에 가장 가까운 자리(요소 번호·비율·거리) */
@@ -817,7 +1171,9 @@ export function slSegmentFree(R: SlRegion, levels0: readonly SlLoop[], d: number
 
 /**
  * 거친 깎기 고리들: levels[k] = 경계에서 d0 + k·step 떨어진 곡선(바깥 → 안). 고리가 없어질 때까지, maxLevels(capped 'rings')·
- * work(요소 수 합)·evals(49차 — 이번에 셈한 일 R.work, 요소 거리·반직선·교점 셈 수)까지(capped 'work' — 넘는 단계는 셈하지 않는다)
+ * work(요소 수 합)·evals(49차 — 이번에 셈한 일 R.work, 요소 거리·반직선·교점 셈 수)까지(capped 'work' — 넘는 단계는 셈하지 않는다).
+ * 50차: 남는 조각은 있는데 닫힌 고리로 잇지 못해 그 단계가 비면 그 앞까지(capped 'open' — 요소가 아주 잘고 꼭짓점이 반올림된 원꼴 윤곽의
+ * 가운데 가까운 고리처럼 겹친 조각이 엉켜 끊긴 것. 공구가 남은 곳을 다 덮어 빈 것과 갈라 알린다)
  */
 export function slLevels(
   R: SlRegion,
@@ -826,7 +1182,7 @@ export function slLevels(
   maxLevels: number,
   work = 2_000_000,
   evals = Infinity,
-): { levels: SlLoop[][]; capped: false | 'rings' | 'work' } {
+): { levels: SlLoop[][]; capped: false | 'rings' | 'work' | 'open' } {
   const levels: SlLoop[][] = [];
   let spent = 0;
   const n0 = R.loops.reduce((s, l) => s + l.length, 0);
@@ -837,7 +1193,8 @@ export function slLevels(
     const loops = offsetUpTo(R, d0 + k * step, limit);
     if (!loops) return { levels, capped: 'work' };
     spent += n0 + loops.reduce((s, l) => s + l.length, 0);
-    if (!loops.length) return { levels, capped: false };
+    // 50차: 남은 조각을 닫힌 고리로 잇지 못해 빈 것(capped 'open')과 공구가 남은 곳을 다 덮어 빈 것을 가른다
+    if (!loops.length) return { levels, capped: R.unclosed ? 'open' : false };
     levels.push(loops);
   }
   return { levels, capped: step > R.eps && levels.length >= maxLevels ? 'rings' : false };

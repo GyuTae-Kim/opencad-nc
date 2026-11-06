@@ -89,8 +89,9 @@ const SL_RING_MAX = 2000;
  *   바닥 층만 그린다(9999층 안전장치처럼 그 뒤 층은 건너뛰고 바닥 층으로). 그래도 넘으면(층 하나가 너무 큼) 넘는 곳에서 멈춘다.
  *   프로그램 전체 이동 한도(기본 800만)의 1/8 — 사이클 하나가 한도를 다 쓰지 않게
  * - SL_EVAL_CALL·SL_EVAL_PGM: 옆 간격 고리 셈의 일(상자 나무에서 본 마디·요소 수와 교점 셈 수 — sl.ts R.work)을 사이클 한 번·프로그램 전체에서.
- *   넘으면 그 안쪽 고리는 셈하지 않고 바깥 고리까지만 그린다(원에 가까운 윤곽은 가운데 가까운 고리마다 거의 모든 요소를 봐야 해서
- *   요소 수의 제곱으로 는다 — 500각형·간격 0.25면 1억 7천만). 일 하나가 이 기계에서 20~30 ns라 한 번 2~3초·전체 6~9초 안팎의 셈
+ *   넘으면 그 안쪽 고리는 셈하지 않고 바깥 고리까지만 그린다. 49차에는 원에 가까운 윤곽의 가운데 가까운 고리가 요소 수의 제곱으로 늘었다
+ *   (500각형·간격 0.25면 1억 7천만 — 버려질 조각마다 거리 질의). 50차에 버려질 팔·고리띠 조각(sl.ts)으로 같은 답을 348만에 셈한다.
+ *   일 하나가 이 기계에서 20~30 ns라 한 번 2~3초·전체 6~9초 안팎의 셈
  */
 const SL_MOVE_MAX = 1_000_000;
 const SL_EVAL_CALL = 100_000_000;
@@ -2656,11 +2657,16 @@ class HRunner extends NcEmitter {
       const L = slLevels(R, d0, Math.abs(Q('Q2', 1)) * rad, SL_RING_MAX, undefined, Math.max(0, Math.min(SL_EVAL_CALL, SL_EVAL_PGM - this.slEvals)));
       this.slEvals += (R.work ?? 0) - w0;
       if (!L.levels.length) {
-        this.w.add(L.capped === 'work' ? `${C}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음` : `${C}: 공구가 윤곽보다 커서 그리지 않음`, line);
+        this.w.add(
+          L.capped === 'work' ? `${C}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음` : L.capped === 'open' ? `${C}: 옆 간격 고리를 잇지 못해 그리지 않음` : `${C}: 공구가 윤곽보다 커서 그리지 않음`,
+          line,
+        );
         return null;
       }
       if (L.capped === 'rings') this.guardStop(`${C}: 옆 간격 고리가 ${SL_RING_MAX}개를 넘어 그 안쪽은 그리지 않음`, line);
       else if (L.capped === 'work') this.guardStop(`${C}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 ${L.levels.length}겹까지만 그림`, line);
+      // 50차: 남은 조각을 닫힌 고리로 잇지 못한 단계에서 멈춤(그 안쪽은 깎지 않은 채 남는다 — 49차까지는 알리지 않음)
+      else if (L.capped === 'open') this.w.add(`${C}: 옆 간격 고리를 잇지 못해 바깥 고리 ${L.levels.length}겹까지만 그림`, line);
       const lv = L.levels.map((ls, k) => ls.map((l) => (k === 0 && q8 > 0 ? slRound(l, q8, R.eps) : l)));
       const s = cs[0]!.els[0]!;
       return { d0, outer: L.levels[0]!, order: slOrder(lv, [s.su, s.sv], R.eps, flip) };

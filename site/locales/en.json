@@ -1352,6 +1352,8 @@
   "CYCL DEF {0}: 이동이 {1}개를 넘어 그 뒤는 그리지 않음": "CYCL DEF {0}: more than {1} moves — the rest is not drawn",
   "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: computing the stepover rings went over its limit — only the outer {1} rings are drawn",
   "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: computing the stepover rings went over its limit — not drawn",
+  "CYCL DEF {0}: 옆 간격 고리를 잇지 못해 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: the next stepover ring could not be joined into closed loops — only the outer {1} rings are drawn",
+  "CYCL DEF {0}: 옆 간격 고리를 잇지 못해 그리지 않음": "CYCL DEF {0}: the stepover ring could not be joined into closed loops — not drawn",
   "CYCL DEF 25: 깊이(Q1)가 0이라 그리지 않음": "CYCL DEF 25: milling depth (Q1) is 0 — the cycle is not run (not drawn)",
   "CYCL DEF 25: 윤곽 LBL이 여럿이라 첫 LBL {0}만 씀": "CYCL DEF 25: several contour LBLs — only the first one, LBL {0}, is used",
   "CYCL DEF 25: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림": "CYCL DEF 25: Cycle 270 is defined — Q391 is used instead of RL/RR in the contour subprogram",
