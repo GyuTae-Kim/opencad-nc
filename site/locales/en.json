@@ -1242,5 +1242,6 @@
   "SLOT1: 왕복 진입 각(_STA2)이 없어 수직 이송으로 그림": "SLOT1: no insertion angle for oscillation (_STA2) — drawn as a vertical infeed",
   "{0}: DP와 DPR이 달라 DPR 깊이로 그림": "{0}: DP and DPR differ — drawn to the DPR depth",
   "POCKET1: 길이·너비(LENG·WID)가 없음 — 그리지 않음": "POCKET1: no length or width (LENG, WID) — not drawn",
-  "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: no pocket radius (PRAD) — not drawn"
+  "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: no pocket radius (PRAD) — not drawn",
+  "G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀": "G70: subprogram calls nested too deeply — finishing cycle skipped"
 }
