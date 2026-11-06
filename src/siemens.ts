@@ -13,7 +13,9 @@
  * 기계 좌표 쪽 이동 SUPA·G53·G153·G74·G75(위치를 모르면 안전 높이 규칙), 단위 G70/G71/G700/G710, G4 F(초)·S(회전).
  * CT(접선 원호, 모달)는 앞 요소에 접하는 원호로, RND·RNDM·CHF·CHR은 앞뒤가 직선인 모서리를 다듬는다(원호와 만나면 그대로, 경고).
  * 포켓 사이클 POCKET3(사각)·POCKET4(원)는 층마다 중심에서 바깥으로 고리 경로(38차 — pocket 참고)와 사이클 설정 _ZSD[1]·[2]·[9] 대입,
- * POCKET1(사각)·POCKET2(원)도 같은 길로 황삭·MIDF 층 윤곽 정삭(41차). 사이클 깊이 DP·DPR은 cycleDepth(DPR이 앞섬, 41차).
+ * POCKET1(사각)·POCKET2(원)도 같은 길로 황삭·MIDF 층 윤곽 정삭(41차). 사이클 깊이 DP·DPR은 cycleDepth(DPR이 앞섬, 41차),
+ * 후퇴 면·기준면이 맞지 않는 사이클(알람 61101)은 그리지 않음(planeAlarm, 43차). 후퇴 면이 기준면 아래인 드릴 사이클(위로 뚫음)은
+ * 그 이동을 급속 안전 검사에서 뺀다(markFromBelow — emitter.ts, 43차).
  * 홈 사이클 LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)는 층마다 왕복·홈 둘레 고리(40차 — slot 참고).
  * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE71·CYCLE95 등),
  * 시스템 변수($…), 배열·문자열 변수.
@@ -1396,21 +1398,57 @@ class SiemensRunner extends Runner {
 
   /**
    * 사이클 깊이 DP·DPR(a[k]·a[k + 1]) — 설명서(6FC5398-3BP20-0BA0, 2006-11) 2.1.3절 CYCLE81 44쪽: 상대 깊이 DPR은 후퇴 면·기준면의 자리로
-   * 방향을 셈(기준면에서 후퇴 면 반대쪽으로 — 후퇴 면 = 기준면이면 설명서는 알람 61101이지만 아래로), DP와 DPR이 둘 다 있으면 DPR이고 DP와 다르면
+   * 방향을 셈(기준면에서 후퇴 면 반대쪽으로 — 후퇴 면 = 기준면이면 알람 61101, planeAlarm), DP와 DPR이 둘 다 있으면 DPR이고 DP와 다르면
    * differ(그릴 때 depthDiffers로 알린다 — 컨트롤러도 대화 줄에 "Depth: Corresponding to value for relative depth"). 빠진 매개변수는 0(1.2절 17쪽)이라
-   * DPR = 0은 적지 않은 것과 같다. 둘 다 없으면 undefined. rtp·rfp는 배율 s를 곱한 값이고 돌려주는 깊이도 그렇다(DP와 같은 깊이면 DP 값 그대로)
+   * DPR = 0은 적지 않은 것과 같다. 둘 다 없으면 undefined. rtp·rfp는 배율 s를 곱한 값이고 돌려주는 깊이도 그렇다(DP와 같은 깊이면 DP 값 그대로).
+   * rel = 상대 깊이 DPR로 셈
    */
-  private cycleDepth(a: (number | undefined)[], k: number, rtp: number, rfp: number, s: number): { d: number; differ: boolean } | undefined {
+  private cycleDepth(a: (number | undefined)[], k: number, rtp: number, rfp: number, s: number): { d: number; differ: boolean; rel: boolean } | undefined {
     const dp = a[k];
     const dpr = a[k + 1];
     if (dpr !== undefined && dpr !== 0) {
       const d = rfp - (rtp >= rfp ? 1 : -1) * Math.abs(dpr) * s;
-      if (dp === undefined) return { d, differ: false };
-      if (Math.abs(dp * s - d) <= 1e-9 * Math.max(1, Math.abs(d))) return { d: dp * s, differ: false };
-      return { d, differ: true };
+      if (dp === undefined) return { d, differ: false, rel: true };
+      if (Math.abs(dp * s - d) <= 1e-9 * Math.max(1, Math.abs(d))) return { d: dp * s, differ: false, rel: true };
+      return { d, differ: true, rel: true };
     }
-    if (dp !== undefined) return { d: dp * s, differ: false };
-    return dpr !== undefined ? { d: rfp, differ: false } : undefined;
+    if (dp !== undefined) return { d: dp * s, differ: false, rel: false };
+    return dpr !== undefined ? { d: rfp, differ: false, rel: false } : undefined;
+  }
+
+  /**
+   * 알람 61101 "Reference plane defined incorrectly"(43차 — 설명서 2.1.3절 CYCLE81 44쪽 주): 사이클은 후퇴 면이 기준면 앞(최종 깊이까지 거리가 더 김)이라고 본다.
+   * 후퇴 면 = 기준면인데 상대 깊이(DPR ≠ 0)를 주었거나, 후퇴 면이 기준면 뒤(최종 깊이까지 거리가 더 짧음)이면 알람을 내고 사이클을 하지 않는다.
+   * RTP·RFP의 설명이 CYCLE81을 가리키는 사이클(CYCLE82~89·840, LONGHOLE·SLOT1·SLOT2·POCKET1~4 — 2.1.1절 40쪽: 기하 매개변수는 드릴·패턴·밀링 사이클에 같음)에 쓴다.
+   * 걸리면 그 줄에 알리고 true(그리지 않음). 같은 값끼리 견주므로(배율도 같음) 수치 오차만 넘긴다
+   */
+  private planeAlarm(name: string, rtp: number, rfp: number, depth: { d: number; rel: boolean }, line: number): boolean {
+    const tol = 1e-9 * Math.max(1, Math.abs(rtp), Math.abs(rfp), Math.abs(depth.d));
+    if (depth.rel && Math.abs(rtp - rfp) <= tol) {
+      this.w.add(`${name}: 후퇴 면과 기준면이 같은데 상대 깊이(DPR)를 줌(알람 61101) — 그리지 않음`, line);
+      return true;
+    }
+    if (Math.abs(rtp - depth.d) < Math.abs(rfp - depth.d) - tol) {
+      this.w.add(`${name}: 후퇴 면이 기준면보다 최종 깊이에 가까움(알람 61101) — 그리지 않음`, line);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 43차: 사이클이 기준면 rfp에서 최종 깊이 d로 가는 공구 축(da) 방향이 표시 좌표에서 위(+Z)로 가면(후퇴 면이 기준면 아래 — 위로 뚫음, 프레임으로
+   * 뒤집힌 것 포함) 이동 first부터를 아래에서 위로 가공한 몫으로 적는다(markFromBelow). 설명서 2.1.3절 44쪽은 후퇴 면이 기준면 앞(최종 깊이에서 더 멂)
+   * 이라고 보고 아니면 알람 61101이므로, 그린 사이클의 후퇴 면·안전 거리 쪽은 늘 공구가 들어오는 쪽이다. rfp·d는 progPos와 같은 단위
+   */
+  private markIfFromBelow(first: number, rfp: number, d: number, da: number): void {
+    const q = Array.from(this.progPos());
+    const p = [0, 0, 0];
+    const b = [0, 0, 0];
+    q[da] = rfp;
+    this.toDisplay(q, p);
+    q[da] = d;
+    this.toDisplay(q, b);
+    if (b[2]! - p[2]! > 1e-9 * Math.max(1, Math.abs(p[2]!), Math.abs(b[2]!))) this.markFromBelow(first);
   }
 
   /** DP와 DPR이 달라 DPR로 그린다고 알림(cycleDepth의 differ — 사이클을 그릴 때만) */
@@ -1418,8 +1456,11 @@ class SiemensRunner extends Runner {
     if (depth.differ) this.w.add(`${name}: DP와 DPR이 달라 DPR 깊이로 그림`, line);
   }
 
-  /** CYCLE81~89·CYCLE840(RTP, RFP, SDIS, DP, DPR, …)을 지금 자리에서 */
-  private sCycle(name: string, a: (number | undefined)[], line: number): void {
+  /**
+   * CYCLE81~89·CYCLE840(RTP, RFP, SDIS, DP, DPR, …)을 지금 자리에서. from = 이 사이클의 몫이 시작하는 이동 번호(HOLES1·HOLES2가 자리 잡기 급속을
+   * 넣어 준다 — 설명서 2.3절 92쪽: 패턴 사이클이 구멍 자리를 차례로 급속으로 찾아감. 없으면 지금부터)
+   */
+  private sCycle(name: string, a: (number | undefined)[], line: number, from?: number): void {
     const [p0, p1, da] = PLANE_AXES[this.plane]!;
     const s = this.scale;
     const rtp = (a[0] ?? 0) * s;
@@ -1430,6 +1471,7 @@ class SiemensRunner extends Runner {
       this.w.add(`${name}에 깊이(DP·DPR)가 없음`, line);
       return;
     }
+    if (this.planeAlarm(name, rtp, rfp, depth, line)) return;
     this.depthDiffers(name, depth, line);
     const dp = depth.d;
     const up = rfp >= dp ? 1 : -1;
@@ -1465,6 +1507,7 @@ class SiemensRunner extends Runner {
     }
     this.retractR = false;
     this.peckName = name;
+    const first = from ?? this.mb.count;
     if (!this.xfPlane(this.plane).keeps) {
       // 기울인 프레임(ROT X/Y): 프로그램 좌표에서 구멍 길을 만들고 점마다 옮긴다(공구 축도 기운다)
       const q = this.progPos();
@@ -1478,6 +1521,7 @@ class SiemensRunner extends Runner {
       const zD = this.level(dp, da);
       this.drillAt(c, p0, p1, da, this.pos[p0]!, this.pos[p1]!, rD, zD, line);
     }
+    this.markIfFromBelow(first, rfp, dp, da);
     this.peckFirstExtra = 0;
     this.peckName = undefined;
     [this.cq, this.cp, this.cqI, this.cqJ, this.cqK] = [saveQ[0], saveQ[1], saveQ[2], saveQ[3], saveQ[4]];
@@ -1515,9 +1559,11 @@ class SiemensRunner extends Runner {
       b.set(LET(AX[a0]!), u / this.axScale[a0]!, true);
       b.set(LET(AX[a1]!), v / this.axScale[a1]!, true);
       b.axAbs = (1 << a0) | (1 << a1);
+      const first = this.mb.count;
       this.exec(b, line);
       this.sMotion = 0;
-      if (mc && mc.kind === 'cycle') this.sCycle(mc.name, mc.args, line);
+      // 자리 잡기 급속도 패턴 사이클의 몫(위로 뚫는 사이클이면 급속 안전 검사에서 함께 뺀다 — markIfFromBelow)
+      if (mc && mc.kind === 'cycle') this.sCycle(mc.name, mc.args, line, first);
     }
 
   }
@@ -1568,11 +1614,12 @@ class SiemensRunner extends Runner {
     const rtp = at(0);
     const rfp = at(1);
     const sdis = Math.abs(at(2));
-    const depth = old ? this.cycleDepth(a, 3, rtp, rfp, 1) : a[3] === undefined ? undefined : { d: a[3], differ: false };
+    const depth = old ? this.cycleDepth(a, 3, rtp, rfp, 1) : a[3] === undefined ? undefined : { d: a[3], differ: false, rel: false };
     if (!depth) {
       this.w.add(old ? `${name}: 깊이(DP·DPR)가 없음 — 그리지 않음` : `${name}: 깊이(_DP)가 없음 — 그리지 않음`, line);
       return;
     }
+    if (this.planeAlarm(name, rtp, rfp, depth, line)) return;
     const dp = depth.d;
     // POCKET3·4: _MID부터는 두 사이클이 같은 차례(POCKET3은 10번째, POCKET4는 7번째 자리부터 — POCKET4에는 _AP2가 없다)
     // POCKET1·2: FFD, FFP1, MID, CDIR, FAL, VARI, MIDF, FFP2, SSF(POCKET1은 11번째, POCKET2는 8번째 자리부터)
@@ -1768,6 +1815,7 @@ class SiemensRunner extends Runner {
     if (p3 && tens === 3) this.w.add('POCKET3: 긴 축 왕복 진입(_VARI 3X)은 수직 이송으로 그림', line);
 
     const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    const first = this.mb.count;
     this.inCycle = true;
     try {
       // 후퇴 면으로 올라가 포켓 중심 위 → 기준면 + 안전 거리
@@ -1820,6 +1868,7 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
+    this.markIfFromBelow(first, rfp * this.scale, dp * this.scale, PLANE_AXES[this.plane]![2]!);
     if (stopped()) this.mb.overflow = true;
     this.known = 7;
   }
@@ -1907,6 +1956,7 @@ class SiemensRunner extends Runner {
       this.w.add(`${name}: 깊이(DP·DPR)가 없음 — 그리지 않음`, line);
       return;
     }
+    if (this.planeAlarm(name, rtp, rfp, depth, line)) return;
     const dp = depth.d;
     const num = Math.round(at(5));
     // LONGHOLE·SLOT1은 LENG(길이), SLOT2는 AFSL(각)
@@ -2160,6 +2210,7 @@ class SiemensRunner extends Runner {
     };
 
     const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    const first = this.mb.count;
     this.inCycle = true;
     try {
       let last: P2 = [this.progCoord(a0), this.progCoord(a1)];
@@ -2183,6 +2234,7 @@ class SiemensRunner extends Runner {
       this.sMotion = save.sMotion;
       this.feed = save.feed;
     }
+    this.markIfFromBelow(first, rfp * this.scale, dp * this.scale, PLANE_AXES[this.plane]![2]!);
     if (stopped()) this.mb.overflow = true;
     this.known = 7;
   }

@@ -1244,5 +1244,7 @@
   "POCKET1: 길이·너비(LENG·WID)가 없음 — 그리지 않음": "POCKET1: keine Länge oder Breite (LENG, WID) — nicht gezeichnet",
   "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: kein Taschenradius (PRAD) — nicht gezeichnet",
   "G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀": "G70: Unterprogrammaufrufe zu tief verschachtelt — Schlichtzyklus übersprungen",
-  "{0}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림": "{0}: FDEP und FDPR weichen voneinander ab — erste Bohrtiefe aus FDPR gezeichnet"
+  "{0}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림": "{0}: FDEP und FDPR weichen voneinander ab — erste Bohrtiefe aus FDPR gezeichnet",
+  "{0}: 후퇴 면과 기준면이 같은데 상대 깊이(DPR)를 줌(알람 61101) — 그리지 않음": "{0}: Relative Tiefe (DPR) angegeben, obwohl Rückzugsebene und Referenzebene gleich sind (Alarm 61101) — nicht gezeichnet",
+  "{0}: 후퇴 면이 기준면보다 최종 깊이에 가까움(알람 61101) — 그리지 않음": "{0}: Die Rückzugsebene liegt näher an der Endtiefe als die Referenzebene (Alarm 61101) — nicht gezeichnet"
 }

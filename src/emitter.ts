@@ -133,6 +133,21 @@ export class NcEmitter {
   protected notices: NcNotice[] = [];
   /** 찾지 못한 프로그램(다른 파일에 있을 부프로그램 — 함께 열면 읽는다) */
   private missingPrograms = new Set<string>();
+  /** 아래에서 위로 가공한 사이클의 이동 번호 구간([처음, 끝) 짝 — markFromBelow, 43차) */
+  private fromBelow: number[] = [];
+
+  /**
+   * 이동 first부터 지금까지를 아래에서 위로(표시 좌표 +Z 쪽으로) 가공한 사이클의 몫으로 적는다(43차). 급속 안전 검사
+   * ("급속 이동이 가장 깊은 절삭보다 아래로 내려감")는 공구가 위에서 내려온다고 보므로, 이 이동들은 검사하지 않고 가장 깊은 절삭도 이들을 빼고 잰다
+   */
+  protected markFromBelow(first: number): void {
+    const end = this.mb.count;
+    if (end <= first) return;
+    const n = this.fromBelow.length;
+    // 바로 앞 구간에 이어지면 늘린다(MCALL·HOLES로 구멍마다 부를 때)
+    if (n && this.fromBelow[n - 1] === first) this.fromBelow[n - 1] = end;
+    else this.fromBelow.push(first, end);
+  }
 
   /** 부른 프로그램을 찾지 못함: 경고(줄과 함께)를 남기고 이름을 모아 화면 띠로 알린다 */
   protected missingProgram(name: string, msg: string, line: number): void {
@@ -1273,6 +1288,13 @@ export class NcEmitter {
     const s = [0, 0, 0];
     const e = [0, 0, 0];
     const c = [0, 0, 0];
+    // 아래에서 위로 가공한 사이클의 이동(markFromBelow): 급속 안전 검사에서 빼고, 그 검사의 가장 깊은 절삭(down)도 그것을 빼고 잰다(43차)
+    let below: Uint8Array | undefined;
+    if (this.fromBelow.length) {
+      below = new Uint8Array(moves.count);
+      for (let j = 0; j < this.fromBelow.length; j += 2) below.fill(1, Math.min(this.fromBelow[j]!, moves.count), Math.min(this.fromBelow[j + 1]!, moves.count));
+    }
+    const down = below ? emptyBox() : cut;
     for (let i = 0; i < moves.count; i++) {
       // 기계 좌표 쪽 추정 이동(안전 높이)은 범위에 넣지 않는다
       const k = i * 3;
@@ -1314,6 +1336,7 @@ export class NcEmitter {
         arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, all);
         arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, cut);
         arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, tb!.box);
+        if (down !== cut && !below![i]) arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, down);
       } else {
         extendBox(all, s[0], s[1], s[2]);
         extendBox(all, e[0], e[1], e[2]);
@@ -1322,19 +1345,23 @@ export class NcEmitter {
           extendBox(cut, e[0], e[1], e[2]);
           extendBox(tb.box, s[0], s[1], s[2]);
           extendBox(tb.box, e[0], e[1], e[2]);
+          if (down !== cut && !below![i]) {
+            extendBox(down, s[0], s[1], s[2]);
+            extendBox(down, e[0], e[1], e[2]);
+          }
         }
       }
     }
     // 안전 확인: 공구 길이 보정·주축(모아 둔 것), 급속이 가장 깊은 절삭보다 아래로·공작물 윗면 아래 급속 수평 이동
     this.safetyFinish();
-    if (!this.latheMode && cut[2]! <= cut[5]!) {
+    if (!this.latheMode && down[2]! <= down[5]!) {
       const tol = this.displayInch ? 0.0005 : 0.01;
-      const minCut = cut[2]!;
+      const minCut = down[2]!;
       const top = o.stock ? o.stock.max[2] : undefined;
       const fz = (v: number): string => String(Number(v.toFixed(this.displayInch ? 4 : 3)));
       for (let i = 0; i < moves.count; i++) {
         const fl = moves.flags[i]!;
-        if (moves.kind[i] !== MOVE_RAPID || (fl & FLAG_MACHINE_EST && !(fl & FLAG_START_EST))) continue;
+        if (moves.kind[i] !== MOVE_RAPID || (fl & FLAG_MACHINE_EST && !(fl & FLAG_START_EST)) || below?.[i]) continue;
         const k = i * 3;
         const z1 = pts[k + 5]!;
         const line = moves.line[i]!;

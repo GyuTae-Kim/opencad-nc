@@ -57,7 +57,7 @@ describe('CYCLE83 첫 드릴 깊이 FDEP·FDPR', () => {
   });
 
   it('후퇴 면이 기준면보다 낮으면(위로 뚫음) 같은 규칙: FDEP와 FDPR이 같으면(기준면에서 후퇴 면 반대쪽) 알리지 않는다', () => {
-    // 위로 뚫는 사이클에는 급속 안전 검사 경고가 그대로 붙는다(README 남은 일 — 이 차수와 상관없음). 그 경고는 하나만 준 것과 견준다
+    // 경고는 하나만 준 것과 견준다(위로 뚫는 사이클은 43차부터 급속 안전 검사에서 빠진다 — tests/siemens-plane-alarm.test.ts)
     const up = (fdep: string, fdpr: string) => `CYCLE83(-10, 0, 2, 30, , ${fdep}, ${fdpr}, 2, 0, 0, 1, 1)`;
     const fdepOnly = run(head + up('8', ''));
     const same = run(head + up('8', '8'));
