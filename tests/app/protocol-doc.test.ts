@@ -283,7 +283,8 @@ describe('다른 언어로 옮긴 상태 막대·고른 것 요약·경고', () 
     expect(texts.length).toBe(3);
     for (const lang of LANGS) for (const t of texts) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(hangul);
     expect(translate("읽을 수 없는 블록 — 알 수 없는 글자 '('", 'en')).toBe("Unreadable block — Unknown character '('");
-    expect(translate('읽을 수 없는 블록 — 식이 끝났다', 'de')).toMatch(/^Nicht lesbarer Block — [^가-힣]+$/);
+    // 52차: NC 블록은 독일어 Satz(HEIDENHAIN·SINUMERIK 설명서의 NC-Satz), 식이 끝났다는 뜻밖에 끝난 것(완료가 아님)
+    expect(translate('읽을 수 없는 블록 — 식이 끝났다', 'de')).toBe('Nicht lesbarer Satz — Ausdruck endet unerwartet');
   });
   it('여러 파일 작업의 줄 요약("O1001.nc · 줄 4 · 이동 2개"): 파일 이름은 그대로, 나머지는 그 언어로', () => {
     for (const t of ['O1001.nc · 줄 4 · 이동 2개', 'O1001.nc · 줄 1,204 · 이동 없음', 'O1001.nc · 4번 줄'])
