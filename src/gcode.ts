@@ -3445,11 +3445,17 @@ export class Runner extends NcEmitter {
     return [s, e];
   }
 
-  /** G70 P Q: 윤곽 블록을 그대로 실행하고 시작점으로 돌아온다 */
+  /**
+   * G70 P Q: 윤곽 블록을 그대로 실행하고 시작점으로 돌아온다. 범위 실행은 호출 단을 하나 쓰므로 부프로그램이 호출 한도(MAX_CALL_DEPTH —
+   * 이 해석기의 안전장치, 실제 컨트롤러의 겹 한도는 훨씬 작다)까지 겹쳤거나 G70이 제 범위 안에서 다시 불리면 그 줄에 알리고 건너뛴다(읽기는 이어 간다)
+   */
   protected g70(blk: Block, line: number): void {
     const r = this.profileRange(blk, line, 'G70');
     if (!r) return;
-    if (this.stack.length >= MAX_CALL_DEPTH) return;
+    if (this.stack.length >= MAX_CALL_DEPTH) {
+      this.w.add('G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀', line);
+      return;
+    }
     const f = this.stack[this.stack.length - 1]!;
     this.stack.push({
       kind: 'm97',
