@@ -854,7 +854,7 @@ function capsuleSpan(pu: number, pv: number, du: number, dv: number, au: number,
  * 증인 요소: 날 요소의 출처 이웃(옮긴 요소 i면 i ± 1, 모서리 잇기 i → j면 i·j)과, 경계 고리를 따라 거리가 줄어드는 쪽으로 걸어 찾은 가까운 요소
  * (앞 날 요소에서 찾은 자리부터 — 원꼴 윤곽 가운데 고리는 맞은편 요소가 가깝다)와 그 이웃. 증인마다 날 요소가 그 캡슐(반지름 t − 2μ) 안인 범위를 어림하고
  * 범위 두 끝에서 실제 거리가 lim보다 가까운지 확인한다 — 직선 위에서 선분·점까지 거리는 볼록이라 두 끝이 가까우면 사이도 가깝다.
- * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 팔이 없다
+ * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 arcArms(51차)
  */
 function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: Int32Array, t: number, mu: number, cnt: { work: number }): SlArms {
   const n = raw.length;
@@ -864,11 +864,18 @@ function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: In
   const lim = t - mu;
   if (!(r > 0)) return { a: A, b: B };
   const carry = new Int32Array(R.loops.length).fill(-1);
+  // 51차: 원호 날 요소의 걷기 시작 자리(직선과 따로 — 직선의 팔·일은 50차 그대로)
+  const arcCarry = new Int32Array(R.loops.length).fill(-1);
   const ivs: [number, number][] = [];
   const tried: number[] = [];
   for (let q = 0; q < n; q++) {
     const K = raw[q]!.e;
-    if (K.arc) continue;
+    if (K.arc) {
+      const ab = arcArms(R, K, raw[q]!.loop, srcA[q]!, srcB[q]!, r, lim, arcCarry, cnt);
+      A[q] = ab[0];
+      B[q] = ab[1];
+      continue;
+    }
     const du = K.eu - K.su;
     const dv = K.ev - K.sv;
     if (!(Math.hypot(du, dv) > R.eps)) continue;
@@ -962,6 +969,121 @@ function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: In
     B[q] = b;
   }
   return { a: A, b: B };
+}
+
+/** 51차: 원호 날 요소를 나누는 토막 수의 위 한계 */
+const ARC_PARTS = 64;
+
+/**
+ * 51차: 원호 날 요소 K의 확실히 버려질 팔 [0, a]·[b, 1](없으면 a = -1·b = 2, a ≥ b면 요소 전체). 직선 날 요소(deadArms)와 같은 길을 원호에 쓴다 —
+ * K를 같은 각의 토막으로 나눠(토막마다 활 높이가 캡슐 반지름의 50분의 1 이하) 토막의 현을 직선으로 보고 증인 캡슐(반지름 r − 활 높이)과 겹치는
+ * 범위를 어림한 뒤, 범위 두 끝(원호 위 점)에서 증인까지 거리의 큰 쪽 + 그 범위의 활 높이가 lim보다 작은지 확인한다 — 범위의 원호 점은 그 현 위 점에서
+ * 활 높이 안이고, 선분·점까지 거리는 현 위에서 볼록이라 현의 두 끝이 큰 쪽이다.
+ * 증인은 직선과 같다(출처 이웃, 경계 고리를 따라 걸어 찾은 가까운 요소와 그 이웃 — 원호 증인은 반원 이하면 현 + 활 높이, 두 끝점).
+ * 50차까지 원호 날 요소(옮긴 원호·오목 모서리 호)는 팔이 없어, 원호가 수백 개 이어진 원꼴 윤곽의 가운데 가까운 고리에서 버려질 조각을 모두 물었다
+ */
+function arcArms(R: SlRegion, K: SlEl, k: number, sa: number, sb: number, r: number, lim: number, carry: Int32Array, cnt: { work: number }): [number, number] {
+  const rho = arcR(K);
+  const span = Math.abs(K.sweep);
+  // 범위는 직선과 같은 캡슐(반지름 r = t − 2μ)에서 토막·증인의 활 높이를 뺀 것으로 어림하고(어림일 뿐), 확인은 lim = t − μ로 한다
+  if (!(rho * span > R.eps) || !(r > 0)) return [-1, 2];
+  const loop = R.loops[k]!;
+  const m = loop.length;
+  // 토막의 활 높이 ≤ r/50(토막 각 θ에서 rho·(1 − cos(θ/2)) ≤ r/50) — 많아야 ARC_PARTS토막(넘으면 활 높이만큼 캡슐이 줄 뿐)
+  const c = 1 - r / 50 / rho;
+  const maxAng = c > -1 ? Math.min(Math.PI / 2, 2 * Math.acos(c)) : Math.PI / 2;
+  const parts = Math.max(Math.ceil(span / (Math.PI / 2)), Math.min(ARC_PARTS, Math.ceil(span / maxAng)));
+  const sagOf = (dt: number): number => rho * (1 - Math.cos((span * dt) / 2));
+  const sagPart = sagOf(1 / parts);
+  const ivs: [number, number][] = [];
+  // 토막 p의 현 위에서 캡슐(선분 AB, 반지름 rr) 범위 → K의 t 범위, 두 끝 확인
+  const span1 = (p: number, f: (u: number, v: number) => number, au: number, av: number, bu: number, bv: number, add: number): void => {
+    const rr = r - add - sagPart;
+    if (!(rr > 0)) return;
+    const c0 = at(K, p / parts);
+    const c1 = at(K, (p + 1) / parts);
+    const s = capsuleSpan(c0[0], c0[1], c1[0] - c0[0], c1[1] - c0[1], au, av, bu, bv, rr);
+    if (!(s[0] <= s[1])) return;
+    const t0 = (p + s[0]) / parts;
+    const t1 = (p + s[1]) / parts;
+    cnt.work += 2;
+    const x0 = at(K, t0);
+    const x1 = at(K, t1);
+    if (Math.max(f(x0[0], x0[1]), f(x1[0], x1[1])) + sagOf(t1 - t0) < lim) ivs.push([t0, t1]);
+  };
+  const tried: number[] = [];
+  const witness = (idx: number): void => {
+    const w = ((idx % m) + m) % m;
+    if (tried.includes(w)) return;
+    tried.push(w);
+    const e = loop[w]!;
+    cnt.work++;
+    const sw = Math.abs(e.sweep);
+    const sagE = e.arc && sw <= Math.PI ? arcR(e) * (1 - Math.cos(sw / 2)) : 0;
+    for (let p = 0; p < parts; p++) {
+      if (!e.arc) span1(p, (x, y) => segDist(x, y, e.su, e.sv, e.eu, e.ev), e.su, e.sv, e.eu, e.ev, 0);
+      else {
+        if (sw <= Math.PI) span1(p, (x, y) => segDist(x, y, e.su, e.sv, e.eu, e.ev) + sagE, e.su, e.sv, e.eu, e.ev, sagE);
+        span1(p, (x, y) => Math.hypot(x - e.su, y - e.sv), e.su, e.sv, e.su, e.sv, 0);
+        span1(p, (x, y) => Math.hypot(x - e.eu, y - e.ev), e.eu, e.ev, e.eu, e.ev, 0);
+      }
+    }
+  };
+  // 덮인 앞쪽 [0, a]와 뒤쪽 [b, 1](직선과 같은 셈)
+  let a = -1;
+  let b = 2;
+  const arms = (): void => {
+    ivs.sort((x, y) => x[0] - y[0]);
+    a = -1;
+    for (const s of ivs) {
+      if (a < 0 ? s[0] <= 0 : s[0] <= a) a = Math.max(a, s[1]);
+      else break;
+    }
+    const byEnd = ivs.slice().sort((x, y) => y[1] - x[1]);
+    b = 2;
+    for (const s of byEnd) {
+      if (b > 1 ? s[1] >= 1 : s[1] >= b) b = Math.min(b, s[0]);
+      else break;
+    }
+  };
+  if (sb < 0) {
+    witness(sa - 1);
+    witness(sa + 1);
+  } else {
+    witness(sa);
+    witness(sb);
+  }
+  arms();
+  if (a < b) {
+    // 덮이지 않은 곳의 가운데에서 경계 고리를 따라 거리가 줄어드는 쪽으로 걷는다(앞 원호 날 요소에서 찾은 자리부터)
+    const p = at(K, (Math.max(a, 0) + Math.min(b, 1)) / 2);
+    let w = carry[k]! >= 0 ? carry[k]! : sa;
+    let fw = elDist(loop[w]!, p[0], p[1]);
+    cnt.work++;
+    for (let step = 0; step < m; step++) {
+      const w1 = (w + 1) % m;
+      const w0 = (w + m - 1) % m;
+      const f1 = elDist(loop[w1]!, p[0], p[1]);
+      const f0 = elDist(loop[w0]!, p[0], p[1]);
+      cnt.work += 2;
+      if (f1 < fw && f1 <= f0) {
+        w = w1;
+        fw = f1;
+      } else if (f0 < fw) {
+        w = w0;
+        fw = f0;
+      } else break;
+    }
+    carry[k] = w;
+    if (fw < lim) {
+      const before = ivs.length;
+      witness(w);
+      witness(w - 1);
+      witness(w + 1);
+      if (ivs.length > before) arms();
+    }
+  }
+  return [a, b];
 }
 
 /** 앞 요소 끝 접선 tA에서 뒤 요소 시작 접선 tB로 오른쪽으로 꺾이는지(되돌아 꺾임 포함 — 가공 면이 왼쪽이면 오목한 꼭짓점) */
