@@ -3787,28 +3787,11 @@ export class Runner extends NcEmitter {
     let zt: number;
     let taper = 0;
     if (!this.fanucLathe) {
-      // LinuxCNC: I = 산 위치(구동선에서, 음수 = 바깥나사), J = 첫 절입, K = 나사 높이, R = 절입 감소 지수
       if (!blk.has[LZ]) {
         this.w.add('G76에 끝 Z가 없음', line);
         return;
       }
-      zt = this.target(blk, 2, false);
-      const I = blk.has[LI] ? blk.val[LI]! * this.scale : 0;
-      const J = blk.has[LJ] ? Math.abs(blk.val[LJ]!) * this.scale : 0;
-      const K = blk.has[LK] ? Math.abs(blk.val[LK]!) * this.scale : 0;
-      const deg = blk.has[LR] && blk.val[LR]! > 0 ? blk.val[LR]! : 1;
-      const sg = I < 0 ? -1 : 1;
-      const crest = xs + I;
-      let d = 0;
-      for (let n = 1; n <= THREAD_PASS_MAX && J > 0; n++) {
-        d = Math.min(K, J * Math.pow(n, 1 / deg));
-        passes.push(crest + sg * d);
-        if (d >= K) break;
-      }
-      // 절입 안전장치: 나사 높이에 닿기 전에 횟수가 다 찼다(그 뒤 절입은 그리지 않는다 — 그린 뒤 알린다)
-      passCap = passes.length >= THREAD_PASS_MAX && d < K;
-      if (!passes.length) passes.push(crest + sg * K);
-      xt = passes[passes.length - 1]!;
+      return this.linuxThread(blk, line, xs, zs);
     } else {
       const hasT = blk.has[LX] || blk.has[LU] || blk.has[LZ] || blk.has[LW];
       if (!hasT) {
@@ -3845,6 +3828,89 @@ export class Runner extends NcEmitter {
     if (passCap) this.guardStop(`G76: 나사 절입이 ${THREAD_PASS_MAX}번을 넘어 그 뒤 절입은 건너뜀`, line);
     const more = this.blockLoop();
     for (let m = 0; m < again && more(); m++) pass(xt);
+    this.known = 7;
+  }
+
+  /**
+   * LinuxCNC G76(설명서 G-code 절 "G76 Threading Cycle"): 구동선(시작 X와 나란한 Z 직선)과 시작 Z에서, I = 산 위치(구동선에서, 음수 = 바깥나사),
+   * J = 첫 절입, K = 나사 높이(G7 지름 모드면 I·J·K는 지름 — 46차), R = 절입 감소(n번째 깊이 J·n^(1/R), 1 = 같은 깊이, 2 = 같은 넓이).
+   * 46차에 더한 것(설명서 글):
+   * - H = 스프링 패스(나사 높이에서 더 깎는 횟수)
+   * - Q = 복합 각: 패스마다 구동선을 따라 옮겨 한쪽 날이 더 깎게 한다(양수면 앞 날 — 깊이가 늘수록 깎는 방향으로 tan Q만큼).
+   *   설명서가 어느 깊이에서 옮기지 않는지 적지 않아 나사 높이 K의 패스가 시작 Z에서 시작하도록 정했다(경고)
+   * - E·L = 끝 테이퍼: L1 들어가는 쪽, L2 나오는 쪽, L3 둘 다(L0·없음 = 없음). 마지막 패스가 E 거리에서 산까지 테이퍼지는 각이고(얕은 패스는 같은 각으로 짧게),
+   *   들어가는 테이퍼는 구동선에서 테이퍼 시작(산)으로 이송한 뒤 테이퍼, 나오는 테이퍼는 산까지 이송한 뒤 구동선으로 급속.
+   *   E가 구동선 길이의 반보다 크면 LinuxCNC는 오류(경고하고 테이퍼 없이 그림)
+   * - 끝 자리: 구동선 끝(설명서 — 마지막 패스 뒤 시작 Z로 돌아가지 않음)
+   */
+  protected linuxThread(blk: Block, line: number, xs: number, zs: number): void {
+    const zt = this.target(blk, 2, false);
+    // G7(지름)이면 I·J·K도 지름 값(설명서) — X와 같은 배율
+    const xk = this.axScale[0]!;
+    const I = blk.has[LI] ? blk.val[LI]! * xk : 0;
+    const J = blk.has[LJ] ? Math.abs(blk.val[LJ]!) * xk : 0;
+    const K = blk.has[LK] ? Math.abs(blk.val[LK]!) * xk : 0;
+    const deg = blk.has[LR] && blk.val[LR]! > 0 ? blk.val[LR]! : 1;
+    const sg = I < 0 ? -1 : 1;
+    const crest = xs + I;
+    const depths: number[] = [];
+    let d = 0;
+    for (let n = 1; n <= THREAD_PASS_MAX && J > 0; n++) {
+      d = Math.min(K, J * Math.pow(n, 1 / deg));
+      depths.push(d);
+      if (d >= K) break;
+    }
+    // 절입 안전장치: 나사 높이에 닿기 전에 횟수가 다 찼다(그 뒤 절입은 그리지 않는다 — 그린 뒤 알린다)
+    const passCap = depths.length >= THREAD_PASS_MAX && d < K;
+    if (!depths.length) depths.push(K);
+    const spring = blk.has[7] ? Math.min(THREAD_PASS_MAX, Math.max(0, Math.round(blk.val[7]!))) : 0;
+    const len = Math.abs(zt - zs);
+    const tol = 1e-9 * Math.max(1, Math.abs(zs), Math.abs(zt));
+    const dirZ = zt < zs ? -1 : 1;
+    // Q: 깊이가 늘수록 깎는 방향으로 tan Q(마지막 패스 K가 시작 Z)
+    const q = blk.has[LQ] ? blk.val[LQ]! : 0;
+    let tq = 0;
+    if (q) {
+      if (Math.abs(q) >= 90) this.w.add('G76: Q(복합 각)가 90도 이상 — 패스를 옮기지 않음', line);
+      else {
+        tq = Math.tan((q * Math.PI) / 180);
+        this.w.add('G76: Q(복합 각)는 패스 시작 Z를 (깊이 − K) × tan Q만큼 깎는 방향으로 옮겨 그림(나사 높이 패스가 시작 Z — 정한 것)', line);
+      }
+    }
+    // E·L: 끝 테이퍼
+    const E = blk.has[LE] ? Math.abs(blk.val[LE]!) * this.scale : 0;
+    let L = blk.has[LL] ? blk.val[LL]! : 0;
+    if (!(Number.isInteger(L) && L >= 0 && L <= 3)) {
+      this.w.add('G76: L(테이퍼 고르기)은 0~3 — 테이퍼 없이 그림', line);
+      L = 0;
+    }
+    if (L && E > len / 2 + tol) {
+      this.w.add('G76: E(테이퍼 거리)가 구동선 길이의 반보다 큼 — LinuxCNC는 오류(테이퍼 없이 그림)', line);
+      L = 0;
+    }
+    const slope = L && E > 0 && K > 0 ? E / K : 0;
+    const entry = slope > 0 && (L === 1 || L === 3);
+    const exit = slope > 0 && (L === 2 || L === 3);
+    const more = this.blockLoop();
+    const all = depths.concat(new Array<number>(spring).fill(K));
+    for (let k = 0; k < all.length; k++) {
+      if (k >= depths.length && !more()) break;
+      const dk = all[k]!;
+      const x = crest + sg * dk;
+      const z0 = tq ? zs + dirZ * (dk - K) * tq : zs;
+      if (Math.abs(z0 - zs) > tol) this.lgo(MOVE_RAPID, xs, z0, line);
+      if (entry) {
+        // 구동선에서 테이퍼 시작(산)으로 이송 → 같은 각으로 이 패스 깊이까지
+        this.lgo(MOVE_FEED, crest, z0, line);
+        this.lgo(MOVE_FEED, x, z0 + dirZ * dk * slope, line);
+      } else this.lgo(MOVE_RAPID, x, z0, line);
+      this.lgo(MOVE_FEED, x, exit ? zt - dirZ * dk * slope : zt, line);
+      if (exit) this.lgo(MOVE_FEED, crest, zt, line);
+      this.lgo(MOVE_RAPID, xs, zt, line);
+      // 마지막 패스 뒤는 구동선 끝에 머문다(설명서)
+      if (k < all.length - 1) this.lgo(MOVE_RAPID, xs, zs, line);
+    }
+    if (passCap) this.guardStop(`G76: 나사 절입이 ${THREAD_PASS_MAX}번을 넘어 그 뒤 절입은 건너뜀`, line);
     this.known = 7;
   }
 
