@@ -1359,6 +1359,8 @@
   "CYCL DEF {0}: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림": "CYCL DEF {0}: Cycle 270 is defined — Q391 is used instead of RL/RR in the contour subprogram",
   "CYCL DEF {0}: 윤곽에 RL·RR이 없어 공구 중심이 윤곽 위를 감(하향·상향 Q15는 프로그램 차례로)": "CYCL DEF {0}: no RL/RR in the contour — the tool center follows the contour (climb/up-cut Q15 follows the programmed order)",
   "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림": "CYCL DEF {0}: machining only what the coarse roughing tool (Q18) left is not drawn — the whole contour is drawn",
+  "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 그림(남은 두께는 그 공구 반지름으로 셈해 정함)": "CYCL DEF {0}: only what the coarse roughing tool (Q18) left is drawn (the residual thickness is computed from that tool's radius, as chosen for drawing)",
+  "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳이 없어 그리지 않음": "CYCL DEF {0}: the coarse roughing tool (Q18) left no residual material — not drawn",
   "CYCL DEF {0}: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)": "CYCL DEF {0}: the tool is too large for parts of the contour — those parts are not machined (no contour damage)",
   "CYCL DEF {0}: 안전 높이(Q7)가 없어 지금 공구 높이로 셈": "CYCL DEF {0}: no clearance height (Q7) — the current tool height is used",
   "CYCL DEF {0}: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF {0}: without radius compensation (R0) the approach and departure (Q390) are not drawn",

@@ -1329,3 +1329,98 @@ export function slTrain(els: readonly SlEl[], d: number, side: number): { runs: 
   }
   return { runs: runs.filter((r) => r.reduce((s, e) => s + slElLen(e), 0) > eps * 100), cut };
 }
+
+/**
+ * 50차 남은 부분만 깎기(사이클 25·276의 Q18·Q446~Q448 — 설명서 9.10절 295쪽·9.12절 305~306쪽): 앞서 다른 공구(중심이 윤곽에서 d1 = 반지름 + Q3)로
+ * 같은 윤곽을 깎았을 때 남은 두께가 accept(Q446)보다 두꺼운 곳의 공구 중심 경로(runs)만 돌려준다.
+ * 윤곽 점 P의 남은 두께 = P에서 앞 공구 중심 경로(slTrain(els, d1, side))까지 거리 − d1 — 앞 공구가 윤곽을 따라 깎은 곳은 0,
+ * 안쪽 모서리·좁은 홈처럼 들어가지 못한 곳은 그만큼(앞 공구가 아무 데도 못 들어가면 모두). 경로의 점마다 가장 가까운 윤곽 점의 두께로 가르고
+ * (요소마다 나눠 살피고 경계는 두 갈래 찾기), 구역마다 앞뒤로 경로를 따라 extend(Q448)만큼 늘이며, 사이가 connect(Q447) 이하인 구역은 이어
+ * 들지 않고 깎는다. 셈이 너무 많으면 null(부르는 쪽이 다 그림)
+ */
+export function slResidual(els: readonly SlEl[], runs: readonly SlLoop[], side: number, d1: number, accept: number, connect: number, extend: number): SlLoop[] | null {
+  const coarse = slTrain(els, d1, side).runs.flat();
+  if (!coarse.length) return runs.map((l) => l.map((e) => ({ ...e })));
+  const total = runs.reduce((s, l) => s + l.reduce((a, e) => a + slElLen(e), 0), 0);
+  if (!(total > 0)) return [];
+  const step = total / 2000;
+  let work = 0;
+  for (const l of runs) for (const e of l) work += Math.min(64, Math.max(4, Math.ceil(slElLen(e) / step))) * (coarse.length + els.length);
+  if (work > 30_000_000) return null;
+  /** 경로 점 (u, v)의 남은 두께 − accept */
+  const f = (u: number, v: number): number => {
+    const n = slNearestIn(els, u, v, 0, els.length);
+    const p = at(els[n.i]!, n.t);
+    let d = Infinity;
+    for (const c of coarse) d = Math.min(d, elDist(c, p[0], p[1]));
+    return d - d1 - accept;
+  };
+  const out: SlLoop[] = [];
+  for (const run of runs) {
+    const lens = run.map(slElLen);
+    const L = lens.reduce((a, b) => a + b, 0);
+    // 남은 구역(경로 길이 [a, b])
+    const zones: [number, number][] = [];
+    let s0 = 0;
+    let open: number | null = null;
+    // 지금 남은 구역 안인지(요소가 바뀌어도 이어 감 — 맞닿은 끝은 같은 점)
+    let state = run.length ? f(...at(run[0]!, 0)) > 0 : false;
+    if (state) open = 0;
+    run.forEach((e, i) => {
+      const len = lens[i]!;
+      const K = Math.min(64, Math.max(4, Math.ceil(len / step)));
+      let tPrev = 0;
+      let inPrev = state;
+      for (let k = 1; k <= K; k++) {
+        const t = k / K;
+        const inNow = f(...at(e, t)) > 0;
+        if (inNow !== inPrev) {
+          // 경계: 두 갈래 찾기
+          let lo = tPrev;
+          let hi = t;
+          for (let it = 0; it < 12; it++) {
+            const m = (lo + hi) / 2;
+            if (f(...at(e, m)) > 0 === inPrev) lo = m;
+            else hi = m;
+          }
+          const s = s0 + ((lo + hi) / 2) * len;
+          if (inNow) open = s;
+          else if (open !== null) {
+            zones.push([open, s]);
+            open = null;
+          }
+        }
+        tPrev = t;
+        inPrev = inNow;
+      }
+      state = inPrev;
+      s0 += len;
+    });
+    if (open !== null) zones.push([open, L]);
+    // 늘이고 잇기
+    const merged: [number, number][] = [];
+    for (const [a, b] of zones) {
+      const z: [number, number] = [Math.max(0, a - extend), Math.min(L, b + extend)];
+      const last = merged[merged.length - 1];
+      if (last && z[0] - last[1] <= connect) last[1] = Math.max(last[1], z[1]);
+      else merged.push(z);
+    }
+    // 구역마다 경로 조각
+    for (const [a, b] of merged) {
+      const piece: SlLoop = [];
+      let c0 = 0;
+      run.forEach((e, i) => {
+        const len = lens[i]!;
+        const c1 = c0 + len;
+        if (c1 > a && c0 < b && len > 0) {
+          const t0 = Math.max(0, (a - c0) / len);
+          const t1 = Math.min(1, (b - c0) / len);
+          if ((t1 - t0) * len > 1e-9) piece.push(t0 === 0 && t1 === 1 ? { ...e } : part(e, t0, t1));
+        }
+        c0 = c1;
+      });
+      if (piece.length) out.push(piece);
+    }
+  }
+  return out;
+}

@@ -36,6 +36,7 @@ import {
   slOffset,
   slOrder,
   slRegion,
+  slResidual,
   slReverse,
   slRound,
   slSegmentFree,
@@ -2925,7 +2926,11 @@ class HRunner extends NcEmitter {
    * 50차 사이클 276 3D 윤곽 트레인(9.12절 302~306쪽): 25와 같은 길에 윤곽 부프로그램의 공구 축 좌표를 더한다("also processes tool axis coordinates").
    * Q5가 없고 Q1 = 0이면 윤곽의 공구 축 좌표 그대로 한 번(302쪽 "without infeed", 304쪽 "DEPTH = 0 … uses the tool axis coordinates"),
    * Q1 ≠ 0이면 그 좌표에서 Q10씩 Q1까지 내려가며 되풀이한다(기준면이 설명서에 없어 정함 — 알림). 공구 중심 경로의 점마다 윤곽 위 가장 가까운 자리의
-   * 공구 축 좌표를 쓴다(직선은 곧게, 원호는 나선). 270을 앞에 두기를 권하지만 없어도 그린다(303쪽). Q18·Q446~Q448(남은 부분만)은 25처럼 알리고 전체를 그린다
+   * 공구 축 좌표를 쓴다(직선은 곧게, 원호는 나선). 270을 앞에 두기를 권하지만 없어도 그린다(303쪽).
+   * 50차 Q18·Q446~Q448(25는 295쪽, 276은 305~306쪽 — "only rough-out the portion that could not be machined with the coarse roughing tool"):
+   * Q18 공구의 반지름(공구 표 → TOOL DEF)을 알고 보정 쪽이 있으면 그 공구가 남긴 두께가 Q446보다 두꺼운 곳만, 앞뒤로 Q448 늘이고 사이가 Q447 이하면
+   * 이어 깎는다(sl.ts slResidual — 남은 두께의 셈은 설명서에 없어 정함, 알림). 옆에서 들어갈 수 없는 곳의 왕복 진입은 곧게 내려감으로 그린다.
+   * 반지름을 모르거나 R0이면 예전처럼 전체를 그리고 알린다
    */
   private slTrainCycle(line: number, n = 25): void {
     const C = `CYCL DEF ${n}`;
@@ -2957,13 +2962,29 @@ class HRunner extends NcEmitter {
       if (side) this.w.add(`${C}: 공구 반지름을 몰라(TOOL DEF R 없음) 반지름 0으로 그림`, line);
       r = 0;
     }
-    if (Q('Q18') !== 0) this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림`, line);
+    // 50차: Q18(앞서 거친 깎기 한 공구 — 295·305쪽)의 반지름을 알고 보정 쪽이 있으면 남은 부분만(아래 slResidual), 아니면 예전처럼 전체를 그리고 알림
+    const q18 = Math.round(Q('Q18'));
+    const r18 = q18 > 0 && side ? this.toolBaseRadius(q18) : undefined;
+    if (Q('Q18') !== 0 && r18 === undefined) this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림`, line);
     const T = slTrain(contour.els, Math.max(0, r + Q('Q3')), side);
     if (!T.runs.length) {
       this.w.add(`${C}: 공구가 윤곽보다 커서 그리지 않음`, line);
       return;
     }
     if (T.cut) this.w.add(`${C}: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)`, line);
+    let runs = T.runs;
+    if (r18 !== undefined) {
+      // 남은 두께 > Q446인 곳만, 앞뒤로 Q448 늘이고 사이가 Q447 이하면 이어서
+      const res = slResidual(contour.els, T.runs, side, Math.max(0, r18 + Q('Q3')), Math.max(0, Q('Q446')), Math.max(0, Q('Q447')), Math.max(0, Q('Q448')));
+      if (!res) this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림`, line);
+      else if (!res.length) {
+        this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳이 없어 그리지 않음`, line);
+        return;
+      } else {
+        this.w.add(`${C}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 그림(남은 두께는 그 공구 반지름으로 셈해 정함)`, line);
+        runs = res;
+      }
+    }
     const [a0, a1, a2] = PLANE_AXES[this.plane]!;
     const up = depth > 0 ? -1 : 1;
     // 276은 층을 윤곽의 공구 축 좌표에 더하는 값(0에서 Q1까지)으로 센다
@@ -3047,8 +3068,8 @@ class HRunner extends NcEmitter {
     const q15 = Math.round(Q('Q15', 1));
     const climbFwd = (side > 0) !== this.cycleMirrored();
     const firstFwd = side === 0 ? true : q15 < 0 ? !climbFwd : climbFwd;
-    const fwdRuns = T.runs;
-    const backRuns = T.runs
+    const fwdRuns = runs;
+    const backRuns = runs
       .slice()
       .reverse()
       .map((l) => slReverse(l));
@@ -3124,7 +3145,7 @@ class HRunner extends NcEmitter {
       if (depart && more()) E.out();
     };
     // 층 하나의 이동(위 한계): 조각 요소 + 올라 옮겨 내려가기 4씩 + 접근·이탈·물러나기 4
-    const per = T.runs.reduce((s, l) => s + l.length + 4, 4);
+    const per = runs.reduce((s, l) => s + l.length + 4, 4);
     const zs = this.slPasses(C, line, surface, up, bottom, Math.abs(Q('Q10')), per);
     this.feed = fMill;
     toClear();

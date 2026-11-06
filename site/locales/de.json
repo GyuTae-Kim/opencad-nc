@@ -1359,6 +1359,8 @@
   "CYCL DEF {0}: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림": "CYCL DEF {0}: Zyklus 270 ist definiert — statt RL/RR im Konturunterprogramm wird Q391 verwendet",
   "CYCL DEF {0}: 윤곽에 RL·RR이 없어 공구 중심이 윤곽 위를 감(하향·상향 Q15는 프로그램 차례로)": "CYCL DEF {0}: kein RL/RR in der Kontur — der Werkzeugmittelpunkt fährt auf der Kontur (Gleich- oder Gegenlauf Q15 in programmierter Reihenfolge)",
   "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림": "CYCL DEF {0}: nur das vom Vorräumwerkzeug (Q18) übrig gelassene Material zu bearbeiten wird nicht gezeichnet — die ganze Kontur wird gezeichnet",
+  "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 그림(남은 두께는 그 공구 반지름으로 셈해 정함)": "CYCL DEF {0}: nur das vom Vorräumwerkzeug (Q18) übrig gelassene Material wird gezeichnet (die Restmaterialdicke wird aus dem Radius dieses Werkzeugs berechnet, zum Zeichnen so festgelegt)",
+  "CYCL DEF {0}: Q18(앞서 거친 깎기 한 공구)이 남긴 곳이 없어 그리지 않음": "CYCL DEF {0}: das Vorräumwerkzeug (Q18) hat kein Restmaterial übrig gelassen — nicht gezeichnet",
   "CYCL DEF {0}: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)": "CYCL DEF {0}: das Werkzeug ist für Teile der Kontur zu groß — diese Teile werden nicht bearbeitet (keine Konturverletzung)",
   "CYCL DEF {0}: 안전 높이(Q7)가 없어 지금 공구 높이로 셈": "CYCL DEF {0}: keine Sichere Höhe (Q7) — die aktuelle Werkzeughöhe wird verwendet",
   "CYCL DEF {0}: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음": "CYCL DEF {0}: ohne Radiuskorrektur (R0) wird das An- und Wegfahren (Q390) nicht gezeichnet",

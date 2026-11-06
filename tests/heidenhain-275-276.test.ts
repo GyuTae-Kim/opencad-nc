@@ -252,6 +252,72 @@ describe('사이클 276 3D 윤곽 트레인(9.12절 302~306쪽)', () => {
   });
 });
 
+describe('사이클 25·276 Q18·Q446~Q448 남은 부분만(295쪽·305~306쪽)', () => {
+  /** 공구 2(반지름 2)로 깎고 Q18 = 앞 공구(공구 8 — 반지름 8). 윤곽은 RL로 왼쪽으로 꺾는 안쪽 모서리 (60, 0)과 (100, 0) */
+  const prog = (n: number, q: Record<string, number>, contour = '11 L X+0 Y+0 RL\n12 L X+60\n13 L Y+40'): string => `0 BEGIN PGM T MM
+1 TOOL DEF 2 L+0 R+2
+2 TOOL DEF 8 L+0 R+8
+3 TOOL CALL 2 Z S3000
+4 L Z+100 R0 FMAX M3
+5 CYCL DEF 14.0 CONTOUR
+6 CYCL DEF 14.1 CONTOUR LABEL 10
+7 CYCL DEF ${n} X ~
+${qs({ Q1: -5, Q3: 0, ...(n === 25 ? { Q5: 0 } : {}), Q7: 50, Q10: -5, Q11: 150, Q12: 500, Q15: -1, Q18: 8, Q446: 0.01, Q447: 10, Q448: 2, ...q })}
+8 CYCL CALL
+9 M30
+10 LBL 10
+${contour}
+14 LBL 0
+15 END PGM T MM
+`;
+  const feeds = (src: string): number[][] => {
+    const p = parseHeidenhain(src);
+    return callMoves(p, src)
+      .filter((i) => p.moves.kind[i] === MOVE_FEED)
+      .map((i) => moveEnd(p.moves, i).map(r3));
+  };
+  const W18 = 'CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 그림(남은 두께는 그 공구 반지름으로 셈해 정함)';
+  it('안쪽 모서리만: 앞 공구(반지름 8) 중심 (52, 8)이 닿지 못한 두께가 Q446보다 두꺼운 곳 ± Q448', () => {
+    const src = prog(25, {});
+    expect(plain(parseHeidenhain(src).warnings)).toEqual([W18]);
+    // 남은 두께 hypot(8, 8 − y) − 8 > 0.01 → y < 7.6(오른쪽 변), x > 52.4(아래 변) — Q448 2만큼 늘여 y 9.6·x 50.4. 상향(Q15 = -1)이라 위에서 아래로
+    expect(feeds(src)).toEqual([
+      [58, 9.6, -5],
+      [58, 2, -5],
+      [50.4, 2, -5],
+    ]);
+  });
+  it('Q447: 남은 구역 사이가 연결 거리 이하면 들지 않고 이어 깎고, 넘으면 올라 옮김', () => {
+    // U자: 안쪽 모서리 (0, 0)·(60, 0) — 남은 구역은 아래 변 x 9.6까지와 50.4부터(공구 중심 y 2), 사이 40.8
+    const U = '11 L X+0 Y+40 RL\n12 L Y+0\n13 L X+60\n13 L Y+40';
+    const join = feeds(prog(25, { Q447: 45 }, U));
+    const lift = prog(25, { Q447: 30 }, U);
+    const p = parseHeidenhain(lift);
+    const ids = callMoves(p, lift);
+    // 이어 깎으면 아래 변을 한 번에(9.6 → 50.4 사이를 들지 않음), 아니면 두 조각 사이에 안전 높이로 오른다
+    expect(join).toContainEqual([2, 2, -5]);
+    expect(join.filter((q) => q[1] === 2 && q[0]! > 9.6 && q[0]! < 50.4)).toEqual([]);
+    const ups = ids.filter((i) => p.moves.kind[i] === MOVE_RAPID && r3(moveEnd(p.moves, i)[2]) === 50 && r3(moveStart(p.moves, i)[2]) === -5);
+    expect(ups.length).toBe(2);
+    const pj = parseHeidenhain(prog(25, { Q447: 45 }, U));
+    const upj = callMoves(pj, prog(25, { Q447: 45 }, U)).filter((i) => pj.moves.kind[i] === MOVE_RAPID && r3(moveEnd(pj.moves, i)[2]) === 50 && r3(moveStart(pj.moves, i)[2]) === -5);
+    expect(upj.length).toBe(1);
+  });
+  it('앞 공구가 지금 공구보다 크지 않으면 남은 곳이 없어 그리지 않고, 앞 공구 반지름을 모르면 예전처럼 전체를 그림, 276도 같음', () => {
+    expect(plain(parseHeidenhain(prog(25, { Q18: 2 })).warnings)).toEqual(['CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳이 없어 그리지 않음']);
+    const unknown = prog(25, { Q18: 5 });
+    expect(plain(parseHeidenhain(unknown).warnings)).toEqual(['CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 깎는 것은 그리지 않고 윤곽 전체를 그림']);
+    expect(feeds(unknown)).toContainEqual([0, 2, -5]);
+    const t = prog(276, { Q1: 0 }, '11 L X+0 Y+0 Z-5 RL\n12 L X+60\n13 L Y+40');
+    expect(plain(parseHeidenhain(t).warnings)).toEqual([W18.replace('25', '276')]);
+    expect(feeds(t)).toEqual([
+      [58, 9.6, -5],
+      [58, 2, -5],
+      [50.4, 2, -5],
+    ]);
+  });
+});
+
 describe('새 경고 글은 네 언어 사전에 있다(50차)', () => {
   it('한국어 글자가 남지 않는다', () => {
     const texts = [
@@ -274,6 +340,8 @@ describe('새 경고 글은 네 언어 사전에 있다(50차)', () => {
       'CYCL DEF 276: 안전 높이(Q7)가 없어 지금 공구 높이로 셈',
       'CYCL DEF 276: 보정 없이(R0) 접근·이탈(Q390)은 그리지 않음',
       'CYCL DEF 276: 공구가 윤곽보다 커서 그리지 않음',
+      'CYCL DEF 25: Q18(앞서 거친 깎기 한 공구)이 남긴 곳만 그림(남은 두께는 그 공구 반지름으로 셈해 정함)',
+      'CYCL DEF 276: Q18(앞서 거친 깎기 한 공구)이 남긴 곳이 없어 그리지 않음',
     ];
     for (const { code } of languages.filter((l: { code: string }) => l.code !== 'ko'))
       for (const t of texts) expect(translate(t, code), `${code}: ${t}`).not.toMatch(/[가-힣]/);
