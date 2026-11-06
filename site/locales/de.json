@@ -1347,5 +1347,9 @@
   "CYCL DEF {0}: Q19(왕복 진입 이송)는 공구 표의 ANGLE을 몰라 곧게 들어가는 것으로 그림": "CYCL DEF {0}: Q19 (Pendelvorschub) — ANGLE aus der Werkzeugtabelle unbekannt, Eintauchen senkrecht gezeichnet",
   "CYCL DEF {0}: 깊이(Q1)가 바닥 여유(Q4)보다 얕아 그리지 않음": "CYCL DEF {0}: Tiefe (Q1) ist geringer als das Aufmaß Tiefe (Q4) — nicht gezeichnet",
   "CYCL DEF {0}: 사이클 20에 옆 여유(Q3)가 없어 그리지 않음 — 컨트롤러는 \"Tool radius too large\" 오류로 멈춤": "CYCL DEF {0}: kein Aufmaß Seite (Q3) in Zyklus 20 — nicht gezeichnet (die Steuerung hält mit der Fehlermeldung \"Tool radius too large\" an)",
-  "CYCL DEF {0}: Q14 + 공구 반지름이 사이클 20의 Q3 + 거친 깎기 공구 반지름보다 작지 않음": "CYCL DEF {0}: Q14 + Werkzeugradius ist nicht kleiner als Q3 aus Zyklus 20 + Radius des Ausräumwerkzeugs"
+  "CYCL DEF {0}: Q14 + 공구 반지름이 사이클 20의 Q3 + 거친 깎기 공구 반지름보다 작지 않음": "CYCL DEF {0}: Q14 + Werkzeugradius ist nicht kleiner als Q3 aus Zyklus 20 + Radius des Ausräumwerkzeugs",
+  "CYCL DEF {0}: 층 × 고리 이동이 {1}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감": "CYCL DEF {0}: Zustellebenen × Bahnen ergeben mehr als {1} Verfahrbewegungen — die übrigen Ebenen werden übersprungen, es geht direkt zur Bodenebene",
+  "CYCL DEF {0}: 이동이 {1}개를 넘어 그 뒤는 그리지 않음": "CYCL DEF {0}: mehr als {1} Verfahrbewegungen — der Rest wird nicht gezeichnet",
+  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: die Berechnung der Bahnen im Seitenabstand hat ihre Grenze überschritten — nur die äußeren {1} Bahnen werden gezeichnet",
+  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: die Berechnung der Bahnen im Seitenabstand hat ihre Grenze überschritten — nicht gezeichnet"
 }

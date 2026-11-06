@@ -1347,5 +1347,9 @@
   "CYCL DEF {0}: Q19(왕복 진입 이송)는 공구 표의 ANGLE을 몰라 곧게 들어가는 것으로 그림": "CYCL DEF {0}: Q19 (reciprocation feed) — the ANGLE in the tool table is not known, so plunging is drawn straight down",
   "CYCL DEF {0}: 깊이(Q1)가 바닥 여유(Q4)보다 얕아 그리지 않음": "CYCL DEF {0}: depth (Q1) is shallower than the floor allowance (Q4) — not drawn",
   "CYCL DEF {0}: 사이클 20에 옆 여유(Q3)가 없어 그리지 않음 — 컨트롤러는 \"Tool radius too large\" 오류로 멈춤": "CYCL DEF {0}: no side allowance (Q3) in Cycle 20 — not drawn (the control stops with the error \"Tool radius too large\")",
-  "CYCL DEF {0}: Q14 + 공구 반지름이 사이클 20의 Q3 + 거친 깎기 공구 반지름보다 작지 않음": "CYCL DEF {0}: Q14 + tool radius is not smaller than Q3 of Cycle 20 + the rough-out tool radius"
+  "CYCL DEF {0}: Q14 + 공구 반지름이 사이클 20의 Q3 + 거친 깎기 공구 반지름보다 작지 않음": "CYCL DEF {0}: Q14 + tool radius is not smaller than Q3 of Cycle 20 + the rough-out tool radius",
+  "CYCL DEF {0}: 층 × 고리 이동이 {1}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감": "CYCL DEF {0}: depth levels × rings come to more than {1} moves — the remaining levels are skipped and machining goes straight to the bottom level",
+  "CYCL DEF {0}: 이동이 {1}개를 넘어 그 뒤는 그리지 않음": "CYCL DEF {0}: more than {1} moves — the rest is not drawn",
+  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 {1}겹까지만 그림": "CYCL DEF {0}: computing the stepover rings went over its limit — only the outer {1} rings are drawn",
+  "CYCL DEF {0}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음": "CYCL DEF {0}: computing the stepover rings went over its limit — not drawn"
 }

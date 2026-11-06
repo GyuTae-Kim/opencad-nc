@@ -25,11 +25,11 @@ import { isSource, jobFileLines, PECK_MAX } from './gcode';
 import { g7xCorners, g7xLine, type G7xCorner } from './lathe-g7x';
 import {
   slArea,
-  slDist,
   slElLen,
   slInside,
   slIsPocket,
   slLevels,
+  slNear,
   slOffset,
   slOrder,
   slRegion,
@@ -82,6 +82,18 @@ const SL_BLOCK_MAX = 200_000;
 const SL_ELEMENT_MAX = 16384;
 /** SL 거친 깎기의 옆 간격 고리 수 안전장치(아주 작은 공구 반지름·Q2) */
 const SL_RING_MAX = 2000;
+/**
+ * 49차 SL 사이클 출력·셈 안전장치(41차 층·쪼기 상한과 같은 규칙 — 닿으면 그 줄에 경고하고 그린 것은 그대로):
+ * - SL_MOVE_MAX: 사이클 한 번(CYCL CALL·M99)이 그리는 층 × 고리 이동 수. 층마다 같은 고리를 도는 22·24는 다 그리면 넘을 때 앞 층 몇 개와
+ *   바닥 층만 그린다(9999층 안전장치처럼 그 뒤 층은 건너뛰고 바닥 층으로). 그래도 넘으면(층 하나가 너무 큼) 넘는 곳에서 멈춘다.
+ *   프로그램 전체 이동 한도(기본 800만)의 1/8 — 사이클 하나가 한도를 다 쓰지 않게
+ * - SL_EVAL_CALL·SL_EVAL_PGM: 옆 간격 고리 셈의 일(상자 나무에서 본 마디·요소 수와 교점 셈 수 — sl.ts R.work)을 사이클 한 번·프로그램 전체에서.
+ *   넘으면 그 안쪽 고리는 셈하지 않고 바깥 고리까지만 그린다(윤곽 요소가 수천 개이고 고리가 많을 때 — 원에 가까운 윤곽은 안쪽 고리마다
+ *   거의 모든 요소를 봐야 해서 요소 수의 제곱으로 는다). 일 하나가 이 기계에서 약 20 ns라 한 번 0.4초·전체 1.6초 안팎의 셈
+ */
+const SL_MOVE_MAX = 1_000_000;
+const SL_EVAL_CALL = 20_000_000;
+const SL_EVAL_PGM = 80_000_000;
 
 /** 윤곽 부프로그램을 읽는 동안 모은 요소(작업 평면 두 축, 프로그램 좌표)와 RND·CHF, 처음 만난 보정(RL 1·RR 2) */
 interface SlCapture {
@@ -167,6 +179,8 @@ class HRunner extends NcEmitter {
   private cap: SlCapture | null = null;
   /** 마지막 거친 깎기(22)의 공구 반지름(24의 Q438 = -1) */
   private slRoughR: number | undefined;
+  /** 49차: 이 프로그램에서 SL 고리 셈에 쓴 일(SL_EVAL_PGM까지) */
+  private slEvals = 0;
 
   constructor(src: NcSource, opts: HeidenhainOptions) {
     super(src, opts.initialPosition, opts.maxMoves);
@@ -2506,7 +2520,16 @@ class HRunner extends NcEmitter {
     const fPlunge = Q('Q11', this.feed || this.autoFeed);
     const fMill = Q('Q12', this.feed || this.autoFeed);
     const saveFeed = this.feed;
-    const more = this.blockLoop();
+    const loop = this.blockLoop();
+    // 49차: 사이클 한 번이 그리는 이동 수 한도(SL_MOVE_MAX) — 닿으면 그 뒤는 그리지 않고 끝에 알린다
+    const callStart = this.mb.count;
+    let hardStop = false;
+    const more = (): boolean => {
+      if (!loop()) return false;
+      if (this.mb.count - callStart < SL_MOVE_MAX) return true;
+      hardStop = true;
+      return false;
+    };
     const F = MOVE_FEED;
     const Rp = MOVE_RAPID;
     let w = this.pos[a2]!;
@@ -2527,8 +2550,11 @@ class HRunner extends NcEmitter {
         } else go(F, e.eu, e.ev, ww);
       }
     };
-    /** 깊이 층: 윗면에서 step씩, 마지막은 bottom(step 0이면 bottom 하나) */
-    const passes = (bottom: number, step: number): number[] => {
+    /**
+     * 깊이 층: 윗면에서 step씩, 마지막은 bottom(step 0이면 bottom 하나). per = 층 하나의 이동 수(어림 — 49차):
+     * 층 수 × per가 SL_MOVE_MAX를 넘으면 앞 층 몇 개와 바닥 층만 남기고 알린다(넘지 않으면 9999층 안전장치만)
+     */
+    const passes = (bottom: number, step: number, per: number): number[] => {
       const out: number[] = [];
       if (step > 0)
         for (let k = 1; k <= MILL_LEVEL_MAX; k++) {
@@ -2536,19 +2562,30 @@ class HRunner extends NcEmitter {
           if (up * (d - bottom) <= 1e-9) break;
           out.push(d);
         }
-      if (step > 0 && up * (surface - up * (MILL_LEVEL_MAX + 1) * step - bottom) > 1e-9) this.guardStop(`${C}: 층이 ${MILL_LEVEL_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
       out.push(bottom);
+      if (out.length * per > SL_MOVE_MAX) {
+        const keep = Math.max(1, Math.floor(SL_MOVE_MAX / Math.max(per, 1)));
+        if (keep < out.length) {
+          this.guardStop(`${C}: 층 × 고리 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
+          return [...out.slice(0, keep - 1), bottom];
+        }
+      }
+      if (step > 0 && up * (surface - up * (MILL_LEVEL_MAX + 1) * step - bottom) > 1e-9) this.guardStop(`${C}: 층이 ${MILL_LEVEL_MAX}개를 넘어 그 뒤 층은 건너뛰고 바닥 층으로 감`, line);
       return out;
     };
     /** 거친 깎기·바닥 다듬질 고리 차례(반지름 rad, 첫 윤곽 시작점에서 셈 — 21과 22의 들어가는 자리가 같게) */
     const plan = (rad: number): { d0: number; outer: SlLoop[]; order: SlLoop[] } | null => {
       const d0 = Math.max(0, rad + Q('Q3'));
-      const L = slLevels(R, d0, Math.abs(Q('Q2', 1)) * rad, SL_RING_MAX);
+      // 49차: 고리 셈의 일 — 사이클 한 번 SL_EVAL_CALL, 프로그램 전체 SL_EVAL_PGM까지
+      const w0 = R.work ?? 0;
+      const L = slLevels(R, d0, Math.abs(Q('Q2', 1)) * rad, SL_RING_MAX, undefined, Math.max(0, Math.min(SL_EVAL_CALL, SL_EVAL_PGM - this.slEvals)));
+      this.slEvals += (R.work ?? 0) - w0;
       if (!L.levels.length) {
-        this.w.add(`${C}: 공구가 윤곽보다 커서 그리지 않음`, line);
+        this.w.add(L.capped === 'work' ? `${C}: 옆 간격 고리 셈이 한도를 넘어 그리지 않음` : `${C}: 공구가 윤곽보다 커서 그리지 않음`, line);
         return null;
       }
-      if (L.capped) this.guardStop(`${C}: 옆 간격 고리가 ${SL_RING_MAX}개를 넘어 그 안쪽은 그리지 않음`, line);
+      if (L.capped === 'rings') this.guardStop(`${C}: 옆 간격 고리가 ${SL_RING_MAX}개를 넘어 그 안쪽은 그리지 않음`, line);
+      else if (L.capped === 'work') this.guardStop(`${C}: 옆 간격 고리 셈이 한도를 넘어 바깥 고리 ${L.levels.length}겹까지만 그림`, line);
       const lv = L.levels.map((ls, k) => ls.map((l) => (k === 0 && q8 > 0 ? slRound(l, q8, R.eps) : l)));
       const s = cs[0]!.els[0]!;
       return { d0, outer: L.levels[0]!, order: slOrder(lv, [s.su, s.sv], R.eps, flip) };
@@ -2625,7 +2662,8 @@ class HRunner extends NcEmitter {
         const p = plan(r);
         if (!p) break;
         if (n === 22) this.slRoughR = r;
-        const zs = n === 22 ? passes(bottom, Math.abs(Q('Q10'))) : [bottom];
+        // 층 하나의 이동(어림): 고리마다 요소 + 잇기(들어 올려 옮기면 4), 첫 고리로 들어가기
+        const zs = n === 22 ? passes(bottom, Math.abs(Q('Q10')), p.order.reduce((s, l) => s + l.length + 4, 2)) : [bottom];
         const pl = plunges(p);
         const first = p.order[0]![0]!;
         toClear();
@@ -2685,10 +2723,11 @@ class HRunner extends NcEmitter {
         }
         loops = loops.map((l) => slStartLongest(q8 > 0 ? slRound(l, q8, R.eps) : l, R.eps)).map((l) => (flip ? slReverse(l) : l));
         const bottom = surface + depth;
-        const zs = passes(bottom, Math.abs(Q('Q10')));
+        // 층 하나의 이동(어림): 고리마다 요소 + 들어가고 나오는 호·옮기기 6
+        const zs = passes(bottom, Math.abs(Q('Q10')), loops.reduce((s, l) => s + l.length + 6, 0));
         const side = flip ? -1 : 1;
         const tolD = Math.max(R.scale, d) * 1e-7;
-        const free = (u: number, v: number): boolean => slInside(R, u, v) && slDist(R, u, v, d - tolD) >= d - tolD;
+        const free = (u: number, v: number): boolean => slInside(R, u, v) && !slNear(R, u, v, d - tolD);
         const left = loops.slice();
         while (left.length && more()) {
           // 지금 자리에서 가장 가까운 시작점의 고리부터 하나씩(설명서 286쪽 — 윤곽마다 따로)
@@ -2744,6 +2783,7 @@ class HRunner extends NcEmitter {
         break;
       }
     }
+    if (hardStop) this.guardStop(`${C}: 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤는 그리지 않음`, line);
     this.feed = saveFeed;
     this.known = 7;
   }
