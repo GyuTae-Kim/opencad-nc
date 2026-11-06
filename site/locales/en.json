@@ -1275,5 +1275,7 @@
   "CYCLE71: 가공 종류(_VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE71: invalid machining type (_VARI = {0}) (alarm 61002) — not drawn",
   "CYCLE71: 면 크기(_LENG·_WID)가 없음 — 그리지 않음": "CYCLE71: no surface size (_LENG, _WID) — not drawn",
   "CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음": "CYCLE71: tool radius unknown, so the width infeed (_MIDA) cannot be determined — not drawn",
-  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: retraction travel (_FDP) is 0 — the manual requires a value greater than 0 (drawn with 0)"
+  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: retraction travel (_FDP) is 0 — the manual requires a value greater than 0 (drawn with 0)",
+  "지름·반지름 지정(DIAMON·DIAMOF) 전의 X를 지름으로 봄 — 컨트롤러 기본값(기계 데이터 MD20150)에 따라 반지름일 수 있음": "X before a diameter/radius setting (DIAMON, DIAMOF) is read as a diameter — depending on the control default (machine data MD20150) it may be a radius",
+  "DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — {0}은(는) 절대·증분으로만 봄": "DAC, DIC, RAC and RIC are read as diameter or radius only for the transverse axis X and for I, I1 — {0} is read as absolute or incremental only"
 }

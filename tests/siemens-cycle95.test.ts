@@ -9,7 +9,8 @@ import { makeSource } from '../src/text';
 import { languages, translate } from '../site/i18n.mjs';
 
 const run = (text: string, o: Record<string, unknown> = {}): NcProgram => parseSiemens(makeSource(text), { lathe: true, initialPosition: [100, 0, 200], ...o });
-const warns = (p: NcProgram): string[] => p.warnings.map((w) => w.replace(/^\d+번 줄: /, ''));
+// 45차: 선반 모드에서 DIAMON·DIAMOF 없이 X를 읽으면 지름 기본값을 알린다 — 그 알림은 siemens-diam.test.ts에서 보고 여기서는 뺀다
+const warns = (p: NcProgram): string[] => p.warnings.map((w) => w.replace(/^\d+번 줄: /, '')).filter((w) => !w.startsWith('지름·반지름 지정(DIAMON·DIAMOF) 전의 X'));
 const r4 = (v: number): number => Math.round(v * 1e4) / 1e4 + 0;
 /** 사이클이 만든 이동(FLAG_CYCLE) 차례 */
 const cyc = (p: NcProgram): number[] => {
@@ -245,7 +246,8 @@ describe('Siemens CYCLE95 — 꼴과 알람', () => {
   });
 
   it('모따기 CHR·CHF와 원호 CR·I=AC를 윤곽에 넣는다', () => {
-    const p = run(prog('CYCLE95("K1", 2, 0, 0, 0, 0.3, 0.1, 0.2, 5)', 'G1 X20 Z0\nZ-10 CHR=1\nX40 CHF=1.4142135623730951\nZ-15\nG3 X60 Z-25 CR=10\nG2 X60 Z-35 I=AC(35) K=AC(-30)\nG1 X80'));
+    // I=AC(…)는 지름 지정(DIAMON)에서 지름 값(Fundamentals 설명서 8.3.6절 170쪽 — 45차): I=AC(70)은 중심 반지름 35
+    const p = run(prog('CYCLE95("K1", 2, 0, 0, 0, 0.3, 0.1, 0.2, 5)', 'G1 X20 Z0\nZ-10 CHR=1\nX40 CHF=1.4142135623730951\nZ-15\nG3 X60 Z-25 CR=10\nG2 X60 Z-35 I=AC(70) K=AC(-30)\nG1 X80'));
     expect(warns(p)).toEqual([]);
     const ends = cyc(p).map((i) => moveEnd(p.moves, i).map(r4));
     // CHR=1(Z-10·반지름 10 모서리 — 두 요소를 따라 1 mm), CHF=√2(Z-10·반지름 20 모서리 — 모따기 선 √2, 직각이라 다리 1 mm)

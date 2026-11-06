@@ -1275,5 +1275,7 @@
   "CYCLE71: 가공 종류(_VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE71: ungültige Bearbeitungsart (_VARI = {0}) (Alarm 61002) — nicht gezeichnet",
   "CYCLE71: 면 크기(_LENG·_WID)가 없음 — 그리지 않음": "CYCLE71: keine Flächengröße (_LENG · _WID) — nicht gezeichnet",
   "CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음": "CYCLE71: Werkzeugradius unbekannt, daher ist die Breitenzustellung (_MIDA) nicht bestimmbar — nicht gezeichnet",
-  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: Rückzugsweg (_FDP) ist 0 — laut Handbuch muss er größer als 0 sein (mit 0 gezeichnet)"
+  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: Rückzugsweg (_FDP) ist 0 — laut Handbuch muss er größer als 0 sein (mit 0 gezeichnet)",
+  "지름·반지름 지정(DIAMON·DIAMOF) 전의 X를 지름으로 봄 — 컨트롤러 기본값(기계 데이터 MD20150)에 따라 반지름일 수 있음": "X vor einer Durchmesser-/Radiusangabe (DIAMON · DIAMOF) wird als Durchmesser gelesen — je nach Grundstellung der Steuerung (Maschinendatum MD20150) kann es ein Radius sein",
+  "DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — {0}은(는) 절대·증분으로만 봄": "DAC · DIC · RAC · RIC werden nur für die Planachse X und für I · I1 als Durchmesser oder Radius gelesen — {0} wird nur absolut oder inkrementell gelesen"
 }

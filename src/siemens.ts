@@ -19,7 +19,8 @@
  * 홈 사이클 LONGHOLE(원 위 긴 구멍)·SLOT1(원 위 홈)·SLOT2(원주 홈)는 층마다 왕복·홈 둘레 고리(40차 — slot 참고).
  * 선반 윤곽 거친 깎기 CYCLE95는 윤곽 부프로그램(이름·표지 구간)을 읽어 구간마다 층·언더컷·다듬질(44차 — cycle95 참고),
  * 평면 밀링 CYCLE71은 층마다 한 방향·오가는 길(44차 — cycle71 참고). DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE72·CYCLE93 등), 시스템 변수($…), 배열 변수.
+ * 선반 모드의 지름·반지름 지정(45차 — Fundamentals 설명서 8.3.6~8.3.7절): DIAMON·DIAM90·DIAMOF·DIAMCYCOF와 X·I의 DAC·DIC·RAC·RIC(setDiam·xs·cMul 참고).
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE72·CYCLE93 등), 시스템 변수($…), 배열 변수, 축별 지름 지정(DIAMONA 등).
  */
 import { ExprError } from './expr';
 import { Block, Runner, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
@@ -48,7 +49,14 @@ const CONTOUR_SKIP = new Set(['IF', 'ELSE', 'ENDIF', 'WHILE', 'ENDWHILE', 'FOR',
 /** 지원하지 않는 사이클(그리지 않음) */
 const UNSUPPORTED_CYCLE = /^(?:POCKET\d|SLOT\d|LONGHOLE|CYCLE7\d|CYCLE9\d|CYCLE6\d+|CYCLE899|CYCLE952|CYCLE930|CYCLE940|CYCLE951|CYCLE99|CYCLE98|CYCLE97|CYCLE96|CYCLE95|CYCLE92|CYCLE90|CYCLE802|CYCLE801|CYCLE90\d?|E_\w+|F_\w+)$/;
 
-type Word = { name: string; value?: number; str?: string; mode?: 'AC' | 'IC' };
+/** 낱말: mode = 축별 절대·증분(AC·IC), dia = 낱말이 정한 지름(true)·반지름(false — 선반 모드 X·I의 DAC·DIC·RAC·RIC, 45차) */
+type Word = { name: string; value?: number; str?: string; mode?: 'AC' | 'IC'; dia?: boolean };
+/** 29군 지름·반지름 지정(Fundamentals 설명서 6FC5398-1BP40-3BA1, 2013-03 — 8.3.6절 168~170쪽, 표 16-28 500쪽) */
+type Diam = 'DIAMON' | 'DIAM90' | 'DIAMOF' | 'DIAMCYCOF';
+const DIAM_WORDS: ReadonlySet<string> = new Set(['DIAMON', 'DIAM90', 'DIAMOF', 'DIAMCYCOF']);
+/** 축 값 함수: 축별 절대·증분과 지름·반지름(DAC·DIC·RAC·RIC는 선반 모드만 — 밀링은 읽지 않는 함수 그대로) */
+const AXFN = /^(AC|IC|DC|ACP|ACN|CAC|CIC|CDC|CACP|CACN)\s*\(/;
+const AXFN_LATHE = /^(AC|IC|DC|ACP|ACN|CAC|CIC|CDC|CACP|CACN|DAC|DIC|RAC|RIC)\s*\(/;
 /** 평면 두 축의 프로그램 좌표 */
 type P2 = readonly [number, number];
 /** 밀링 사이클 이동 도구(cycleMover): 반복 문지기·G0~G3 블록 이동·멈췄는지 */
@@ -185,9 +193,51 @@ class SiemensRunner extends Runner {
   private strVars = new Map<string, string>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
   private inCycle = false;
+  /** 45차: 29군 지름·반지름 지정(선반 모드에서만 읽음). 처음은 옵션 latheDiameter(없으면 지름 — 44차까지와 같음)대로 DIAMON·DIAMOF */
+  private diam: Diam = 'DIAMON';
+  /** 29군 명령을 읽었거나 옵션으로 정했는지 — 아니면 첫 X에서 기본값을 알린다(noteDiamDefault) */
+  private diamSet = false;
 
   constructor(src: NcSource, opts: GcodeOptions, head: () => string) {
     super(src, opts, 'siemens', head);
+    this.diam = this.xMul === 0.5 ? 'DIAMON' : 'DIAMOF';
+    this.diamSet = opts.latheDiameter !== undefined;
+  }
+
+  // ───────────────────── 지름·반지름 지정(45차) ─────────────────────
+  // Fundamentals 설명서(6FC5398-1BP40-3BA1, 2013-03) 8.3.6절 168~170쪽: DIAMON은 G90·G91 모두 지름, DIAM90은 G90 지름·G91 반지름, DIAMOF는 둘 다 반지름,
+  // DIAMCYCOF는 사이클 안 셈을 반지름으로(위치 표시만 앞 명령). 지름 값은 끝 자리와 AC로 준 원호 중심 I·J·K에만 — IC(기본) 중심은 늘 반지름(170쪽).
+  // 1.1.5절 20쪽: DIAMOF·DIAM90의 G91 거리는 반지름. 8.3.7절 172~174쪽: X=DAC·DIC·RAC·RIC(…)는 그 블록만 지름·반지름 절대·증분.
+  // 공장 기본은 DIAMOF(표 16-28 500쪽 — 기계 데이터 MD20150로 바꿈)이지만 선반 모드의 기본은 44차까지처럼 지름으로 두고 첫 X에서 알린다.
+  // 밀링 모드는 읽지 않는다(44차까지와 같음 — 가로 축 X는 선반 모드에서만).
+
+  /** 29군 명령(선반 모드만): X의 절대 값 배율(xMul)을 바꾼다 */
+  private setDiam(d: Diam): void {
+    if (!this.lathe) return;
+    this.diam = d;
+    this.diamSet = true;
+    this.xMul = d === 'DIAMON' || d === 'DIAM90' ? 0.5 : 1;
+    this.updateScale();
+  }
+
+  /** X(가로 축) 값의 배율: 낱말이 정한 지름·반지름(dia), 아니면 29군 — DIAM90의 증분만 반지름. 밀링 모드는 그대로 */
+  private xs(dia: boolean | undefined, inc: boolean): number {
+    if (!this.lathe) return this.axScale[0]!;
+    if (dia !== undefined) return dia ? this.scale * 0.5 : this.scale;
+    return this.diam === 'DIAM90' && inc ? this.scale : this.axScale[0]!;
+  }
+
+  /** 원호 중심 낱말(축 a — I는 X)의 값에 더 곱할 것: 선반 모드 X 중심은 AC일 때만 29군 지름(170쪽), DAC 등은 그대로 */
+  private cMul(w: { mode?: 'AC' | 'IC'; dia?: boolean }, a: number): number {
+    if (!this.lathe || a !== 0) return 1;
+    if (w.dia !== undefined) return w.dia ? 0.5 : 1;
+    return w.mode === 'AC' ? this.xMul : 1;
+  }
+
+  /** 29군 명령 없이 X를 처음 읽을 때 한 번 알린다(선반 모드, 옵션으로 정하지 않았을 때) */
+  private noteDiamDefault(line: number): void {
+    if (!this.lathe || this.diamSet) return;
+    this.warnOnce('DIAM-default', '지름·반지름 지정(DIAMON·DIAMOF) 전의 X를 지름으로 봄 — 컨트롤러 기본값(기계 데이터 MD20150)에 따라 반지름일 수 있음', line);
   }
 
   protected override flags(): number {
@@ -1042,6 +1092,8 @@ class SiemensRunner extends Runner {
       for (let k = words.length - 1; k >= 0; k--) if (words[k]!.name === n) return words[k];
       return undefined;
     };
+    // 29군 지름·반지름 지정(G 기능 — 같은 블록의 X부터, 설명서 173쪽 예 N10 G0 X0 Z0 DIAMON)
+    for (const id of idents) if (DIAM_WORDS.has(id)) this.setDiam(id as Diam);
     // ── G 코드 고르기·바꾸기 ──
     const pass: number[] = [];
     let dwell = false;
@@ -1118,7 +1170,9 @@ class SiemensRunner extends Runner {
       const wu = word(AX[a0]!);
       const wv = word(AX[a1]!);
       const base = poleMode === 1100 ? [cur[a0]!, cur[a1]!] : poleMode === 1120 ? [this.pole[0]!, this.pole[1]!] : [0, 0];
-      this.pole = [base[0]! + (wu?.value ?? 0) * sc0[a0]!, base[1]! + (wv?.value ?? 0) * sc0[a1]!];
+      // G110·G112는 앞 자리·앞 극에서 증분(DIAM90이면 X 반지름), G111은 절대
+      const ps = (w: Word | undefined, a: number): number => (a === 0 ? this.xs(w?.dia, poleMode !== 1110) : sc0[a]!);
+      this.pole = [base[0]! + (wu?.value ?? 0) * ps(wu, a0), base[1]! + (wv?.value ?? 0) * ps(wv, a1)];
       if (poleMode === 1110 && !wu && !wv) this.pole = [0, 0];
       words.splice(0, words.length, ...words.filter((w) => w.name !== AX[a0] && w.name !== AX[a1]));
     }
@@ -1156,7 +1210,8 @@ class SiemensRunner extends Runner {
       for (let a = 0; a < 3; a++) {
         const w0 = word(AX[a]!);
         if (w0?.value === undefined) continue;
-        const v = w0.value * this.axScale[a]!;
+        if (a === 0 && w0.dia === undefined) this.noteDiamDefault(line);
+        const v = w0.value * (a === 0 ? this.xs(w0.dia, incMode(w0)) : this.axScale[a]!);
         end[a] = incMode(w0) ? cur[a]! + v : v;
         moveAxes |= 1 << a;
       }
@@ -1193,7 +1248,8 @@ class SiemensRunner extends Runner {
       for (let a = 0; a < 3; a++) {
         const w0 = word(`${CENTER[a]}1`);
         if (w0?.value === undefined) continue;
-        const v = w0.value * this.axScale[a]!;
+        // 중간점은 자리(X와 같은 지름·반지름 규칙)
+        const v = w0.value * (a === 0 ? this.xs(w0.dia, incMode(w0)) : this.axScale[a]!);
         mid[a] = incMode(w0) ? cur[a]! + v : v;
         gotMid = true;
       }
@@ -1215,8 +1271,8 @@ class SiemensRunner extends Runner {
         const ccw = this.sMotion === 30;
         if (hasC && !(moveAxes & ((1 << a0) | (1 << a1)))) {
           // 중심 + 여는 각 → 끝점
-          const cu = this.centerValue(word(CENTER[a0]!), cur[a0]!);
-          const cv = this.centerValue(word(CENTER[a1]!), cur[a1]!);
+          const cu = this.centerValue(word(CENTER[a0]!), cur[a0]!, a0);
+          const cv = this.centerValue(word(CENTER[a1]!), cur[a1]!, a1);
           const t = Math.atan2(cur[a1]! - cv, cur[a0]! - cu) + (ccw ? 1 : -1) * ar.value * DEG;
           const r = Math.hypot(cur[a0]! - cu, cur[a1]! - cv);
           end[a0] = cu + r * Math.cos(t);
@@ -1271,7 +1327,7 @@ class SiemensRunner extends Runner {
           for (let a = 0; a < 3; a++) {
             const w0 = word(CENTER[a]!);
             if (w0?.value === undefined) continue;
-            b.set(LET(CENTER[a]!), w0.value, true);
+            b.set(LET(CENTER[a]!), w0.value * this.cMul(w0, a), true);
             if (w0.mode === 'AC') b.cAbs |= 1 << a;
           }
         if (radiusR !== undefined) b.set(LET('R'), radiusR, true);
@@ -1347,9 +1403,9 @@ class SiemensRunner extends Runner {
     if (ret) this.subReturn(line);
   }
 
-  private centerValue(w: Word | undefined, cur: number): number {
+  private centerValue(w: Word | undefined, cur: number, a: number): number {
     if (w?.value === undefined) return cur;
-    const v = w.value * this.scale;
+    const v = w.value * this.scale * this.cMul(w, a);
     return w.mode === 'AC' ? v : cur + v;
   }
 
@@ -1380,13 +1436,20 @@ class SiemensRunner extends Runner {
       return;
     }
     let mode: 'AC' | 'IC' | undefined;
-    const m = /^(AC|IC|DC|ACP|ACN|CAC|CIC|CDC|CACP|CACN)\s*\(/.exec(sc.s.slice(sc.i));
+    let dia: boolean | undefined;
+    const m = (this.lathe ? AXFN_LATHE : AXFN).exec(sc.s.slice(sc.i));
     let v: number;
     if (m) {
       sc.i += m[0].length;
       v = this.expr(sc);
       if (!sc.eat(')')) throw new ExprError(') 없음');
-      mode = m[1] === 'IC' || m[1] === 'CIC' ? 'IC' : 'AC';
+      const fn = m[1]!;
+      mode = fn === 'IC' || fn === 'CIC' || fn === 'DIC' || fn === 'RIC' ? 'IC' : 'AC';
+      if (fn === 'DAC' || fn === 'DIC' || fn === 'RAC' || fn === 'RIC') {
+        // 블록만의 지름·반지름(174쪽: 축 자리·원호 중심 I·J·K) — 가로 축 X와 그 중심 I·중간점 I1만, 다른 축은 절대·증분으로만
+        if (name === 'X' || name === 'I' || name === 'I1') dia = fn[0] === 'D';
+        else this.warnOnce(`DAC-${name}`, `DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — ${name}은(는) 절대·증분으로만 봄`, line);
+      }
     } else v = this.expr(sc);
     if (this.isVar(name)) {
       this.sSet(name, v);
@@ -1394,7 +1457,7 @@ class SiemensRunner extends Runner {
     }
     if (IGNORE_ADDR.has(name)) return;
     if (/^(?:[XYZABCIJKFSTDP]|CR|AR|AP|RP|TURN|I1|J1|K1|X1|Y1|Z1|FP|RND|RNDM|CHF|CHR)$/.test(name)) {
-      words.push({ name, value: v, mode });
+      words.push({ name, value: v, mode, dia });
       return;
     }
     // 처음 보는 이름 = 대입(정의 없이 쓰는 변수로 본다)
@@ -2401,7 +2464,8 @@ class SiemensRunner extends Runner {
    * - 깎는 방향(321쪽): 거친 깎기·온 가공은 첫 점과 끝 점 가운데 더 깊은 쪽에서 시작(윤곽을 뒤집어도 같은 길), 다듬질만은 프로그램 차례.
    *   최대 지름(가장 얕은 점)이 시작·끝에 없으면 끝에서 축과 나란한 직선을 그 깊이까지 더해 언더컷으로 깎는다(320쪽 — 거친 깎기만)
    * - 다듬질 여유(316쪽): FALZ·FALX(축별)와 FAL(윤곽 따라)을 모두 더한다 — 축별 여유는 윤곽을 시작 쪽·바깥으로 옮김(정한 것), FAL은 떨어진 곡선.
-   *   MID는 _ZSD[0] = 0이면 절입 축의 프로그램 단위(지름 지정이면 지름 — 316쪽 보기가 지름 차로 셈), 1이면 반지름, 2이면 지름. FALX·FAL은 반지름 값으로 본다(정한 것)
+   *   MID는 _ZSD[0] = 1이면 반지름, 2이면 지름, 0이면 절입 축이 가로 축 X일 때 29군을 따라 DIAMOF면 반지름·아니면 지름(45차 — 같은 설명서 4.10절 356쪽
+   *   CYCLE950의 _ZSD[0] 표, 316쪽 보기도 지름 차로 셈. 밀링 모드는 44차처럼 프로그램 단위). FALX·FAL은 반지름 값으로 본다(정한 것)
    * - _VRT(319쪽): 물러남, 0이면 1 mm. 시작 자리(322쪽) = 절입 축은 가장 얕은 윤곽 + 여유 + _VRT, 다른 축은 윤곽 시작 + 여유 + _VRT 앞 — 두 축 함께 G0
    * - 다듬질(314쪽): 시작 자리로 G0, 윤곽 시작보다 여유 + 공구 끝 반지름 + 1 mm 앞으로 G0, G1(FF3)로 윤곽 시작, 윤곽을 FF3, 시작 자리로 G0
    * 그리지 않는 것(경고): 걸친 윤곽(321쪽 — 설명서도 깎을 수 없다고 함, 거친 깎기만 뺌), MID 없음(거친 깎기만 뺌), DT·DAM 칩 끊기, 공구 끝 반지름 보정
@@ -2449,7 +2513,7 @@ class SiemensRunner extends Runner {
     const cutAx = ci === 0 ? a0 : a1;
     const infAx = ci === 0 ? a1 : a0;
     const zsd0 = Math.round(this.zsd.get(0) ?? 0);
-    const mid = Math.abs(a[1] ?? 0) * (zsd0 === 1 ? s : zsd0 === 2 && infAx === 0 ? s / 2 : this.axScale[infAx]!);
+    const mid = Math.abs(a[1] ?? 0) * (zsd0 === 1 ? s : zsd0 === 2 && infAx === 0 ? s / 2 : this.lathe && infAx === 0 ? (this.diam === 'DIAMOF' ? s : s / 2) : this.axScale[infAx]!);
     const falz = Math.abs(a[2] ?? 0) * s;
     const falx = Math.abs(a[3] ?? 0) * s;
     const fal = Math.abs(a[4] ?? 0) * s;
@@ -2599,14 +2663,30 @@ class SiemensRunner extends Runner {
   /**
    * CYCLE95 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 평면 두 축(a0, a1)의 요소로(표시 단위, 프로그램 좌표 — 지름 지정 X는 반지름). 첫 이동 블록의 자리가 윤곽 시작.
    * G0~G3(G0은 직선), G90·G91, 축별 AC·IC, 원호 CR·I·J·K(I=AC 절대 중심), RND·CHF·CHR, 한 좌표 + ANG를 읽고, M17·M2·M30·RET에서 끝난다.
+   * 선반 모드의 29군(DIAMON 등)·DAC 등은 sBlock과 같은 규칙이고, 윤곽 안의 29군은 윤곽에만 걸린다(사이클이 윤곽을 따로 읽음 — 45차, 정한 것).
    * 읽지 않는 꼴(흐름·호출·프레임·CIP·CT·AR·극좌표·두 블록 윤곽 정의)과 읽을 수 없는 식은 경고하고 null(그리지 않음)
    */
   private readContour(s: number, e: number, line: number): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
     const [a0, a1] = PLANE_AXES[this.plane]!;
     const cur = this.progPos();
-    let u = cur[a0]!;
-    let v = cur[a1]!;
-    let abs = this.absolute;
+    const u = cur[a0]!;
+    const v = cur[a1]!;
+    const abs = this.absolute;
+    // 29군은 윤곽 안에서만 바꾼다(끝나면 되돌림)
+    const keep = { diam: this.diam, diamSet: this.diamSet, xMul: this.xMul };
+    try {
+      return this.readContourBody(s, e, line, a0, a1, u, v, abs);
+    } finally {
+      this.diam = keep.diam;
+      this.diamSet = keep.diamSet;
+      if (this.xMul !== keep.xMul) {
+        this.xMul = keep.xMul;
+        this.updateScale();
+      }
+    }
+  }
+
+  private readContourBody(s: number, e: number, line: number, a0: number, a1: number, u: number, v: number, abs: boolean): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
     let mot = -1;
     let blocks = 0;
     let first = true;
@@ -2633,7 +2713,7 @@ class SiemensRunner extends Runner {
       if (kw === 'PROC' || kw === 'DEF') continue;
       if (CONTOUR_SKIP.has(kw)) return bad(kw);
       const sc = new Scan(t);
-      const words = new Map<string, { v: number; mode?: 'AC' | 'IC' }>();
+      const words = new Map<string, { v: number; mode?: 'AC' | 'IC'; dia?: boolean }>();
       let gMot = -1;
       let end = false;
       try {
@@ -2663,17 +2743,20 @@ class SiemensRunner extends Runner {
           if (sc.s[sc.i] === '=' && sc.s[sc.i + 1] !== '=') {
             sc.i++;
             sc.ws();
-            const m = /^(AC|IC)\s*\(/.exec(sc.s.slice(sc.i));
+            const m = (this.lathe ? /^(AC|IC|DAC|DIC|RAC|RIC)\s*\(/ : /^(AC|IC)\s*\(/).exec(sc.s.slice(sc.i));
             if (m) {
               sc.i += m[0].length;
               const val = this.expr(sc);
               if (!sc.eat(')')) throw new ExprError(') 없음');
-              words.set(id, { v: val, mode: m[1] as 'AC' | 'IC' });
+              const fn = m[1]!;
+              const dr = fn.length === 3 && (id === 'X' || id === 'I') ? fn[0] === 'D' : undefined;
+              words.set(id, { v: val, mode: fn.endsWith('IC') ? 'IC' : 'AC', dia: dr });
             } else words.set(id, { v: this.expr(sc) });
             continue;
           }
           if (id === 'CIP' || id === 'CT' || /^A?(?:TRANS|ROT|SCALE|MIRROR)$/.test(id)) return bad(id);
-          // 그 밖의 낱말(DIAMON·SOFT 등)은 윤곽 모양과 상관없어 건너뛴다
+          // 29군(선반 모드)은 이 블록의 X부터 윤곽에만 건다. 그 밖의 낱말(SOFT 등)은 윤곽 모양과 상관없어 건너뛴다
+          if (DIAM_WORDS.has(id)) this.setDiam(id as Diam);
         }
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
@@ -2691,9 +2774,11 @@ class SiemensRunner extends Runner {
           this.w.add('CYCLE95: 윤곽 첫 이동 블록에 G0~G3이 없음(알람 15800) — 그리지 않음', line);
           return null;
         }
-        const val = (w: { v: number; mode?: 'AC' | 'IC' }, ax: number, c0: number): number => {
+        const val = (w: { v: number; mode?: 'AC' | 'IC'; dia?: boolean }, ax: number, c0: number): number => {
           const inc = w.mode === 'IC' || (w.mode !== 'AC' && !abs);
-          return inc ? c0 + w.v * this.axScale[ax]! : w.v * this.axScale[ax]!;
+          if (ax === 0 && w.dia === undefined) this.noteDiamDefault(line);
+          const k = ax === 0 ? this.xs(w.dia, inc) : this.axScale[ax]!;
+          return inc ? c0 + w.v * k : w.v * k;
         };
         let nu = w0 ? val(w0, a0, u) : u;
         let nv = w1 ? val(w1, a1, v) : v;
@@ -2736,8 +2821,8 @@ class SiemensRunner extends Runner {
                 this.w.add('CYCLE95: 윤곽 원호에 중심(I·J·K)·반지름(CR)이 없음 — 그리지 않음', line);
                 return null;
               }
-              cu = k0 ? (k0.mode === 'AC' ? k0.v * this.scale : u + k0.v * this.scale) : u;
-              cv = k1 ? (k1.mode === 'AC' ? k1.v * this.scale : v + k1.v * this.scale) : v;
+              cu = k0 ? (k0.mode === 'AC' ? k0.v * this.scale * this.cMul(k0, a0) : u + k0.v * this.scale * this.cMul(k0, a0)) : u;
+              cv = k1 ? (k1.mode === 'AC' ? k1.v * this.scale * this.cMul(k1, a1) : v + k1.v * this.scale * this.cMul(k1, a1)) : v;
             }
             let sw = Math.atan2(nv - cv, nu - cu) - Math.atan2(v - cv, u - cu);
             if (ccw) while (sw <= 0) sw += Math.PI * 2;
