@@ -21,7 +21,8 @@
  * 평면 밀링 CYCLE71은 층마다 한 방향·오가는 길(44차 — cycle71 참고). DEF STRING 변수는 CYCLE95 윤곽 이름에만 읽는다.
  * 선반 모드의 지름·반지름 지정(45차 — Fundamentals 설명서 8.3.6~8.3.7절): DIAMON·DIAM90·DIAMOF·DIAMCYCOF와 X·I의 DAC·DIC·RAC·RIC(setDiam·xs·cMul 참고).
  * 나사 깎기 CYCLE97은 깊이를 나눈 패스마다 시작 자리 → 깊이 → 나사 이송 → 물러남(45차 — cycle97 참고).
- * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE72·CYCLE93 등), 시스템 변수($…), 배열 변수, 축별 지름 지정(DIAMONA 등).
+ * 윤곽 밀링 CYCLE72는 CYCLE95와 같은 윤곽 찾기로 층마다 접근 → 윤곽 → 물러남을 그리고, 반경 보정은 사이클이 낸 G41·G42·G40 블록으로 보정 구간에 적는다(46차 — cycle72 참고).
+ * 그리지 않는 것(경고): CYCLE800(기울인 평면), 그 밖의 밀링·선반 사이클(CYCLE76·CYCLE93 등), 시스템 변수($…), 배열 변수, 축별 지름 지정(DIAMONA 등).
  */
 import { ExprError } from './expr';
 import { Block, Runner, THREAD_PASS_MAX, ZERO3, affine, composeAffine, diagAbout, registerDialectParser, rotAbout, type Affine, type GcodeOptions } from './gcode';
@@ -65,10 +66,10 @@ const MPIT_COARSE: ReadonlyMap<number, number> = new Map([
 ]);
 /** 평면 두 축의 프로그램 좌표 */
 type P2 = readonly [number, number];
-/** 밀링 사이클 이동 도구(cycleMover): 반복 문지기·G0~G3 블록 이동·멈췄는지 */
+/** 밀링 사이클 이동 도구(cycleMover): 반복 문지기·G0~G3 블록 이동(comp = 같은 블록의 G40·G41·G42 — 46차 CYCLE72)·멈췄는지 */
 interface CycleMover {
   go(): boolean;
-  move(g: 0 | 1 | 2 | 3, p: P2 | null, w: number | null, f: number, c?: P2): void;
+  move(g: 0 | 1 | 2 | 3, p: P2 | null, w: number | null, f: number, c?: P2, comp?: 40 | 41 | 42): void;
   stopped(): boolean;
 }
 
@@ -1065,7 +1066,7 @@ class SiemensRunner extends Runner {
         }
         if (sc.peek() === '(') {
           const strs: (string | undefined)[] = [];
-          calls.push({ name: id, args: this.args(sc, id === 'CYCLE95' ? strs : undefined), strs });
+          calls.push({ name: id, args: this.args(sc, id === 'CYCLE95' || id === 'CYCLE72' ? strs : undefined), strs });
           continue;
         }
         if (id === '_ZSD' && sc.peek() === '[') {
@@ -1396,6 +1397,7 @@ class SiemensRunner extends Runner {
       else if (c.name === 'SLOT1' || c.name === 'SLOT2' || c.name === 'LONGHOLE') this.slot(c.name, c.args, line);
       else if (c.name === 'CYCLE95') this.cycle95(c.args, c.strs[0], line);
       else if (c.name === 'CYCLE71') this.cycle71(c.args, line);
+      else if (c.name === 'CYCLE72') this.cycle72(c.args, c.strs[0], line);
       else if (c.name === 'CYCLE97') this.cycle97(c.args, line);
       else if (UNSUPPORTED_CYCLE.test(c.name) || /^CYCLE/.test(c.name)) this.warnOnce(c.name, `Siemens 사이클 ${c.name}은(는) 지원하지 않음(그리지 않음)`, line);
       else this.callSub(c.name, 1, c.args, line, false);
@@ -1979,10 +1981,11 @@ class SiemensRunner extends Runner {
         if (!stop && (this.mb.count >= this.maxMoves || ++steps > budget)) stop = true;
         return !stop;
       },
-      move: (g, p, w, f, c): void => {
+      move: (g, p, w, f, c, comp): void => {
         if (stop) return;
         b.reset();
         b.set(6, g, true);
+        if (comp) b.set(6, comp, true);
         if (p) {
           b.set(LET(AX[a0]!), p[0], true);
           b.set(LET(AX[a1]!), p[1], true);
@@ -2458,6 +2461,241 @@ class SiemensRunner extends Runner {
     this.known = 7;
   }
 
+  // ── 윤곽 밀링 CYCLE72(46차) ──
+  /**
+   * CYCLE72(_KNAME, _RTP, _RFP, _SDIS, _DP, _MID, _FAL, _FALD, _FFP1, _FFD, _VARI, _RL, _AS1, _LP1, _FF3, _AS2, _LP2) — 설명서(6FC5398-3BP20-0BA0, 2006-11)
+   * 3.12절 163~170쪽. 윤곽 _KNAME(이름·"표지1:표지2"·"이름:표지1:표지2" — CYCLE95와 같은 찾기, contourRange·readContour)을 지금 평면에서 층마다 돈다.
+   * _RTP·_RFP·_SDIS는 CYCLE81(planeAlarm), _MID·_FAL·_FALD·_FFP1은 POCKET3, _DP는 CYCLE71, _ZSD[1]은 밀링 사이클 설정을 따른다(170쪽).
+   * - 층(163·167쪽): 거친 깎기(_VARI 일의 자리 1)는 _DP + _FALD까지, 다듬질(2)은 _DP까지 _MID 이하의 같은 절입(_ZSD[1] = 0이면 기준면 + 안전 거리부터,
+   *   1이면 기준면부터 — CYCLE71과 같음). 거친 깎기는 윤곽을 공구 쪽으로 _FAL만큼 옮긴 길(g7xOffset — 보정 반지름에 더하는 Siemens OFFN과 같은 뜻)을 돈다
+   * - 반경 보정(_RL, 164·169쪽): 41·42면 사이클이 접근 시작으로 가는 블록에서 G41·G42를 켠다(167쪽). 이동은 프로그램 경로(윤곽)로 쌓고 보정 구간(compRuns)에
+   *   적으므로 보정 경로(comp.ts)가 사용자가 G41·G42로 쓴 윤곽과 같은 길로 공구 중심을 그린다. 40이면 보정 없이 윤곽이 곧 공구 중심이고 _FAL은 0이어야 한다(169쪽)
+   * - 접근·물러남(_AS1·_AS2·_LP1·_LP2, 164·169~170쪽): 일의 자리 1 접선 직선·2 사분원·3 반원, 십의 자리 0 평면·1 3D(층 + 안전 거리와 층 사이를 오르내림).
+   *   _AS2를 주지 않으면 접근과 같은 꼴(_LP2가 없으면 _LP1). 길이는 사이클이 쓰는 부드러운 접근·물러남(SAR)의 DISR 뜻을 따른다(840D sl 프로그래밍 설명서
+   *   6FC5398-1BP40-5BA2, 11.4절 269쪽): 직선은 공구 날 끝에서 윤곽 시작까지(공구 중심은 _LP1 + 공구 반지름, G40이면 공구 중심에서 — 170쪽),
+   *   원은 공구 중심 길의 반지름. 그래서 프로그램 경로의 원호는 보정 쪽에 중심을 둔 반지름 _LP1 + 공구 반지름이다(보정하면 _LP1). G40은 직선만(170쪽)
+   * - 차례(167쪽): 지금 높이에서 접근 시작으로(G0·G1 — _VARI 십의 자리, G1 이송은 _FF3, 없으면 _FFP1 — 170쪽) → 층 + 안전 거리 → _FFD로 층 → 접근(_FFP1,
+   *   3D면 _FFD) → 윤곽(_FFP1) → 물러남(_FFP1) → 층 사이 들어 올림(_VARI 백의 자리: 0 _RTP, 1 _RFP + _SDIS, 2 층 + _SDIS, 3 그대로) → 다음 층.
+   *   끝나면 물러남 끝 위 _RTP(167쪽)
+   * 여기서 정한 것(경고): 층마다 들어 올린 뒤 보정을 끄고(G40) 공구 중심 자리로 옮긴 다음 접근 시작으로 가며 다시 켠다(보정 경로의 나오기·들어가기가 실제 공구 중심
+   * 길과 같게 — 프로그램 경로에는 공구 반지름만큼 옮기는 짧은 이동이 보임), 3D 물러남은 안전 거리만큼 오른다.
+   * 그리지 않는 것(경고): _KNAME·_DP 없음, 알람 61101·61002(_VARI)·61116(_LP1·_LP2 = 0)·61000(D0), _RL·_AS1·_AS2가 맞지 않음, 윤곽 블록이 둘보다 적음(163쪽)
+   */
+  private cycle72(a: (number | undefined)[], kname: string | undefined, line: number): void {
+    const C = 'CYCLE72';
+    if (!kname || !kname.trim()) {
+      this.w.add(`${C}: 윤곽 이름(_KNAME)이 없음 — 그리지 않음`, line);
+      return;
+    }
+    const at = (k: number): number => a[k] ?? 0;
+    const rtp = at(1);
+    const rfp = at(2);
+    const sdis = Math.abs(at(3));
+    if (a[4] === undefined) {
+      this.w.add(`${C}: 깊이(_DP)가 없음 — 그리지 않음`, line);
+      return;
+    }
+    const dp = at(4);
+    if (this.planeAlarm(C, rtp, rfp, { d: dp, rel: false }, line)) return;
+    const mid = Math.abs(at(5));
+    let fal = Math.abs(at(6));
+    const fald = Math.abs(at(7));
+    const ffp1 = at(8);
+    const ffd = at(9);
+    const vari = Math.round(at(10));
+    const v1 = vari % 10;
+    const v10 = Math.floor(vari / 10) % 10;
+    const v100 = Math.floor(vari / 100);
+    if (!(vari > 0 && (v1 === 1 || v1 === 2) && v10 <= 1 && v100 <= 3)) {
+      this.w.add(`${C}: 가공 종류(_VARI = ${vari})가 맞지 않음(알람 61002) — 그리지 않음`, line);
+      return;
+    }
+    const rl = Math.round(at(11));
+    if (rl !== 40 && rl !== 41 && rl !== 42) {
+      this.w.add(`${C}: 윤곽 쪽(_RL = ${rl})이 40·41·42가 아님 — 그리지 않음`, line);
+      return;
+    }
+    const asOk = (v: number): boolean => v >= 1 && v < 20 && v % 10 >= 1 && v % 10 <= 3;
+    const as1 = Math.round(at(12));
+    if (!asOk(as1)) {
+      this.w.add(`${C}: 접근 방식(_AS1 = ${as1})이 맞지 않음 — 그리지 않음`, line);
+      return;
+    }
+    const as2Given = Math.round(at(15)) !== 0;
+    const as2 = as2Given ? Math.round(at(15)) : as1;
+    if (!asOk(as2)) {
+      this.w.add(`${C}: 물러남 방식(_AS2 = ${as2})이 맞지 않음 — 그리지 않음`, line);
+      return;
+    }
+    const lp1 = Math.abs(at(13));
+    if (!(lp1 > 0)) {
+      this.w.add(`${C}: 접근 길이·반지름(_LP1)이 0(알람 61116) — 그리지 않음`, line);
+      return;
+    }
+    let lp2 = Math.abs(at(16));
+    if (!(lp2 > 0)) {
+      if (as2Given) {
+        this.w.add(`${C}: 물러남 길이·반지름(_LP2)이 0(알람 61116) — 그리지 않음`, line);
+        return;
+      }
+      lp2 = lp1;
+    }
+    if (this.dNum === 0) {
+      this.w.add(`${C}: 공구 보정이 없음(D0 — 알람 61000) — 그리지 않음`, line);
+      return;
+    }
+    const range = this.contourRange(kname, line, C);
+    if (!range) return;
+    const prof = this.readContour(range[0], range[1], line, C);
+    if (!prof) return;
+    if (prof.blocks < 2) {
+      this.w.add(`${C}: 윤곽 블록이 2개보다 적음(설명서 163쪽 — 시작점과 끝점) — 그리지 않음`, line);
+      return;
+    }
+    const cut = g7xCorners(prof.els, prof.corners);
+    if (cut.failed) this.w.add(`${C}: 모서리 둥글리기·모따기(RND·CHF·CHR)를 넣을 수 없음 — 모서리 그대로 그림`, line);
+    let els = cut.els;
+    if (!els.length) {
+      this.w.add(`${C}: 윤곽 점이 모자람 — 그리지 않음`, line);
+      return;
+    }
+    const s = this.scale;
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    // 보정 쪽: 41 = 왼쪽(+1), 42 = 오른쪽(-1), 40 = 가운데(0)
+    const sigma = rl === 41 ? 1 : rl === 42 ? -1 : 0;
+    if (this.comp) this.w.add(`${C}: 반경 보정(G41·G42)이 켜진 채 부름 — 사이클이 보정을 다시 고르고 끝에서 끔(G40)`, line);
+    if (!sigma && fal > 0) {
+      this.w.add(`${C}: 가운데(_RL = 40)로 돌면 _FAL은 0이어야 함(설명서 169쪽) — 여유 없이 그림`, line);
+      fal = 0;
+    }
+    let k1 = as1 % 10;
+    let k2 = as2 % 10;
+    if (!sigma && (k1 !== 1 || k2 !== 1)) {
+      this.w.add(`${C}: 가운데(_RL = 40)는 직선으로만 접근·물러남(설명서 170쪽) — 직선으로 그림`, line);
+      k1 = 1;
+      k2 = 1;
+    }
+    const rd = sigma ? this.toolRadiusFor(this.dNum >= 0 ? this.dNum : undefined) : 0;
+    if (rd === undefined) this.w.add(`${C}: 공구 반지름을 몰라 접근·물러남 길을 반지름 0으로 셈 — 보정 경로는 공구 반지름을 알아야 그림`, line);
+    const r = Math.abs(rd ?? 0);
+    const rough = v1 === 1;
+    if (rough && fal > 0) {
+      els = g7xOffset(els, fal * s, sigma);
+      if (!els.length) {
+        this.w.add(`${C}: 다듬질 여유(_FAL)를 둔 윤곽이 남지 않음 — 그리지 않음`, line);
+        return;
+      }
+    }
+    // 층(공구 축, 프로그램 단위)
+    const up = rfp >= dp ? 1 : -1;
+    const safe = rfp + up * sdis;
+    const top = (this.zsd.get(1) ?? 0) === 1 ? rfp : safe;
+    const to = rough ? dp + up * fald : dp;
+    const total = up * (top - to);
+    const nL = total < -1e-9 ? 0 : total > 1e-9 && mid > 0 ? Math.max(1, Math.ceil(total / mid - 1e-9)) : 1;
+    if (!nL) {
+      this.w.add(`${C}: 거친 깎기 끝(_DP + _FALD)이 시작 높이보다 위 — 깎을 층이 없음`, line);
+      return;
+    }
+    const levelAt = (k: number): number => (k >= nL - 1 ? to : top - ((top - to) * (k + 1)) / nL);
+    // 접근·물러남(평면 두 축, 표시 단위 — 프로그램 경로). tn = 단위 접선, 보정 쪽 법선 = σ × 왼쪽 법선
+    const tn = (e: G7xEl, atEnd: boolean): P2 => {
+      if (!e.arc) {
+        const l = Math.hypot(e.eu - e.su, e.ev - e.sv) || 1;
+        return [(e.eu - e.su) / l, (e.ev - e.sv) / l];
+      }
+      const pu = (atEnd ? e.eu : e.su) - e.cu;
+      const pv = (atEnd ? e.ev : e.sv) - e.cv;
+      const rr = Math.hypot(pu, pv) || 1;
+      const sg = Math.sign(e.sweep);
+      return [(-pv / rr) * sg, (pu / rr) * sg];
+    };
+    const e0 = els[0]!;
+    const eN = els[els.length - 1]!;
+    const S: P2 = [e0.su, e0.sv];
+    const E: P2 = [eN.eu, eN.ev];
+    const t0 = tn(e0, false);
+    const t1 = tn(eN, true);
+    const n0: P2 = [-t0[1] * sigma, t0[0] * sigma];
+    const n1: P2 = [-t1[1] * sigma, t1[0] * sigma];
+    type Lead = { p: P2; c: P2 | null; sweep: number; len: number };
+    const lead = (kind: number, lp: number, P: P2, t: P2, n: P2, dir: 1 | -1): Lead => {
+      // dir = -1: 접근(p에서 P로), 1: 물러남(P에서 p로). 프로그램 경로의 길이·반지름 = LP + 공구 반지름
+      const L = lp * s + r;
+      if (kind === 1) return { p: [P[0] + dir * L * t[0], P[1] + dir * L * t[1]], c: null, sweep: 0, len: L };
+      const c: P2 = [P[0] + L * n[0], P[1] + L * n[1]];
+      if (kind === 2) return { p: [c[0] + dir * L * t[0], c[1] + dir * L * t[1]], c, sweep: (sigma * Math.PI) / 2, len: L };
+      return { p: [P[0] + 2 * L * n[0], P[1] + 2 * L * n[1]], c, sweep: sigma * Math.PI, len: L };
+    };
+    const ap = lead(k1, lp1, S, t0, n0, -1);
+    const rt = lead(k2, lp2, E, t1, n1, 1);
+    // 물러남 끝의 공구 중심(보정 경로의 끝 — 직선은 보정 쪽으로 반지름, 원호는 중심 쪽으로 반지름)
+    const cR: P2 = rt.c
+      ? [rt.c[0] + (rt.p[0] - rt.c[0]) * (1 - r / rt.len), rt.c[1] + (rt.p[1] - rt.c[1]) * (1 - r / rt.len)]
+      : [rt.p[0] + r * n1[0], rt.p[1] + r * n1[1]];
+    let ext = 1;
+    for (const e of els) ext = Math.max(ext, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    const tol = 1e-9 * ext;
+    const gInt: 0 | 1 = v10 === 1 ? 1 : 0;
+    const fInt = (a[14] ?? 0) > 0 ? a[14]! : ffp1;
+    const compOn: 40 | 41 | 42 = sigma > 0 ? 41 : sigma < 0 ? 42 : 40;
+    const ap3d = Math.floor(as1 / 10) === 1;
+    const rt3d = Math.floor(as2 / 10) === 1;
+
+    const { go, move, stopped } = this.cycleMover(line);
+    const put = (g: 0 | 1 | 2 | 3, p: P2 | null, w: number | null, f: number, c?: P2 | null, comp?: 40 | 41 | 42): void =>
+      move(g, p ? [p[0] / this.axScale[a0]!, p[1] / this.axScale[a1]!] : null, w, f, c ? [c[0] / s, c[1] / s] : undefined, comp);
+    const save = { motion: this.motion, sMotion: this.sMotion, feed: this.feed };
+    const first = this.mb.count;
+    let h = NaN;
+    const toW = (g: 0 | 1, w: number, f: number): void => {
+      if (Math.abs(w - h) <= 1e-12 * Math.max(1, Math.abs(w))) return;
+      put(g, null, w, f);
+      h = w;
+    };
+    this.inCycle = true;
+    try {
+      for (let k = 0; k < nL && go(); k++) {
+        const L = levelAt(k);
+        const above = L + up * sdis;
+        // 접근 시작으로(보정을 켜는 블록 — 167쪽) → 층 + 안전 거리
+        put(gInt, ap.p, null, fInt, null, compOn);
+        toW(gInt, above, fInt);
+        // 접근: 평면이면 _FFD로 층에 내려가 _FFP1, 3D면 내려가며 _FFD
+        if (!ap3d) toW(1, L, ffd);
+        put(ap.c ? (ap.sweep > 0 ? 3 : 2) : 1, S, L, ap3d ? ffd : ffp1, ap.c);
+        h = L;
+        for (const e of els) {
+          if (!go()) break;
+          put(e.arc ? (e.sweep > 0 ? 3 : 2) : 1, [e.eu, e.ev], L, ffp1, e.arc ? [e.cu, e.cv] : null);
+        }
+        // 물러남(3D면 안전 거리만큼 오름 — 정한 것)
+        put(rt.c ? (rt.sweep > 0 ? 3 : 2) : 1, rt.p, rt3d ? above : L, ffp1, rt.c);
+        h = rt3d ? above : L;
+        // 들어 올림: 마지막 층은 _RTP, 층 사이는 _VARI 백의 자리
+        const last = k === nL - 1;
+        if (last || v100 === 0) toW(gInt, rtp, fInt);
+        else if (v100 === 1) toW(gInt, safe, fInt);
+        else if (v100 === 2) toW(gInt, above, fInt);
+        // 보정을 끄고 공구 중심 자리로(정한 것 — 보정 경로의 나오기가 그 자리에서 끝남)
+        if (sigma) {
+          put(0, null, null, 0, null, 40);
+          if (Math.hypot(cR[0] - rt.p[0], cR[1] - rt.p[1]) > tol) put(gInt, cR, null, fInt);
+        }
+        if (stopped()) break;
+      }
+    } finally {
+      this.inCycle = false;
+      this.motion = save.motion;
+      this.sMotion = save.sMotion;
+      this.feed = save.feed;
+    }
+    this.w.add(`${C}: 층 사이 길(물러남 끝에서 들어 올리고 보정을 끈 공구 중심 자리로, 다음 층 접근 시작으로)과 3D 물러남 높이(_SDIS)는 정해 그림`, line);
+    this.markIfFromBelow(first, rfp * s, dp * s, a2);
+    if (stopped()) this.mb.overflow = true;
+    this.known = 7;
+  }
+
   // ── 선반 윤곽 거친 깎기 CYCLE95(44차) ──
   /**
    * CYCLE95(NPP, MID, FALZ, FALX, FAL, FF1, FF2, FF3, VARI, DT, DAM, _VRT) — 설명서(6FC5398-3BP20-0BA0, 2006-11) 4.5절 309~322쪽, 사이클 설정 _ZSD[0]은 4.2절 293쪽.
@@ -2631,9 +2869,10 @@ class SiemensRunner extends Runner {
 
   /**
    * CYCLE95 윤곽 NPP의 줄 범위(설명서 315쪽): "이름"(그 프로그램 몸통 — 다음 머리 줄 앞까지), "표지1:표지2"(부른 프로그램 안 — 표지1 줄부터 표지2 줄까지),
-   * "이름:표지1:표지2"(그 프로그램 안). 표지는 이름표(LABEL:)나 N 번호. 경로·_N_·_SPF는 뗀다. 못 찾으면 경고하고 null
+   * "이름:표지1:표지2"(그 프로그램 안). 표지는 이름표(LABEL:)나 N 번호. 경로·_N_·_SPF는 뗀다. 못 찾으면 경고하고 null.
+   * CYCLE72의 _KNAME도 같은 꼴이다(설명서 3.12절 168쪽 — 46차, cyc = 경고에 붙일 사이클 이름)
    */
-  private contourRange(npp: string, line: number): [number, number] | null {
+  private contourRange(npp: string, line: number, cyc = 'CYCLE95'): [number, number] | null {
     const parts = npp.split(':').map((p) => p.trim().toUpperCase());
     const prog = (p: string): string => p.replace(/^.*\//, '').replace(/^_N_/, '').replace(/(?:_SPF|_MPF|\.SPF|\.MPF)$/, '');
     let lo = 0;
@@ -2642,14 +2881,14 @@ class SiemensRunner extends Runner {
       const name = prog(parts[0]!);
       const sec = this.sections.get(name);
       if (!sec) {
-        this.missingProgram(name, `CYCLE95: 윤곽 ${name}을(를) 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
+        this.missingProgram(name, `${cyc}: 윤곽 ${name}을(를) 찾지 못함 — 다른 파일이면 함께 열어야 읽음`, line);
         return null;
       }
       lo = sec.line + 1;
       for (const h of this.sectionLines.keys()) if (h >= lo && h - 1 < hi) hi = h - 1;
       if (parts.length === 1) return [lo, hi];
     } else if (parts.length !== 2) {
-      this.w.add(`CYCLE95: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
+      this.w.add(`${cyc}: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
       return null;
     }
     const find = (name: string, from: number, to: number): number => {
@@ -2661,7 +2900,7 @@ class SiemensRunner extends Runner {
     const s = k === 0 ? this.findTarget(parts[0]!, line, 'FB') : find(parts[1]!, lo, hi);
     const e = s < 0 ? -1 : find(parts[k + 1]!, s, hi);
     if (s < 0 || e < 0) {
-      this.w.add(`CYCLE95: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
+      this.w.add(`${cyc}: 윤곽 구간 ${npp}을(를) 찾지 못함 — 그리지 않음`, line);
       return null;
     }
     return [s, e];
@@ -2671,9 +2910,11 @@ class SiemensRunner extends Runner {
    * CYCLE95 윤곽 블록(줄 s~e)을 상태를 건드리지 않고 평면 두 축(a0, a1)의 요소로(표시 단위, 프로그램 좌표 — 지름 지정 X는 반지름). 첫 이동 블록의 자리가 윤곽 시작.
    * G0~G3(G0은 직선), G90·G91, 축별 AC·IC, 원호 CR·I·J·K(I=AC 절대 중심), RND·CHF·CHR, 한 좌표 + ANG를 읽고, M17·M2·M30·RET에서 끝난다.
    * 선반 모드의 29군(DIAMON 등)·DAC 등은 sBlock과 같은 규칙이고, 윤곽 안의 29군은 윤곽에만 걸린다(사이클이 윤곽을 따로 읽음 — 45차, 정한 것).
-   * 읽지 않는 꼴(흐름·호출·프레임·CIP·CT·AR·극좌표·두 블록 윤곽 정의)과 읽을 수 없는 식은 경고하고 null(그리지 않음)
+   * 읽지 않는 꼴(흐름·호출·프레임·CIP·CT·AR·극좌표·두 블록 윤곽 정의)과 읽을 수 없는 식은 경고하고 null(그리지 않음).
+   * 46차 CYCLE72(cyc): 첫 블록은 G0·G1 직선(설명서 167쪽 — 아니면 알리고 시작 자리로만), 공구 축 좌표는 읽지 않고 알림(윤곽은 한 평면 — 163쪽),
+   * 시작과 끝이 같은 원호 블록(중심 I·J·K)은 온 원으로 읽는다
    */
-  private readContour(s: number, e: number, line: number): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
+  private readContour(s: number, e: number, line: number, cyc = 'CYCLE95'): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
     const [a0, a1] = PLANE_AXES[this.plane]!;
     const cur = this.progPos();
     const u = cur[a0]!;
@@ -2682,7 +2923,7 @@ class SiemensRunner extends Runner {
     // 29군은 윤곽 안에서만 바꾼다(끝나면 되돌림)
     const keep = { diam: this.diam, diamSet: this.diamSet, xMul: this.xMul };
     try {
-      return this.readContourBody(s, e, line, a0, a1, u, v, abs);
+      return this.readContourBody(s, e, line, a0, a1, u, v, abs, cyc);
     } finally {
       this.diam = keep.diam;
       this.diamSet = keep.diamSet;
@@ -2693,18 +2934,22 @@ class SiemensRunner extends Runner {
     }
   }
 
-  private readContourBody(s: number, e: number, line: number, a0: number, a1: number, u: number, v: number, abs: boolean): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
+  private readContourBody(s: number, e: number, line: number, a0: number, a1: number, u: number, v: number, abs: boolean, cyc: string): { els: G7xEl[]; corners: G7xCorner[]; blocks: number } | null {
     let mot = -1;
     let blocks = 0;
     let first = true;
     const els: G7xEl[] = [];
     const corners: G7xCorner[] = [];
     const bad = (what: string): null => {
-      this.w.add(`CYCLE95: 윤곽의 ${what}은(는) 읽지 않음 — 그리지 않음`, line);
+      this.w.add(`${cyc}: 윤곽의 ${what}은(는) 읽지 않음 — 그리지 않음`, line);
       return null;
     };
+    const mill = cyc === 'CYCLE72';
     const L0 = AX[a0]!;
     const L1 = AX[a1]!;
+    // CYCLE72: 공구 축 낱말(윤곽은 한 평면 — 읽지 않고 한 번 알림)
+    const L2 = AX[3 - a0 - a1]!;
+    let axisWarned = false;
     for (let i = s; i <= e; i++) {
       if (i > s && this.sectionLines.has(i)) break;
       let t = splitLine(sourceLine(this.src, i)).code.trim();
@@ -2767,7 +3012,7 @@ class SiemensRunner extends Runner {
         }
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
-        this.w.add(`CYCLE95: 윤곽 블록을 읽을 수 없음 — ${err.message}`, line);
+        this.w.add(`${cyc}: 윤곽 블록을 읽을 수 없음 — ${err.message}`, line);
         return null;
       }
       for (const k of ['AR', 'AP', 'RP', 'TURN', 'I1', 'J1', 'K1', 'ANG1', 'ANG2']) if (words.has(k)) return bad(k);
@@ -2775,9 +3020,14 @@ class SiemensRunner extends Runner {
       const w0 = words.get(L0);
       const w1 = words.get(L1);
       const ang = words.get('ANG');
+      if (mill && !axisWarned && words.has(L2)) {
+        axisWarned = true;
+        this.w.add(`CYCLE72: 윤곽의 공구 축 좌표(${L2})는 읽지 않음 — 윤곽은 한 평면(설명서 163쪽)`, line);
+      }
       if (w0 || w1 || ang) {
         blocks++;
-        if (first && gMot < 0) {
+        if (first && mill && gMot !== 0 && gMot !== 10) this.w.add('CYCLE72: 윤곽 첫 블록이 G0·G1 직선 블록이 아님(설명서 167쪽) — 첫 블록은 시작 자리로만 봄', line);
+        else if (first && gMot < 0) {
           this.w.add('CYCLE95: 윤곽 첫 이동 블록에 G0~G3이 없음(알람 15800) — 그리지 않음', line);
           return null;
         }
@@ -2802,10 +3052,12 @@ class SiemensRunner extends Runner {
             nu = u + ((nv - v) * cs) / sn;
           }
         }
+        // CYCLE72: 시작과 끝이 같은 원호 블록에 중심(I·J·K)을 주면 온 원(46차)
+        const full = mill && !first && (mot === 20 || mot === 30) && !words.has('CR') && Math.hypot(nu - u, nv - v) <= 1e-9 && !!(words.get(CENTER[a0]!) || words.get(CENTER[a1]!));
         if (first) {
-          if (!(w0 && w1)) this.w.add('CYCLE95: 윤곽 첫 블록에 두 축 좌표가 다 있어야 함 — 없는 축은 지금 자리로 봄', line);
+          if (!(w0 && w1)) this.w.add(`${cyc}: 윤곽 첫 블록에 두 축 좌표가 다 있어야 함 — 없는 축은 지금 자리로 봄`, line);
           first = false;
-        } else if (Math.hypot(nu - u, nv - v) > 1e-9) {
+        } else if (Math.hypot(nu - u, nv - v) > 1e-9 || full) {
           if (mot === 20 || mot === 30) {
             const ccw = mot === 30;
             const cr = words.get('CR');
@@ -2825,7 +3077,7 @@ class SiemensRunner extends Runner {
               const k0 = words.get(CENTER[a0]!);
               const k1 = words.get(CENTER[a1]!);
               if (!k0 && !k1) {
-                this.w.add('CYCLE95: 윤곽 원호에 중심(I·J·K)·반지름(CR)이 없음 — 그리지 않음', line);
+                this.w.add(`${cyc}: 윤곽 원호에 중심(I·J·K)·반지름(CR)이 없음 — 그리지 않음`, line);
                 return null;
               }
               cu = k0 ? (k0.mode === 'AC' ? k0.v * this.scale * this.cMul(k0, a0) : u + k0.v * this.scale * this.cMul(k0, a0)) : u;
@@ -2834,6 +3086,13 @@ class SiemensRunner extends Runner {
             let sw = Math.atan2(nv - cv, nu - cu) - Math.atan2(v - cv, u - cu);
             if (ccw) while (sw <= 0) sw += Math.PI * 2;
             else while (sw >= 0) sw -= Math.PI * 2;
+            // 온 원: 반지름이 0이면 읽지 않음
+            if (full && Math.hypot(u - cu, v - cv) <= 1e-9) {
+              u = nu;
+              v = nv;
+              if (end) break;
+              continue;
+            }
             els.push({ arc: true, su: u, sv: v, eu: nu, ev: nv, cu, cv, sweep: sw });
           } else els.push(g7xLine(u, v, nu, nv));
           const rnd = words.get('RND');
