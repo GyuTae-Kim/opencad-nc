@@ -55,6 +55,94 @@ describe('language URLs and UI presentation', () => {
     // 도구 모음(OpenCAD 도구를 모은 쪽)을 도구 막대(toolbar)로 옮긴 말 — 제목 줄 단추 설명(다른 OpenCAD 앱과 같은 말)
     expect(['en', 'ja', 'zh-CN', 'de'].map((code) => translate('OpenCAD 도구 모음', code))).toEqual(['OpenCAD Tool List', 'OpenCADツールのリスト', 'OpenCAD 工具列表', 'OpenCAD-Toolliste']);
   });
+  it('keeps NC homonyms, statements, code words and one term per concept in every catalog (52nd review)', () => {
+    const codes = ['en', 'ja', 'zh-CN', 'de'];
+    // [한국어 열쇠에 든 말, 언어(*는 넷 다), 있어야 할 말(없으면 null), 없어야 할 말] — 52차에 사전 전체를 읽고 찾은 오역·들쭉날쭉한 용어
+    const rules: [string, string, RegExp | null, RegExp][] = [
+      // 동음이의: 고름(고른 것)→고름(膿), 무늬(texture)→무늬(pattern — NC에는 PATTERN DEF가 따로 있다), 합성(synthetic)→복합, 상자(3D box)→칸·정사각형,
+      // 올리다(upload)→들어 올리다·반올림, 원점(origin)→출신, 뷰(view 명사)→보다(동사), 단면(section)→한쪽 면, 감지 않음(감지 않다=wrap 안 함)→감지(detect),
+      // 표지(label)→책 표지, 자리(position)→숫자 자리, 열 파일(열 것)→열(列), 몇(how many)→몇몇, 주(main)→주석(注), 가공도(…도 그리기)→가공도(그림),
+      // 멈춤(stopped)→갇힘, 둘레 상자(bounding box)→둘레(circumference), 기본 단위(default unit)→기본 부품·장치, 묶음(group)→꾸러미(bundle), 가공→과정(process),
+      // 공구 끝점(tool tip)→끝점(end point), 드릴(drilling)→연습(drill), 해(solution)→해(年), 모서리(corner)→변(edge), 선반(lathe)→책꽂이, 멈추다(그만두다)→일시 멈춤,
+      // 식이 끝났다(뜻밖에 끝남)→완료, 다시 읽음(다시 읽는다)→끝남·명령, 임의(arbitrary)→무작위, 급속(rapid)→빠른, 식(expression)→방정식
+      ['고름:', '*', null, /Pus|Eiter|膿|脓|更正/],
+      ['무늬', '*', null, /Pattern|Muster|柄|图案|パターン|模様/],
+      ['합성 장면', '*', null, /Composite|Komposition|複合/],
+      ['상자', '*', null, /\bFeld\b|Quadrat|方框|^框$|Umfangskasten|周边盒子|円周/],
+      ['올리는 중', '*', null, /Anheben|提升/],
+      ['다 올림', '*', null, /上へ|向上取整|werden hochgeladen|Uploading all/],
+      ['원점', '*', null, /Herkunft|起源/],
+      ['뷰 큐브', 'de', /Ansichtswürfel/, /Würfel anzeigen/],
+      ['뷰 큐브', 'zh-CN', /视图立方体/, /查看立方体|立方体视图/],
+      ['단면', 'en', /[Ss]ection/, /Single-sided|Cross/],
+      ['단면', 'de', /Schnitt/, /Einseitig|Querschnitt|Abschnitt/],
+      ['단면', 'zh-CN', null, /部分/],
+      ['감지 않음', '*', null, /sensed|検出|检测|erfasst/],
+      ['표지', '*', null, /cover|カバー|前盖|Etikett/i],
+      ['자리가 아님', '*', null, /digit|Ziffer|数字|場所/],
+      ['열 파일 주소', '*', null, /Column|Spalte|列/],
+      ['몇 선분', '*', null, /a few|ein paar|从哪个|数線分/],
+      ['주 프로그램', 'zh-CN', /主程序/, /注释/],
+      ['꺼진 가공도', '*', null, /diagram|Diagramm|オフセット|凹槽/],
+      ['멈춤', '*', null, /\bstuck\b|\bSTOP\b|hängen|steckt fest|卡住/],
+      ['둘레 상자', '*', null, /perimeter|円周|周边|Umfang/],
+      ['기본 단위', '*', null, /Basic unit|基本单元|Grundgerät/],
+      ['묶음', '*', null, /Bundle|Bündel|捆绑/i],
+      ['가공', 'zh-CN', null, /进程/],
+      ['가공', 'de', null, /\bProzess/],
+      ['공구 끝점 제어', '*', null, /end point control|終点|终点|Endpunktsteuerung/i],
+      ['드릴처럼', '*', null, /Übung|就像钻头/],
+      ['해 고르기', 'ja', null, /年/],
+      ['모서리', '*', null, /\bEdges overlap|エッジが重な|边重叠|Kanten überlappen|draws the edges|按原样绘制边缘|zeichnet die Kanten/],
+      ['선반', 'ja', null, /シェルフ|棚/],
+      ['읽기를 멈췄', '*', null, /pausier|暂停/],
+      ['읽기 멈추기', '*', null, /pausier|暂停/],
+      ['식이 끝났다', '*', null, /complete|完成|abgeschlossen|終了しました/],
+      ['다시 읽음', '*', null, /^Read again$|済み|已重新|Lesen Sie/],
+      ['임의', '*', null, /random|随机|Zufällig/i],
+      ['급속', 'de', null, /Schnell/],
+      ['식', 'zh-CN', null, /方程/],
+      ['식', 'de', null, /Gleichung/],
+      // 같은 개념은 한 말로: NC 블록은 중국어 程序段·독일어 Satz(HEIDENHAIN·SINUMERIK 독일어 설명서의 NC-Satz)
+      ['블록', 'zh-CN', null, /块(?!数据)|模块/],
+      ['블록', 'de', null, /\bBlock|Blöcke/],
+    ];
+    for (const [term, lang, need, ban] of rules)
+      for (const code of lang === '*' ? codes : [lang])
+        for (const [key, value] of Object.entries(catalogs[code])) {
+          if (!key.includes(term)) continue;
+          if (need) expect(value, `${code}: ${key}`).toMatch(need);
+          expect(value, `${code}: ${key}`).not.toMatch(ban);
+        }
+    // 코드 낱말(키워드·이름)은 옮기지 않는다(THEN→然后·DANN, WHILE … DO→过了一段时间就不要做, TOOL CALL→刀具调用, STEP→步骤, Tasche→塔, LinuxCNC→Linux数控)
+    const code = /\b(?:THEN|WHILE|GOTO|ENDIF|TOOL CALL|CYCL CALL|LinuxCNC|STEP|Tasche|createImageBitmap|Heidenhain)\b/g;
+    for (const lang of codes)
+      for (const [key, value] of Object.entries(catalogs[lang])) {
+        // 서술 경고를 1인칭("I don't know"·"Ich kenne"·"我不知道")이나 명령형("Ignore …"·"Zeichnen Sie …")으로 옮긴 것, 섞여 들어온 쓰레기 글
+        expect(value, `${lang}: ${key}`).not.toMatch(/\bI (?:do|don't|read|work|assume)\b|\bso I\b|\bIch\b|我(?!们)|私は/);
+        expect(value, `${lang}: ${key}`).not.toMatch(/^Ignore |— do not draw|, draw with|Zeichnen Sie (?:keine|ein)|Öffnen Sie keine|(?:Linie|Halbkreis) zeichnen|nicht zeichnen\b|ignorieren \(/);
+        expect(value, `${lang}: ${key}`).not.toMatch(/Stuck|Sep 24|2016|\bnein\b|\{\d+\}第二/);
+        // 검색 제목(언어별로 일부러 다르게 쓴 글)은 뺀다
+        if (!key.startsWith('OpenCAD 무료 NC·G-code 뷰어 |')) for (const word of key.match(code) ?? []) expect(value, `${lang}: ${key}`).toContain(word);
+        // 화면에서 옮기지 않는 인라인 스크립트 열쇠도 코드는 원문 그대로(옮긴 글이 data-theme·catch를 바꾸거나 가운데를 잘랐다)
+        if (key.startsWith('// ') && key.includes('(function')) expect(value.endsWith(key.slice(key.indexOf('(function'))), `${lang}: script`).toBe(true);
+      }
+    // 고친 말(4개 언어): 고른 것, 3D 무늬, 뷰 큐브, 경고 되풀이 수, 식 오류, 공구 끝점 제어, 열 파일 주소
+    const want: [string, string[]][] = [
+      ['고름: {0} "{1}" #{2}{3} ({4})', ['Selected: {0} "{1}" #{2}{3} ({4})', '選択：{0} "{1}" #{2}{3} ({4})', '已选：{0} "{1}" #{2}{3} ({4})', 'Ausgewählt: {0} „{1}“ #{2}{3} ({4})']],
+      ['무늬', ['Texture', 'テクスチャ', '纹理', 'Textur']],
+      ['뷰 큐브', ['View Cube', 'ビューキューブ', '视图立方体', 'Ansichtswürfel']],
+      ['{0}{1} (모두 {2}번)', ['{0}{1} ({2} times in total)', '{0}{1}（全 {2} 回）', '{0}{1}（共 {2} 次）', '{0}{1} (insgesamt {2}-mal)']],
+      ['식이 끝났다', ['Unexpected end of expression', '式が途中で終わった', '表达式意外结束', 'Ausdruck endet unerwartet']],
+      ['G43.4 공구 끝점 제어는 위치만 그림(회전축 무시)', ['G43.4 tool center point control: only positions are drawn (rotary axes ignored)', 'G43.4 工具先端点制御は位置のみ描画（回転軸は無視）', 'G43.4 刀尖点控制仅绘制位置（忽略旋转轴）', 'G43.4 TCP-Steuerung: nur die Position wird gezeichnet (Drehachsen ignoriert)']],
+      ['열 파일 주소(?open=)가 비어 있습니다.', ['The address of the file to open (?open=) is empty.', '開くファイルのアドレス（?open=）が空です。', '要打开的文件地址（?open=）为空。', 'Die Adresse der zu öffnenden Datei (?open=) ist leer.']],
+    ];
+    for (const [ko, values] of want) expect(codes.map((code) => translate(ko, code)), ko).toEqual(values);
+    // 경고 글 안에 끼워 쓴 꼴: 실제 해석 경고(경고 되풀이 수·멈춤·1인칭이던 오프셋 경고)
+    expect(translate('GOTO 10: N20 블록이 없음 — 멈춤', 'en')).toBe('GOTO 10: no N20 block — stopped');
+    expect(translate('G55 오프셋 값을 몰라 G54와 같은 원점으로 그림', 'de')).toBe('G55-Versatzwert unbekannt — mit demselben Nullpunkt wie G54 gezeichnet');
+    expect(translate('THEN 없음', 'zh-CN')).toBe('缺少 THEN');
+  });
   it('translates every piece of a " · "-joined sentence, even when a short pattern would swallow the rest', () => {
     const hangul = /[가-힣]/;
     // "줄 {0}"·"중심 {0}"·"{0} · 줄 {1}"이 문장 끝까지 잡아 나머지가 한국어로 남던 줄(상태 막대의 고른 이동·원호 상태)
