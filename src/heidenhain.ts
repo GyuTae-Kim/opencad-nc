@@ -128,6 +128,8 @@ class HRunner extends NcEmitter {
   constructor(src: NcSource, opts: HeidenhainOptions) {
     super(src, opts.initialPosition, opts.maxMoves);
     this.o = opts;
+    // 47차: TOOL CALL 축이 공구 축(작업 평면) — 공구 축 Y·X 구간의 급속은 안전 검사에서 뺀다(emitter.ts)
+    this.toolAxisByPlane = true;
     this.maxBlocks = opts.maxBlocks ?? Math.max(src.lineCount * 20, 2_000_000);
     this.multi = jobFileLines(src) !== null;
     // 단위: BEGIN PGM … MM|INCH, DIN/ISO는 %이름 G71(mm)·G70(inch)

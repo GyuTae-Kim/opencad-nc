@@ -209,6 +209,9 @@ class SiemensRunner extends Runner {
     super(src, opts, 'siemens', head);
     this.diam = this.xMul === 0.5 ? 'DIAMON' : 'DIAMOF';
     this.diamSet = opts.latheDiameter !== undefined;
+    // 47차: 작업 평면이 진입 방향(공구 축)을 정한다 — Fundamentals(6FC5398-1BP40-3BA1) 8.2절 154쪽 G17 Z·G18 Y·G19 X,
+    // 155쪽 공구 길이 보정은 프레임으로 돌리지 않은 평면 기준(급속 안전 검사 — emitter.ts)
+    this.toolAxisByPlane = true;
   }
 
   // ───────────────────── 지름·반지름 지정(45차) ─────────────────────

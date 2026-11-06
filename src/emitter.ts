@@ -19,6 +19,7 @@ import {
   FLAG_PER_REV,
   FLAG_START_EST,
   FLAG_TOOL_LENGTH,
+  MODAL_PLANE,
   MOVE_ARC,
   MOVE_FEED,
   MOVE_RAPID,
@@ -137,6 +138,11 @@ export class NcEmitter {
   private missingPrograms = new Set<string>();
   /** 아래에서 위로 가공한 사이클의 이동 번호 구간([처음, 끝) 짝 — markFromBelow, 43차) */
   private fromBelow: number[] = [];
+  /**
+   * 47차: 공구 축이 작업 평면을 따르는지(Siemens — G17 진입 Z·G18 진입 Y·G19 진입 X, Heidenhain — TOOL CALL 축). 그러면 평면이 G18·G19(공구 축 Y·X)인
+   * 이동은 표시 Z가 평면 안 좌표라 급속 안전 검사(가장 깊은 절삭·공작물 윗면)를 하지 않는다. Fanuc 계열은 평면과 상관없이 공구 축 Z(false)
+   */
+  protected toolAxisByPlane = false;
 
   /**
    * 이동 first부터 지금까지를 아래에서 위로(표시 좌표 +Z 쪽으로) 가공한 사이클의 몫으로 적는다(43차). 급속 안전 검사
@@ -1389,9 +1395,12 @@ export class NcEmitter {
       const minCut = down[2]!;
       const top = o.stock ? o.stock.max[2] : undefined;
       const fz = (v: number): string => String(Number(v.toFixed(this.displayInch ? 4 : 3)));
+      // 47차: 공구 축이 평면을 따르는 해석기에서 평면 G18·G19(공구 축 Y·X)의 급속은 검사하지 않는다(가장 깊은 절삭은 그대로 모든 절삭으로 잰다 — G17 경고는 그대로)
+      const sideAxis = this.toolAxisByPlane;
       for (let i = 0; i < moves.count; i++) {
         const fl = moves.flags[i]!;
         if (moves.kind[i] !== MOVE_RAPID || (fl & FLAG_MACHINE_EST && !(fl & FLAG_START_EST)) || below?.[i]) continue;
+        if (sideAxis && (moves.modal[i]! & MODAL_PLANE) !== 0) continue;
         const k = i * 3;
         const z1 = pts[k + 5]!;
         const line = moves.line[i]!;
