@@ -6,12 +6,13 @@
  * CYCL DEF 200·201·202·203·205·240·206·207·209·1(드릴 계열)과 CYCL CALL·M99·M89, CYCL DEF 7(원점 이동),
  * 밀링 사이클 208(보어 밀링 나선)·251(사각 포켓)·252(원 포켓)·253(홈)·256(사각 보스)·257(원 보스)·232(정면 밀링),
  * SL 사이클(48차) 14 윤곽·20 윤곽 자료·21 예비 드릴·22 거친 깎기·23 바닥 다듬질·24 옆면 다듬질(윤곽 부프로그램을 읽어 포켓 − 섬 면을 깎는 길 — sl.ts),
+ * 윤곽 트레인 25·270 자료(49차)·275 트로코이드 홈·276 3D 윤곽 트레인(50차),
  * FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 안 자료로 정해지는 경우), RL/RR 반경 보정 구간 기록,
  * LBL·CALL LBL REP(구간 반복·부프로그램, 앞쪽 표지 + LBL 0이면 부프로그램), FN 9~12 조건 점프,
  * PATTERN DEF(POS·ROW·PAT·CIRC·PITCHCIRC — 34차, 숨긴 자리 /POS — 36차)와 CYCL CALL PAT(200번대 사이클을 가공 위치마다, GLOBAL DEF 125의 Q345).
  * 근사: RND는 작업 평면 안의 직선·원호 모서리를 접하는 호로, CHF는 두 직선 사이 모서리만 다듬고(원호와 만나면 모서리 그대로, 경고), APPR·DEP는 끝점까지 직선(경고), 포켓 사이클은 동심 윤곽으로 깎는 길(공구 반지름은 TOOL DEF).
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
- * 지원하지 않음: PLANE·19 기울인 평면, 윤곽 트레인 25·270 등 다른 윤곽 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
+ * 지원하지 않음: PLANE·19 기울인 평면, OCM(27x)·윤곽 공식 등 다른 윤곽 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
  */
 import { affinePlane, applyAffine, composeAffine, diagAbout, invertAffine, isIdentityAffine, rotAbout, translateAffine, ZERO3, type Affine } from './affine';
 import { NcEmitter } from './emitter';
@@ -25,11 +26,13 @@ import { isSource, jobFileLines, PECK_MAX } from './gcode';
 import { g7xCorners, g7xLine, type G7xCorner } from './lathe-g7x';
 import {
   slArea,
+  slAt,
   slElLen,
   slInside,
   slIsPocket,
   slLevels,
   slNear,
+  slNearestIn,
   slOffset,
   slOrder,
   slRegion,
@@ -115,6 +118,13 @@ interface SlCapture {
   /** 축별 배율로 원호가 타원이 되는 것을 알렸는지와 알릴 줄(사이클을 부른 줄) */
   oval: boolean;
   line: number;
+  /**
+   * 50차 사이클 276(3D 윤곽 트레인 — 설명서 9.12절 302쪽 "also processes tool axis coordinates"): use3d면 윤곽 부프로그램의 공구 축 좌표를 따라가며
+   * (지금 자리의 공구 축 값도 바꿈) 요소마다 시작·끝 공구 축 좌표(사이클을 부를 때의 좌표)를 모은다
+   */
+  use3d: boolean;
+  zs: number[];
+  ze: number[];
 }
 
 /** 한 블록: 원본 첫 줄 번호와 낱말들 */
@@ -250,7 +260,10 @@ class HRunner extends NcEmitter {
     super.emitArc(plane, c, sweep, x, y, z, line, extraFlags);
   }
 
-  /** 윤곽 요소 하나 모으기: 첫 이동은 윤곽 시작점만 정한다(설명서 9.1절 266쪽 — 첫 블록에 두 축을 다 씀). 공구 축 좌표는 쓰지 않는다 */
+  /**
+   * 윤곽 요소 하나 모으기: 첫 이동은 윤곽 시작점만 정한다(설명서 9.1절 266쪽 — 첫 블록에 두 축을 다 씀). 공구 축 좌표는 쓰지 않는다
+   * (50차: 사이클 276이면 쓴다 — cap.use3d)
+   */
   private capMove(arc: { c: readonly number[]; sweep: number } | null, x: number, y: number, z: number): boolean {
     const cap = this.cap!;
     const [a0, a1, a2] = PLANE_AXES[this.plane]!;
@@ -289,6 +302,14 @@ class HRunner extends NcEmitter {
     };
     const [su, sv] = map(p[a0]!, p[a1]!);
     const [eu, ev] = map(e[a0]!, e[a1]!);
+    // 50차: 공구 축 좌표(사이클을 부를 때의 좌표) — use3d일 때만
+    const axisAt = (q: readonly number[]): number => {
+      if (!M) return q[a2]!;
+      const o = [0, 0, 0];
+      applyAffine(M, q, o);
+      return o[a2]!;
+    };
+    const n0 = cap.els.length;
     // 보정 쪽도 사이클을 부를 때의 좌표에서(거울이면 RL·RR이 바뀜)
     if (cap.comp <= 0 && this.comp) cap.comp = sign < 0 ? 3 - this.comp : this.comp;
     if (!cap.start) cap.start = [eu, ev];
@@ -297,6 +318,14 @@ class HRunner extends NcEmitter {
       const [cu, cv] = map(arc.c[a0]!, arc.c[a1]!);
       if (cap.els.length < SL_ELEMENT_MAX + 1) cap.els.push({ arc: true, su, sv, eu, ev, cu, cv, sweep: sw });
     } else if (Math.hypot(eu - su, ev - sv) > 1e-12 && cap.els.length < SL_ELEMENT_MAX + 1) cap.els.push(g7xLine(su, sv, eu, ev));
+    if (cap.use3d) {
+      // 평면에서 움직이지 않은 블록(공구 축만)은 요소를 만들지 않고 다음 요소의 시작 높이가 된다
+      if (cap.els.length > n0) {
+        cap.zs.push(axisAt([p[0]!, p[1]!, p[2]!]));
+        cap.ze.push(axisAt(e));
+      }
+      p[a2] = e[a2]!;
+    }
     p[a0] = e[a0]!;
     p[a1] = e[a1]!;
     this.known = 7;
@@ -950,6 +979,11 @@ class HRunner extends NcEmitter {
       this.ct270 = true;
       return;
     }
+    // 50차: 사이클 275 트로코이드 홈(9.11절 296쪽)·276 3D 윤곽 트레인(9.12절 302쪽) — 사이클 14의 윤곽으로 CYCL CALL·M99에서 그린다
+    if (major === 275 || major === 276) {
+      this.cycle = { n: major, ok: true };
+      return;
+    }
     this.cycle = { n: major, ok: false };
     this.w.add(`CYCL DEF ${num}은 지원하지 않음(호출해도 그리지 않음)`, line);
   }
@@ -1188,7 +1222,8 @@ class HRunner extends NcEmitter {
     if (!c.ok) return;
     if (MILL_CYCLES.has(c.n)) return this.millCycle(c.n, line);
     if (c.n >= 21 && c.n <= 24) return this.slCycle(c.n, line);
-    if (c.n === 25) return this.slTrainCycle(line);
+    if (c.n === 25 || c.n === 276) return this.slTrainCycle(line, c.n);
+    if (c.n === 275) return this.trochoidSlot(line);
     const [p0, p1, da] = PLANE_AXES[this.plane]!;
     const Q = (k: string, d: number): number => this.q.get(k) ?? d;
     let setup: number;
@@ -2412,7 +2447,12 @@ class HRunner extends NcEmitter {
    * 포켓·섬은 보정 쪽과 돌아가는 방향으로(sl.ts slIsPocket).
    * 49차: open이면 윤곽 트레인(사이클 25)용 — 닫지 않고 넓이·포켓을 보지 않으며 처음 만난 보정(comp: RL 1·RR 2·없음 0)을 함께 돌려준다
    */
-  private slCapture(labels: readonly string[], line: number, open = false): { els: SlLoop; pocket: boolean; comp: number }[] | null {
+  private slCapture(
+    labels: readonly string[],
+    line: number,
+    open = false,
+    use3d = false,
+  ): { els: SlLoop; pocket: boolean; comp: number; path3?: { els: SlLoop; zs: number[]; ze: number[] } }[] | null {
     const save = {
       pc: this.pc,
       pos: [this.pos[0]!, this.pos[1]!, this.pos[2]!],
@@ -2436,7 +2476,7 @@ class HRunner extends NcEmitter {
       scale26: [...this.scale26],
       center26: [...this.center26],
     };
-    const out: { els: SlLoop; pocket: boolean; comp: number }[] = [];
+    const out: { els: SlLoop; pocket: boolean; comp: number; path3?: { els: SlLoop; zs: number[]; ze: number[] } }[] = [];
     let total = 0;
     try {
       for (const lb of labels) {
@@ -2445,7 +2485,7 @@ class HRunner extends NcEmitter {
           this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}이 없음`, line);
           continue;
         }
-        const cap: SlCapture = { els: [], corners: [], comp: 0, start: null, axis: false, skipped: new Set(), xf0: save.xf, mFor: null, toCall: null, oval: false, line };
+        const cap: SlCapture = { els: [], corners: [], comp: 0, start: null, axis: false, skipped: new Set(), xf0: save.xf, mFor: null, toCall: null, oval: false, line, use3d, zs: [], ze: [] };
         this.cap = cap;
         this.comp = 0;
         this.lastDir = null;
@@ -2491,8 +2531,9 @@ class HRunner extends NcEmitter {
         }
         this.cap = null;
         if (!found0) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}에 끝(LBL 0)이 없음`, line);
-        if (cap.axis) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}의 공구 축 좌표는 쓰지 않음(윤곽은 작업 평면 안)`, line);
+        if (cap.axis && !use3d) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}의 공구 축 좌표는 쓰지 않음(윤곽은 작업 평면 안)`, line);
         const els = cap.els;
+        const path3 = use3d ? { els: els.slice(), zs: cap.zs, ze: cap.ze } : undefined;
         if (!cap.start || !els.length) {
           this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}에 윤곽 요소가 없음`, line);
           continue;
@@ -2515,7 +2556,7 @@ class HRunner extends NcEmitter {
         if (done.failed) this.w.add(`CYCL DEF 14: 윤곽 LBL ${lb}의 RND·CHF ${done.failed}개는 값이 앞뒤 요소보다 커서 모서리 그대로 그림`, line);
         total += done.els.length;
         if (open) {
-          out.push({ els: done.els, pocket: true, comp: cap.comp });
+          out.push({ els: done.els, pocket: true, comp: cap.comp, ...(path3 ? { path3 } : {}) });
           continue;
         }
         if (Math.abs(slArea(done.els)) <= 1e-12 * Math.max(1, done.els.reduce((s, e) => s + slElLen(e), 0)) ** 2) {
@@ -2881,9 +2922,14 @@ class HRunner extends NcEmitter {
    * - 접근·이탈(사이클 270 Q390 — 290~291쪽): 1 접선 원호(반지름 Q392·중심각 Q393), 2 접선 직선(Q394), 3 수직(Q394), 0·4 없음. 접근 시작점에서 내려간다(302쪽)
    * - 정해 그린 것: 사이클 25에는 안전 거리(Q6)가 없어 안전 높이 Q7에서 Q11로 내려간다. Q15 = 0의 첫 층은 하향 쪽. R0이면 Q15는 프로그램 차례로.
    *   끝나면 공구 축으로 Q7(평면 자리는 그대로 — 293쪽 posAfterContPocket)
+   * 50차 사이클 276 3D 윤곽 트레인(9.12절 302~306쪽): 25와 같은 길에 윤곽 부프로그램의 공구 축 좌표를 더한다("also processes tool axis coordinates").
+   * Q5가 없고 Q1 = 0이면 윤곽의 공구 축 좌표 그대로 한 번(302쪽 "without infeed", 304쪽 "DEPTH = 0 … uses the tool axis coordinates"),
+   * Q1 ≠ 0이면 그 좌표에서 Q10씩 Q1까지 내려가며 되풀이한다(기준면이 설명서에 없어 정함 — 알림). 공구 중심 경로의 점마다 윤곽 위 가장 가까운 자리의
+   * 공구 축 좌표를 쓴다(직선은 곧게, 원호는 나선). 270을 앞에 두기를 권하지만 없어도 그린다(303쪽). Q18·Q446~Q448(남은 부분만)은 25처럼 알리고 전체를 그린다
    */
-  private slTrainCycle(line: number): void {
-    const C = 'CYCL DEF 25';
+  private slTrainCycle(line: number, n = 25): void {
+    const C = `CYCL DEF ${n}`;
+    const three = n === 276;
     const labels = this.slLabels;
     if (!labels?.length) {
       this.w.add(`${C}: 앞에 CYCL DEF 14(윤곽)가 없어 그리지 않음`, line);
@@ -2891,14 +2937,15 @@ class HRunner extends NcEmitter {
     }
     const Q = (k: string, d = 0): number => this.q.get(k) ?? d;
     const depth = Q('Q1');
-    if (depth === 0) {
+    if (depth === 0 && !three) {
       this.w.add(`${C}: 깊이(Q1)가 0이라 그리지 않음`, line);
       return;
     }
     if (labels.length > 1) this.w.add(`${C}: 윤곽 LBL이 여럿이라 첫 LBL ${labels[0]}만 씀`, line);
-    const cs = this.slCapture(labels.slice(0, 1), line, true);
+    const cs = this.slCapture(labels.slice(0, 1), line, true, three);
     if (!cs?.length) return;
     const contour = cs[0]!;
+    if (three && depth !== 0) this.w.add(`${C}: 깊이(Q1)는 윤곽 부프로그램의 공구 축 좌표에서부터 셈함(설명서에 기준면이 없어 정함)`, line);
     let side = contour.comp === 1 ? 1 : contour.comp === 2 ? -1 : 0;
     if (this.ct270) {
       if (contour.comp) this.w.add(`${C}: 사이클 270이 있어 윤곽 부프로그램의 RL·RR 대신 Q391로 그림`, line);
@@ -2919,14 +2966,47 @@ class HRunner extends NcEmitter {
     if (T.cut) this.w.add(`${C}: 공구가 커서 윤곽 일부는 깎지 않음(윤곽을 깎아 들어가지 않게)`, line);
     const [a0, a1, a2] = PLANE_AXES[this.plane]!;
     const up = depth > 0 ? -1 : 1;
-    const surface = Q('Q5') + this.shift[a2]!;
+    // 276은 층을 윤곽의 공구 축 좌표에 더하는 값(0에서 Q1까지)으로 센다
+    const surface = three ? 0 : Q('Q5') + this.shift[a2]!;
     const bottom = surface + depth;
+    // 50차: 공구 중심 경로 점(u, v)의 공구 축 좌표 — 25는 층 높이 그대로, 276은 윤곽 위 가장 가까운 자리의 좌표 + 층(앞 자리 둘레를 먼저 본다)
+    const p3 = three ? contour.path3 : undefined;
+    const dOff = side ? Math.max(0, r + Q('Q3')) : 0;
+    let size = 0;
+    for (const e of contour.els) size = Math.max(size, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    const zTol = (size + dOff + 1) * 1e-6;
+    // 윤곽 위 자리(요소 번호 + 비율)를 도는 방향으로만 나아가게 고른다 — 닫힌 윤곽의 끝이 시작점과 겹쳐도(나선 등) 지나온 쪽 높이를 쓴다
+    let hint = 0;
+    let pos = -Infinity;
+    let fwdNow = true;
+    const W = (u: number, v: number, o: number): number => {
+      if (!p3?.els.length) return o;
+      const m = p3.els.length;
+      const pick = (from: number, to: number): { i: number; t: number; key: number } | null => {
+        let best: { i: number; t: number; key: number } | null = null;
+        for (let i = Math.max(0, from); i < Math.min(m, to); i++) {
+          const b = slNearestIn(p3.els, u, v, i, i + 1);
+          if (!(b.d <= dOff + zTol)) continue;
+          const key = i + b.t;
+          if (fwdNow ? key < pos - 1e-9 : key > pos + 1e-9) continue;
+          if (!best || (fwdNow ? key < best.key : key > best.key)) best = { i, t: b.t, key };
+        }
+        return best;
+      };
+      const b = (fwdNow ? pick(hint - 2, hint + 48) : pick(hint - 47, hint + 3)) ?? pick(0, m) ?? (() => {
+        const n = slNearestIn(p3.els, u, v, 0, m);
+        return { i: n.i, t: n.t, key: n.i + n.t };
+      })();
+      hint = b.i;
+      pos = b.key;
+      return p3.zs[b.i]! + (p3.ze[b.i]! - p3.zs[b.i]!) * b.t + o;
+    };
     let w = this.pos[a2]!;
     const q7 = this.q.get('Q7');
     let clear: number;
     if (q7 === undefined) {
       this.w.add(`${C}: 안전 높이(Q7)가 없어 지금 공구 높이로 셈`, line);
-      clear = up * (w - surface) < 0 ? w : surface;
+      clear = three || up * (w - surface) < 0 ? w : surface;
     } else clear = q7 + this.shift[a2]!;
     const fPlunge = Q('Q11', this.feed || this.autoFeed);
     const fMill = Q('Q12', this.feed || this.autoFeed);
@@ -2953,11 +3033,14 @@ class HRunner extends NcEmitter {
     const toClear = (): void => {
       if (up * (w - clear) < 0) go(Rp, ...here(), clear);
     };
-    const mill = (l: SlLoop): void => {
+    const mill = (l: SlLoop, z: number): void => {
       for (const e of l) {
         if (!more()) return;
-        if (e.arc) arc(e.cu, e.cv, e.sweep, e.eu, e.ev);
-        else go(F, e.eu, e.ev);
+        const ww = W(e.eu, e.ev, z);
+        if (e.arc) {
+          this.arc3(e.cu, e.cv, e.sweep, e.eu, e.ev, ww, line);
+          w = ww;
+        } else go(F, e.eu, e.ev, ww);
       }
     };
     // 하향이 프로그램 차례인지(공구가 진행 방향 왼쪽 — RL). 한 축 대칭이면 화면에서 반대가 되므로 거꾸로 돌려 하향·상향을 지킨다
@@ -3018,6 +3101,11 @@ class HRunner extends NcEmitter {
     /** 한 층: 들어가는 자리에서 z로 내려가(fromClear면 안전 높이에서 옮겨 와서) 고리 조각들을 차례로, 조각 사이는 올라 옮긴다 */
     const pass = (runs: SlLoop[], fwd: boolean, z: number, fromClear: boolean, approach: boolean, depart: boolean): void => {
       const E = ends(runs, fwd);
+      // 276: 윤곽 위 자리를 이 층의 도는 방향으로 새로 센다(거꾸로 도는 층은 윤곽 끝에서)
+      fwdNow = fwd;
+      pos = fwd ? -Infinity : Infinity;
+      if (!fwd) hint = p3 ? p3.els.length - 1 : 0;
+      else hint = 0;
       runs.forEach((l, k) => {
         if (!more()) return;
         const s = l[0]!;
@@ -3027,10 +3115,10 @@ class HRunner extends NcEmitter {
           go(Rp, P[0], P[1]);
         }
         this.feed = fPlunge;
-        go(F, P[0], P[1], z);
+        go(F, P[0], P[1], W(s.su, s.sv, z));
         this.feed = fMill;
         if (k === 0 && approach) E.into();
-        mill(l);
+        mill(l, z);
         if (k < runs.length - 1) toClear();
       });
       if (depart && more()) E.out();
@@ -3052,6 +3140,248 @@ class HRunner extends NcEmitter {
       }
     }
     go(Rp, ...here(), clear);
+    if (hardStop) this.guardStop(`${C}: 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤는 그리지 않음`, line);
+    this.feed = saveFeed;
+    this.known = 7;
+  }
+
+  /**
+   * 50차 사이클 275 트로코이드 홈(TNC 640 가공 사이클 설명서 34059x-17 9.11절 296~301쪽, DIN/ISO G275):
+   * - 사이클 14의 첫 윤곽 LBL이 홈 가운데 선(298쪽 "Define the center line of the slot", 윤곽 부프로그램은 하나만). 끝이 시작점이면 닫힌 홈, 아니면 열린 홈(297쪽).
+   *   사이클 20은 쓰지 않는다(298쪽). Q215 가공(0 거친 깎기 + 다듬질·1 거친 깎기만·2 다듬질만), Q219 홈 너비, Q368 옆 여유, Q436 한 바퀴에 나아감,
+   *   Q207 밀링 이송, Q351 하향 +1(0도 하향)·상향 -1, Q201 깊이(0이면 실행하지 않음 — 298쪽), Q202 절입, Q206 들어가기 이송, Q338 다듬질 절입(0이면 한 번),
+   *   Q385 다듬질 이송, Q200 안전 거리, Q203 윗면, Q204 2차 안전 거리, Q366 들어가기(0 곧게·2 왕복 — 공구 표 ANGLE), Q369 바닥 여유(299~301쪽)
+   * - 거친 깎기(297쪽 1~4): 시작점에서 절입 깊이로 들어가 원 운동으로 윤곽 끝까지 — 원을 돌며 한 바퀴에 Q436씩 가공 방향(프로그램 차례)으로 나아간다.
+   *   끝에서 안전 높이로 올라 시작점으로 돌아가 다음 깊이. 너비 = 공구 지름이면 긴 구멍(가운데 선을 곧게 — 299쪽), 너비가 공구 지름의 두 배를 넘으면
+   *   거친 깎기는 하지 않는다(299쪽 "Maximum slot width for roughing: Twice the tool diameter").
+   * - 옆면 다듬질(297쪽 5): 옆 여유가 있으면 홈 벽을 Q338씩(0이면 한 번) — 시작점에서 벽으로 접선으로 들어가 하향·상향대로. 바닥 다듬질은 바닥 여유가 있을 때만(299쪽)
+   * - 정해 그린 것(설명서에 자세히 없음 — 알림): 원 운동은 반지름 (너비 − 2 × 옆 여유)/2 − 공구 반지름의 원을 가운데 선의 접선·법선 틀에서
+   *   한 바퀴 32토막 직선으로, 하향(M3)이면 반시계(한 축 대칭이면 거꾸로 돌려 하향을 지킴). 가운데 선에서 원으로 곧게 나가 처음 자리에서 한 바퀴,
+   *   나아가며 길이/Q436 바퀴, 끝 자리에서 한 바퀴 돈 뒤 가운데로.
+   *   바닥 다듬질은 바닥에서 같은 원 운동 한 번(Q385). 옆면 다듬질은 가운데 선에서 너비/2 − 공구 반지름 떨어진 벽 길(열린 홈은 두 끝을 반원으로 이은
+   *   한 바퀴, 닫힌 홈은 두 바퀴)을 시작점에서 반원 호로 들어가 돌고 시작점으로 곧게 돌아온다. 왕복 들어가기는 공구 표 ANGLE을 몰라 곧게.
+   *   층 사이·돌아가기는 안전 거리 Q200, 처음과 끝은 2차 안전 거리 Q204. 열린 홈은 APPR 시작점 대신 윤곽 첫 점에서 내려간다(APPR는 끝점까지 직선)
+   */
+  private trochoidSlot(line: number): void {
+    const C = 'CYCL DEF 275';
+    const labels = this.slLabels;
+    if (!labels?.length) {
+      this.w.add(`${C}: 앞에 CYCL DEF 14(윤곽)가 없어 그리지 않음`, line);
+      return;
+    }
+    const Q = (k: string, d = 0): number => this.q.get(k) ?? d;
+    const depth = Q('Q201');
+    if (depth === 0) {
+      this.w.add(`${C}: 깊이(Q201)가 0이라 그리지 않음`, line);
+      return;
+    }
+    if (labels.length > 1) this.w.add(`${C}: 윤곽 LBL이 여럿이라 첫 LBL ${labels[0]}만 씀`, line);
+    const cs = this.slCapture(labels.slice(0, 1), line, true);
+    if (!cs?.length) return;
+    const path = cs[0]!.els.filter((e) => slElLen(e) > 1e-12);
+    if (!path.length) return;
+    let r = this.toolRadius();
+    if (r === undefined) {
+      this.w.add(`${C}: 공구 반지름을 몰라(TOOL DEF R 없음) 반지름 0으로 그림`, line);
+      r = 0;
+    }
+    const width = Q('Q219');
+    if (!(width > 0) || width < 2 * r - 1e-9) {
+      this.w.add(`${C}: 홈 너비(Q219)가 없거나 공구보다 좁아 그리지 않음`, line);
+      return;
+    }
+    const op = Math.round(Q('Q215'));
+    const sideAllow = Math.max(0, Q('Q368'));
+    const floorAllow = Math.max(0, Q('Q369'));
+    const finSide = (op === 0 || op === 2) && sideAllow > 0;
+    const finFloor = (op === 0 || op === 2) && floorAllow > 0;
+    let rough = op !== 2;
+    if (!rough && !finSide && !finFloor) {
+      this.w.add(`${C}: 다듬질 여유(Q368·Q369)가 없어 그리지 않음`, line);
+      return;
+    }
+    // 거친 깎기 원 반지름(옆 여유를 남김 — 여유 때문에 공구보다 좁으면 긴 구멍처럼 가운데 선만)
+    const rho = Math.max(0, width / 2 - sideAllow - r);
+    const adv = Q('Q436');
+    if (rough && width > 4 * r + 1e-9) {
+      this.w.add(`${C}: 홈 너비(Q219)가 공구 지름의 두 배를 넘어 거친 깎기는 그리지 않음`, line);
+      rough = false;
+    }
+    if (rough && rho > 1e-9 && !(adv > 0)) {
+      this.w.add(`${C}: 한 바퀴에 나아감(Q436)이 0이라 거친 깎기는 그리지 않음`, line);
+      rough = false;
+    }
+    if (!rough && !finSide && !finFloor) return;
+    if (Math.round(Q('Q366')) === 2) this.w.add(`${C}: 왕복 들어가기(Q366 = 2)는 공구 표 ANGLE을 몰라 곧게 내려감`, line);
+    this.w.add(`${C}: 원 운동(트로코이드)의 반지름·나눔과 벽 다듬질의 들어가기·나가기는 설명서에 자세히 없어 정해 그림`, line);
+    const [a0, a1, a2] = PLANE_AXES[this.plane]!;
+    const up = depth > 0 ? -1 : 1;
+    const surface = Q('Q203') + this.shift[a2]!;
+    const bottom = surface + depth;
+    const setup = Math.abs(Q('Q200', 2));
+    const clear1 = surface + up * setup;
+    const clear2 = surface + up * Math.max(setup, Math.abs(Q('Q204')));
+    const auto = this.feed || this.autoFeed;
+    const fPlunge = Q('Q206', auto);
+    const fMill = Q('Q207', auto);
+    const fFin = Q('Q385', fMill);
+    const saveFeed = this.feed;
+    const loop = this.blockLoop();
+    const callStart = this.mb.count;
+    let hardStop = false;
+    const more = (): boolean => {
+      if (!loop()) return false;
+      if (this.mb.count - callStart < SL_MOVE_MAX) return true;
+      hardStop = true;
+      return false;
+    };
+    const F = MOVE_FEED;
+    const Rp = MOVE_RAPID;
+    let w = this.pos[a2]!;
+    const here = (): [number, number] => [this.pos[a0]!, this.pos[a1]!];
+    const go = (kind: number, u: number, v: number, ww = w): void => {
+      this.go3(kind, u, v, ww, line);
+      w = ww;
+    };
+    // 가운데 선: 길이 s의 점과 접선(앞 자리부터 찾음)
+    const lens = path.map(slElLen);
+    const total = lens.reduce((a, b) => a + b, 0);
+    let k0 = 0;
+    let s0 = 0;
+    const center = (s: number): { p: [number, number]; t: [number, number] } => {
+      if (s < s0) {
+        k0 = 0;
+        s0 = 0;
+      }
+      while (k0 < path.length - 1 && s - s0 > lens[k0]!) {
+        s0 += lens[k0]!;
+        k0++;
+      }
+      const f = Math.max(0, Math.min(1, (s - s0) / lens[k0]!));
+      return { p: slAt(path[k0]!, f), t: slTanAt(path[k0]!, f) };
+    };
+    const S = center(0).p;
+    const first = path[0]!;
+    const last = path[path.length - 1]!;
+    const closed = Math.hypot(last.eu - first.su, last.ev - first.sv) <= Math.max(this.tol, 1e-9);
+    // 하향(Q351 = +1, 0도 하향 — 299쪽)은 M3 공구가 원을 반시계로(재료가 진행 방향 오른쪽). 한 축 대칭이면 화면에서 반대가 되므로 거꾸로
+    const climb = Math.round(Q('Q351', 1)) >= 0;
+    const ccw = climb !== this.cycleMirrored();
+    const SEG = 32;
+    /** 시작점 위로 옮겨 z까지 들어간다(처음이면 2차 안전 거리에서) */
+    const enter = (z: number, firstTime: boolean): void => {
+      const h = firstTime ? clear2 : clear1;
+      if (up * (w - h) < 0) go(Rp, ...here(), h);
+      go(Rp, S[0], S[1]);
+      if (up * (w - clear1) > 0) go(Rp, S[0], S[1], clear1);
+      this.feed = fPlunge;
+      go(F, S[0], S[1], z);
+    };
+    /** 원 운동 한 번(가운데 선 시작 → 끝, 끝에서 한 바퀴 더) 또는 긴 구멍이면 가운데 선 */
+    const troch = (z: number, feed: number): void => {
+      this.feed = feed;
+      if (!(rho > 1e-9) || !(adv > 0)) {
+        for (const e of path) {
+          if (!more()) return;
+          if (e.arc) {
+            this.arc3(e.cu, e.cv, e.sweep, e.eu, e.ev, z, line);
+            w = z;
+          } else go(F, e.eu, e.ev, z);
+        }
+        return;
+      }
+      // 처음 자리에서 한 바퀴, 나아가며 total/adv 바퀴, 끝 자리에서 한 바퀴
+      const theta = TAU * (total / adv + 2);
+      const n = Math.max(SEG, Math.ceil((theta / TAU) * SEG));
+      const dir = ccw ? 1 : -1;
+      const th0 = -dir * (Math.PI / 2);
+      k0 = 0;
+      s0 = 0;
+      for (let i = 0; i <= n; i++) {
+        if (!more()) return;
+        const th = (theta * i) / n;
+        const c = center(Math.max(0, Math.min(total, (th / TAU - 1) * adv)));
+        const a = th0 + dir * th;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        go(F, c.p[0] + rho * (ca * c.t[0] - sa * c.t[1]), c.p[1] + rho * (ca * c.t[1] + sa * c.t[0]), z);
+      }
+      const e = center(total).p;
+      if (more()) go(F, e[0], e[1], z);
+    };
+    // 거친 깎기: 층마다 시작점에서 들어가 끝까지, 안전 거리로 올라 시작점으로
+    let firstTime = true;
+    if (rough) {
+      const roughBottom = bottom + up * floorAllow;
+      const per = (rho > 1e-9 ? Math.ceil((total / adv + 2) * SEG) : path.length) + 8;
+      for (const z of this.slPasses(C, line, surface, up, roughBottom, Math.abs(Q('Q202')), per)) {
+        if (!more()) break;
+        enter(z, firstTime);
+        firstTime = false;
+        troch(z, fMill);
+        go(Rp, ...here(), clear1);
+      }
+    }
+    // 바닥 다듬질: 바닥에서 원 운동 한 번(Q385)
+    if (finFloor && more()) {
+      enter(bottom, firstTime);
+      firstTime = false;
+      troch(bottom, fFin);
+      go(Rp, ...here(), clear1);
+    }
+    // 옆면 다듬질: 벽 길(공구 중심) — 열린 홈은 두 끝을 반원으로 이은 한 바퀴, 닫힌 홈은 양쪽 벽 두 바퀴. 하향이면 벽이 진행 방향 오른쪽(반시계)
+    if (finSide && more()) {
+      const dw = width / 2 - r;
+      const flat = (runs: SlLoop[]): SlLoop => runs.flat();
+      let loops: SlLoop[];
+      if (!(dw > 1e-9)) loops = [path];
+      else {
+        const right = flat(slTrain(path, dw, -1).runs);
+        const left = flat(slTrain(path, dw, 1).runs);
+        if (closed) loops = [right, slReverse(left)].filter((l) => l.length);
+        else if (!right.length || !left.length) loops = [];
+        else {
+          // 끝 반원(오른쪽 벽 끝 → 왼쪽 벽 끝)과 처음 반원(왼쪽 벽 시작 → 오른쪽 벽 시작), 가운데는 가운데 선 끝·시작
+          const re = right[right.length - 1]!;
+          const ls = slReverse(left);
+          const lsEnd = ls[ls.length - 1]!;
+          const capE = { arc: true, su: re.eu, sv: re.ev, eu: ls[0]!.su, ev: ls[0]!.sv, cu: last.eu, cv: last.ev, sweep: Math.PI };
+          const capS = { arc: true, su: lsEnd.eu, sv: lsEnd.ev, eu: right[0]!.su, ev: right[0]!.sv, cu: first.su, cv: first.sv, sweep: Math.PI };
+          loops = [[...right, capE, ...ls, capS]];
+        }
+      }
+      if (!ccw) loops = loops.map((l) => slReverse(l));
+      if (!loops.length) this.w.add(`${C}: 공구가 커서 홈 벽 다듬질은 그리지 않음`, line);
+      const fq = Math.abs(Q('Q338'));
+      const per = loops.reduce((s, l) => s + l.length + 6, 4);
+      for (const z of loops.length ? this.slPasses(C, line, surface, up, bottom, fq, per) : []) {
+        if (!more()) break;
+        enter(z, firstTime);
+        firstTime = false;
+        for (const l of loops) {
+          if (!more()) break;
+          // 시작점에서 벽 시작점으로 반원 호(끝 접선이 벽 진행 방향)
+          const p0 = l[0]!;
+          this.feed = fFin;
+          const mu = (S[0] + p0.su) / 2;
+          const mv = (S[1] + p0.sv) / 2;
+          if (Math.hypot(p0.su - S[0], p0.sv - S[1]) > 1e-9) {
+            this.arc3(mu, mv, ccw ? Math.PI : -Math.PI, p0.su, p0.sv, z, line);
+            w = z;
+          }
+          for (const e of l) {
+            if (!more()) break;
+            if (e.arc) {
+              this.arc3(e.cu, e.cv, e.sweep, e.eu, e.ev, z, line);
+              w = z;
+            } else go(F, e.eu, e.ev, z);
+          }
+          if (more()) go(F, S[0], S[1], z);
+        }
+        go(Rp, ...here(), clear1);
+      }
+    }
+    go(Rp, ...here(), clear2);
     if (hardStop) this.guardStop(`${C}: 이동이 ${SL_MOVE_MAX}개를 넘어 그 뒤는 그리지 않음`, line);
     this.feed = saveFeed;
     this.known = 7;

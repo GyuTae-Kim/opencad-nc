@@ -1054,10 +1054,21 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
   return loops;
 }
 
+/** 요소 위 비율 t(0 시작 ~ 1 끝)의 점(50차 — 사이클 275 홈 가운데 선) */
+export function slAt(e: SlEl, t: number): [number, number] {
+  return at(e, t);
+}
+
 /** 고리 위에서 점에 가장 가까운 자리(요소 번호·비율·거리) */
 function nearestOn(loop: readonly SlEl[], u: number, v: number): { i: number; t: number; d: number } {
+  return slNearestIn(loop, u, v, 0, loop.length);
+}
+
+/** 요소 열의 [from, to) 안에서 점에 가장 가까운 자리(요소 번호·비율·거리) — 50차 사이클 276이 공구 축 좌표를 옮길 때 앞 자리 둘레만 먼저 본다 */
+export function slNearestIn(loop: readonly SlEl[], u: number, v: number, from: number, to: number): { i: number; t: number; d: number } {
   let best = { i: 0, t: 0, d: Infinity };
-  loop.forEach((e, i) => {
+  for (let i = Math.max(0, from); i < Math.min(loop.length, to); i++) {
+    const e = loop[i]!;
     let t: number;
     if (!e.arc) {
       const du = e.eu - e.su;
@@ -1073,7 +1084,7 @@ function nearestOn(loop: readonly SlEl[], u: number, v: number): { i: number; t:
     const p = at(e, t);
     const d = Math.hypot(p[0] - u, p[1] - v);
     if (d < best.d) best = { i, t, d };
-  });
+  }
   return best;
 }
 
