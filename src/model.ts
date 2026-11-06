@@ -252,8 +252,13 @@ export interface NcStats {
 export interface NcCompRun {
   first: number;
   end: number;
-  /** 1 왼쪽(G41·RL), 2 오른쪽(G42·RR) */
+  /** 1 왼쪽(G41·RL), 2 오른쪽(G42·RR) — 프로그램에 쓴 쪽 */
   side: 1 | 2;
+  /**
+   * 47차: 한 축 대칭(Siemens MIRROR·AMIRROR, Heidenhain 사이클 8 — 보정 평면 안 방향이 바뀐 좌표 변환) 아래라 컨트롤러가 보정 쪽을 바꿈.
+   * 표시 좌표의 이동은 이미 대칭된 것이라 보정 경로는 side의 반대쪽으로 계산한다(프로그램 좌표에서 계산해 대칭한 것과 같음)
+   */
+  mirror?: true;
   plane: NcPlane;
   /** 공구 반지름(표시 단위, 모르면 NaN) */
   radius: number;

@@ -1372,6 +1372,19 @@ export class Runner extends NcEmitter {
       this.w.add('배율이 0인 좌표 변환 — 변환을 끔');
       this.xf = null;
     }
+    this.compXfChanged();
+  }
+
+  /**
+   * 47차: 한 축 대칭(보정 평면 안 방향이 바뀐 변환) 아래의 반경 보정 쪽. Siemens는 설명서(Fundamentals 6FC5398-1BP40-3BA1, 03/2013, 12.7절 349~350쪽 —
+   * 대칭이면 컨트롤러가 G41/G42와 G2/G3을 새 가공 방향에 맞게 바꿈)대로 뒤집는다. 다른 방언(G51.1·음수 배율)은 공개 설명서 근거를 찾지 못해
+   * 프로그램 쪽 그대로 두고 알린다
+   */
+  protected override compMirrored(plane: number, line: number): boolean {
+    if (!this.xf || affinePlane(this.xf, plane).sign > 0) return false;
+    if (this.dialect === 'siemens') return true;
+    this.w.add('한 축 대칭(G51.1·음수 배율) 아래의 반경 보정(G41/G42) — 보정 쪽은 프로그램 그대로 셈(뒤집는 근거를 찾지 못함)', line);
+    return false;
   }
 
   /** 변환이 평면 plane을 그대로 두는지(원호를 원호로 옮길 수 있는지), 평면 안 방향 부호(거울이면 -1), 평면 안 배율이 고른지 */

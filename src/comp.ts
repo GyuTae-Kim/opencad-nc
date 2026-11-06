@@ -12,6 +12,7 @@
  * - 나오기: 보정을 끈 뒤 첫 이동은 마지막 요소 끝에서 수직으로 옮긴 점에서 프로그램 끝점까지 직선.
  * - 평면에 수직인 이동(Z만)은 그 자리에서 수직 축만 움직인다. 보정 평면 밖의 호는 현(직선)으로 본다.
  * - 반지름이 음수면 보정 쪽을 바꾼다(Fanuc의 음수 보정 값과 같은 뜻).
+ * - 한 축 대칭 아래의 구간(run.mirror — 47차)은 보정 쪽을 바꾼다: 이동은 이미 대칭된 표시 좌표라, 프로그램 좌표에서 G41/G42로 계산해 대칭한 것과 같게.
  * - 선반 공구 끝 R 보정(선반 모드의 XZ 구간): 노즈 반지름을 둥근 공구로 보고 위와 같이 노즈 중심 경로를 구한 뒤, 공구 방향(1~8)이 있으면
  *   구간 전체를 노즈 중심에서 가상 공구 끝(조정점)으로 옮긴다(LATHE_TIP). 들어가기의 시작점·나오기의 끝점은 보정 없는 프로그램 점 그대로다.
  * 조각마다 원래 이동 번호를 붙인다(재생·고르기에서 같은 줄로 이어진다). 다른 NC 해석기 코드를 보지 않고 일반 기하로 짰다.
@@ -317,7 +318,7 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const tipDir = lathe && run.orientation !== undefined ? LATHE_TIP[run.orientation] : undefined;
     buf.du = tipDir ? tipDir[0] * r : 0;
     buf.dv = tipDir ? tipDir[1] * r : 0;
-    let sigma = run.side === 1 ? 1 : -1;
+    let sigma = (run.side === 1) !== !!run.mirror ? 1 : -1;
     if (r < 0) {
       sigma = -sigma;
       r = -r;

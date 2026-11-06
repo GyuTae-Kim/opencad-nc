@@ -12,7 +12,7 @@
  * 좌표 변환: 7 원점 이동·TRANS DATUM AXIS/RESET, 8 대칭, 10 회전, 11 배율, 26 축별 배율(원점 둘레, 출력 변환 — 원호·사이클도 함께).
  * 지원하지 않음: PLANE·19 기울인 평면, 윤곽(SL) 사이클, 다음 블록 자료가 필요한 FK, PATTERN DEF FRAME·SEL PATTERN 점 표(경고).
  */
-import { composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
+import { affinePlane, composeAffine, diagAbout, isIdentityAffine, rotAbout, translateAffine, ZERO3 } from './affine';
 import { NcEmitter } from './emitter';
 import { ExprError, evalMprExpr } from './expr';
 import { FLAG_CYCLE, FLAG_MACHINE, MODAL_XF, MOVE_DRILL, MOVE_FEED, MOVE_RAPID, PLANE_AXES, type NcMachineOptions, type NcPlane, type NcProgram } from './model';
@@ -654,6 +654,14 @@ class HRunner extends NcEmitter {
   private compNote(line: number): void {
     const r = this.comp ? this.toolRadius() : undefined;
     this.noteComp(this.plane, line, r, r === undefined ? '' : `T${this.tool} R${this.toolDR ? ' + DR' : ''}`, this.tool);
+  }
+
+  /**
+   * 47차: 사이클 8(대칭)로 보정 평면 안 한 축이 뒤집혔으면 RL/RR을 표시 좌표에서 반대로 센다 — 설명서(TNC 310 사용 설명서 4/2003, 8.6절 140쪽
+   * "MIRROR IMAGE (Cycle 8)")대로 한 축 대칭은 가공 방향이 바뀌고(공구 경로가 대칭된 모양 그대로) 두 축 대칭은 그대로. 회전·배율과 함께여도 평면 안 방향으로 정한다
+   */
+  protected override compMirrored(plane: number): boolean {
+    return !!this.outXf && affinePlane(this.outXf, plane).sign < 0;
   }
 
   private cyclDef(T: string[], line: number): void {
