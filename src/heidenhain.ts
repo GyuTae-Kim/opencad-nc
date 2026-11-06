@@ -1997,7 +1997,9 @@ class HRunner extends NcEmitter {
     const saveFeed = this.feed;
     const fMill = Q('Q207', this.feed || this.autoFeed);
     const fPlunge = Q('Q206', fMill);
-    const climb = Q('Q351', 1) >= 0;
+    // 48차: 한 축 대칭(사이클 8) 아래에서도 고정 사이클의 가공 방향(하향·상향)은 그대로(TNC 310 사용 설명서 8.6절 140쪽 "except in fixed cycles",
+    // TNC 640 가공 사이클 설명서 34059x-17 사이클 208 절 104쪽 "대칭은 사이클의 밀링 꼴에 영향 없음") — 프로그램 좌표에서 방향을 바꿔 두면 대칭한 화면에서 원래 방향이 된다
+    const climb = (Q('Q351', 1) >= 0) !== this.cycleMirrored();
     const cu0 = this.pos[a0]!;
     const cv0 = this.pos[a1]!;
     if (depth === 0) {
