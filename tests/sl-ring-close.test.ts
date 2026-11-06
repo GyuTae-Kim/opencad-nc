@@ -3,8 +3,9 @@
  * 1) 점으로 준 원호(가공 면 쪽으로 볼록하고 반지름이 d 이하)의 끝이 오목한 꼭짓점이면 그 둘레 반지름 d 호가 떨어진 곡선의 일부다 —
  *    50차까지는 건너뛴 자리를 곧게 이어 그 호가 빠졌다. 고리가 끊기면 그 단계에서 멈춰 안쪽을 깎지 않은 채 남겼고(잇지 못함 알림),
  *    끊기지 않아도 곧은 잇기가 남아 공구 중심이 경계에 d보다 가까이 들어갔다(벽을 깎아 들어감).
- * 2) 볼록한 꼭짓점의 아주 얇은 제비꼬리 조각(원호 끝의 거의 곧은 꼭짓점, 꼭짓점이 반올림된 원꼴 다각형)이 판정 여유 안이라 남아
- *    사슬이 그 가지로 들어가 끊겼다 — 끊긴 가지를 빼고 다시 잇는다.
+ * 2) 볼록한 꼭짓점의 아주 얇은 제비꼬리 조각(원호 끝의 거의 곧은 꼭짓점, 꼭짓점이 반올림된 원꼴 다각형, 요소 천 개 넘는 정다각형의 바깥 고리)이
+ *    남기는 판정 여유(크기의 10⁻⁷) 안이라 남아 사슬이 그 가지로 들어가 끊기거나 고리를 통째로 잃었다 — 여유를 10⁻⁹로 좁히고,
+ *    그래도 잇지 못한 사슬이 있으면 끊긴 가지를 빼고 다시 잇는다.
  * 고친 고리의 바름: 요소 위 점의 경계까지 거리 = d, 가공 면 안, 이어진 닫힌 고리, 넓이 합이 단계마다 줄어듦. 버려질 팔을 셈해도 같은 답.
  */
 import { describe, expect, it } from 'vitest';
@@ -156,22 +157,25 @@ describe('51차: 볼록한 꼭짓점의 얇은 제비꼬리 조각(끊긴 가지
     const L = slLevels(R, 0.5, 0.25, 2000);
     expect(L.capped).toBe(false);
     expect(L.levels.length).toBeGreaterThan(119);
-    // 제비꼬리 둘레 조각을 잇기 허용 안에서 이어 붙여 그만큼까지 어긋난다
-    expect(check(R, L.levels, 0.5, 0.25)).toBeLessThan(R.eps * 1e3);
+    expect(check(R, L.levels, 0.5, 0.25)).toBeLessThan(1e-6);
   });
-  it('꼭짓점을 소수 둘째 자리로 반올림한 250각형(50차는 116겹에서 멈춤)', () => {
-    const R = pocket(jagged(250, 0, 0, 0, 0, 2));
-    const L = slLevels(R, 0.5, 0.3, 2000);
-    expect(L.capped).toBe(false);
-    expect(L.levels).toHaveLength(132);
-    // 엉킨 조각을 잇기 허용(크기의 10⁻⁶) 안에서 이어 붙여 그만큼까지 어긋난다
-    expect(check(R, L.levels, 0.5, 0.3)).toBeLessThan(R.eps * 1e3);
+  it('꼭짓점을 소수 둘째 자리로 반올림한 250각형·400각형(50차는 116겹·100겹에서 멈춤)', () => {
+    for (const n of [250, 400]) {
+      const R = pocket(jagged(n, 0, 0, 0, 0, 2));
+      const L = slLevels(R, 0.5, 0.3, 2000);
+      expect(L.capped, `${n}`).toBe(false);
+      expect(L.levels, `${n}`).toHaveLength(132);
+      expect(check(R, L.levels, 0.5, 0.3)).toBeLessThan(1e-6);
+    }
   });
-  it('갈림길에서 사슬이 닫히지 못하는 단계가 남으면(반올림이 거친 400각형 가운데 가까이) 여전히 그 앞 고리까지 그리고 알린다', () => {
-    const R = pocket(jagged(400, 0, 0, 0, 0, 2));
-    const L = slLevels(R, 0.5, 0.3, 2000);
-    expect(L.capped).toBe('open');
-    expect(L.levels.length).toBeGreaterThan(100);
-    expect(check(R, L.levels, 0.5, 0.3)).toBeLessThan(R.eps * 1e3);
+  it('정 1000각형의 바깥 고리(d 0.5): 꼭짓점마다 남던 얇은 제비꼬리 없이 요소 1000개 고리 하나(50차는 길이 0.006 삼각형 하나만)', () => {
+    const R = pocket(jagged(1000, 0));
+    const L = slOffset(R, 0.5);
+    expect(L).toHaveLength(1);
+    expect(L[0]).toHaveLength(1000);
+    // 떨어진 정다각형의 둘레 = 2n · 변심거리 · tan(π/n)
+    const a = 40 * Math.cos(Math.PI / 1000) - 0.5;
+    expect(Math.abs(L[0]!.reduce((s, e) => s + Math.hypot(e.eu - e.su, e.ev - e.sv), 0) - 2000 * a * Math.tan(Math.PI / 1000))).toBeLessThan(1e-9);
+    expect(check(R, [L], 0.5, 0)).toBeLessThan(1e-12);
   });
 });
