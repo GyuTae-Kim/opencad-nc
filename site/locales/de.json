@@ -1275,5 +1275,19 @@
   "CYCLE71: 가공 종류(_VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE71: ungültige Bearbeitungsart (_VARI = {0}) (Alarm 61002) — nicht gezeichnet",
   "CYCLE71: 면 크기(_LENG·_WID)가 없음 — 그리지 않음": "CYCLE71: keine Flächengröße (_LENG · _WID) — nicht gezeichnet",
   "CYCLE71: 공구 반지름을 몰라 폭 절입(_MIDA)을 정할 수 없음 — 그리지 않음": "CYCLE71: Werkzeugradius unbekannt, daher ist die Breitenzustellung (_MIDA) nicht bestimmbar — nicht gezeichnet",
-  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: Rückzugsweg (_FDP) ist 0 — laut Handbuch muss er größer als 0 sein (mit 0 gezeichnet)"
+  "CYCLE71: 물러남(_FDP)이 0 — 설명서는 0보다 커야 한다고 함(0으로 그림)": "CYCLE71: Rückzugsweg (_FDP) ist 0 — laut Handbuch muss er größer als 0 sein (mit 0 gezeichnet)",
+  "지름·반지름 지정(DIAMON·DIAMOF) 전의 X를 지름으로 봄 — 컨트롤러 기본값(기계 데이터 MD20150)에 따라 반지름일 수 있음": "X vor einer Durchmesser-/Radiusangabe (DIAMON · DIAMOF) wird als Durchmesser gelesen — je nach Grundstellung der Steuerung (Maschinendatum MD20150) kann es ein Radius sein",
+  "DAC·DIC·RAC·RIC는 가로 축 X와 I·I1에만 지름·반지름으로 읽음 — {0}은(는) 절대·증분으로만 봄": "DAC · DIC · RAC · RIC werden nur für die Planachse X und für I · I1 als Durchmesser oder Radius gelesen — {0} wird nur absolut oder inkrementell gelesen",
+  "CYCLE97: 가공 종류(VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음": "CYCLE97: ungültige Bearbeitungsart (VARI = {0}) (Alarm 61002) — nicht gezeichnet",
+  "CYCLE97: 나사 피치가 맞지 않음(PIT = {0}, MPIT = {1})(알람 61001) — 그리지 않음": "CYCLE97: ungültige Gewindesteigung (PIT = {0}, MPIT = {1}) (Alarm 61001) — nicht gezeichnet",
+  "CYCLE97: 나사 피치(PIT·MPIT)가 없음 — 그리지 않음": "CYCLE97: keine Gewindesteigung (PIT · MPIT) — nicht gezeichnet",
+  "CYCLE97: 나사 크기 MPIT = {0}의 피치를 몰라 나사 이송 없이 그림": "CYCLE97: Steigung der Gewindegröße MPIT = {0} unbekannt — ohne Gewindevorschub gezeichnet",
+  "CYCLE97: 나사 깊이(TDEP)가 없음 — 그리지 않음": "CYCLE97: keine Gewindetiefe (TDEP) — nicht gezeichnet",
+  "CYCLE97: 나사 시작과 끝(SPL·FPL·DM1·DM2)이 같음 — 그리지 않음": "CYCLE97: Gewindeanfangs- und -endpunkt (SPL · FPL · DM1 · DM2) sind gleich — nicht gezeichnet",
+  "CYCLE97: 다듬질 여유(FAL)가 나사 깊이(TDEP)보다 큼 — 거친 깎기 없이 다듬질만 그림": "CYCLE97: Schlichtaufmaß (FAL) ist größer als die Gewindetiefe (TDEP) — nur der Schlichtschnitt ohne Schruppen gezeichnet",
+  "CYCLE97: 거친 깎기 횟수(NRC)가 없어 한 번으로 봄": "CYCLE97: keine Anzahl der Schruppschnitte (NRC) — ein Schnitt angenommen",
+  "CYCLE97: 패스가 {0}번을 넘어 그 뒤 패스는 건너뜀": "CYCLE97: mehr als {0} Durchgänge — die übrigen Durchgänge werden übersprungen",
+  "CYCLE97: 물러나는 길(나사 끝에서 _VRT 밖으로 G0, 다음 패스 시작으로 G0)은 정해 그림": "CYCLE97: Rückzugsweg (G0 um _VRT nach außen am Gewindeende, G0 zum Anfang des nächsten Durchgangs) festgelegt gezeichnet",
+  "CYCLE97: 측면 절입(IANG)은 패스마다 깊이 × tan IANG만큼 깎는 방향으로 옮겨 그림 — 설명서는 그림만 있어 정한 것": "CYCLE97: Flankenzustellung (IANG) wird je Durchgang um Tiefe × tan IANG in Schnittrichtung versetzt gezeichnet — festgelegt, da das Handbuch nur Abbildungen zeigt",
+  "CYCLE97: 가로 나사(테이퍼 각 45도 넘음)는 바깥 나사를 긴 축 음의 쪽으로 절입하는 것으로 정해 그림": "CYCLE97: Plangewinde (Kegelwinkel über 45 Grad) — Außengewinde wird mit Zustellung in negativer Längsachsenrichtung gezeichnet (festgelegt)"
 }
