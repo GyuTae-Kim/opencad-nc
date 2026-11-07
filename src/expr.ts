@@ -47,7 +47,7 @@ const FUNCS: Record<string, (x: number) => number> = {
 export class ExprError extends Error {}
 
 /**
- * 53차: 식 겹침 한도 — 괄호·부호·변수 참조·거듭제곱이 이보다 깊게 겹치면 ExprError(읽을 수 없는 블록·계산할 수 없는 식으로 알림).
+ * 53차: 식 겹침 한도 — 괄호·함수 인수·변수 참조(G-code는 부호도)가 이보다 깊게 겹치면 ExprError(읽을 수 없는 블록·계산할 수 없는 식으로 알림).
  * 셈은 겹칠 때마다 함수를 다시 불러 겹침이 1천 겹쯤이면 호출 쌓기가 넘쳐(RangeError) 파일을 통째로 열지 못했다(퍼징에서 찾음).
  * 실제 프로그램의 식은 몇 겹이라 200겹이면 넉넉하고, 한 겹이 함수 여덟 개 안팎이라 브라우저 워커의 쌓기 안에 든다
  */
@@ -55,8 +55,9 @@ export const EXPR_DEPTH_MAX = 200;
 export const EXPR_TOO_DEEP = `식이 ${EXPR_DEPTH_MAX}겹보다 깊게 겹침`;
 
 /**
- * 판재 파일(MPR·PGI·KDT XML) 값의 크기 한도(10⁷ — 판 크기·좌표·지름·개수 모두 mm·개). WangShi 식 값은 전부터 이 한도였고(wangs.ts),
- * 53차에 글자 그대로 쓴 수와 MPR 값에도 같게 했다 — 1e308 같은 값이 화면 좌표(32비트 실수)에서 무한이 되고, 구멍 개수는 메모리를 다 썼다(퍼징에서 찾음)
+ * 판재 파일(MPR·PGI·KDT XML) 값의 크기 한도(10⁷ — 판 크기·좌표·지름 mm). WangShi 식 값은 전부터 이 한도였고(wangs.ts),
+ * 53차에 글자 그대로 쓴 수와 MPR 값에도 같게 했다 — 1e308 같은 값이 화면 좌표(32비트 실수)에서 무한이 되었다(퍼징에서 찾음).
+ * MPR 구멍 개수 AN은 파일 전체 구멍 한도(mpr.ts HOLE_MAX)가 따로 막아 이 한도를 쓰지 않는다
  */
 export const PANEL_VALUE_MAX = 1e7;
 export const PANEL_TOO_BIG = '값이 너무 큼(판재 값 한도 넘음)';
@@ -89,7 +90,7 @@ const FANUC_ROUND: Record<string, (x: number) => number> = {
  * 빈 변수(#0·정의 안 된 변수)는 산술에서 0으로 본다. 단일 변수 값 그대로면 undefined를 돌려줄 수 있다(낱말 생략용).
  */
 export class GExpr {
-  /** 53차: 지금 겹침(unary·varRef·power에 들어갈 때 하나씩 — EXPR_DEPTH_MAX) */
+  /** 53차: 지금 겹침(unary·varRef에 들어갈 때 하나씩 — 괄호·함수 인수는 unary에서 다시 들어온다, EXPR_DEPTH_MAX) */
   private depth = 0;
 
   constructor(

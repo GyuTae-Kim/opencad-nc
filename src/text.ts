@@ -87,9 +87,6 @@ export function sourceText(src: NcSource): string {
   return decoder(src.encoding).decode(src.bytes);
 }
 
-/** 줄 나눔 글자(정규식의 여러 줄 모드가 줄 끝으로 보는 것 — LF·CR·줄 구분자 U+2028·문단 구분자 U+2029) */
-const LINE_BREAKS = [10, 13, 0x2028, 0x2029].map((c) => String.fromCharCode(c));
-
 /**
  * 53차: 판별용 글 앞부분 — 64자 넘게 이어진 공백(줄 바꿈 포함)을 줄 바꿈 하나(줄 바꿈이 없으면 빈칸 하나)로 줄인다.
  * 판별 정규식은 `^\s*낱말`(여러 줄 모드)처럼 줄 첫머리 공백을 건너뛰는데, \s가 줄 바꿈도 받아 빈 줄(CR) 수만 개가 이어지면
@@ -97,7 +94,8 @@ const LINE_BREAKS = [10, 13, 0x2028, 0x2029].map((c) => String.fromCharCode(c));
  * "공백이 있음"은 그대로라 판별 결과는 같다. 그런 긴 공백이 없으면 같은 글을 그대로 돌려준다
  */
 export function detectionHead(s: string): string {
-  return s.replace(/\s{65,}/g, (w) => (LINE_BREAKS.some((c) => w.includes(c)) ? '\n' : ' '));
+  // 줄 나눔 글자(정규식의 여러 줄 모드가 줄 끝으로 보는 것 — LF·CR·줄 구분자 U+2028·문단 구분자 U+2029)
+  return s.replace(/\s{65,}/g, (w) => ([10, 13, 0x2028, 0x2029].some((c) => w.includes(String.fromCharCode(c))) ? '\n' : ' '));
 }
 
 /** 바이트가 올바른 UTF-8인지 본다(문자열을 만들지 않는다). 0x80 이상이 없으면 UTF-8로 본다 */
