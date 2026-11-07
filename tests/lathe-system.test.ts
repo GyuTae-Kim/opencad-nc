@@ -8,6 +8,7 @@ import { detectLatheSystem, parseGcode } from '../src/gcode';
 import { moveEnd, MOVE_FEED, MOVE_RAPID, type NcProgram } from '../src/model';
 import { parseForView } from '../src/app/payload';
 import { createDoc, noticeViews } from '../src/app/doc';
+import { plainText } from '../src/app/filetext';
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 + 0;
 const xz = (p: NcProgram): number[][] => {
@@ -175,9 +176,9 @@ M30`, { latheSystem: 'B' });
       ['lathe-auto', undefined],
       ['lathe-system-B', 'info'],
     ]);
-    expect(v[1]!.text).toContain('B 체계로 읽었습니다');
+    expect(plainText(v[1]!.text)).toContain('B 체계로 읽었습니다');
     const hint = createDoc('h.nc', 1, parseForView('h.nc', enc.encode('O1\nT0101\nG21 G18 G99\nG96 S200 M3\nG0 X50 Z2\nG91 G1 W-10 F0.2\nG90\nM30')));
-    expect(noticeViews(hint).find((n) => n.key === 'lathe-system-A')?.text).toBe(
+    expect(plainText(noticeViews(hint).find((n) => n.key === 'lathe-system-A')?.text ?? [])).toBe(
       'Fanuc 선반 G 코드 B·C 체계일 수 있습니다(G91) — A 체계(G90·G92·G94 단순 사이클)로 읽었습니다.',
     );
     const forced = parseForView('b.nc', enc.encode(B_FILE), { latheSystem: 'A' });

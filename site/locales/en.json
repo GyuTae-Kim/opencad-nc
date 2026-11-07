@@ -1379,5 +1379,6 @@
   "좌표가 수가 아니거나 너무 커서 이 이동은 그리지 않음": "Coordinate is not a number or too large — this move is not drawn",
   "이동 없이 {0}블록 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Stopped after executing more than {0} blocks without any move (possibly an infinite loop)",
   "읽을 수 없는 블록을 {0}번 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Stopped after executing unreadable blocks more than {0} times (possibly an infinite loop)",
-  "값이 너무 큼(판재 값 한도 넘음)": "Value too large (exceeds the panel value limit)"
+  "값이 너무 큼(판재 값 한도 넘음)": "Value too large (exceeds the panel value limit)",
+  "같은 상태(변수·반복 횟수·부르기)로 같은 줄을 되풀이하는 끝없는 반복이라 멈춤": "Stopped: an infinite loop that repeats the same blocks in the same state (variables, repeat counts, calls)"
 }

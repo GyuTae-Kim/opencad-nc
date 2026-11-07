@@ -7,6 +7,7 @@ import { catalogs, currentLanguage, languageUrl, languages, translate } from '..
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
 import { noticeViews } from '../src/app/doc';
+import { plainText } from '../src/app/filetext';
 
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); vi.unstubAllGlobals(); });
@@ -182,7 +183,7 @@ describe('language URLs and UI presentation', () => {
     const ui = ['체계 바꾸기', '선반 G 코드', '선반 G 코드 체계', '자동 (A 체계)', '자동 (B 체계)', '자동 (C 체계)', 'A 체계', 'B 체계', 'C 체계',
       'Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm'];
     for (const {code} of languages.filter(item => item.code !== 'ko'))
-      for (const text of [...texts, ...notices.map((n) => n.text), ...ui]) expect(translate(text, code), `${code}: ${text}`).not.toMatch(/[가-힣]/);
+      for (const text of [...texts, ...notices.map((n) => plainText(n.text)), ...ui]) expect(translate(text, code), `${code}: ${text}`).not.toMatch(/[가-힣]/);
     expect(translate('G5.2 NURBS: 조정점 2개가 계수 L3보다 적음 — 조정점을 직선으로 이음', 'en')).toBe('G5.2 NURBS: 2 control points are fewer than the order L3 — control points joined with straight lines');
   });
 

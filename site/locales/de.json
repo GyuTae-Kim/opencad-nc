@@ -1379,5 +1379,6 @@
   "좌표가 수가 아니거나 너무 커서 이 이동은 그리지 않음": "Koordinate ist keine Zahl oder zu groß — diese Bewegung wird nicht gezeichnet",
   "이동 없이 {0}블록 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Abbruch nach mehr als {0} ausgeführten Sätzen ohne Bewegung (Endlosschleife möglich)",
   "읽을 수 없는 블록을 {0}번 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Abbruch, nachdem nicht lesbare Sätze mehr als {0}-mal ausgeführt wurden (Endlosschleife möglich)",
-  "값이 너무 큼(판재 값 한도 넘음)": "Wert zu groß (über der Grenze für Plattenwerte)"
+  "값이 너무 큼(판재 값 한도 넘음)": "Wert zu groß (über der Grenze für Plattenwerte)",
+  "같은 상태(변수·반복 횟수·부르기)로 같은 줄을 되풀이하는 끝없는 반복이라 멈춤": "Abbruch: Endlosschleife, die dieselben Sätze im selben Zustand wiederholt (Variablen, Wiederholungszähler, Aufrufe)"
 }

@@ -54,6 +54,7 @@ vi.mock('../../src/app/client', async () => {
 
 import { NcViewerApp } from '../../src/app/app';
 import { jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText } from '../../src/app/doc';
+import { plainText } from '../../src/app/filetext';
 import { RecentStore } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 
@@ -167,8 +168,10 @@ describe('여러 파일을 한 작업으로 열기', () => {
     const job = { main: 'main.nc', files: ['main.nc', 'O1001.nc', '1002.nc'], starts: [0, 11, 20], skipped: [] };
     expect([5, 11, 12, 15, 20, 21].map((l) => lineNumberText({ job }, l))).toEqual(['6', '', '1', '4', '', '1']);
     expect(lineNumberText({ job: null }, 15)).toBe('16');
-    expect(lineAtLabel({ job }, 21)).toBe('1002.nc · 1번 줄');
-    expect(lineLabel({ job }, 3)).toBe('main.nc · 줄 4');
+    // 파일 이름은 파일 글(번역하지 않는 자리 — 54차)
+    expect(lineAtLabel({ job }, 21)).toEqual([{ file: '1002.nc' }, ' · 1번 줄']);
+    expect(plainText(lineLabel({ job }, 3))).toBe('main.nc · 줄 4');
+    expect(lineLabel({ job: null }, 3)).toEqual(['줄 4']);
     expect(jobLineOf({ ...job, files: ['main.nc'] }, 3)).toBeNull();
     // ":4"(줄로 가기): 고른 줄이 있는 파일의 4번 줄, 그 파일 범위 밖이면 그 파일 끝
     expect(jobLineToGlobal(job, 1, 4)).toBe(15);

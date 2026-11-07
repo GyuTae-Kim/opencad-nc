@@ -28,8 +28,8 @@ describe('측정 안내(휴대폰·터치)', () => {
 
   it('상태 막대 요약도 손가락 기기면 Esc 설명을 뺀다', () => {
     const d = { scene: { units: 'mm' }, measure: null } as unknown as Parameters<typeof selectionSummary>[0];
-    expect(selectionSummary(d, true)).toBe(statusMeasureHint(false));
-    expect(selectionSummary(d, true, true)).toBe(statusMeasureHint(true));
+    expect(selectionSummary(d, true)).toEqual([statusMeasureHint(false)]);
+    expect(selectionSummary(d, true, true)).toEqual([statusMeasureHint(true)]);
   });
 
   it('결과 글: 거리(단위)와 dx·dy·dz', () => {
