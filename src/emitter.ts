@@ -19,6 +19,7 @@ import {
   FLAG_PER_REV,
   FLAG_START_EST,
   FLAG_TOOL_LENGTH,
+  MODAL_PLANE,
   MOVE_ARC,
   MOVE_FEED,
   MOVE_RAPID,
@@ -62,6 +63,8 @@ interface CompEvent {
   line: number;
   /** 선반 모드만: 공구 방향과 그 출처, 앱 선반 공구 표 열쇠 */
   tip?: CompTip;
+  /** 47차: 한 축 대칭(평면 안 방향이 바뀐 변환)이라 표시 좌표에서 프로그램의 반대쪽으로 보정(compMirrored) */
+  mirror?: true;
 }
 
 /** 선반 반경 보정의 공구 끝: 앱 선반 공구 표 열쇠(공구 번호)와 공구 방향(LinuxCNC 0~9, 모르면 없음) */
@@ -135,6 +138,11 @@ export class NcEmitter {
   private missingPrograms = new Set<string>();
   /** 아래에서 위로 가공한 사이클의 이동 번호 구간([처음, 끝) 짝 — markFromBelow, 43차) */
   private fromBelow: number[] = [];
+  /**
+   * 47차: 공구 축이 작업 평면을 따르는지(Siemens — G17 진입 Z·G18 진입 Y·G19 진입 X, Heidenhain — TOOL CALL 축). 그러면 평면이 G18·G19(공구 축 Y·X)인
+   * 이동은 표시 Z가 평면 안 좌표라 급속 안전 검사(가장 깊은 절삭·공작물 윗면)를 하지 않는다. Fanuc 계열은 평면과 상관없이 공구 축 Z(false)
+   */
+  protected toolAxisByPlane = false;
 
   /**
    * 이동 first부터 지금까지를 아래에서 위로(표시 좌표 +Z 쪽으로) 가공한 사이클의 몫으로 적는다(43차). 급속 안전 검사
@@ -371,6 +379,7 @@ export class NcEmitter {
     this.outInv = inv;
     if (inv) applyAffine(inv, d, this.pos);
     else this.pos.set(d);
+    this.compXfChanged();
   }
 
   /** 변환 전 좌표 → 쌓는(화면) 좌표 */
@@ -1086,9 +1095,35 @@ export class NcEmitter {
     const last = evs[evs.length - 1];
     if (!last && this.comp === 0) return;
     const ev: CompEvent = { move: this.mb.count, side: this.comp, plane, radius, source, d, tool: this.tool, line, ...(tip ? { tip } : {}) };
+    if ((this.comp === 1 || this.comp === 2) && this.compMirrored(plane, line)) ev.mirror = true;
     const sameTip = (a?: CompTip, b?: CompTip): boolean => a?.tool === b?.tool && a?.orientation === b?.orientation && a?.source === b?.source;
-    if (last && last.side === ev.side && last.plane === ev.plane && last.radius === ev.radius && last.d === ev.d && last.tool === ev.tool && sameTip(last.tip, ev.tip)) return;
+    if (last && last.side === ev.side && last.plane === ev.plane && last.radius === ev.radius && last.d === ev.d && last.tool === ev.tool && sameTip(last.tip, ev.tip) && last.mirror === ev.mirror) return;
     if (last && last.move === ev.move) evs[evs.length - 1] = ev;
+    else evs.push(ev);
+  }
+
+  /**
+   * 47차: 보정 평면 plane에서 지금 좌표 변환이 평면 안 방향을 바꾸면(한 축 대칭 — 두 축 대칭·회전은 바꾸지 않음) 표시 좌표의 보정 쪽을
+   * 프로그램의 G41/G42(RL/RR)와 반대로 셀지. 방언마다 설명서 근거가 있을 때만 true(해석기가 덮어쓴다 — 기본은 그대로)
+   */
+  protected compMirrored(_plane: number, _line: number): boolean {
+    return false;
+  }
+
+  /**
+   * 47차: 좌표 변환을 바꾼 뒤 해석기가 부른다. 보정이 켜진 채 대칭 여부가 바뀌었으면 다음 이동부터 쪽을 바꾼 보정 구간을 잇는다
+   * (보정 경로는 앞 구간이 끝난 자리에서 이어진다 — comp.ts의 이어지는 구간)
+   */
+  protected compXfChanged(): void {
+    const evs = this.compEvents;
+    const last = evs[evs.length - 1];
+    if (!last || (last.side !== 1 && last.side !== 2)) return;
+    const mirror = this.compMirrored(last.plane, last.line);
+    if (!!last.mirror === mirror) return;
+    const ev: CompEvent = { ...last, move: this.mb.count };
+    if (mirror) ev.mirror = true;
+    else delete ev.mirror;
+    if (last.move === ev.move) evs[evs.length - 1] = ev;
     else evs.push(ev);
   }
 
@@ -1114,6 +1149,7 @@ export class NcEmitter {
         }
       }
       const run: NcCompRun = { first: ev.move, end, side: ev.side, plane: (ev.plane as NcPlane) ?? 0, radius: radius ?? NaN, source: radius === undefined ? '' : source, line: ev.line };
+      if (ev.mirror) run.mirror = true;
       if (ev.tip) {
         run.tool = ev.tip.tool;
         if (ev.tip.orientation !== undefined) {
@@ -1359,9 +1395,12 @@ export class NcEmitter {
       const minCut = down[2]!;
       const top = o.stock ? o.stock.max[2] : undefined;
       const fz = (v: number): string => String(Number(v.toFixed(this.displayInch ? 4 : 3)));
+      // 47차: 공구 축이 평면을 따르는 해석기에서 평면 G18·G19(공구 축 Y·X)의 급속은 검사하지 않는다(가장 깊은 절삭은 그대로 모든 절삭으로 잰다 — G17 경고는 그대로)
+      const sideAxis = this.toolAxisByPlane;
       for (let i = 0; i < moves.count; i++) {
         const fl = moves.flags[i]!;
         if (moves.kind[i] !== MOVE_RAPID || (fl & FLAG_MACHINE_EST && !(fl & FLAG_START_EST)) || below?.[i]) continue;
+        if (sideAxis && (moves.modal[i]! & MODAL_PLANE) !== 0) continue;
         const k = i * 3;
         const z1 = pts[k + 5]!;
         const line = moves.line[i]!;

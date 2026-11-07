@@ -196,6 +196,8 @@ class SiemensRunner extends Runner {
   private warnedWord = new Set<string>();
   /** 사이클 설정 _ZSD[n](38차 — 프로그램이 대입한 것만, 없으면 0) */
   private zsd = new Map<number, number>();
+  /** 47차: 공구 데이터 $TC_DP6(r)·$TC_DP15(w) — 열쇠 "공구,날", 프로그램이 대입한 것만(표시 단위) */
+  private tcdp = new Map<string, { r?: number; w?: number }>();
   /** DEF STRING 변수의 글 값(44차 — CYCLE95 윤곽 이름 NPP에만 쓴다) */
   private strVars = new Map<string, string>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
@@ -209,6 +211,9 @@ class SiemensRunner extends Runner {
     super(src, opts, 'siemens', head);
     this.diam = this.xMul === 0.5 ? 'DIAMON' : 'DIAMOF';
     this.diamSet = opts.latheDiameter !== undefined;
+    // 47차: 작업 평면이 진입 방향(공구 축)을 정한다 — Fundamentals(6FC5398-1BP40-3BA1) 8.2절 154쪽 G17 Z·G18 Y·G19 X,
+    // 155쪽 공구 길이 보정은 프레임으로 돌리지 않은 평면 기준(급속 안전 검사 — emitter.ts)
+    this.toolAxisByPlane = true;
   }
 
   // ───────────────────── 지름·반지름 지정(45차) ─────────────────────
@@ -1077,6 +1082,10 @@ class SiemensRunner extends Runner {
           this.zsd.set(k, this.expr(sc));
           continue;
         }
+        if (sc.peek() === '[' && (id === '$TC_DP6' || id === '$TC_DP15')) {
+          this.tcdpAssign(id, sc, line);
+          continue;
+        }
         if (sc.peek() === '[') {
           // FA[X]=… 꼴: 값을 읽고 버린다
           const e = sc.s.indexOf(']', sc.i);
@@ -1425,6 +1434,64 @@ class SiemensRunner extends Runner {
     } catch {
       sc.i = sc.s.length;
     }
+  }
+
+  // ───────────────────── 공구 데이터 $TC_DP(47차) ─────────────────────
+  // Fundamentals(6FC5398-1BP40-3BA1, 03/2013) 90쪽: 공구 반지름 = $TC_DP6(기하) + $TC_DP15(마모). 268·281·285·287쪽 예처럼 프로그램이
+  // $TC_DPn[공구 번호, 날 번호] = 값으로 대입한 것만 공구 표처럼 쓴다(기계에 둔 공구 데이터는 모름). 73쪽: D가 없으면 날은 기계 데이터가 정하므로 쓰지 않는다.
+  // 값은 지금 프로그램 단위로 본다(기본 체계 — 기계 데이터 — 를 모름). 길이 $TC_DP3 등 다른 번호는 전처럼 무시하고 알린다
+
+  /** $TC_DP6·$TC_DP15[t, d] = 값. 첨자가 [공구 번호, 날 번호](양의 정수 둘) 꼴이 아니면 무시하고 알린다 */
+  private tcdpAssign(id: string, sc: Scan, line: number): void {
+    const start = sc.i;
+    let t = NaN;
+    let d = NaN;
+    try {
+      sc.i++;
+      t = this.expr(sc);
+      if (!sc.eat(',')) throw new ExprError(', 없음');
+      d = this.expr(sc);
+      if (!sc.eat(']') || !sc.eat('=')) throw new ExprError('] = 없음');
+    } catch {
+      t = NaN;
+    }
+    if (!(Number.isInteger(t) && Number.isInteger(d) && t >= 0 && d >= 1)) {
+      sc.i = start;
+      const e = sc.s.indexOf(']', sc.i);
+      sc.i = e < 0 ? sc.s.length : e + 1;
+      if (sc.eat('=')) this.skipValue(sc);
+      this.warnOnce(`${id}[]`, `${id}: 첨자가 [공구 번호, 날 번호] 꼴이 아님 — 무시함`, line);
+      return;
+    }
+    const v = this.expr(sc) * this.scale;
+    const k = `${t},${d}`;
+    const e = this.tcdp.get(k) ?? {};
+    if (id === '$TC_DP6') e.r = v;
+    else e.w = v;
+    this.tcdp.set(k, e);
+  }
+
+  /** 프로그램이 $TC_DP6(+ $TC_DP15)로 준 지금 공구·날 d의 반지름(표시 단위)과 출처. 날을 모르거나(D 없음) 대입이 없으면 undefined */
+  private tcRadius(d: number | undefined): { r: number; src: string } | undefined {
+    if (d === undefined || d < 1 || this.tool < 0) return undefined;
+    const e = this.tcdp.get(`${this.tool},${d}`);
+    if (e?.r === undefined) return undefined;
+    return { r: e.r + (e.w ?? 0), src: `$TC_DP6${e.w !== undefined ? ' + $TC_DP15' : ''} T${this.tool} D${d}` };
+  }
+
+  /** 반경 보정 반지름: 옵션 공구 표 다음에 $TC_DP(gcode.ts compChange) */
+  protected override programRadius(d: number | undefined): { r: number; src: string } | undefined {
+    return this.tcRadius(d);
+  }
+
+  /** 사이클의 공구 반지름: 옵션 공구 표가 없으면 $TC_DP, 그다음 공구 주석 지름(gcode.ts) */
+  protected override toolRadiusFor(d: number | undefined): number | undefined {
+    const has = (t?: { radius?: number; diameter?: number }): boolean => !!t && (t.radius !== undefined || t.diameter !== undefined);
+    if (!has(d !== undefined && d >= 0 ? this.o.toolTable?.[d] : undefined) && !has(this.o.toolTable?.[this.tool])) {
+      const p = this.tcRadius(d);
+      if (p) return p.r;
+    }
+    return super.toolRadiusFor(d);
   }
 
   /** NAME = 값: 변수면 대입, 주소면 낱말로 */

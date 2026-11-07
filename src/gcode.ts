@@ -580,6 +580,8 @@ const SIEMENS_MARKS: RegExp[] = [
   /^\s*(?:N\d+\s+)?(?:TRANS|ROT|MIRROR|SCALE)\s+(?:[XYZ][-+.\d]|RPL\s*=)/im,
   /(?:^|\s)G(?:64[1-5]|700|710|500|50[5-9]|5[1-9]\d)(?![\d.])/im,
   /^\s*(?:N\d+\s+)?R\d+\s*=/im,
+  // 47차: 공구 데이터 시스템 변수 대입 $TC_DP6[1,1]= 꼴(설명서 예는 프로그램 머리에 이것만 둔다)
+  /\$TC_[A-Z]+\d*\s*\[/i,
 ];
 
 /** 판별용 코드 글: 괄호 주석과 ; 주석을 뗀다 */
@@ -604,7 +606,7 @@ function siemensMarks(code: string): number {
 
 /**
  * Siemens Sinumerik 표지: %_N_…_MPF/SPF 머리·$PATH, MCALL, CYCLE8x(…)·HOLES·CYCLE800, T="이름", CR=, =AC(…)·=IC(…),
- * GOTOF/GOTOB, DEF REAL/INT, SUPA, TRANS/ATRANS/AROT/AMIRROR, G64x, G700/G710, R 변수 대입. 주석(; …·괄호 주석)은 떼고 본다
+ * GOTOF/GOTOB, DEF REAL/INT, SUPA, TRANS/ATRANS/AROT/AMIRROR, G64x, G700/G710, R 변수 대입, $TC_…[…] 공구 데이터 대입. 주석(; …·괄호 주석)은 떼고 본다
  */
 export function looksSiemens(head: string): boolean {
   return siemensHeader(head) || siemensMarks(detectCode(head)) > 0;
@@ -1372,6 +1374,19 @@ export class Runner extends NcEmitter {
       this.w.add('배율이 0인 좌표 변환 — 변환을 끔');
       this.xf = null;
     }
+    this.compXfChanged();
+  }
+
+  /**
+   * 47차: 한 축 대칭(보정 평면 안 방향이 바뀐 변환) 아래의 반경 보정 쪽. Siemens는 설명서(Fundamentals 6FC5398-1BP40-3BA1, 03/2013, 12.7절 349~350쪽 —
+   * 대칭이면 컨트롤러가 G41/G42와 G2/G3을 새 가공 방향에 맞게 바꿈)대로 뒤집는다. 다른 방언(G51.1·음수 배율)은 공개 설명서 근거를 찾지 못해
+   * 프로그램 쪽 그대로 두고 알린다
+   */
+  protected override compMirrored(plane: number, line: number): boolean {
+    if (!this.xf || affinePlane(this.xf, plane).sign > 0) return false;
+    if (this.dialect === 'siemens') return true;
+    this.w.add('한 축 대칭(G51.1·음수 배율) 아래의 반경 보정(G41/G42) — 보정 쪽은 프로그램 그대로 셈(뒤집는 근거를 찾지 못함)', line);
+    return false;
   }
 
   /** 변환이 평면 plane을 그대로 두는지(원호를 원호로 옮길 수 있는지), 평면 안 방향 부호(거울이면 -1), 평면 안 배율이 고른지 */
@@ -2114,6 +2129,11 @@ export class Runner extends NcEmitter {
     }
   }
 
+  /** 47차: 프로그램 안 공구 데이터가 준 지금 공구·날 d의 반지름(Siemens $TC_DP — siemens.ts). 옵션 공구 표 다음, G10 앞에 본다 */
+  protected programRadius(_d: number | undefined): { r: number; src: string } | undefined {
+    return undefined;
+  }
+
   /** 반경 보정 상태·반지름 바뀜 기록. D: Fanuc 계열은 보정 번호, LinuxCNC는 공구 번호(없으면 지금 공구), G41.1/G42.1은 지름 */
   protected compChange(blk: Block, line: number, direct: boolean): void {
     if (blk.has[LD]) {
@@ -2147,9 +2167,13 @@ export class Runner extends NcEmitter {
     } else {
       const g = this.radiusGeo.get(key);
       const wear = this.radiusWear.get(key);
+      const pr = tt && (tt.radius !== undefined || tt.diameter !== undefined) ? undefined : this.programRadius(blk.has[LD] ? Math.round(blk.val[LD]!) : this.dNum >= 0 ? this.dNum : undefined);
       if (tt && (tt.radius !== undefined || tt.diameter !== undefined)) {
         radius = tt.radius ?? tt.diameter! / 2;
         source = `공구 표 ${name}`;
+      } else if (pr) {
+        radius = pr.r;
+        source = pr.src;
       } else if (g !== undefined || wear !== undefined) {
         radius = (g ?? 0) + (wear ?? 0);
         source = `G10 ${name} 반지름`;
