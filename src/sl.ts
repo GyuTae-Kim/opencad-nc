@@ -7,9 +7,9 @@
  * - 9.4절 274쪽: Q2 × 공구 반지름 = 옆 간격, Q8 = 공구 중심 경로의 안쪽 모서리 반지름
  * 방법(일반 평면 기하로 짰다 — 다른 CAD·NC 코드를 보지 않았다):
  * - 가공 면 경계: 모든 윤곽 요소를 서로의 교점에서 나누고, 조각 양쪽 가운데 한쪽만 가공 면인 조각을 가공 면이 왼쪽이 되게 돌려 고리로 잇는다.
- * - 떨어진 곡선(거리 d): 경계 고리마다 요소를 왼쪽으로 d만큼 옮기고(직선은 평행, 원호는 반지름 ∓ d — 점으로 줄면 뺀다), 오른쪽으로 꺾이는
- *   모서리는 원래 꼭짓점을 중심으로 한 반지름 d 호, 왼쪽으로 꺾이는 모서리는 직선으로 이은 날 곡선을 만든다. 날 곡선끼리의 교점에서 나눈 조각 가운데
- *   가운데 점이 가공 면 안이고 경계까지 거리가 d인 것만 남겨 고리로 잇는다(가공 면 쪽이 왼쪽).
+ * - 떨어진 곡선(거리 d): 경계 고리마다 요소를 왼쪽으로 d만큼 옮기고(직선은 평행, 원호는 반지름 ∓ d — 점으로 줄면 빼고 그 양 끝을 꼭짓점으로 본다),
+ *   오른쪽으로 꺾이는 모서리는 원래 꼭짓점을 중심으로 한 반지름 d 호, 왼쪽으로 꺾이는 모서리는 직선으로 이은 날 곡선을 만든다. 날 곡선끼리의 교점에서
+ *   나눈 조각 가운데 가운데 점이 가공 면 안이고 경계까지 거리가 d인 것만 남겨 고리로 잇는다(가공 면 쪽이 왼쪽 — 닫히지 않으면 끝이 끊긴 가지를 빼고 다시).
  */
 import { cornerElem, cornerIntersections } from './corner';
 import { g7xCorners, g7xLine, g7xOffset, type G7xCorner, type G7xEl } from './lathe-g7x';
@@ -854,7 +854,7 @@ function capsuleSpan(pu: number, pv: number, du: number, dv: number, au: number,
  * 증인 요소: 날 요소의 출처 이웃(옮긴 요소 i면 i ± 1, 모서리 잇기 i → j면 i·j)과, 경계 고리를 따라 거리가 줄어드는 쪽으로 걸어 찾은 가까운 요소
  * (앞 날 요소에서 찾은 자리부터 — 원꼴 윤곽 가운데 고리는 맞은편 요소가 가깝다)와 그 이웃. 증인마다 날 요소가 그 캡슐(반지름 t − 2μ) 안인 범위를 어림하고
  * 범위 두 끝에서 실제 거리가 lim보다 가까운지 확인한다 — 직선 위에서 선분·점까지 거리는 볼록이라 두 끝이 가까우면 사이도 가깝다.
- * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 팔이 없다
+ * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 arcArms(51차)
  */
 function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: Int32Array, t: number, mu: number, cnt: { work: number }): SlArms {
   const n = raw.length;
@@ -864,11 +864,18 @@ function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: In
   const lim = t - mu;
   if (!(r > 0)) return { a: A, b: B };
   const carry = new Int32Array(R.loops.length).fill(-1);
+  // 51차: 원호 날 요소의 걷기 시작 자리(직선과 따로 — 직선의 팔·일은 50차 그대로)
+  const arcCarry = new Int32Array(R.loops.length).fill(-1);
   const ivs: [number, number][] = [];
   const tried: number[] = [];
   for (let q = 0; q < n; q++) {
     const K = raw[q]!.e;
-    if (K.arc) continue;
+    if (K.arc) {
+      const ab = arcArms(R, K, raw[q]!.loop, srcA[q]!, srcB[q]!, r, lim, arcCarry, cnt);
+      A[q] = ab[0];
+      B[q] = ab[1];
+      continue;
+    }
     const du = K.eu - K.su;
     const dv = K.ev - K.sv;
     if (!(Math.hypot(du, dv) > R.eps)) continue;
@@ -964,6 +971,233 @@ function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: In
   return { a: A, b: B };
 }
 
+/** 51차: 원호 날 요소를 나누는 토막 수의 위 한계 */
+const ARC_PARTS = 64;
+
+/**
+ * 51차: 원호 날 요소 K의 확실히 버려질 팔 [0, a]·[b, 1](없으면 a = -1·b = 2, a ≥ b면 요소 전체). 직선 날 요소(deadArms)와 같은 길을 원호에 쓴다 —
+ * K를 같은 각의 토막으로 나눠(토막마다 활 높이가 캡슐 반지름의 50분의 1 이하) 토막의 현을 직선으로 보고 증인 캡슐(반지름 r − 활 높이)과 겹치는
+ * 범위를 어림한 뒤, 범위 두 끝(원호 위 점)에서 증인까지 거리의 큰 쪽 + 그 범위의 활 높이가 lim보다 작은지 확인한다 — 범위의 원호 점은 그 현 위 점에서
+ * 활 높이 안이고, 선분·점까지 거리는 현 위에서 볼록이라 현의 두 끝이 큰 쪽이다.
+ * 증인은 직선과 같다(출처 이웃, 경계 고리를 따라 걸어 찾은 가까운 요소와 그 이웃 — 원호 증인은 반원 이하면 현 + 활 높이, 두 끝점).
+ * 50차까지 원호 날 요소(옮긴 원호·오목 모서리 호)는 팔이 없어, 원호가 수백 개 이어진 원꼴 윤곽의 가운데 가까운 고리에서 버려질 조각을 모두 물었다
+ */
+function arcArms(R: SlRegion, K: SlEl, k: number, sa: number, sb: number, r: number, lim: number, carry: Int32Array, cnt: { work: number }): [number, number] {
+  const rho = arcR(K);
+  const span = Math.abs(K.sweep);
+  // 범위는 직선과 같은 캡슐(반지름 r = t − 2μ)에서 토막·증인의 활 높이를 뺀 것으로 어림하고(어림일 뿐), 확인은 lim = t − μ로 한다
+  if (!(rho * span > R.eps) || !(r > 0)) return [-1, 2];
+  const loop = R.loops[k]!;
+  const m = loop.length;
+  // 토막의 활 높이 ≤ r/50(토막 각 θ에서 rho·(1 − cos(θ/2)) ≤ r/50) — 많아야 ARC_PARTS토막(넘으면 활 높이만큼 캡슐이 줄 뿐)
+  const c = 1 - r / 50 / rho;
+  const maxAng = c > -1 ? Math.min(Math.PI / 2, 2 * Math.acos(c)) : Math.PI / 2;
+  const parts = Math.max(Math.ceil(span / (Math.PI / 2)), Math.min(ARC_PARTS, Math.ceil(span / maxAng)));
+  const sagOf = (dt: number): number => rho * (1 - Math.cos((span * dt) / 2));
+  const sagPart = sagOf(1 / parts);
+  const ivs: [number, number][] = [];
+  // 토막 p의 현 위에서 캡슐(선분 AB, 반지름 rr) 범위 → K의 t 범위, 두 끝 확인
+  const span1 = (p: number, f: (u: number, v: number) => number, au: number, av: number, bu: number, bv: number, add: number): void => {
+    const rr = r - add - sagPart;
+    if (!(rr > 0)) return;
+    const c0 = at(K, p / parts);
+    const c1 = at(K, (p + 1) / parts);
+    const s = capsuleSpan(c0[0], c0[1], c1[0] - c0[0], c1[1] - c0[1], au, av, bu, bv, rr);
+    if (!(s[0] <= s[1])) return;
+    const t0 = (p + s[0]) / parts;
+    const t1 = (p + s[1]) / parts;
+    cnt.work += 2;
+    const x0 = at(K, t0);
+    const x1 = at(K, t1);
+    if (Math.max(f(x0[0], x0[1]), f(x1[0], x1[1])) + sagOf(t1 - t0) < lim) ivs.push([t0, t1]);
+  };
+  const tried: number[] = [];
+  const witness = (idx: number): void => {
+    const w = ((idx % m) + m) % m;
+    if (tried.includes(w)) return;
+    tried.push(w);
+    const e = loop[w]!;
+    cnt.work++;
+    const sw = Math.abs(e.sweep);
+    const sagE = e.arc && sw <= Math.PI ? arcR(e) * (1 - Math.cos(sw / 2)) : 0;
+    for (let p = 0; p < parts; p++) {
+      if (!e.arc) span1(p, (x, y) => segDist(x, y, e.su, e.sv, e.eu, e.ev), e.su, e.sv, e.eu, e.ev, 0);
+      else {
+        if (sw <= Math.PI) span1(p, (x, y) => segDist(x, y, e.su, e.sv, e.eu, e.ev) + sagE, e.su, e.sv, e.eu, e.ev, sagE);
+        span1(p, (x, y) => Math.hypot(x - e.su, y - e.sv), e.su, e.sv, e.su, e.sv, 0);
+        span1(p, (x, y) => Math.hypot(x - e.eu, y - e.ev), e.eu, e.ev, e.eu, e.ev, 0);
+      }
+    }
+  };
+  // 덮인 앞쪽 [0, a]와 뒤쪽 [b, 1](직선과 같은 셈)
+  let a = -1;
+  let b = 2;
+  const arms = (): void => {
+    ivs.sort((x, y) => x[0] - y[0]);
+    a = -1;
+    for (const s of ivs) {
+      if (a < 0 ? s[0] <= 0 : s[0] <= a) a = Math.max(a, s[1]);
+      else break;
+    }
+    const byEnd = ivs.slice().sort((x, y) => y[1] - x[1]);
+    b = 2;
+    for (const s of byEnd) {
+      if (b > 1 ? s[1] >= 1 : s[1] >= b) b = Math.min(b, s[0]);
+      else break;
+    }
+  };
+  if (sb < 0) {
+    witness(sa - 1);
+    witness(sa + 1);
+  } else {
+    witness(sa);
+    witness(sb);
+  }
+  arms();
+  if (a < b) {
+    // 덮이지 않은 곳의 가운데에서 경계 고리를 따라 거리가 줄어드는 쪽으로 걷는다(앞 원호 날 요소에서 찾은 자리부터)
+    const p = at(K, (Math.max(a, 0) + Math.min(b, 1)) / 2);
+    let w = carry[k]! >= 0 ? carry[k]! : sa;
+    let fw = elDist(loop[w]!, p[0], p[1]);
+    cnt.work++;
+    for (let step = 0; step < m; step++) {
+      const w1 = (w + 1) % m;
+      const w0 = (w + m - 1) % m;
+      const f1 = elDist(loop[w1]!, p[0], p[1]);
+      const f0 = elDist(loop[w0]!, p[0], p[1]);
+      cnt.work += 2;
+      if (f1 < fw && f1 <= f0) {
+        w = w1;
+        fw = f1;
+      } else if (f0 < fw) {
+        w = w0;
+        fw = f0;
+      } else break;
+    }
+    carry[k] = w;
+    if (fw < lim) {
+      const before = ivs.length;
+      witness(w);
+      witness(w - 1);
+      witness(w + 1);
+      if (ivs.length > before) arms();
+    }
+  }
+  return [a, b];
+}
+
+/** 앞 요소 끝 접선 tA에서 뒤 요소 시작 접선 tB로 오른쪽으로 꺾이는지(되돌아 꺾임 포함 — 가공 면이 왼쪽이면 오목한 꼭짓점) */
+function rightTurn(tA: [number, number], tB: [number, number]): boolean {
+  const cr = tA[0] * tB[1] - tA[1] * tB[0];
+  const dot = tA[0] * tB[0] + tA[1] * tB[1];
+  return cr < -1e-12 || (Math.abs(cr) <= 1e-12 && dot < 0);
+}
+
+/** 꼭짓점 (pu, pv) 둘레 시계 호 (au, av) → (bu, bv) — 오목한 꼭짓점의 모서리 잇기 */
+function cornerArc(pu: number, pv: number, au: number, av: number, bu: number, bv: number): SlEl {
+  let sw = Math.atan2(bv - pv, bu - pu) - Math.atan2(av - pv, au - pu);
+  while (sw >= 0) sw -= TAU;
+  while (sw < -TAU) sw += TAU;
+  return { arc: true, su: au, sv: av, eu: bu, ev: bv, cu: pu, cv: pv, sweep: sw };
+}
+
+/**
+ * 51차: 점으로 준 원호(가공 면 쪽으로 볼록하고 반지름이 d 이하라 떨어진 곡선이 없는 것)를 건너뛰어, 경계 요소 i를 옮긴 A의 끝에서
+ * 경계 요소 j를 옮긴 B의 시작으로 잇는다. 건너뛴 자리의 꼭짓점(원호 양 끝) 가운데 오른쪽으로 꺾이는 곳이 있으면 그 꼭짓점 둘레 반지름 d 호를 넣고 true.
+ * 50차까지는 늘 A 끝 → B 시작을 곧게 이어 이 호가 빠졌고, 그 호가 떨어진 곡선의 일부인 단계(들쭉날쭉한 다각형의 CR 원호 둘레 등)에서
+ * 고리가 끊겨 그 안쪽을 깎지 않은 채 남겼다. 원호 안쪽의 점은 d가 반지름보다 크면 가장 가까운 경계 점이 될 수 없어(곡률 중심을 지나 거리가
+ * 원호를 따라 가장 커지는 자리) 떨어진 곡선은 원호 양 끝 둘레 호와 이웃 요소에서만 나온다.
+ * 나머지는 곧게 잇는다 — 왼쪽으로 꺾이는 꼭짓점의 두 법선 자리 사이(그 꼭짓점 둘레 반지름 d 원의 현)와 없어진 원호 양 끝의 법선 자리 사이
+ * (반지름 d − r로 뒤집힌 원호의 현 — 원호 위 같은 각의 점에서 d보다 가까움)라 늘 버려진다.
+ * 오른쪽 꺾임이 없으면 false(예전처럼 A 끝 → B 시작을 곧게 — 결과 그대로)
+ */
+function bridge(loop: readonly SlEl[], i: number, j: number, A: SlEl, B: SlEl, d: number, eps: number, put: (e: SlEl, a: number, b: number) => void): boolean {
+  const n = loop.length;
+  let any = false;
+  for (let a = i; a !== j && !any; a = (a + 1) % n) any = rightTurn(tanAt(loop[a]!, 1), tanAt(loop[(a + 1) % n]!, 0));
+  if (!any) return false;
+  let cu = A.eu;
+  let cv = A.ev;
+  for (let a = i; ; a = (a + 1) % n) {
+    const b = (a + 1) % n;
+    const V = loop[a]!;
+    const E = loop[b]!;
+    const t0 = tanAt(E, 0);
+    // 꼭짓점에서 E 시작 접선의 왼쪽(가공 면 쪽) 법선으로 d — E가 B의 출처면 B의 시작 그대로
+    const pu = b === j ? B.su : V.eu - t0[1] * d;
+    const pv = b === j ? B.sv : V.ev + t0[0] * d;
+    if (rightTurn(tanAt(V, 1), t0)) put(cornerArc(V.eu, V.ev, cu, cv, pu, pv), a, b);
+    else if (Math.hypot(pu - cu, pv - cv) > eps * 10) put(g7xLine(cu, cv, pu, pv), a, b);
+    if (b === j) return true;
+    // E는 없어진 원호: 끝 자리의 법선 쪽 d까지
+    const t1 = tanAt(E, 1);
+    cu = E.eu - t1[1] * d;
+    cv = E.ev + t1[0] * d;
+    if (Math.hypot(cu - pu, cv - pv) > eps * 10) put(g7xLine(pu, pv, cu, cv), b, b);
+  }
+}
+
+/**
+ * 51차: 남는 조각 가운데 끝에서 이어지는 조각이 없거나(끝이 다른 조각의 시작과 tol 안에서 만나지 않음) 시작으로 들어오는 조각이 없는 것을
+ * 되풀이해 뺀다 — 닫힌 고리에 들 수 없는 가지. 볼록한 꼭짓점의 아주 얇은 제비꼬리(날 곡선이 스스로 엇갈려 생긴 작은 고리 — 거의 없어진 원호 끝,
+ * 요소가 아주 잘고 꼭짓점이 반올림된 원꼴 윤곽)는 경계까지 거리가 d보다 판정 여유(tolD) 안에서만 가까우면 그 조각이 남고, 갈림길에서 그 가지로
+ * 들어간 사슬이 끊겨 고리 전체를 잃었다(48~50차). 51차에 여유를 좁혀 거의 남지 않지만, 남으면 이것이 받는다. 칸·허용은 잇기(chain)와 같다
+ */
+function prune(ps: readonly SlEl[], tol: number): SlEl[] {
+  const n = ps.length;
+  const cell = Math.max(tol * 4, 1e-12);
+  const grid = new Map<number, Map<number, number[]>>();
+  ps.forEach((p, i) => {
+    const ku = Math.round(p.su / cell);
+    const kv = Math.round(p.sv / cell);
+    let col = grid.get(ku);
+    if (!col) grid.set(ku, (col = new Map()));
+    const g = col.get(kv);
+    if (g) g.push(i);
+    else col.set(kv, [i]);
+  });
+  // 끝 → 이어지는 조각(succ), 그 거꾸로(pred)
+  const succ: number[][] = [];
+  const pred: number[][] = ps.map(() => []);
+  for (let i = 0; i < n; i++) {
+    const p = ps[i]!;
+    const cu = Math.round(p.eu / cell);
+    const cv = Math.round(p.ev / cell);
+    const s: number[] = [];
+    for (let du = -1; du <= 1; du++)
+      for (let dv = -1; dv <= 1; dv++)
+        for (const j of grid.get(cu + du)?.get(cv + dv) ?? []) {
+          const q = ps[j]!;
+          if (Math.hypot(q.su - p.eu, q.sv - p.ev) > tol) continue;
+          s.push(j);
+          pred[j]!.push(i);
+        }
+    succ.push(s);
+  }
+  const nOut = Int32Array.from(succ, (s) => s.length);
+  const nIn = Int32Array.from(pred, (s) => s.length);
+  const dead = new Uint8Array(n);
+  const stack: number[] = [];
+  for (let i = 0; i < n; i++)
+    if (!nOut[i] || !nIn[i]) {
+      dead[i] = 1;
+      stack.push(i);
+    }
+  const drop = (cnt: Int32Array, j: number): void => {
+    if (dead[j]) return;
+    cnt[j] = cnt[j]! - 1;
+    if (cnt[j]! > 0) return;
+    dead[j] = 1;
+    stack.push(j);
+  };
+  while (stack.length) {
+    const i = stack.pop()!;
+    for (const j of succ[i]!) drop(nIn, j);
+    for (const j of pred[i]!) drop(nOut, j);
+  }
+  return ps.filter((_, i) => !dead[i]);
+}
+
 /**
  * slOffset과 같되 셈한 일(R.work)이 workLimit을 넘으면 그만두고 null(49차 — 고리 셈 한도).
  * plain이면 50차 버려질 팔(deadArms)을 셈하지 않고 모든 조각을 묻는다(같은 답 — 시험에서 견줄 때)
@@ -992,12 +1226,16 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
       return { ...e, su: e.cu + (e.su - e.cu) * f, sv: e.cv + (e.sv - e.cv) * f, eu: e.cu + (e.eu - e.cu) * f, ev: e.cv + (e.ev - e.cv) * f };
     });
     const out: SlEl[] = [];
+    // 날 요소 하나와 그 출처
+    const put = (e: SlEl, a: number, b: number): void => {
+      out.push(e);
+      srcA.push(a);
+      srcB.push(b);
+    };
     for (let i = 0; i < n; i++) {
       const A = moved[i];
       if (!A) continue;
-      out.push(A);
-      srcA.push(i);
-      srcB.push(-1);
+      put(A, i, -1);
       // 다음 옮긴 요소(점으로 준 원호는 건너뛴다)
       let j = (i + 1) % n;
       let skipped = false;
@@ -1007,30 +1245,24 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
       }
       const B = moved[j];
       if (!B) continue;
+      // 51차: 건너뛴 자리에 오른쪽으로 꺾이는 꼭짓점이 있으면 그 둘레 호를 넣어 잇는다
+      if (skipped && bridge(loop, i, j, A, B, d, R.eps, put)) continue;
       const gap = Math.hypot(B.su - A.eu, B.sv - A.ev);
       if (gap <= R.eps * 10) continue;
       const V = loop[i]!;
-      const tA = tanAt(loop[i]!, 1);
-      const tB = tanAt(loop[(i + 1) % n]!, 0);
-      const cr = tA[0] * tB[1] - tA[1] * tB[0];
-      const dot = tA[0] * tB[0] + tA[1] * tB[1];
-      if (!skipped && (cr < -1e-12 || (Math.abs(cr) <= 1e-12 && dot < 0))) {
-        // 오른쪽으로 꺾임(가공 면의 오목한 꼭짓점): 꼭짓점 둘레 반지름 d 호(시계)
-        const pu = V.eu;
-        const pv = V.ev;
-        let sw = Math.atan2(B.sv - pv, B.su - pu) - Math.atan2(A.ev - pv, A.eu - pu);
-        while (sw >= 0) sw -= TAU;
-        while (sw < -TAU) sw += TAU;
-        out.push({ arc: true, su: A.eu, sv: A.ev, eu: B.su, ev: B.sv, cu: pu, cv: pv, sweep: sw });
-      } else out.push(g7xLine(A.eu, A.ev, B.su, B.sv));
-      srcA.push(i);
-      srcB.push(j);
+      // 오른쪽으로 꺾임(가공 면의 오목한 꼭짓점): 꼭짓점 둘레 반지름 d 호(시계)
+      if (!skipped && rightTurn(tanAt(loop[i]!, 1), tanAt(loop[(i + 1) % n]!, 0))) put(cornerArc(V.eu, V.ev, A.eu, A.ev, B.su, B.sv), i, j);
+      else put(g7xLine(A.eu, A.ev, B.su, B.sv), i, j);
     }
     out.forEach((e, i) => raw.push({ e, loop: k, idx: i, n: out.length }));
   });
   if (!raw.length) return [];
   const cnt = counter(R);
-  const tolD = Math.max(R.scale, d) * 1e-7;
+  // 남는 조각의 판정 여유: 경계까지 거리가 d − tolD보다 가까우면 버린다. 51차: 10⁻⁷에서 10⁻⁹(R.eps 꼴)로 — 볼록한 꼭짓점의 날 곡선이 스스로
+  // 엇갈린 얇은 제비꼬리(꺾임 θ에서 깊이 ≈ d·θ²/8 — 요소 천 개 넘는 원꼴 다각형·반올림된 꼭짓점·거의 곧은 원호 끝)가 여유 안이라 남아,
+  // 사슬이 그 가지로 들어가 고리가 끊기거나(잇지 못함) 고리를 통째로 잃었다(1000각형 d 0.5는 길이 0.006 삼각형만). 바른 조각의 거리는
+  // 옮긴 요소·꼭짓점 호 위 점이라 반올림(좌표의 10⁻¹⁴쯤)만큼만 d에서 벗어난다
+  const tolD = Math.max(R.scale, d) * 1e-9;
   // 50차: 확실히 버려질 팔(μ는 반올림을 덮는 여유 — 좌표 크기·윤곽 크기의 10억분의 1)
   let arms: SlArms | undefined;
   if (!plain) {
@@ -1045,7 +1277,11 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
     const m = at(p, 0.5);
     if (!slNear(R, m[0], m[1], d - tolD) && slInside(R, m[0], m[1])) keep.push(p);
   }
-  const loops = chain(keep, R.eps * 1e3).loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100);
+  const tol = R.eps * 1e3;
+  let c = chain(keep, tol);
+  // 51차: 잇지 못한 사슬이 있으면 끊긴 가지를 빼고 다시 잇는다(모두 닫혔으면 그대로 — 결과 같음)
+  if (c.open) c = chain(prune(keep, tol), tol);
+  const loops = c.loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100);
   if (!loops.length && keep.length) {
     let len = 0;
     for (const p of keep) len += slElLen(p);

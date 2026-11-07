@@ -82,21 +82,18 @@ describe('SL 사이클 층 × 고리 이동 한도(사이클 한 번 100만 개)
 });
 
 describe('SL 옆 간격 고리 셈의 일 한도', () => {
-  it('요소가 아주 많은 원꼴 윤곽 + 작은 공구: 50차부터 일 한도에 닿지 않고, 고리를 잇지 못한 단계에서 멈추면 그렇게 알린다', () => {
+  it('요소가 아주 많은 원꼴 윤곽 + 작은 공구: 50차부터 일 한도에 닿지 않고, 51차부터 가운데 가까운 고리도 이어 끝까지 그린다', () => {
     // 1600각형(반지름 40, 꼭짓점 소수 넷째 자리) · 공구 0.5 · 겹침 Q2 0.5(간격 0.25) → 고리 158개. 49차에는 가운데 가까운 고리의 버려질 조각마다
     // 거리를 물어 일 한도(1억)에 닿아 바깥 고리 몇 겹까지만 그렸다 — 50차는 버려질 팔·고리띠 조각으로 같은 고리를 일 몇백만으로 셈한다.
-    // 꼭짓점이 반올림된 아주 잘은 원꼴 윤곽은 가운데 가까운 고리(반지름 3.5쯤)의 남은 조각이 끊겨 닫힌 고리가 되지 않는다(49차도 같은 길 —
-    // 그 앞 고리까지만 그림). 49차는 그 전에 일 한도 경고가 났고, 50차는 고리를 잇지 못했다고 알린다
+    // 꼭짓점이 반올림된 아주 잘은 원꼴 윤곽은 가운데 가까운 고리(반지름 3.5쯤)에 얇은 제비꼬리 조각이 남아 사슬이 끊겼다(50차는 그 앞 고리까지만
+    // 그리고 잇지 못했다고 알림). 51차는 끊긴 가지를 빼고 다시 이어 158겹을 모두 그린다
     const src = prog(poly(1600), 0.5, { Q1: -5, Q2: 0.5 }, rough(-5));
     const t0 = performance.now();
     const p = parseHeidenhain(src);
     const ms = performance.now() - t0;
-    expect(p.warnings).toHaveLength(1);
-    expect(plain(p.warnings)[0]).toMatch(/^CYCL DEF 22: 옆 간격 고리를 잇지 못해 바깥 고리 \d+겹까지만 그림$/);
-    const rings = Number(/고리 (\d+)겹/.exec(p.warnings[0]!)![1]);
-    expect(rings).toBeGreaterThan(100);
-    expect(rings).toBeLessThan(158);
-    // 그린 고리는 모두 벽에서 공구 반지름 이상 안쪽이고, 가장 안쪽 고리는 그린 고리 수만큼 들어간 자리
+    expect(p.warnings).toEqual([]);
+    const rings = 158;
+    // 그린 고리는 모두 벽에서 공구 반지름 이상 안쪽이고, 가장 안쪽 고리는 고리 수만큼 들어간 자리
     let rMin = Infinity;
     for (let i = 0; i < p.moves.count; i++)
       if (p.moves.kind[i] === MOVE_FEED) {
@@ -106,8 +103,8 @@ describe('SL 옆 간격 고리 셈의 일 한도', () => {
         expect(rr).toBeLessThanOrEqual(40 - 0.5 + 1e-4);
         rMin = Math.min(rMin, rr);
       }
-    expect(rMin).toBeGreaterThan(40 - 0.5 - 0.25 * rings - 0.01);
-    expect(rMin).toBeLessThan(40 - 0.5 - 0.25 * (rings - 2));
+    expect(rMin).toBeGreaterThan(40 - 0.5 - 0.25 * (rings - 1) - 0.01);
+    expect(rMin).toBeLessThan(40 - 0.5 - 0.25 * (rings - 1) + 0.01);
     // 한도는 일(셈 수)로 정해 기계 빠르기와 상관없이 같은 결과 — 여기서는 시간이 넉넉히 짧음만 본다
     expect(ms).toBeLessThan(30_000);
   });
@@ -180,10 +177,14 @@ describe('50차 버려질 팔·고리띠 조각은 떨어진 곡선을 바꾸지
     expect(slOffset(R, ap + 0.0005)).toEqual([]);
     expect(w.fast * 5).toBeLessThan(w.plainWork);
   });
-  it('바깥으로 볼록한 원호 200개로 된 원꼴 윤곽(원호 날 요소는 팔을 셈하지 않음)', () => {
+  it('바깥으로 볼록한 원호 200개로 된 원꼴 윤곽: 51차부터 원호 날 요소도 팔을 셈해 같은 답을 훨씬 적은 일로', () => {
     const els = polyEls(200, 40, 300);
     const R = slRegion([{ els, pocket: slIsPocket(els, 2) }]);
-    both(R, [0.5, 20, 38, 39.5, 39.9, 39.99]);
+    const w = both(R, [0.5, 20, 38, 39, 39.5, 39.75, 39.9, 39.99]);
+    expect(w.fast * 3).toBeLessThan(w.plainWork);
+    // 반지름이 작은 볼록 원호(점으로 줄어드는 것 포함)와 오목 모서리 호가 섞인 꼴
+    const mix = polyEls(120, 40, 25).map((e, i) => (i % 3 ? g7xLine(e.su, e.sv, e.eu, e.ev) : e));
+    both(slRegion([{ els: mix, pocket: slIsPocket(mix, 2) }]), [0.5, 5, 15, 24.9, 25.1, 30, 39, 39.9]);
   });
   it('들쭉날쭉한 다각형 포켓 + 원호 섞인 섬, 오목한 꼭짓점이 많은 별꼴 포켓, 섬 여럿', () => {
     const pts: [number, number][] = [...Array(120).keys()].map((k) => {
