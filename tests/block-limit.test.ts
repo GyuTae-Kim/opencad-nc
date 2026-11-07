@@ -641,9 +641,10 @@ describe('한도와 블록 실행', () => {
     const text = 'G21 G18\nG0 X40 Z5\nG71 U2 R0.5\nG71 P10 Q20 U0 W0 F0.2\nN10 G1 X10 Z0\nG1 Z-10\n/N20 G1 X20\nG70 P10 Q20\nT0202\nG4 P5000\nG0 X99\nM30';
     const go = (maxMoves: number): NcProgram => parseGcode(text, { dialect: 'fanuc', lathe: true, blockDelete: true, initialPosition: [50, 0, 50], maxMoves });
     const full = go(FREE);
-    expect(full.moves.count).toBe(39);
+    // 윤곽 첫 블록(N10)에 X·Z가 함께 있어 G71은 II형(43차 — 층 끝에서 윤곽을 따라 깎아 39 → 42개). 한도는 G70의 마지막 두 이동
+    expect(full.moves.count).toBe(42);
     expect(full.stats.toolChanges).toBe(1);
-    for (const L of [37, 38]) {
+    for (const L of [40, 41]) {
       const p = go(L);
       expect(p.moves.count, `한도 ${L}`).toBe(L);
       expect(p.stats.toolChanges, `한도 ${L}`).toBe(0);

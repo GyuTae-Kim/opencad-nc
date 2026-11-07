@@ -1244,5 +1244,11 @@
   "POCKET1: 길이·너비(LENG·WID)가 없음 — 그리지 않음": "POCKET1: no length or width (LENG, WID) — not drawn",
   "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: no pocket radius (PRAD) — not drawn",
   "G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀": "G70: subprogram calls nested too deeply — finishing cycle skipped",
-  "{0}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림": "{0}: FDEP and FDPR differ — first drilling depth drawn from FDPR"
+  "{0}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림": "{0}: FDEP and FDPR differ — first drilling depth drawn from FDPR",
+  "{0}: 후퇴 면과 기준면이 같은데 상대 깊이(DPR)를 줌(알람 61101) — 그리지 않음": "{0}: relative depth (DPR) given while the retraction plane equals the reference plane (alarm 61101) — not drawn",
+  "{0}: 후퇴 면이 기준면보다 최종 깊이에 가까움(알람 61101) — 그리지 않음": "{0}: the retraction plane is closer to the final depth than the reference plane (alarm 61101) — not drawn",
+  "{0}: II형 윤곽의 {1}가 한 방향으로만 바뀌지 않음(알람 {2}) — 그리지 않음": "{0}: {1} of the type II contour does not change in one direction only (alarm {2}) — not drawn",
+  "{0}: 윤곽 첫 블록에 X·Z가 있어 II형으로 그림 — 층 끝에서 윤곽을 따라 앞 층 높이까지 깎고 {1}로 물러나는 길은 설명서 그림으로 정함": "{0}: the first contour block has both X and Z, so type II is drawn — at each layer end the tool cuts along the contour up to the previous layer and escapes along {1}, as read from the manual's figures",
+  "{0}: II형 포켓에 들어가는 길은 설명서에 그림으로만 있어 위 층에서 곧게 내려가게 그림": "{0}: the path into type II pockets is only shown in the manual's figures — drawn going straight down from the layer above",
+  "{0}: II형 포켓이 있는데 Z 다듬질 여유 W가 0이 아님 — 설명서는 한쪽 벽을 팔 수 있다고 함": "{0}: the type II contour has pockets but the Z finishing allowance W is not 0 — the manual says the tool may dig into one wall"
 }
