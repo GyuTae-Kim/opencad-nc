@@ -97,6 +97,14 @@ export const BAD_BLOCK_MAX = 10_000;
 
 export type { CornerKind } from './corner';
 
+/** 53차: 상자 a(min xyz, max xyz)를 상자 b에 합친다 — a를 이룬 점들로 b를 하나씩 넓힌 것과 같은 값(extendBox와 같은 엄격한 견줌) */
+function mergeBox(b: Float64Array, a: Float64Array): void {
+  for (let k = 0; k < 3; k++) {
+    if (a[k]! < b[k]!) b[k] = a[k]!;
+    if (a[k + 3]! > b[k + 3]!) b[k + 3] = a[k + 3]!;
+  }
+}
+
 /** 마지막으로 넣은 이동(출력 좌표) — 모서리 다듬기·접선 원호가 쓴다 */
 interface LastSeg {
   i: number;
@@ -1388,6 +1396,7 @@ export class NcEmitter {
       for (let j = 0; j < this.fromBelow.length; j += 2) below.fill(1, Math.min(this.fromBelow[j]!, moves.count), Math.min(this.fromBelow[j + 1]!, moves.count));
     }
     const down = below ? emptyBox() : cut;
+    const ab = emptyBox();
     for (let i = 0; i < moves.count; i++) {
       // 기계 좌표 쪽 추정 이동(안전 높이)은 범위에 넣지 않는다
       const k = i * 3;
@@ -1426,10 +1435,14 @@ export class NcEmitter {
         c[0] = arcs.center[ai * 3]!;
         c[1] = arcs.center[ai * 3 + 1]!;
         c[2] = arcs.center[ai * 3 + 2]!;
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, all);
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, cut);
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, tb!.box);
-        if (down !== cut && !below![i]) arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, down);
+        // 53차: 호가 지나는 범위를 한 번만 셈해 상자마다 합친다(같은 점들의 최소·최대라 같은 값 — 상자 넷에 호마다 다시 셈하던 것이
+        // 원호가 많은 SL 프로그램 해석 시간의 열에 하나쯤이었다)
+        ab.fill(Infinity, 0, 3).fill(-Infinity, 3, 6);
+        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, ab);
+        mergeBox(all, ab);
+        mergeBox(cut, ab);
+        mergeBox(tb!.box, ab);
+        if (down !== cut && !below![i]) mergeBox(down, ab);
       } else {
         extendBox(all, s[0], s[1], s[2]);
         extendBox(all, e[0], e[1], e[2]);
