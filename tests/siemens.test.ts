@@ -233,14 +233,25 @@ SCALE`);
 G4 F2.5
 G1 Z-0.1 F10
 G74 Z1=0
-CYCLE71(10, 0, 1, -5)
+CYCLE72(10, 0, 1, -5)
 R5=$AA_IW[X]
 G0 X2`);
     expect(p.units).toBe('inch');
     expect(p.stats.dwellTime).toBeCloseTo(2.5);
     expect(p.moves.flags[2]! & FLAG_MACHINE_EST).toBe(FLAG_MACHINE_EST);
-    expect(p.warnings.some((w) => w.includes('CYCLE71') && w.includes('지원하지 않음'))).toBe(true);
+    // 44차: CYCLE71은 그리게 되어 지원하지 않는 사이클 보기를 CYCLE72(윤곽 밀링)로 바꿈
+    expect(p.warnings.some((w) => w.includes('CYCLE72') && w.includes('지원하지 않음'))).toBe(true);
     expect(p.warnings.some((w) => w.includes('$AA_IW'))).toBe(true);
     expect(ends(p).slice(-1)[0]![0]).toBe(2);
+  });
+
+  it('44차: 선반 모드에서도 G90·G94 X Z는 절대 이동·분당 이송(Fanuc 단순 사이클로 그리지 않음), X는 지름 지정', () => {
+    const p = parseSiemens(makeSource('G71 G18\nT1 D1\nG0 X81 Z125\nG0 G90 X60 Z110\nG1 G94 X50 Z100 F100\nM30'), { lathe: true, initialPosition: [100, 0, 200] });
+    expect(ends(p)).toEqual([
+      [40.5, 0, 125],
+      [30, 0, 110],
+      [25, 0, 100],
+    ]);
+    expect(p.latheSystem).toBeUndefined();
   });
 });

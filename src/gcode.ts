@@ -1039,11 +1039,14 @@ export class Runner extends NcEmitter {
     if (opts.lathe === true || latheAuto) {
       this.lathe = true;
       this.latheMode = true;
-      this.fanucLathe = dialect !== 'linuxcnc' && dialect !== 'grbl';
+      // 44차: Siemens는 Fanuc 선반 코드(G90·G94·G92 단순 사이클, U·W 증분, G 코드 체계)가 없다 — G90 X Z가 단순 사이클로 그려지던 것을 고침.
+      // 지름 지정(DIAMON)·회전당 이송(G95)은 Siemens 선반의 흔한 기본이라 Fanuc 선반과 같게 둔다
+      this.fanucLathe = dialect !== 'linuxcnc' && dialect !== 'grbl' && dialect !== 'siemens';
+      const turnDefaults = this.fanucLathe || dialect === 'siemens';
       this.plane = 1;
-      this.xMul = (opts.latheDiameter ?? this.fanucLathe) ? 0.5 : 1;
+      this.xMul = (opts.latheDiameter ?? turnDefaults) ? 0.5 : 1;
       // Fanuc 선반은 켜질 때 회전당 이송(G99)이 흔하다
-      if (this.fanucLathe) this.feedMode = 95;
+      if (turnDefaults) this.feedMode = 95;
       // 선반의 기계 원점은 +X·+Z 쪽(공구대가 멀리 물러난다)
       this.machSafeAxes = 5;
       // Fanuc 선반 G 코드 체계: 고르지 않았으면 단순 사이클 꼴로 판별(정할 수 없으면 A — B·C 표지가 있으면 띠·경고)
