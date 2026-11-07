@@ -1243,5 +1243,6 @@
   "{0}: DP와 DPR이 달라 DPR 깊이로 그림": "{0}: DP und DPR weichen voneinander ab — bis zur Tiefe aus DPR gezeichnet",
   "POCKET1: 길이·너비(LENG·WID)가 없음 — 그리지 않음": "POCKET1: keine Länge oder Breite (LENG, WID) — nicht gezeichnet",
   "POCKET2: 포켓 반지름(PRAD)이 없음 — 그리지 않음": "POCKET2: kein Taschenradius (PRAD) — nicht gezeichnet",
-  "G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀": "G70: Unterprogrammaufrufe zu tief verschachtelt — Schlichtzyklus übersprungen"
+  "G70: 부프로그램 호출이 너무 깊어 다듬질을 건너뜀": "G70: Unterprogrammaufrufe zu tief verschachtelt — Schlichtzyklus übersprungen",
+  "{0}: FDEP와 FDPR이 달라 FDPR 첫 깊이로 그림": "{0}: FDEP und FDPR weichen voneinander ab — erste Bohrtiefe aus FDPR gezeichnet"
 }
