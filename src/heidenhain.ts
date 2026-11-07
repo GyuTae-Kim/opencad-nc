@@ -149,7 +149,8 @@ class HRunner extends NcEmitter {
   private cc: [number, number] | null = null;
   private lastDir: [number, number] | null = null;
   private dr = 1;
-  private q = new Map<string, number>();
+  // 54차: Q 변수는 바꿀 때마다 고리 상태 판을 올린다(emitter.ts repeatStop)
+  private q: Map<string, number> = this.vmap<string, number>();
   private shift = [0, 0, 0];
   private blkMin: number[] | null = null;
   private blkMax: number[] | null = null;
@@ -174,7 +175,7 @@ class HRunner extends NcEmitter {
   private multi = false;
   /** SEL PGM으로 고른 프로그램(CALL SELECTED PGM) */
   private selPgm: string | null = null;
-  private sectionReps = new Map<number, number>();
+  private sectionReps = this.vmap<number, number>();
   private pc = 0;
   private ended = false;
   private blocks = 0;
@@ -394,7 +395,21 @@ class HRunner extends NcEmitter {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, b.line);
         break;
       }
+      // 54차: 같은 상태로 되돌아오는 끝없는 고리(증분 이동을 되풀이하는 CALL LBL·FN 9~12 뛰기)
+      if (!this.ended && this.pc <= b.line && this.repeatStop(b.line, this.pc, this.blocks, () => this.hLoopSig())) break;
     }
+  }
+
+  /** 54차: 고리 상태 서명 — 부르기 틀(번호·남은 횟수), 모달 사이클 부르기(M89), 고른 프로그램(SEL PGM)(repeatStop) */
+  private hLoopSig(): string {
+    return `${this.stack.map((f) => `${this.frameId(f)}.${f.reps}`).join(',')}|${this.modalCall}|${this.selPgm}`;
+  }
+
+  /** 54차: Q 변수 저장소 복사(고리 상태 판을 올리는 Map으로 — SL 윤곽을 읽고 되돌릴 때) */
+  private copyQ(): Map<string, number> {
+    const m = this.vmap<string, number>();
+    for (const [k, v] of this.q) m.set(k, v);
+    return m;
   }
 
   // ── DIN/ISO → 평문 ──
@@ -2470,7 +2485,7 @@ class HRunner extends NcEmitter {
       lastDir: this.lastDir,
       dr: this.dr,
       fkPole: this.fkPole,
-      q: new Map(this.q),
+      q: this.copyQ(),
       isoAbs: this.isoAbs,
       isoMot: this.isoMot,
       isoComp: this.isoComp,
@@ -2595,6 +2610,7 @@ class HRunner extends NcEmitter {
       this.dr = save.dr;
       this.fkPole = save.fkPole;
       this.q = save.q;
+      this.stateVer++;
       this.isoAbs = save.isoAbs;
       this.isoMot = save.isoMot;
       this.isoComp = save.isoComp;

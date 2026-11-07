@@ -94,6 +94,30 @@ export const IDLE_BLOCK_MAX = 100_000;
  * 깨진 블록이 든 고리가 실행 블록 한도까지 경고만 쌓으며 돌았다(퍼징). 고리 없이는 줄 수를 넘지 못한다
  */
 export const BAD_BLOCK_MAX = 10_000;
+/**
+ * 54차: 같은 상태로 되돌아오는 고리(repeatStop)를 보기 시작하는 블록 수(프로그램 줄 수 + 이 값). 고리 없이 내려가는 프로그램은 줄 수를 넘지 못하므로
+ * 보통 프로그램에서는 셈하지 않는다
+ */
+export const REPEAT_MIN = 10_000;
+
+/** 54차: 값을 넣거나 지울 때마다 해석기의 고리 상태 판(stateVer)을 올리는 Map — 변수 저장소(repeatStop) */
+export class VerMap<K, V> extends Map<K, V> {
+  constructor(private readonly bump: () => void) {
+    super();
+  }
+  override set(k: K, v: V): this {
+    this.bump();
+    return super.set(k, v);
+  }
+  override delete(k: K): boolean {
+    this.bump();
+    return super.delete(k);
+  }
+  override clear(): void {
+    this.bump();
+    super.clear();
+  }
+}
 
 export type { CornerKind } from './corner';
 
@@ -484,10 +508,59 @@ export class NcEmitter {
 
   /** 53차: 읽을 수 없는 블록을 하나 건너뛸 때 부른다 — 줄 수 + BAD_BLOCK_MAX번을 넘으면 경고하고 true(해석기는 멈춘다) */
   protected badBlockStop(line: number): boolean {
+    // 54차: 깨진 블록이 든 고리는 이 한도가 맡는다(같은 상태 고리 repeatStop은 보지 않게 상태 판을 올린다)
+    this.stateVer++;
     const limit = this.src.lineCount + BAD_BLOCK_MAX;
     if (++this.badBlocks <= limit) return false;
     this.w.add(`읽을 수 없는 블록을 ${limit}번 넘게 실행해 멈춤(끝없는 반복일 수 있음)`, line);
     return true;
+  }
+
+  /**
+   * 54차: 고리 상태 판. 해석기는 변수 대입·지움, 위치·모달처럼 이동으로 바뀌는 시스템 변수 읽기, 반복·조건 상태 바뀜마다 올린다(repeatStop)
+   */
+  protected stateVer = 0;
+  /** 54차: 되돌아가는 뛰기(줄 → 줄)마다 마지막으로 본 상태 판·서명·이동 수 */
+  private repeatSeen: Map<number, { ver: number; sig: string | null; moves: number }> | null = null;
+  private frameIds: WeakMap<object, number> | null = null;
+  private frameN = 0;
+
+  /** 54차: 바꿀 때마다 고리 상태 판을 올리는 변수 저장소 */
+  protected vmap<K, V>(): VerMap<K, V> {
+    return new VerMap<K, V>(() => this.stateVer++);
+  }
+
+  /** 54차: 부르기·반복 틀의 번호(같은 틀이면 같은 번호 — 다시 만든 틀은 새 번호) — repeatStop 서명에 쓴다 */
+  protected frameId(f: object): number {
+    const m = (this.frameIds ??= new WeakMap());
+    let id = m.get(f);
+    if (id === undefined) m.set(f, (id = ++this.frameN));
+    return id;
+  }
+
+  /**
+   * 54차: 같은 상태로 되돌아오는 끝없는 고리. 블록을 실행한 뒤 다음 줄(to)이 그 줄(from)보다 앞이면 부른다. 해석기는 결정적이라, 같은 되돌아가는
+   * 뛰기를 다시 할 때 그 사이에 상태 판(stateVer — 변수 대입·위치 같은 시스템 변수 읽기·반복 상태)과 서명(sig — 부르기·반복 틀과 그 남은 횟수 등)이
+   * 그대로면 조건이 늘 같게 풀려 그 뒤로도 같은 블록을 끝없이 되풀이한다(증분 이동만 쌓인다 — 실행 블록 한도까지 돌던 것, Siemens 5~15초).
+   * 이동이 늘지 않은 고리는 idleStop이 맡는다. 줄 수 + REPEAT_MIN 블록 전에는 보지 않는다(보통 프로그램은 셈하지 않는다). 멈추면 경고하고 true
+   */
+  protected repeatStop(from: number, to: number, blocks: number, sig: () => string): boolean {
+    if (to > from || blocks <= this.src.lineCount + REPEAT_MIN) return false;
+    const seen = (this.repeatSeen ??= new Map());
+    const key = from * 16_777_216 + to;
+    const e = seen.get(key);
+    if (!e || e.ver !== this.stateVer) {
+      seen.set(key, { ver: this.stateVer, sig: null, moves: this.mb.count });
+      return false;
+    }
+    const s = sig();
+    if (e.sig === s && this.mb.count > e.moves) {
+      this.w.add('같은 상태(변수·반복 횟수·부르기)로 같은 줄을 되풀이하는 끝없는 반복이라 멈춤', from);
+      return true;
+    }
+    e.sig = s;
+    e.moves = this.mb.count;
+    return false;
   }
 
   /**

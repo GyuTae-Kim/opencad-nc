@@ -171,8 +171,9 @@ type ModalCall = { kind: 'cycle'; name: string; args: (number | undefined)[] } |
 
 class SiemensRunner extends Runner {
   private sBlk = new Block();
-  private r = new Map<number, number>();
-  private vars = new Map<string, number>();
+  // 54차: 변수 저장소는 바꿀 때마다 고리 상태 판을 올린다(emitter.ts repeatStop)
+  private r = this.vmap<number, number>();
+  private vars = this.vmap<string, number>();
   private sStack: SFrame[] = [];
   private sections = new Map<string, Section>();
   private sectionLines = new Map<number, Section>();
@@ -197,11 +198,11 @@ class SiemensRunner extends Runner {
   private toolByName = new Map<string, number>();
   private warnedWord = new Set<string>();
   /** 사이클 설정 _ZSD[n](38차 — 프로그램이 대입한 것만, 없으면 0) */
-  private zsd = new Map<number, number>();
+  private zsd = this.vmap<number, number>();
   /** 47차: 공구 데이터 $TC_DP6(r)·$TC_DP15(w) — 열쇠 "공구,날", 프로그램이 대입한 것만(표시 단위) */
-  private tcdp = new Map<string, { r?: number; w?: number }>();
+  private tcdp = this.vmap<string, { r?: number; w?: number }>();
   /** DEF STRING 변수의 글 값(44차 — CYCLE95 윤곽 이름 NPP에만 쓴다) */
-  private strVars = new Map<string, string>();
+  private strVars = this.vmap<string, string>();
   /** 포켓 사이클이 만드는 이동인지(고정 사이클 표시 FLAG_CYCLE) */
   private inCycle = false;
   /** 45차: 29군 지름·반지름 지정(선반 모드에서만 읽음). 처음은 옵션 latheDiameter(없으면 지름 — 44차까지와 같음)대로 DIAMON·DIAMOF */
@@ -403,7 +404,17 @@ class SiemensRunner extends Runner {
       }
       this.afterLine(line);
       if (this.limitReached(line)) break;
+      // 54차: 같은 상태로 되돌아오는 끝없는 고리(증분 이동을 되풀이하는 GOTOB·WHILE·LOOP·REPEAT … UNTIL)
+      if (this.pc <= line && this.repeatStop(line, this.pc, this.blocks, () => this.sLoopSig())) {
+        this.hitLimit = true;
+        break;
+      }
     }
+  }
+
+  /** 54차: 고리 상태 서명 — 부르기·구간 반복 틀(번호·남은 횟수), 도는 FOR, 모달 부르기(MCALL)(repeatStop) */
+  private sLoopSig(): string {
+    return `${this.sStack.map((f) => `${this.frameId(f)}.${f.reps}`).join(',')}|${[...this.forActive].join(',')}|${JSON.stringify(this.modalCall)}|${this.loopSig()}`;
   }
 
   /** 구간 반복(REPEAT 표지)의 끝 줄을 지났으면 다시 */
@@ -893,7 +904,7 @@ class SiemensRunner extends Runner {
       this.ended = true;
       return;
     }
-    const locals = new Map<string, number>();
+    const locals = this.vmap<string, number>();
     sec.params.forEach((p, k) => locals.set(p, args[k] ?? 0));
     this.sStack.push({ kind: 'sub', ret: this.pc, start: sec.line + 1, reps, locals, modal });
     this.pc = sec.line + 1;

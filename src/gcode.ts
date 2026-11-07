@@ -1193,7 +1193,17 @@ export class Runner extends NcEmitter {
       this.exec(blk, line);
       if (line === this.rangeEnd) this.endRange();
       if (this.limitReached(line)) break;
+      // 54차: 같은 상태로 되돌아오는 끝없는 고리(증분 이동을 되풀이하는 WHILE·GOTO·o-코드)
+      if (this.pc <= line && this.repeatStop(line, this.pc, this.blocks, () => this.loopSig())) {
+        this.hitLimit = true;
+        break;
+      }
     }
+  }
+
+  /** 54차: 고리 상태 서명 — 부르기 틀(번호·남은 횟수), WHILE·DO 틀, o-코드 반복 남은 횟수·조건 갈래, G70 범위 끝(repeatStop) */
+  protected loopSig(): string {
+    return `${this.stack.map((f) => `${this.frameId(f)}.${f.reps}`).join(',')}|${this.loops.map((l) => `${l.m}.${l.line}`).join(',')}|${[...this.repeatLeft].join(';')}|${[...this.ifTaken].join(';')}|${this.rangeEnd}`;
   }
 
   /** 이동 한도에 닿았으면(또는 G7x 구간 상한으로 멈췄으면) 그 줄에 한 번 경고하고 true(읽기를 멈춘다) */
@@ -1233,6 +1243,8 @@ export class Runner extends NcEmitter {
     }
     if (ref === 0) return undefined;
     if (ref >= 1 && ref <= 33) return f.locals?.get(ref);
+    // 54차: 시스템 변수(위치·모달·공구 등 — 이동으로 바뀐다)를 읽으면 고리 상태가 바뀐 것으로 본다(repeatStop)
+    if (ref >= 1000) this.stateVer++;
     if (ref >= 5001 && ref <= 5003) return this.progCoord(ref - 5001);
     if (ref >= 5021 && ref <= 5023) return this.pos[ref - 5021];
     if (ref >= 5041 && ref <= 5043) return this.progCoord(ref - 5041);
@@ -1244,6 +1256,8 @@ export class Runner extends NcEmitter {
     return this.globals.get(ref);
   }
   protected setVar(ref: GVarRef, v: number | undefined): void {
+    // 54차: 변수 대입은 고리 상태를 바꾼다(repeatStop)
+    this.stateVer++;
     const f = this.stack[this.stack.length - 1]!;
     if (typeof ref === 'string') {
       const m = ref.startsWith('_') ? this.namedGlobals : (f.named ??= new Map());
@@ -4139,7 +4153,10 @@ export class Runner extends NcEmitter {
         return jumpPast(['ENDSUB']);
       case 'ENDSUB':
       case 'RETURN': {
-        if (c.val !== undefined) this.namedGlobals.set('_value', c.val);
+        if (c.val !== undefined) {
+          this.namedGlobals.set('_value', c.val);
+          this.stateVer++;
+        }
         const f = this.stack[this.stack.length - 1]!;
         if (f.kind === 'ocall') {
           this.stack.pop();
