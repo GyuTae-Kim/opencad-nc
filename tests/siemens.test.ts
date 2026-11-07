@@ -233,14 +233,14 @@ SCALE`);
 G4 F2.5
 G1 Z-0.1 F10
 G74 Z1=0
-CYCLE72(10, 0, 1, -5)
+CYCLE76(10, 0, 1, -5)
 R5=$AA_IW[X]
 G0 X2`);
     expect(p.units).toBe('inch');
     expect(p.stats.dwellTime).toBeCloseTo(2.5);
     expect(p.moves.flags[2]! & FLAG_MACHINE_EST).toBe(FLAG_MACHINE_EST);
-    // 44차: CYCLE71은 그리게 되어 지원하지 않는 사이클 보기를 CYCLE72(윤곽 밀링)로 바꿈
-    expect(p.warnings.some((w) => w.includes('CYCLE72') && w.includes('지원하지 않음'))).toBe(true);
+    // 44차: CYCLE71은 그리게 되어 지원하지 않는 사이클 보기를 CYCLE72로, 46차: CYCLE72도 그리게 되어 CYCLE76(사각 돌출부 밀링)으로 바꿈
+    expect(p.warnings.some((w) => w.includes('CYCLE76') && w.includes('지원하지 않음'))).toBe(true);
     expect(p.warnings.some((w) => w.includes('$AA_IW'))).toBe(true);
     expect(ends(p).slice(-1)[0]![0]).toBe(2);
   });
