@@ -5,6 +5,7 @@ import { mprToScene } from '../src/scene';
 import { decodeXmlBytes, parseXml, xmlRootName } from '../src/xml';
 import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput, parseForView } from '../src/app/payload';
 import { createDoc, docLabel, mprOps, noticeViews, panelTabs, selectionSummary, statusParts } from '../src/app/doc';
+import { plainText } from '../src/app/filetext';
 import { translate } from '../site/i18n.mjs';
 import type { ParseResult } from '../src/app/protocol';
 
@@ -449,7 +450,7 @@ describe('판별·장면·화면', () => {
       expect(ops.some((o) => !o.enabled)).toBe(true);
       const lines = ops.map((_, i) => {
         d.selKey = String(i);
-        return selectionSummary(d);
+        return plainText(selectionSummary(d));
       });
       lines.push(...statusParts(d).filter((p) => p.startsWith('가공 ')));
       for (const lang of ['en', 'ja', 'zh-CN', 'de']) for (const t of lines) expect(translate(t, lang), `${lang}: ${t}`).not.toMatch(/[가-힣]/);

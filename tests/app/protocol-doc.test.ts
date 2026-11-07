@@ -10,7 +10,7 @@ import {
   lineMoveList,
   moveEndPoint,
   moveSegments,
-  moveSummary,
+  moveSummary as moveSummaryMixed,
   mprOpAtLine,
   mprOps,
   mprVars,
@@ -18,14 +18,19 @@ import {
   replaceResult,
   sceneCounts,
   selectedLineText,
-  selectionSummary,
+  selectionSummary as selectionSummaryMixed,
   statusParts,
   toolGroup,
   toolItems,
   unitLabel,
   warningLabel,
 } from '../../src/app/doc';
+import { plainText } from '../../src/app/filetext';
 import { translate } from '../../site/i18n.mjs';
+
+// 54차: 요약 글은 파일 글이 섞인 글(filetext.ts) — 원문으로 견준다
+const moveSummary = (...a: Parameters<typeof moveSummaryMixed>): string => plainText(moveSummaryMixed(...a));
+const selectionSummary = (...a: Parameters<typeof selectionSummaryMixed>): string => plainText(selectionSummaryMixed(...a));
 
 const enc = new TextEncoder();
 

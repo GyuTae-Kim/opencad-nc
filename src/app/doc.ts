@@ -25,6 +25,7 @@ import {
 import { sourceLine } from '../text';
 import type { NcCompRunMeta } from '../scene';
 import { idRange, moveEndTime, playbackAt } from '../view/playback';
+import { filePrefix, fileText, joinMixed, mix, type FileText, type Mixed } from './filetext';
 import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint, type TrackMark } from './measure';
 import type { MprPayload, NcJobInfo, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
@@ -161,26 +162,26 @@ export function lineNumberText(d: Pick<NcDoc, 'job'>, line: number): string {
   return j.local > 0 ? String(j.local) : '';
 }
 
-/** "줄 N"(여러 파일 작업이면 "파일 · 줄 N" — 원래 파일의 줄) */
-export function lineLabel(d: Pick<NcDoc, 'job'>, line: number): string {
+/** "줄 N"(여러 파일 작업이면 "파일 · 줄 N" — 원래 파일의 줄, 파일 이름은 파일 글) */
+export function lineLabel(d: Pick<NcDoc, 'job'>, line: number): Mixed {
   const j = jobLineOf(d.job, line);
-  return j ? `${j.file} · 줄 ${j.local.toLocaleString('ko-KR')}` : `줄 ${(line + 1).toLocaleString('ko-KR')}`;
+  return j ? mix`${fileText(j.file)} · 줄 ${j.local.toLocaleString('ko-KR')}` : [`줄 ${(line + 1).toLocaleString('ko-KR')}`];
 }
 
 /** "N번 줄"(여러 파일 작업이면 "파일 · N번 줄") */
-export function lineAtLabel(d: Pick<NcDoc, 'job'>, line: number): string {
+export function lineAtLabel(d: Pick<NcDoc, 'job'>, line: number): Mixed {
   const j = jobLineOf(d.job, line);
-  return j ? `${j.file} · ${j.local}번 줄` : `${line + 1}번 줄`;
+  return j ? mix`${fileText(j.file)} · ${j.local}번 줄` : [`${line + 1}번 줄`];
 }
 
 /**
- * 그릴 것이 없는 프로그램 알림의 글 조각(app.ts openBuffer — 조각마다 글 마디 하나라 번역층이 따로 옮긴다): 안내 글, 첫 해석 경고가 있으면
+ * 그릴 것이 없는 프로그램 알림의 글 조각(app.ts openBuffer — 조각마다 글 마디 하나라 번역층이 따로 옮긴다, 파일 글 조각은 옮기지 않는다): 안내 글, 첫 해석 경고가 있으면
  * ' (' · '해석 경고' · ': ' · 줄 · ': ' · 경고 글 · ')'. 경고는 정보 탭 목록처럼 줄과 글을 나눠(warnItems — 같은 사전 열쇠로 옮겨진다) 두고, 여러 번 났으면 '모두 N번'.
  * 31차: 한 글로 끼우면 사전 틀({0})이 잡은 경고가 다른 언어에서도 한국어로 남았다. 경고 조각이 없으면 장면 경고 글 그대로
  */
-export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' | 'mpr'>): string[] {
+export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' | 'mpr'>): (string | FileText)[] {
   const it = res.nc?.warnItems?.[0] ?? res.mpr?.warnItems?.[0];
-  const w = it ? [...(it.line >= 0 ? [lineAtLabel({ job: res.job ?? null }, it.line), ': '] : []), it.text, ...(it.count > 1 ? [' · ', `모두 ${it.count}번`] : [])] : res.scene.warnings?.slice(0, 1) ?? [];
+  const w = it ? [...(it.line >= 0 ? [...lineAtLabel({ job: res.job ?? null }, it.line), ': '] : []), it.text, ...(it.count > 1 ? [' · ', `모두 ${it.count}번`] : [])] : res.scene.warnings?.slice(0, 1) ?? [];
   return ['그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.', ...(w.length ? [' (', '해석 경고', ': ', ...w, ')'] : [])];
 }
 
@@ -192,7 +193,8 @@ export function cutRangeText(min: readonly number[], max: readonly number[], uni
 /** 해석 판단 띠 하나: 글과 행동(다른 설정으로 다시 읽기, 또는 패널 탭 열기) */
 export interface NoticeView {
   key: string;
-  text: string;
+  /** 글(주 프로그램·찾지 못한 프로그램 이름은 파일 글) */
+  text: Mixed;
   /** opts = 그 설정으로 다시 읽기, tab = 패널 탭 열기, add = 이 작업에 파일 더하기 */
   action?: { label: string; opts?: NcOpenOptions; tab?: PanelTab; add?: boolean };
 }
@@ -215,24 +217,25 @@ export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotice
   const job = d.job;
   if (job && (job.files.length > 1 || job.skipped.length) && !d.dismissedNotices.has('job')) {
     const skipped = job.skipped.length ? ` · 잇지 않은 파일 ${job.skipped.length}개` : '';
-    out.push({ key: 'job', text: `파일 ${job.files.length}개를 한 작업으로 읽었습니다 — 주 프로그램 ${job.main}${skipped}`, action: { label: '작업 파일', tab: 'info' } });
+    out.push({ key: 'job', text: mix`파일 ${job.files.length}개를 한 작업으로 읽었습니다 — 주 프로그램 ${fileText(job.main)}${skipped}`, action: { label: '작업 파일', tab: 'info' } });
   }
   for (const n of d.nc?.notices ?? []) {
     let v: NoticeView | null = null;
-    if (n.kind === 'lathe-auto') v = { key: 'lathe-auto', text: '선반 프로그램으로 보여 선반 모드(X 지름·선반 사이클·XZ 단면)로 읽었습니다.', action: { label: '밀링으로 읽기', opts: { ...d.ncOptions, lathe: false } } };
+    if (n.kind === 'lathe-auto') v = { key: 'lathe-auto', text: ['선반 프로그램으로 보여 선반 모드(X 지름·선반 사이클·XZ 단면)로 읽었습니다.'], action: { label: '밀링으로 읽기', opts: { ...d.ncOptions, lathe: false } } };
     else if (n.kind === 'integer-units')
-      v = { key: 'integer-units', text: '소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.', action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
-    else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: DIALECT_NOTICE[n.dialect]!, action: { label: '방언 바꾸기', tab: 'info' } };
+      v = { key: 'integer-units', text: ['소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.'], action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
+    else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: [DIALECT_NOTICE[n.dialect]!], action: { label: '방언 바꾸기', tab: 'info' } };
     else if (n.kind === 'lathe-system' && n.system) {
       const text =
         n.system === 'A'
           ? `Fanuc 선반 G 코드 B·C 체계일 수 있습니다(${(n.hints ?? []).join(' · ')}) — A 체계(G90·G92·G94 단순 사이클)로 읽었습니다.`
           : LATHE_SYSTEM_NOTICE[n.system]!;
-      v = { key: `lathe-system-${n.system}`, text, action: { label: '체계 바꾸기', tab: 'info' } };
+      v = { key: `lathe-system-${n.system}`, text: [text], action: { label: '체계 바꾸기', tab: 'info' } };
     }
     else if (n.kind === 'missing-program' && n.programs?.length) {
-      const names = n.programs.length > 6 ? `${n.programs.slice(0, 6).join(', ')}, …` : n.programs.join(', ');
-      v = { key: 'missing-program', text: `다른 파일의 프로그램 ${names}을(를) 찾지 못했습니다 — 그 파일을 더하면 이어서 그립니다.`, action: { label: '파일 더하기', add: true } };
+      // 프로그램 이름(CALL PGM "…"·부프로그램 이름)은 파일 글
+      const names = fileText(n.programs.length > 6 ? `${n.programs.slice(0, 6).join(', ')}, …` : n.programs.join(', '));
+      v = { key: 'missing-program', text: mix`다른 파일의 프로그램 ${names}을(를) 찾지 못했습니다 — 그 파일을 더하면 이어서 그립니다.`, action: { label: '파일 더하기', add: true } };
     }
     if (v && !d.dismissedNotices.has(v.key)) out.push(v);
   }
@@ -485,11 +488,11 @@ export function statusParts(d: NcDoc): string[] {
 
 const KIND_LABEL: Record<string, string> = { rapid: '급속', feed: '직선 이송', arc: '원호 이송', drill: '드릴' };
 
-/** 공구 이름표: T번호(이름만 있는 공구는 이름) */
-export function toolLabel(nc: Partial<Pick<NcPayload, 'tools'>>, t: number): string {
+/** 공구 이름표: T번호(이름만 있는 공구는 이름 — 파일 글) */
+export function toolLabel(nc: Partial<Pick<NcPayload, 'tools'>>, t: number): string | FileText {
   if (t < 0) return '';
-  if (t >= 100000) return nc.tools?.find((x) => x.number === t)?.name ?? `T${t}`;
-  return `T${t}`;
+  const name = t >= 100000 ? nc.tools?.find((x) => x.number === t)?.name : undefined;
+  return name !== undefined ? fileText(name) : `T${t}`;
 }
 
 /** 공구 이름 → 재생 표시 모양: 볼 → 'ball', 드릴·센터·모따기·탭 → 'cone', 엔드밀·페이스밀 → 'cylinder' (모르면 null) */
@@ -513,12 +516,12 @@ export function toolMarker(nc: Pick<NcPayload, 'moves' | 'tools'>, move: number,
 }
 
 /** 이동 하나의 설명("직선 이송 · T1 · F1200") */
-export function moveSummary(nc: Pick<NcPayload, 'moves'> & Partial<Pick<NcPayload, 'tools'>>, i: number): string {
-  if (i < 0 || i >= nc.moves.count) return '';
+export function moveSummary(nc: Pick<NcPayload, 'moves'> & Partial<Pick<NcPayload, 'tools'>>, i: number): Mixed {
+  if (i < 0 || i >= nc.moves.count) return [];
   const kind = MOVE_KIND_NAMES[nc.moves.kind[i]!] ?? 'feed';
   const tool = nc.moves.tool[i]!;
   const feed = nc.moves.feed[i]!;
-  return `${KIND_LABEL[kind] ?? kind}${tool >= 0 ? ` · ${toolLabel(nc, tool)}` : ''}${kind !== 'rapid' && feed > 0 ? ` · F${fmtNum(feed, 1)}` : ''}`;
+  return mix`${KIND_LABEL[kind] ?? kind}${tool >= 0 ? mix` · ${toolLabel(nc, tool)}` : ''}${kind !== 'rapid' && feed > 0 ? ` · F${fmtNum(feed, 1)}` : ''}`;
 }
 
 /** 작업 좌표계 번호 → 이름 */
@@ -532,7 +535,7 @@ export function wcsLabel(idx: number, dialect: string): string {
  * 현재 블록(이동 i) 상태 한 덩어리: 끝점 X·Y·Z, 이송·주축·냉각, 공구·H·D, 모달 G(좌표계·G90/G91·평면·보정·이송 꼴·극좌표·변환),
  * 고정 사이클, 원호(중심·반지름·중심각). 줄마다 하나씩(패널 아래 띠·재생 띠)
  */
-export function moveState(nc: NcPayload, i: number, units: string): { pos: string; motion: string; modal: string; arc: string } | null {
+export function moveState(nc: NcPayload, i: number, units: string): { pos: string; motion: string; modal: Mixed; arc: string } | null {
   const m = nc.moves;
   if (i < 0 || i >= m.count) return null;
   const k = (i + 1) * 3;
@@ -568,38 +571,53 @@ export function moveState(nc: NcPayload, i: number, units: string): { pos: strin
     const sw = (a.sweep[ai]! * 180) / Math.PI;
     arc = `중심 ${fmtPt(c)} · R ${fmtNum(r)} · ${sw < 0 ? '시계' : '반시계'} ${fmtNum(Math.abs(sw), 1)}°`;
   }
-  return { pos, motion: parts.join(' · '), modal: [...tl, ...g].join(' · '), arc };
+  // 공구 이름(이름만 있는 공구)은 파일 글
+  return { pos, motion: parts.join(' · '), modal: joinMixed([...tl, ...g].map((x) => [x])), arc };
+}
+
+/** 장면 항목 이름(고른 것): 이름 붙은 공구의 경로("이름 이송")·MPR 가공 이름으로 지은 이름은 그 앞이 파일 글 */
+export function itemName(d: Pick<NcDoc, 'kind' | 'nc' | 'scene'>, id: string, name: string | undefined, group: string | undefined): Mixed {
+  if (name === undefined) return [id.startsWith('sim-') ? '깎인 소재' : id];
+  if (d.nc && group && d.nc.tools.some((t) => t.number >= 100000 && t.name === group)) return filePrefix(name, group);
+  const op = d.kind === 'mpr' && /^mpr-op-\d+$/.test(id) ? mprOps(d.scene)[Number(id.slice(7))] : undefined;
+  return filePrefix(name, op?.label);
+}
+
+/** 판재 가공 이름: MPR은 파일 글(가공 이름 MNM·주석·매크로 이름), PGI·XML은 앱이 지은 이름(수직 드릴 Ø5 × 13 — 옮긴다) */
+export function opLabel(d: Pick<NcDoc, 'kind'>, op: Pick<MprOpRow, 'label' | 'kind'>): string | FileText {
+  const label = op.label || op.kind;
+  return d.kind === 'mpr' ? fileText(label) : label;
 }
 
 /**
  * 상태 막대 오른쪽: 고른 것 한 줄 요약(측정이 있으면 측정 먼저).
  * measuring은 측정 모드가 켜져 있는지(결과가 없으면 안내 글), touch는 손가락 기기인지(안내에서 Esc 설명을 뺀다).
  */
-export function selectionSummary(d: NcDoc | null, measuring = false, touch = false): string {
-  if (!d) return '';
+export function selectionSummary(d: NcDoc | null, measuring = false, touch = false): Mixed {
+  if (!d) return [];
   const u = unitLabel(d.scene.units);
   if (d.measure) {
     const m = d.measure;
-    return `거리 ${fmtNum(m.distance)}${u ? ` ${u}` : ''} · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`;
+    return [`거리 ${fmtNum(m.distance)}${u ? ` ${u}` : ''} · dx ${fmtNum(m.dx)} · dy ${fmtNum(m.dy)} · dz ${fmtNum(m.dz)}`];
   }
-  if (measuring) return statusMeasureHint(touch);
+  if (measuring) return [statusMeasureHint(touch)];
   const p = d.pick;
   if (d.nc && d.selLine >= 0) {
     const head = lineLabel(d, d.selLine);
-    if (p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count) return `${head} · ${moveSummary(d.nc, p.index)} · ${fmtPt(p.point)}`;
+    if (p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count) return mix`${head} · ${moveSummary(d.nc, p.index)} · ${fmtPt(p.point)}`;
     const n = d.selMoves.length;
-    return n ? `${head} · 이동 ${fmtCount(n)}` : `${head} · 이동 없음`;
+    return n ? mix`${head} · 이동 ${fmtCount(n)}` : mix`${head} · 이동 없음`;
   }
   if (isPanelKind(d.kind) && d.selKey !== null) {
     const op = mprOps(d.scene)[Number(d.selKey)];
-    // 조각마다 따로 번역되게 " · "로 잇는다(가공 이름이 앱이 지은 한국어여도 — 예: PGI "수직 드릴 Ø5 × 13" — 그 언어로)
-    if (op) return `가공 ${op.index + 1} · ${op.label || op.kind}${op.enabled ? '' : ' · 꺼짐'}`;
+    // 조각마다 따로 번역되게 " · "로 잇는다(가공 이름이 앱이 지은 한국어여도 — 예: PGI "수직 드릴 Ø5 × 13" — 그 언어로, MPR 가공 이름은 파일 글)
+    if (op) return mix`가공 ${op.index + 1} · ${opLabel(d, op)}${op.enabled ? '' : ' · 꺼짐'}`;
   }
   if (p) {
     const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);
-    return `${item?.name ?? p.id} · ${fmtPt(p.point)}`;
+    return mix`${itemName(d, p.id, item?.name, item?.group)} · ${fmtPt(p.point)}`;
   }
-  return '';
+  return [];
 }
 
 /** 고른 줄의 원문(패널 아래 띠) */

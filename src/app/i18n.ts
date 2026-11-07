@@ -3,12 +3,50 @@ import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { CUBE_FACES } from 'opencad-viewer3d/viewcube';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */
 import { currentLanguage, languages, languageUrl, metadataForLanguage, registerCatalog, sourceMessage, translate } from '../../site/i18n-core.mjs';
+import type { Mixed } from './filetext';
 
 const loaders: Record<string, () => Promise<{default: Record<string,string>}>> = {
   en: () => import('../../site/locales/en.json'), ja: () => import('../../site/locales/ja.json'),
   'zh-CN': () => import('../../site/locales/zh-CN.json'), de: () => import('../../site/locales/de.json'),
 };
 async function loadLanguage(language: string): Promise<void> { if (loaders[language]) registerCatalog(language,(await loaders[language]()).default); }
+
+/** 지금 화면 언어(사전을 받은 뒤 installLocalization이 정하고 언어를 바꾸면 따라간다 — 그 전과 닫은 뒤는 한국어) */
+let active = 'ko';
+/**
+ * 파일 글이 섞인 글(filetext.ts)을 지금 언어로(54차, opencad-skp 52차와 같은 꼴): 파일 글 자리를 번역기가 보지 않는 사용 영역 글자(U+E000~)로
+ * 바꿔 옮긴 뒤 되돌린다(사전 틀의 {0}이 그 글자를 그대로 잡고, 나눔 글로 조각낼 때도 한글이 없는 조각이라 그대로 둔다).
+ * 옮긴 글을 넣은 속성은 data-i18n-keep에, 마디를 담은 요소는 data-i18n-skip으로 번역층에서 빼고, 언어를 바꾸면 앱이 다시 그린다(app.ts languagechange)
+ */
+function mixed(parts: Mixed): [string, string[]] {
+  const files: string[] = [];
+  return [translate(parts.map(p => typeof p === 'string' ? p : String.fromCharCode(0xe000 + files.push(p.file) - 1)).join(''), active), files];
+}
+/** 글자 c가 파일 글 자리면 그 파일 글(아니면 undefined) */
+const slot = (c: string, files: string[]): string | undefined => c.length === 1 ? files[c.charCodeAt(0) - 0xe000] : undefined;
+export function mixText(parts: Mixed): string {
+  const [text, files] = mixed(parts);
+  return Array.from(text, c => slot(c, files) ?? c).join('');
+}
+/** 섞은 글 → 화면 마디(파일 글은 translate="no" 묶음). 담는 요소에 data-i18n-skip을 둔다 */
+export function mixNodes(parts: Mixed): (string | Node)[] {
+  const [text, files] = mixed(parts);
+  const out: (string | Node)[] = [];
+  let run = '';
+  for (const c of text) {
+    const file = slot(c, files);
+    if (file === undefined) {
+      run += c;
+      continue;
+    }
+    if (run) out.push(run);
+    run = '';
+    const el = document.createElement('span'); el.setAttribute('translate', 'no'); el.textContent = file;
+    out.push(el);
+  }
+  if (run) out.push(run);
+  return out;
+}
 
 type RecordValue = { source: string; rendered: string };
 // NC group names (rapid, tool groups, panel operation kinds) are app words; data names such as Siemens named tools carry translate="no".
@@ -19,6 +57,7 @@ const ATTR_INSIDE = '.code-list .ln';
 export async function installLocalization(root: HTMLElement): Promise<() => void> {
   let language = currentLanguage(location.href);
   await loadLanguage(language);
+  active = language;
   const originalViews = Object.entries(VIEW_LABELS);
   const originalFaces = CUBE_FACES.map(face => face.label);
   function canvasLabels(): void {
@@ -39,8 +78,10 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   function element(el: Element): void {
     if ((el.matches(SKIP) && !el.matches(ATTR_SELF)) || el.closest('[translate="no"], [data-i18n-skip]')) return;
     const records = attributes.get(el) ?? new Map<string, RecordValue>(); attributes.set(el, records);
+    // data-i18n-keep: 파일 글이거나 앱이 이미 옮겨 넣은 속성(mixText — 54차)
+    const keep = el.getAttribute('data-i18n-keep')?.split(' ');
     for (const name of ['title','aria-label','aria-description','placeholder','alt']) {
-      if (!el.hasAttribute(name)) continue;
+      if (!el.hasAttribute(name) || keep?.includes(name)) continue;
       const record = value(el.getAttribute(name)!, records.get(name)); records.set(name, record);
       if (el.getAttribute(name) !== record.rendered) el.setAttribute(name, record.rendered);
     }
@@ -52,6 +93,8 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
     }
   }
   function update(node: Node): void {
+    // 감시 기록을 받을 때 이미 빠진 마디(가상 목록이 되돌려 둔 코드 줄 등)는 건너뛴다 — 건너뛸 조상(.code-list)을 잃어 파일 글을 옮겼다(54차)
+    if (!node.isConnected) return;
     if (node.nodeType === Node.TEXT_NODE) {
       if (!node.parentElement || node.parentElement.closest(SKIP)) return;
       const record = value(node.nodeValue ?? '', texts.get(node)); texts.set(node, record);
@@ -115,6 +158,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       url.pathname = base + (next === 'ko' ? '' : next + '/');
     }
     language = next;
+    active = next;
     control.setLanguage(language);
     history.replaceState(history.state,'',url.pathname+url.search+url.hash);
     metadata(); canvasLabels(); update(presentationRoot);
@@ -143,6 +187,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   if (title) titleObserver.observe(title,{childList:true,subtree:true,characterData:true});
   observer.observe(presentationRoot,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','aria-description','placeholder','alt','href']});
   return () => {
+    active = 'ko';
     observer.disconnect(); titleObserver.disconnect(); control.dispose();
     for (const [view,label] of originalViews) VIEW_LABELS[view as keyof typeof VIEW_LABELS]=label;
     CUBE_FACES.forEach((face,index) => { face.label=originalFaces[index]!; });

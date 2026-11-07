@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseForView } from '../../src/app/payload';
-import { moveState, moveSummary, wcsLabel } from '../../src/app/doc';
+import { moveState as moveStateMixed, moveSummary as moveSummaryMixed, wcsLabel } from '../../src/app/doc';
+import { plainText } from '../../src/app/filetext';
+
+// 54차: 공구 이름(이름만 있는 공구)은 파일 글이 섞인 글 — 원문으로 견준다
+const moveSummary = (...a: Parameters<typeof moveSummaryMixed>): string => plainText(moveSummaryMixed(...a));
+const moveState = (...a: Parameters<typeof moveStateMixed>) => {
+  const s = moveStateMixed(...a);
+  return s && { ...s, modal: plainText(s.modal) };
+};
 
 const PROG = `G21 G17 G90 G55
 T7 M6

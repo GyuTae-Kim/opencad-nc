@@ -6,17 +6,24 @@
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/panel.ts를 이 앱(문서 하나, 리본 없음)에 맞게 옮겼다.
  */
 import { isPanelKind } from '../extensions';
-import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { sourceLine } from '../text';
 import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
-import { MPR_KIND, cutRangeText, docLabel, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
-import { h } from './dom';
+import { MPR_KIND, cutRangeText, docLabel, itemName, jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText, mprOpAtLine, mprOps, mprVars, moveState, panelTabs, sceneCounts, sceneFeatures, selectedLineText, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { onceImport } from './core';
+import { fileSpan, h, mixSpan } from './dom';
+import { fileText, mix, type Mixed } from './filetext';
+import { mixNodes, mixText } from './i18n';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint, snapPair } from './measure';
+import type { OptKey } from './panel-info';
 import type { NcJobInfo, NcOpenOptions } from './protocol';
-import { cleanLatheTool, defaultSettings, type NcSettings } from './settings';
+import type { NcSettings } from './settings';
+
+/** 정보 탭의 공구 경로 부분(panel-info.ts — 해석 설정·보기 선택·공구 경로·기계 설정). 문서를 열 때 받는다(54차 — 첫 화면 JS에서 뺐다) */
+let info: typeof import('./panel-info') | null = null;
+export const loadPanelInfo = onceImport(() => import('./panel-info').then((m) => (info = m)));
 
 /** 이보다 좁으면 패널을 아래 시트로 */
 export const NARROW_WIDTH = 760;
@@ -63,10 +70,10 @@ export interface PanelHost {
   renderSimTab(body: HTMLElement, d: NcDoc): void;
 }
 
-const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
-
-const row = (k: string, v: string): HTMLElement => h('div', { class: 'prop-row' }, h('span', { class: 'k' }, k), h('span', { class: 'v', title: v }, v));
-const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
+/** 이름·값 줄(이름이 섞은 글이면 지금 언어로 옮겨 담고, file이면 값은 파일 글 — 번역하지 않는다) */
+export const row = (k: string | Mixed, v: string, file = false): HTMLElement =>
+  h('div', { class: 'prop-row' }, typeof k === 'string' ? h('span', { class: 'k' }, k) : mixSpan(k, 'k'), h('span', { class: 'v', title: v, translate: file ? 'no' : null }, v));
+export const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
 
 function safeGet(key: string): string | null {
   try {
@@ -88,7 +95,7 @@ export class NcPanel {
   readonly el: HTMLElement;
   private readonly tabsEl: HTMLDivElement;
   private readonly play: HTMLDivElement;
-  private readonly body: HTMLDivElement;
+  readonly body: HTMLDivElement;
   private readonly foot: HTMLDivElement;
   private doc: NcDoc | null = null;
   private code: VirtualList | null = null;
@@ -97,7 +104,7 @@ export class NcPanel {
   private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement; toHere: HTMLButtonElement } | null = null;
 
   constructor(
-    private readonly host: PanelHost,
+    readonly host: PanelHost,
     /** 패널을 담는 작업 영역(시트 높이 변수 --sheet-h를 둔다) */
     private readonly workspace: HTMLElement,
   ) {
@@ -233,11 +240,12 @@ export class NcPanel {
     p.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
     p.range.setAttribute('aria-valuetext', `${formatDuration(info.sec)} / ${formatDuration(info.total)}`);
     p.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
-    p.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '전체 경로';
+    // 줄(작업 파일 이름)·상태(이름 붙은 공구)에 파일 글이 섞인다 — 지금 언어로 옮겨 담는다(data-i18n-skip)
+    p.line.replaceChildren(...mixNodes(info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : ['전체 경로']));
     const nc = this.doc?.nc;
     const st = nc && info.move >= 0 ? moveState(nc, info.move, unitLabel(this.doc!.scene.units)) : null;
     p.state.hidden = !st;
-    if (st) p.state.textContent = `${st.motion} · ${st.modal}\n${st.pos}`;
+    if (st) p.state.replaceChildren(...mixNodes(mix`${st.motion} · ${st.modal}\n${st.pos}`));
     p.speed.value = String(this.host.speed);
     p.toHere.disabled = !this.doc || this.doc.selLine < 0;
     if (info.line !== this.lastPlayLine) {
@@ -312,7 +320,7 @@ export class NcPanel {
       if (info) this.host.seek((Number(range.value) / 1000) * info.total);
     });
     const time = h('span', { class: 'mono-dim' });
-    const line = h('span', { class: 'mono-dim' });
+    const line = h('span', { class: 'mono-dim', 'data-i18n-skip': true });
     // 한 이동씩(← →, Shift면 10)·고른 줄까지 그리기
     const iconBtn = (ic: 'stepBack' | 'stepFwd' | 'toHere', label: string, title: string, run: () => void): HTMLButtonElement => {
       const b = h('button', { class: 'btn small icon-only', type: 'button', title, 'aria-label': label, html: icon(ic) });
@@ -323,7 +331,7 @@ export class NcPanel {
     const fwd = iconBtn('stepFwd', '다음 이동', '다음 이동 (→, Shift+→ 10개)', () => this.host.stepMove(1));
     const toHere = iconBtn('toHere', '여기까지 그리기', '고른 줄까지 그리기', () => this.host.drawToLine());
     // 재생 중인 이동의 상태(끝점·이송·주축·공구·모달 G)
-    const state = h('div', { class: 'play-state', 'aria-live': 'off' });
+    const state = h('div', { class: 'play-state', 'aria-live': 'off', 'data-i18n-skip': true });
     this.play.append(h('div', { class: 'play-row' }, first, back, btn, fwd, all, toHere, speed, h('span', { class: 'play-info' }, time, line)), range, state);
     this.playEls = { btn, range, time, line, speed, state, toHere };
   }
@@ -560,9 +568,9 @@ export class NcPanel {
       const visible = g ? !d.hiddenGroups.has(g) : true;
       // 이름만 있는 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 번호 칸을 비우고 이름 칸에 보인다
       const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
-      // 단추 이름: 이름만 있는 공구는 그 이름(파일 자료 — 번역 틀에 그대로 들어감)
-      const who = t.number >= 100000 ? (t.name ?? label) : label;
-      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': `${who} ${visible ? '숨기기' : '보이기'}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
+      // 단추 이름: 이름만 있는 공구는 그 이름(파일 글 — 자리를 지켜 옮겨 넣고 번역층은 건너뛴다)
+      const who = t.number >= 100000 && t.name !== undefined ? fileText(t.name) : label;
+      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': mixText(mix`${who} ${visible ? '숨기기' : '보이기'}`), 'data-i18n-keep': 'aria-label', 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
       eye.disabled = !g;
       eye.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -663,7 +671,8 @@ export class NcPanel {
         'tr',
         { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, title: typeof o.line === 'number' ? `줄 ${o.line + 1}` : '' },
         h('td', { class: 'num faint' }, String(o.index + 1)),
-        h('td', { class: 'wrap' }, o.label || MPR_KIND[o.kind] || o.kind),
+        // MPR 가공 이름(MNM·주석·매크로 이름)은 파일 글, PGI·XML은 앱이 지은 이름(옮긴다)
+        h('td', { class: 'wrap', translate: o.label && d.kind === 'mpr' ? 'no' : null }, o.label || MPR_KIND[o.kind] || o.kind),
         h('td', {}, MPR_KIND[o.kind] ?? o.kind),
         detailCell,
         h('td', {}, o.enabled ? h('span', { class: 'chip' }, '켜짐') : h('span', { class: 'chip warn' }, '꺼짐')),
@@ -717,7 +726,7 @@ export class NcPanel {
     const u = unitLabel(s.units);
     const c = sceneCounts(s);
     const b = s.bounds;
-    const rows: HTMLElement[] = [row('파일', d.name), row('형식', docLabel(d)), row('크기', formatBytes(d.size)), row('단위', u || '모름'), row('읽은 시간', formatMs(d.ms))];
+    const rows: HTMLElement[] = [row('파일', d.name, true), row('형식', docLabel(d)), row('크기', formatBytes(d.size)), row('단위', u || '모름'), row('읽은 시간', formatMs(d.ms))];
     if (b) {
       // 장면 범위 = 급속·공작물 포함(기계 좌표 쪽 추정 이동은 뺌). 절삭만의 범위는 아래 "절삭 범위"
       rows.push(row('범위 크기(급속 포함)', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
@@ -739,7 +748,17 @@ export class NcPanel {
           row('가장 깊은 Z', `${fmtNum(cb.min[2])} ${u}`),
         ),
       );
-    if (d.nc) this.ncInfo(d);
+    // 공구 경로 부분은 문서를 열 때 받는 조각(받기 전이면 받은 뒤 다시 그린다)
+    if (d.nc) {
+      if (info) info.ncInfo(this, d);
+      else
+        loadPanelInfo().then(
+          () => {
+            if (this.doc === d && d.panelTab === 'info') this.render();
+          },
+          () => undefined,
+        );
+    }
     if (isPanelKind(d.kind)) {
       const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;
       if (st)
@@ -770,7 +789,7 @@ export class NcPanel {
       const b = h(
         'button',
         { class: 'warn-item', type: 'button', title: it.lines.length > 1 ? '누르면 그 줄로(다시 누르면 같은 경고가 난 다음 줄로)' : '누르면 그 줄로' },
-        h('span', { class: 'ln' }, lineAtLabel(d, it.line)),
+        mixSpan(lineAtLabel(d, it.line), 'ln'),
         h('span', { class: 'msg' }, it.text),
         it.count > 1 ? h('span', { class: 'cnt' }, `모두 ${it.count}번`) : null,
       );
@@ -791,7 +810,7 @@ export class NcPanel {
    */
   private jobGroup(d: NcDoc, job: NcJobInfo): HTMLElement {
     const main = h('select', { class: 'select', 'aria-label': '주 프로그램' });
-    for (const f of job.files) main.append(h('option', { value: f }, f));
+    for (const f of job.files) main.append(h('option', { value: f, translate: 'no' }, f));
     main.value = job.main;
     main.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, jobMain: main.value }));
     const list = h('ul', { class: 'warn-list job-files' });
@@ -817,8 +836,9 @@ export class NcPanel {
       `작업 파일 ${job.files.length}개`,
       h('label', { class: 'prop-row edit', title: '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일' }, h('span', { class: 'k' }, '주 프로그램'), main),
       list,
-      job.skipped.length ? h('p', { class: 'hint' }, `잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${job.skipped.join(', ')}`) : null,
-      missing.length ? h('p', { class: 'hint' }, `찾지 못한 프로그램: ${missing.join(', ')} — 해석 경고에서 그 줄로 갑니다.`) : null,
+      // 파일·프로그램 이름은 파일 글
+      job.skipped.length ? h('p', { class: 'hint' }, mixSpan(mix`잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${fileText(job.skipped.join(', '))}`)) : null,
+      missing.length ? h('p', { class: 'hint' }, mixSpan(mix`찾지 못한 프로그램: ${fileText(missing.join(', '))} — 해석 경고에서 그 줄로 갑니다.`)) : null,
       add,
     );
   }
@@ -853,213 +873,8 @@ export class NcPanel {
     return this.warnLines?.get(i);
   }
 
-  private ncInfo(d: NcDoc): void {
-    const nc = d.nc!;
-    const st = nc.stats;
-    const u = unitLabel(d.scene.units);
-    const f = sceneFeatures(d.scene);
-    if (nc.kind === 'gcode') {
-      const dialect = h('select', { class: 'select', 'aria-label': 'G-code 방언' });
-      dialect.append(h('option', { value: 'auto' }, `자동 (${NC_DIALECT_NAMES[nc.dialect]})`));
-      for (const k of G_DIALECTS) dialect.append(h('option', { value: k }, NC_DIALECT_NAMES[k]));
-      dialect.value = d.ncOptions.dialect ?? 'auto';
-      const units = h('select', { class: 'select', 'aria-label': '기본 단위' });
-      units.append(h('option', { value: 'mm' }, 'mm'), h('option', { value: 'inch' }, 'inch'));
-      units.value = d.ncOptions.units ?? 'mm';
-      const apply = () => this.host.reparse({ ...d.ncOptions, dialect: dialect.value as NcDialect | 'auto', units: units.value as 'mm' | 'inch' });
-      dialect.addEventListener('change', apply);
-      units.addEventListener('change', apply);
-      this.body.append(
-        group(
-          '해석 설정',
-          h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '방언'), dialect),
-          f.lathe && nc.latheSystem ? this.latheSystemRow(d, nc.latheSystem) : null,
-          h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
-          this.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
-          h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
-        ),
-      );
-    }
-    // 선택 기능: 반경 보정 경로·선반·회전축
-    const opts: HTMLElement[] = [];
-    if (f.compRunCount > 0 || d.ncOptions.comp) {
-      opts.push(
-        this.optToggle(
-          d,
-          'comp',
-          '보정 경로 보기',
-          f.lathe
-            ? `선반 공구 끝 R 보정(G41/G42) 구간 ${f.compRunCount}곳의 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 공구 방향(1~8)이 있으면 가상 공구 끝, 없거나 9면 노즈 반지름 중심 경로입니다. 프로그램 경로는 그대로입니다.`
-            : `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`,
-        ),
-      );
-      if (f.compRuns)
-        for (const r of f.compRuns.slice(0, 20)) {
-          const v = r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음';
-          const el = row(`${lineAtLabel(d, r.line)} ${r.side === 1 ? '왼쪽' : '오른쪽'}`, v);
-          // 출처(G10 T1 반지름·선반 공구 표 T1 등)는 따로 옮겨지게 조각으로 — 보이는 글은 같다. 풍선 글(title)은 통째로 옮겨져 출처가 한국어로 남으므로 뺀다(30차)
-          if (r.computed && r.source) {
-            const ve = el.querySelector('.v')!;
-            ve.replaceChildren(`반지름 ${fmtNum(r.radius)} ${u}`, ' (', h('span', {}, r.source), ')');
-            ve.removeAttribute('title');
-          }
-          opts.push(el);
-          // 선반: 공구 방향(값과 출처를 따로 — 출처 글이 따로 옮겨지게)
-          if (r.tool !== undefined)
-            opts.push(
-              h(
-                'div',
-                { class: 'prop-row' },
-                h('span', { class: 'k' }, '공구 방향'),
-                r.orientation !== undefined && r.orientation > 0
-                  ? h('span', { class: 'v' }, String(r.orientation), ' · ', h('span', {}, r.orientationSource ?? ''))
-                  : h('span', { class: 'v' }, '모름 — 노즈 중심'),
-              ),
-            );
-        }
-      if (f.lathe && f.compRuns) opts.push(...this.latheToolRows(f.compRuns));
-    }
-    if (nc.kind === 'gcode') {
-      opts.push(this.optToggle(d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
-      if (f.rotaryAxes || d.ncOptions.rotary) opts.push(this.optToggle(d, 'rotary', '회전축 감기', 'A·B·C 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로를 그립니다(회전 중심 = 원점, G43.4 동안은 감지 않음).'));
-    }
-    if (opts.length) this.body.append(group('보기 선택', ...opts));
-    this.body.append(
-      group(
-        '공구 경로',
-        row('방언 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 평문' : NC_DIALECT_NAMES[nc.dialect]}${f.lathe ? ' · 선반' : ''} · ${nc.units}`),
-        row('줄 · 실행 블록', `${nc.source.lineCount.toLocaleString('ko-KR')} · ${st.blocks.toLocaleString('ko-KR')}`),
-        row('이동', st.moveCount.toLocaleString('ko-KR')),
-        row('이송 길이', `${fmtNum(st.feedLength, 1)} ${u}`),
-        row('급속 길이', `${fmtNum(st.rapidLength, 1)} ${u}`),
-        row('예상 시간', formatDuration(st.time)),
-        row('이송 · 급속 · 휴지', `${formatDuration(st.feedTime)} · ${formatDuration(st.rapidTime)} · ${formatDuration(st.dwellTime)}`),
-        row('급속 속도(계산용)', `${fmtNum(st.rapidFeed, 0)} ${u}/분`),
-        row('공구 교환 · 원호 · 구멍', `${st.toolChanges} · ${st.arcCount.toLocaleString('ko-KR')} · ${st.holeCount.toLocaleString('ko-KR')}`),
-        st.toolChangeTime > 0 ? row('공구 교환 시간', formatDuration(st.toolChangeTime)) : null,
-      ),
-    );
-    this.body.append(this.settingsGroup());
-  }
-
-  /** 기계·읽기 설정(앱 전체, 이 브라우저에 기억): 바꾸면 지금 프로그램을 다시 읽는다 */
-  private settingsGroup(): HTMLElement {
-    const s = this.host.settings;
-    const set = (patch: Partial<NcSettings>): void => this.host.setSettings({ ...this.host.settings, ...patch });
-    const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = ''): HTMLInputElement => {
-      const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label, placeholder });
-      el.value = v === null ? '' : String(v);
-      el.addEventListener('change', () => {
-        const t = el.value.trim();
-        const n = t === '' ? null : Number(t);
-        onSet(n === null || Number.isFinite(n) ? n : null);
-      });
-      return el;
-    };
-    const one = (label: string, hint: string, v: number | null, onSet: (n: number | null) => void, placeholder: string): HTMLElement =>
-      h('label', { class: 'prop-row edit', title: hint }, h('span', { class: 'k' }, label), numIn(v, label, onSet, placeholder));
-    const tri = (label: string, hint: string, key: 'offsetMm' | 'referenceMm' | 'limitMin' | 'limitMax'): HTMLElement =>
-      h(
-        'div',
-        { class: 'prop-row edit', title: hint },
-        h('span', { class: 'k' }, label),
-        h(
-          'span',
-          { class: 'xyz-input' },
-          ...[0, 1, 2].map((a) =>
-            numIn(
-              s[key][a]!,
-              `${label} — ${'XYZ'[a]}`,
-              (n) => {
-                const v = [...this.host.settings[key]] as NcSettings[typeof key];
-                v[a] = n;
-                set({ [key]: v });
-              },
-              'XYZ'[a]!,
-            ),
-          ),
-        ),
-      );
-    const check = (label: string, hint: string, key: 'blockDelete' | 'checkToolNumbers' | 'dogleg' | 'toolSize'): HTMLElement => {
-      const cb = h('input', { type: 'checkbox' });
-      cb.checked = s[key];
-      cb.addEventListener('change', () => set({ [key]: cb.checked }));
-      return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label));
-    };
-    const reset = h('button', { type: 'button', class: 'btn small' }, '기본값으로');
-    reset.addEventListener('click', () => this.host.setSettings(defaultSettings()));
-    return group(
-      '기계·읽기 설정',
-      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000'),
-      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0'),
-      check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
-      check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
-      check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
-      tri('G54 원점의 기계 좌표(mm)', '세 축을 모두 넣으면 G53·M91 값과 G28·G30 기준점을 실제 위치로 그립니다(없으면 공구 축만 안전 높이로 추정).', 'offsetMm'),
-      tri('G28 기준점 기계 좌표(mm)', 'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.', 'referenceMm'),
-      tri('허용 범위 최소(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMin'),
-      tri('허용 범위 최대(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMax'),
-      check('공구를 실제 크기로 표시', '재생 중 공구 표시를 주석·공구 정의에서 읽은 지름 크기로 그립니다(모양은 공구 이름: 볼·드릴·엔드밀).', 'toolSize'),
-      h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
-      reset,
-    );
-  }
-
-  /**
-   * 선반 공구 표(보정 구간이 쓰는 공구마다 노즈 반지름 mm·LinuxCNC 공구 방향) — 파일에 값이 없을 때 쓴다.
-   * 기계·읽기 설정에 기억하고, 바꾸면 다시 읽는다
-   */
-  private latheToolRows(runs: readonly { tool?: number }[]): HTMLElement[] {
-    const keys = [...new Set(runs.map((r) => r.tool).filter((t): t is number => t !== undefined && t >= 0))].sort((a, b) => a - b).slice(0, 12);
-    if (!keys.length) return [];
-    const save = (key: number, radiusMm: number | null, orientation: number | null): void => {
-      const all = { ...this.host.settings.latheTools };
-      const c = cleanLatheTool({ radiusMm, orientation });
-      if (c) all[key] = c;
-      else delete all[key];
-      this.host.setSettings({ ...this.host.settings, latheTools: all });
-    };
-    const rows = keys.map((key) => {
-      const cur = this.host.settings.latheTools[key];
-      const r = h('input', { type: 'number', step: 'any', min: '0', inputmode: 'decimal', class: 'num-input', 'aria-label': `T${key} 노즈 반지름(mm)`, placeholder: 'R' });
-      r.value = cur?.radiusMm != null ? String(cur.radiusMm) : '';
-      const q = h('select', { class: 'select', 'aria-label': `T${key} 공구 방향` });
-      q.append(h('option', { value: '' }, '—'), ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: String(n) }, String(n))));
-      q.value = cur?.orientation != null ? String(cur.orientation) : '';
-      const apply = (): void => {
-        const n = r.value.trim() === '' ? null : Number(r.value);
-        save(key, n !== null && Number.isFinite(n) && n > 0 ? n : null, q.value ? Number(q.value) : null);
-      };
-      r.addEventListener('change', apply);
-      q.addEventListener('change', apply);
-      return h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, `T${key} 노즈 R(mm) · 방향`), h('span', { class: 'sim-pair' }, r, q));
-    });
-    return [
-      ...rows,
-      h('p', { class: 'hint' }, '선반 공구 표: 파일에 노즈 반지름(G10 L1 R·G41.1 D)이나 공구 방향(G10 L1 Q·G41.1 L)이 없을 때 씁니다. 방향은 LinuxCNC 설명서의 공구 방향 번호입니다(1~8 가상 공구 끝, 9 노즈 중심). 이 브라우저에 기억합니다.'),
-    ];
-  }
-
-  /** 다시 읽는 켜고 끄기(선택 기능) */
-  /** Fanuc 선반 G 코드 체계 고르기(자동 = 글로 판별, 정할 수 없으면 A) — 바꾸면 다시 읽는다 */
-  private latheSystemRow(d: NcDoc, read: NcLatheSystem): HTMLElement {
-    const sel = h('select', { class: 'select', 'aria-label': '선반 G 코드 체계' });
-    sel.append(h('option', { value: 'auto' }, `자동 (${read} 체계)`));
-    for (const k of ['A', 'B', 'C'] as const) sel.append(h('option', { value: k }, `${k} 체계`));
-    sel.value = d.ncOptions.latheSystem ?? 'auto';
-    sel.addEventListener('change', () => {
-      const { latheSystem: _, ...rest } = d.ncOptions;
-      void this.host.reparse(sel.value === 'auto' ? rest : { ...rest, latheSystem: sel.value as NcLatheSystem });
-    });
-    return h(
-      'label',
-      { class: 'prop-row edit', title: 'Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm' },
-      h('span', { class: 'k' }, '선반 G 코드'),
-      sel,
-    );
-  }
-
-  private optToggle(d: NcDoc, key: 'comp' | 'lathe' | 'rotary' | 'mprDisabled' | 'integerUnits', label: string, hint: string): HTMLElement {
+  /** 다시 읽는 켜고 끄기(선택 기능 — panel-info.ts도 쓴다) */
+  optToggle(d: NcDoc, key: OptKey, label: string, hint: string): HTMLElement {
     const cb = h('input', { type: 'checkbox' });
     // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다
     cb.checked = key === 'lathe' ? sceneFeatures(d.scene).lathe : !!d.ncOptions[key];
@@ -1081,7 +896,8 @@ export class NcPanel {
     const u = unitLabel(d.scene.units);
     const p = d.pick;
     if (d.selLine >= 0 && (d.nc || d.mpr)) {
-      lines.push(h('div', {}, h('b', {}, lineLabel(d, d.selLine)), ` ${selectedLineText(d, 80)}`));
+      // 줄 이름(작업 파일 이름)과 줄 원문은 파일 글
+      lines.push(h('div', {}, h('b', {}, mixSpan(lineLabel(d, d.selLine))), ' ', fileSpan(selectedLineText(d, 80))));
       if (d.nc) {
         const picked = p && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < d.nc.moves.count ? p.index : -1;
         const mi = picked >= 0 ? picked : (d.selMoves[0] ?? -1);
@@ -1089,7 +905,7 @@ export class NcPanel {
         if (st) {
           // 현재 블록 상태: 이동·이송·주축 / 공구·보정·모달 G / 끝점(고른 점) / 원호
           lines.push(h('div', { class: 'state' }, st.motion));
-          lines.push(h('div', { class: 'state' }, st.modal));
+          lines.push(h('div', { class: 'state' }, mixSpan(st.modal)));
           lines.push(h('div', { class: 'dim' }, `끝점 ${st.pos}${picked >= 0 ? ` · 고른 점 ${fmtPt(p!.point)}` : ''}`));
           if (st.arc) lines.push(h('div', { class: 'dim' }, st.arc));
           if (picked < 0 && d.selMoves.length > 1) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다(첫 이동의 상태).`));
@@ -1097,8 +913,9 @@ export class NcPanel {
       }
     } else if (p) {
       const item = p.kind === 'mesh' ? d.scene.meshes.find((m) => m.id === p.id) : p.kind === 'line' ? d.scene.lines.find((l) => l.id === p.id) : d.scene.points?.find((x) => x.id === p.id);
+      // 이름 붙은 공구의 경로·MPR 가공 이름은 파일 글
       const name = item?.name ?? (p.id.startsWith('sim-') ? '깎인 소재' : p.id);
-      lines.push(h('div', {}, h('b', {}, '고른 것 '), name, item?.group && item.group !== name ? h('span', { class: 'dim' }, ` · ${item.group}`) : null));
+      lines.push(h('div', {}, h('b', {}, '고른 것 '), mixSpan(itemName(d, p.id, item?.name, item?.group)), item?.group && item.group !== name ? mixSpan(mix` · ${itemName(d, '', item.group, item.group)}`, 'dim') : null));
       lines.push(h('div', { class: 'dim' }, `점 ${fmtPt(p.point)}`));
     }
     if (d.measure) {

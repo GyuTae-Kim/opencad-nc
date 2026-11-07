@@ -3,6 +3,7 @@ import { parseGcode } from '../src/gcode';
 import { MOVE_DRILL, moveEnd, type NcProgram } from '../src/model';
 import { parseForView } from '../src/app/payload';
 import { createDoc, noticeViews } from '../src/app/doc';
+import { plainText } from '../src/app/filetext';
 
 const r3 = (v: number): number => Math.round(v * 10000) / 10000;
 const ends = (p: NcProgram): number[][] => {
@@ -133,7 +134,7 @@ describe('선반 자동 판별 띠', () => {
     const d = createDoc('h.nc', 1, parseForView('h.nc', enc.encode(text)));
     const v = noticeViews(d);
     expect(v.map((n) => [n.key, n.action?.tab])).toEqual([['dialect-haas', 'info']]);
-    expect(v[0]!.text).toContain('G73·G83의 K는 최소 절입');
+    expect(plainText(v[0]!.text)).toContain('G73·G83의 K는 최소 절입');
     expect(parseGcode(text, { dialect: 'haas' }).notices).toBeUndefined();
     expect(parseGcode(text).notices).toEqual([{ kind: 'dialect', dialect: 'haas' }]);
   });

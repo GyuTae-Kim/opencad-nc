@@ -1,6 +1,8 @@
 /**
- * 작은 DOM 도움: 요소 만들기(h)와 알림(toast).
+ * 작은 DOM 도움: 요소 만들기(h)와 알림(toast), 파일 글을 담는 요소(fileSpan·mixSpan — 54차).
  */
+import type { FileText, Mixed } from './filetext';
+import { mixNodes } from './i18n';
 
 type Attr = string | number | boolean | null | undefined;
 type Child = Node | string | null | undefined | false;
@@ -21,10 +23,19 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<s
   return el;
 }
 
+/** 파일 글 하나(번역층이 옮기지 않는다) */
+export const fileSpan = (text: string, cls?: string): HTMLSpanElement => h('span', { class: cls, translate: 'no' }, text);
+
+/** 글 조각 목록 → 마디(앱 글 조각은 번역층이 따로 옮기고, 파일 글 조각은 옮기지 않는다) */
+export const pieces = (parts: readonly (string | FileText)[]): (string | Node)[] => parts.map((p) => (typeof p === 'string' ? p : fileSpan(p.file)));
+
+/** 파일 글이 섞인 글을 지금 언어로 옮겨 담은 span(번역층은 건너뛴다 — 언어를 바꾸면 그린 쪽이 다시 그린다) */
+export const mixSpan = (m: Mixed, cls?: string): HTMLSpanElement => h('span', { class: cls, 'data-i18n-skip': true }, ...mixNodes(m));
+
 let toastHost: HTMLElement | null = null;
 
 /** 잠깐 보이는 알림(오류는 role=alert). 글 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다). action을 주면 단추 하나(누르면 실행하고 닫는다) */
-export function toast(message: string | readonly string[], kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
+export function toast(message: string | readonly (string | Node)[], kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
   if (!toastHost) {
     toastHost = h('div', { class: 'toasts', 'aria-live': 'polite' });
     document.body.append(toastHost);

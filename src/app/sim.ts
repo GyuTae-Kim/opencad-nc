@@ -14,8 +14,9 @@
  *   패널을 닫으면 3D 보기 아래에 같은 단추의 띠(재생 띠 자리)를 보인다.
  */
 import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
-import { MPR_KIND, lineAtLabel, mprOps, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
-import { h, toast } from './dom';
+import { MPR_KIND, lineAtLabel, mprOps, opLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
+import { fileSpan, h, mixSpan, toast } from './dom';
+import type { FileText } from './filetext';
 import { fmtNum } from './format';
 import { icon, type IconName } from './icons';
 import { sourceLine, sourceText } from '../text';
@@ -751,7 +752,7 @@ export class SimView {
       const b = this.block;
       const p = h('p', { class: 'sim-block' }, h('b', {}, '시뮬레이션하지 않음'), ' ', SIM_BLOCK_TEXT[b.code]);
       if (b.line >= 0) {
-        const go = h('button', { class: 'linkish', type: 'button', title: '누르면 그 줄로' }, lineAtLabel(d, b.line));
+        const go = h('button', { class: 'linkish', type: 'button', title: '누르면 그 줄로' }, mixSpan(lineAtLabel(d, b.line)));
         go.addEventListener('click', () => this.host.selectLine(b.line, undefined, true));
         p.append(' ', go, b.token ? h('span', { class: 'dim', translate: 'no' }, ` ${b.token}`) : '');
       }
@@ -786,7 +787,7 @@ export class SimView {
       const { rows, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
       const list = h('ul', { class: 'warn-list' });
       for (const r of rows) {
-        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 줄로' }, h('span', { class: 'ln' }, lineAtLabel(d, r.line)), h('span', { class: 'msg' }, `깊이 ${fmtNum(r.depth)} ${u}`));
+        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 줄로' }, mixSpan(lineAtLabel(d, r.line), 'ln'), h('span', { class: 'msg' }, `깊이 ${fmtNum(r.depth)} ${u}`));
         b.addEventListener('click', () => this.host.selectLine(r.line, [r.move], true));
         list.append(h('li', {}, b));
       }
@@ -1030,6 +1031,11 @@ export class SimView {
     return { el, count, name, first, prev, next, all, range };
   }
 
+  /** 가공 이름 칸(파일 글 — MPR 가공 이름 — 이면 번역하지 않는다) */
+  private opName(label: string | FileText, cls?: string): HTMLElement {
+    return typeof label === 'string' ? h('span', { class: cls }, label) : fileSpan(label.file, cls);
+  }
+
   /** 단추·막대를 지금 자리로: "k / 걸음 수", 지금 가공(가공 번호 · 이름), 끝에서 막힌 단추 */
   private fillSteps(s: StepEls): void {
     const list = this.opSteps();
@@ -1040,7 +1046,8 @@ export class SimView {
     const row = op !== undefined ? mprOps(this.host.doc?.scene ?? { name: '', units: 'mm', meshes: [], lines: [] }).find((o) => o.index === op) : undefined;
     if (this.step === null) s.name.replaceChildren(h('span', {}, '모든 가공'));
     else if (k === 0) s.name.replaceChildren(h('span', {}, '깎기 전'));
-    else s.name.replaceChildren(h('span', {}, `가공 ${(op ?? 0) + 1}`), ...(row ? [' · ', h('span', {}, row.label || MPR_KIND[row.kind] || row.kind)] : []));
+    // 가공 이름: MPR은 파일 글(번역하지 않는다), PGI·XML은 앱이 지은 이름
+    else s.name.replaceChildren(h('span', {}, `가공 ${(op ?? 0) + 1}`), ...(row ? [' · ', this.opName(row.label ? opLabel(this.host.doc!, row) : MPR_KIND[row.kind] || row.kind)] : []));
     s.first.disabled = this.step === 0;
     s.prev.disabled = k === 0;
     // 모든 가공(따라가기 전)에서 다음 가공은 첫 가공부터 — → 키·G-code 재생 띠의 다음 이동과 같은 차례(stepBy)
@@ -1063,7 +1070,7 @@ export class SimView {
       sec.append(h('p', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${list.length.toLocaleString('ko-KR')}개`)));
       const ul = h('ul', { class: 'warn-list' });
       for (const s of list.slice(0, 50)) {
-        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 가공을 고릅니다' }, h('span', { class: 'ln' }, `가공 ${s.op + 1}`), h('span', { class: 'msg' }, s.label));
+        const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 가공을 고릅니다' }, h('span', { class: 'ln' }, `가공 ${s.op + 1}`), this.opName(this.host.doc?.kind === 'mpr' ? { file: s.label } : s.label, 'msg'));
         b.addEventListener('click', () => this.host.selectMprOp(s.op, true));
         ul.append(h('li', {}, b));
       }

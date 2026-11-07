@@ -349,13 +349,13 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     fake.FakeViewer.last!.emitMeasure({ distance: 20, dx: 20, dy: 0, dz: 0, snapA: 'center', snapB: 'endpoint' });
     expect(root.querySelector('.measure-bar .mb-snap')!.textContent).toBe('중심 → 끝점');
     expect(root.querySelector('.st-sel')!.textContent).toBe('거리 20 mm · dx 20 · dy 0 · dz 0 · 중심 → 끝점');
-    // 이름은 따로 번역되게 조각으로
-    expect([...root.querySelectorAll('.st-sel span')].map((e) => e.textContent)).toEqual(['중심', '끝점']);
+    // 이름은 따로 번역되게 조각으로(고른 것 요약은 그릴 때 옮겨 담는 묶음 — 54차)
+    expect([...root.querySelectorAll('.st-sel > span:not([data-i18n-skip])')].map((e) => e.textContent)).toEqual(['중심', '끝점']);
     expect(root.querySelector('.panel-foot')!.textContent).toContain('중심 → 끝점');
     // 잠근 선 위에 찍은 둘째 점(코어 0.10.0 lockedB)은 "잠금"을 따로 붙인다
     fake.FakeViewer.last!.emitMeasure({ distance: 20, dx: 0, dy: 0, dz: 20, snapA: 'endpoint', snapB: 'axis', axisB: 'z', lockedB: true });
     expect(root.querySelector('.measure-bar .mb-snap')!.textContent).toBe('끝점 → Z축 방향 · 잠금');
-    expect([...root.querySelectorAll('.st-sel span')].map((e) => e.textContent)).toEqual(['끝점', 'Z축 방향', '잠금']);
+    expect([...root.querySelectorAll('.st-sel > span:not([data-i18n-skip])')].map((e) => e.textContent)).toEqual(['끝점', 'Z축 방향', '잠금']);
     expect(root.querySelector('.panel-foot')!.textContent).toContain('끝점 → Z축 방향 · 잠금');
     // 붙잡기를 켜지 않은 결과(snapA·snapB 없음)는 예전 그대로
     fake.FakeViewer.last!.emitMeasure({ distance: 5, dx: 5, dy: 0, dz: 0, snapA: undefined, snapB: undefined });

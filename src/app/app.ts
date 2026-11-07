@@ -22,7 +22,6 @@
 import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
-import { NC_SAMPLE_NAME, ncSampleProgram } from '../view/sample';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 // 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
 import type { TouchAim } from './aim';
@@ -32,14 +31,16 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, toast } from './dom';
+import { h, mixSpan, pieces, toast } from './dom';
+import { fileText, mix, plainText, type Mixed } from './filetext';
+import { mixNodes, mixText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
 import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import type { TrackPick } from './measure-track';
-import { NARROW_WIDTH, NcPanel, type PanelHost } from './panel';
+import { NARROW_WIDTH, NcPanel, loadPanelInfo, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
@@ -312,6 +313,14 @@ export class NcViewerApp implements PanelHost {
       this.labelFormat();
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
+      // 파일 글이 섞인 글(상태 줄·안내 띠·패널·재생 띠·시작 화면 오류 — 그릴 때 옮겨 넣고 번역층은 건너뛴다)을 새 언어로 다시 그린다(54차)
+      if (this.startError && !this.startError.hidden) this.startError.replaceChildren(...this.errorNodes());
+      if (this.doc) {
+        this.renderStatus();
+        this.renderNotices();
+        this.panel.show(this.doc);
+        this.refreshPlayStrip();
+      }
     });
     this.root = root;
     this.recent = opts.recent ?? new RecentStore();
@@ -437,7 +446,8 @@ export class NcViewerApp implements PanelHost {
     this.startEl = this.buildStart();
     this.busyStage = h('div', { class: 'busy-stage' }, '여는 중…');
     this.busyBar = h('div', { class: 'bar' });
-    this.busyName = h('div', { class: 'busy-name' });
+    // 여는 파일 이름(파일 글 — 번역하지 않는다)
+    this.busyName = h('div', { class: 'busy-name', translate: 'no' });
     this.busyCancel = h('button', { class: 'btn small busy-cancel', type: 'button', title: '읽기 멈추기 (Esc) — 열린 문서는 그대로 둡니다' }, '취소');
     this.busyCancel.addEventListener('click', () => this.cancelLoad());
     this.busyEl = h(
@@ -479,7 +489,8 @@ export class NcViewerApp implements PanelHost {
 
     // ── 상태 막대 ──
     this.stMain = h('span', { class: 'st-main' });
-    this.stSel = h('span', { class: 'st-sel' });
+    // 고른 것 요약의 풍선 글은 그릴 때 옮겨 넣는다(파일 글 자리 — renderStatus)
+    this.stSel = h('span', { class: 'st-sel', 'data-i18n-keep': 'title' });
     this.stWarn = h('button', { class: 'st-warn', type: 'button', hidden: true, title: '해석 경고 보기(패널 정보 탭)' });
     this.stWarn.addEventListener('click', () => this.showInfoTab());
     const status = h('footer', { class: 'statusbar', 'aria-live': 'polite' }, this.stMain, this.stWarn, this.stSel);
@@ -646,8 +657,9 @@ export class NcViewerApp implements PanelHost {
       h('span', { class: 'recent-meta', translate: 'no' }, `${formatBytes(e.size)} · ${formatRecentTime(e.time, now, lang)}`),
     );
     open.addEventListener('click', () => void this.openRecent(e));
-    const label = `최근 문서에서 ${e.name} 지우기`;
-    const del = h('button', { class: 'recent-del', type: 'button', title: label, 'aria-label': label, html: icon('close') });
+    // 파일 이름 자리를 지켜 옮겨 넣는다(언어를 바꾸면 다시 그린다)
+    const label = mixText(mix`최근 문서에서 ${fileText(e.name)} 지우기`);
+    const del = h('button', { class: 'recent-del', type: 'button', title: label, 'aria-label': label, 'data-i18n-keep': 'title aria-label', html: icon('close') });
     del.addEventListener('click', () => void this.removeRecent(e.id));
     return h('li', { class: 'recent-item' }, open, del);
   }
@@ -882,11 +894,11 @@ export class NcViewerApp implements PanelHost {
     const attempt = beginOpen('local', files[0]!.name.split('.').pop() ?? 'other');
     const { ok, bad } = await this.readFiles(files);
     if (!ok.length) {
-      this.showError(`${bad.join(', ')}: ${BINARY_MESSAGE}`);
+      this.showError(mix`${fileText(bad.join(', '))}: ${BINARY_MESSAGE}`);
       attempt.error('unsupported');
       return false;
     }
-    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    if (bad.length) toast([mixSpan(mix`읽지 않은 파일: ${fileText(bad.join(', '))}`)], 'info', 6000);
     const [first, ...rest] = ok;
     const opened = await this.openBuffer(
       first!.file.name,
@@ -905,7 +917,7 @@ export class NcViewerApp implements PanelHost {
     if (!d?.nc) return this.openFiles(files);
     const attempt = beginOpen('local', files[0]?.name.split('.').pop() ?? 'other');
     const { ok, bad } = await this.readFiles(files);
-    if (bad.length) toast(`읽지 않은 파일: ${bad.join(', ')}`, 'info', 6000);
+    if (bad.length) toast([mixSpan(mix`읽지 않은 파일: ${fileText(bad.join(', '))}`)], 'info', 6000);
     if (!ok.length) {
       attempt.error('unsupported');
       return false;
@@ -945,13 +957,13 @@ export class NcViewerApp implements PanelHost {
     try {
       // 손가락 기기는 확장자로 거르지 않아(사진·동영상도 고를 수 있다) 모르는 확장자는 앞부분만 먼저 보고 이진 파일을 막는다
       if (!isNcFileName(f.name) && looksBinary(new Uint8Array(await f.slice(0, 4096).arrayBuffer()))) {
-        this.showError(`${f.name}: ${BINARY_MESSAGE}`);
+        this.showError(mix`${fileText(f.name)}: ${BINARY_MESSAGE}`);
         attempt.error('unsupported');
         return false;
       }
       buf = await f.arrayBuffer();
     } catch (e) {
-      this.showError(`${f.name}: 파일을 읽지 못했습니다(${errorText(e)}).`);
+      this.showError(mix`${fileText(f.name)}: 파일을 읽지 못했습니다(${errorText(e)}).`);
       attempt.error('read_error');
       return false;
     }
@@ -980,10 +992,10 @@ export class NcViewerApp implements PanelHost {
       this.setBusy(null);
       attempt.error('read_error');
       if (r.kind === 'missing') {
-        this.showError(`${e.name}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
+        this.showError(mix`${fileText(e.name)}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
         await this.recent.remove(e.id);
         await this.renderRecent();
-      } else this.showError(`${e.name}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`);
+      } else this.showError(mix`${fileText(e.name)}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`);
       return false;
     }
     const ok = await this.openBuffer(e.name, r.data, {}, attempt);
@@ -1017,8 +1029,18 @@ export class NcViewerApp implements PanelHost {
   }
 
   async openSample(): Promise<boolean> {
-    const bytes = new TextEncoder().encode(ncSampleProgram());
-    return this.openBuffer(NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer, {}, beginOpen('sample', 'nc'));
+    const attempt = beginOpen('sample', 'nc');
+    // 예제 글을 만드는 코드는 누를 때 받는다(첫 화면 JS에서 뺀다 — 54차, 오프라인 앱은 서비스 워커가 미리 담아 둔다)
+    let sample: typeof import('../view/sample');
+    try {
+      sample = await import('../view/sample');
+    } catch (e) {
+      this.showError(errorText(e));
+      attempt.error('fetch_error');
+      return false;
+    }
+    const bytes = new TextEncoder().encode(sample.ncSampleProgram());
+    return this.openBuffer(sample.NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer, {}, attempt);
   }
 
   /** 같은 출처 주소에서 받아 연다(?open=) */
@@ -1038,7 +1060,7 @@ export class NcViewerApp implements PanelHost {
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
-        this.showError(`${label}: ${errorText(e)}`);
+        this.showError(mix`${fileText(label)}: ${errorText(e)}`);
         attempt.error('fetch_error');
       }
       return false;
@@ -1074,8 +1096,8 @@ export class NcViewerApp implements PanelHost {
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
         attempt.error('empty');
-        // 안내 글과 첫 해석 경고(줄·글)를 조각마다 따로 번역되게(doc.ts emptyProgramParts)
-        this.showError([`${name}: `, ...emptyProgramParts(res)]);
+        // 안내 글과 첫 해석 경고(줄·글)를 조각마다 따로 번역되게(doc.ts emptyProgramParts — 파일 이름은 옮기지 않는다)
+        this.showError([fileText(name), ': ', ...emptyProgramParts(res)], true);
         return false;
       }
       await this.ensureViewer();
@@ -1086,7 +1108,7 @@ export class NcViewerApp implements PanelHost {
       return true;
     } catch (e) {
       if (seq === this.loadSeq) {
-        this.showError(`${name}: ${errorText(e)}`);
+        this.showError(mix`${fileText(name)}: ${errorText(e)}`);
         attempt.error('parse_error');
       }
       return false;
@@ -1130,9 +1152,9 @@ export class NcViewerApp implements PanelHost {
       this.renderToolbar();
       this.renderStatus();
       this.renderNotices();
-      toast(`${d.name}: 다시 읽었습니다.`, 'info', 2500);
+      toast([mixSpan(mix`${fileText(d.name)}: 다시 읽었습니다.`)], 'info', 2500);
     } catch (e) {
-      if (seq === this.loadSeq) this.showError(`${d.name}: 다시 읽지 못했습니다 — ${errorText(e)}`);
+      if (seq === this.loadSeq) this.showError(mix`${fileText(d.name)}: 다시 읽지 못했습니다 — ${errorText(e)}`);
     } finally {
       if (seq === this.loadSeq) this.setBusy(null);
     }
@@ -1225,16 +1247,28 @@ export class NcViewerApp implements PanelHost {
     this.busyName.textContent = name;
   }
 
-  /** 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다) */
-  private showError(msg: string | readonly string[]): void {
-    const parts = typeof msg === 'string' ? [msg] : msg;
-    this.error = parts.join('');
+  /** 마지막 오류 알림의 글과 조각 여부(시작 화면 — 언어를 바꾸면 다시 그린다) */
+  private errorMsg: [Mixed, boolean] = [[], false];
+
+  /**
+   * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차),
+   * split이면 조각마다 글 마디 하나(번역층이 따로 옮기고 파일 글 조각은 옮기지 않는다)
+   */
+  private showError(msg: string | Mixed, split = false): void {
+    const m = typeof msg === 'string' ? [msg] : msg;
+    this.error = plainText(m);
+    this.errorMsg = [m, split];
     if (this.doc) {
-      toast(parts, 'error', 8000);
+      toast(this.errorNodes(), 'error', 8000);
       return;
     }
-    this.startError.replaceChildren(...parts);
+    this.startError.replaceChildren(...this.errorNodes());
     this.startError.hidden = false;
+  }
+
+  private errorNodes(): (string | Node)[] {
+    const [m, split] = this.errorMsg;
+    return split ? pieces(m) : [mixSpan(m)];
   }
 
   private bindDrop(): void {
@@ -1280,6 +1314,8 @@ export class NcViewerApp implements PanelHost {
     // 측정 도구 조각(코어보다 훨씬 작다)도 함께 기다려 첫 문서가 보일 때 측정이 바로 켜지게 한다. 받지 못하거나 코어 뒤에도 늦으면
     // 기다리지 않고 연다(측정을 켤 때 FirstUse로 받는다)
     const measure = this.mlock ? null : this.ensureMeasureTools().catch(() => undefined);
+    // 정보 탭의 공구 경로 부분(panel-info.ts — 54차에 첫 화면 JS에서 뺐다)도 함께 기다린다(늦거나 받지 못하면 정보 탭이 받은 뒤 다시 그린다)
+    const info = loadPanelInfo().catch(() => undefined);
     let core: Awaited<ReturnType<typeof loadViewerCore>>;
     try {
       core = await loadViewerCore();
@@ -1287,6 +1323,7 @@ export class NcViewerApp implements PanelHost {
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
     }
     if (measure) await settleWithin(measure, MEASURE_WAIT_MS);
+    await settleWithin(info, MEASURE_WAIT_MS);
     if (this.viewer) return;
     this.viewEl.hidden = false;
     let v: Viewer3d;
@@ -2028,17 +2065,18 @@ export class NcViewerApp implements PanelHost {
     this.stWarn.hidden = !wl;
     this.stWarn.textContent = wl;
     // 측정 도구 조각을 받는 동안(받은 뒤 측정을 켠다)
-    const sel = this.measureFirstUse.wanted && !this.measuring ? MEASURE_LOADING : selectionSummary(d, this.measuring, this.touch);
+    const sel: Mixed = this.measureFirstUse.wanted && !this.measuring ? [MEASURE_LOADING] : selectionSummary(d, this.measuring, this.touch);
     // 측정 결과의 붙잡은 종류(예: 중심 → 끝점)는 이름마다 따로 번역되게 조각으로 붙인다(잠근 선 위에 찍었으면 "잠금")
     const sp = d.measure ? snapPair(d.measure) : null;
     // 방향 잠금 안내(첫 점을 찍은 뒤): 잠근 방향이나 Shift·화살표 — 안내 글과 따로 둔다(번역이 안내 글 전체를 찾게)
     const lock = this.measuring ? this.lockHintNow() : null;
+    // 고른 것 요약에는 파일 글(작업 파일·이름 붙은 공구·MPR 가공 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
     this.stSel.replaceChildren(
-      sel,
+      mixSpan(sel),
       ...(sp ? [' · ', h('span', {}, sp[0]), ' → ', h('span', {}, sp[1]), ...(sp[2] ? [' · ', h('span', { class: 'st-lock' }, '잠금')] : [])] : []),
       ...(lock ? [' · ', h('span', { class: 'st-lock' }, lock)] : []),
     );
-    this.stSel.title = sel;
+    this.stSel.title = mixText(sel);
     this.refreshBar();
   }
 
@@ -2050,8 +2088,8 @@ export class NcViewerApp implements PanelHost {
       return b;
     };
     const time = h('span', { class: 'ps-time' });
-    const line = h('span', { class: 'ps-line' });
-    const state = h('div', { class: 'ps-state' });
+    const line = h('span', { class: 'ps-line', 'data-i18n-skip': true });
+    const state = h('div', { class: 'ps-state', 'data-i18n-skip': true });
     const play = btn('play', '재생', () => this.togglePlay());
     const speed = h('select', { class: 'select small', 'aria-label': '재생 속도', title: '재생 속도' });
     for (const s of PLAY_SPEEDS) speed.append(h('option', { value: String(s) }, `×${s}`));
@@ -2099,9 +2137,10 @@ export class NcViewerApp implements PanelHost {
     s.el.hidden = !on;
     if (!on || !d || !info) return;
     s.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
-    s.line.textContent = info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : '';
+    // 줄(작업 파일 이름)·상태(이름 붙은 공구)에 파일 글이 섞인다 — 지금 언어로 옮겨 담는다(data-i18n-skip)
+    s.line.replaceChildren(...mixNodes(info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : []));
     const st = d.nc && info.move >= 0 ? moveState(d.nc, info.move, unitLabel(d.scene.units)) : null;
-    s.state.textContent = st ? `${st.motion} · ${st.modal}` : '';
+    s.state.replaceChildren(...mixNodes(st ? mix`${st.motion} · ${st.modal}` : []));
     s.play.innerHTML = icon(this.playing ? 'pause' : 'play');
     s.play.setAttribute('aria-label', this.playing ? '재생 멈춤' : '재생');
     s.play.title = this.playing ? '재생 멈춤' : '재생';
@@ -2118,7 +2157,9 @@ export class NcViewerApp implements PanelHost {
     bar.hidden = !list.length;
     for (const n of list) {
       // 좁은 화면은 글을 한두 줄로 줄여 보이고(3D 보기를 덜 가리게), 글을 누르면 펼친다
-      const text = h('span', { class: 'nt-text', title: n.text }, n.text);
+      // 글에 파일 글(주 프로그램·찾지 못한 프로그램 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
+      const text = mixSpan(n.text, 'nt-text');
+      text.title = mixText(n.text);
       const row = h('div', { class: 'notice', 'data-notice': n.key }, text);
       text.addEventListener('click', () => row.classList.toggle('open'));
       if (n.action) {
