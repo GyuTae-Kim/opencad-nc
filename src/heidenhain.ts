@@ -371,6 +371,8 @@ class HRunner extends NcEmitter {
         this.w.add(`실행 블록이 ${this.maxBlocks}개를 넘어 멈춤(끝없는 반복일 수 있음)`, this.pc);
         break;
       }
+      // 53차: 이동 없이 도는 끝없는 고리
+      if (this.idleStop(this.pc)) break;
       const b = this.readBlock(this.pc);
       this.pc = b.next;
       if (!b.toks.length) continue;
@@ -385,6 +387,8 @@ class HRunner extends NcEmitter {
       } catch (err) {
         if (!(err instanceof ExprError)) throw err;
         this.w.add(`읽을 수 없는 블록 — ${err.message}`, b.line);
+        // 53차: 깨진 블록이 든 끝없는 고리
+        if (this.badBlockStop(b.line)) break;
       }
       if (this.mb.full()) {
         this.w.add(`이동이 ${this.maxMoves}개를 넘어 나머지는 읽지 않음`, b.line);
@@ -605,6 +609,8 @@ class HRunner extends NcEmitter {
         return undefined;
       },
     });
+    // 53차: 넘침(1e300 * 1e300·1E999)·수가 아닌 값은 읽을 수 없는 블록으로(무한·NaN 좌표가 경로에 들어갔다 — 퍼징에서 찾음)
+    if (!Number.isFinite(v)) throw new ExprError('값이 유한한 수가 아님(0으로 나눔·넘침)');
     return v;
   }
 

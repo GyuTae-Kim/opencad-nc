@@ -76,7 +76,34 @@ export interface CompTip {
 
 const AXIS_INDEX: Record<string, number> = { x: 0, y: 1, z: 2 };
 
+/**
+ * 53차: 이동 좌표 한도 — 화면 좌표(32비트 실수)가 나타낼 수 있는 가장 큰 크기. 넘거나 수가 아닌(NaN·무한) 끝점·호 중심의 이동은 그리지 않고 알린다.
+ * 0으로 나눈 변수·1e300 같은 값·아주 긴 수 글이 경로와 화면 좌표에 무한·NaN으로 들어가 보기 범위·길이·시간 셈을 깨뜨렸다(퍼징에서 찾음)
+ */
+export const COORD_MAX = 3.4028234663852886e38;
+const BAD_COORD = '좌표가 수가 아니거나 너무 커서 이 이동은 그리지 않음';
+
+/**
+ * 53차: 이동 없이 실행한 블록 수 한도(프로그램 줄 수 + 이 값) — 넘으면 끝없는 반복으로 보고 멈춘다(idleStop). 실행 블록 한도(수백만)까지
+ * 이동 없이 도는 고리는 해석에 수십 초가 걸려 화면이 멈춘 듯했다(퍼징 — 깨진 WHILE·GOTO·LOOP). 고리 없이 내려가는 프로그램은 줄 수를 넘지 못하므로
+ * 이 한도에 닿는 것은 이동 없이 같은 줄을 10만 번 넘게 되풀이하는 고리뿐이다
+ */
+export const IDLE_BLOCK_MAX = 100_000;
+/**
+ * 53차: 읽을 수 없는 블록을 실행한 수 한도(프로그램 줄 수 + 이 값). 컨트롤러는 첫 블록에서 알람으로 멈추지만 이 뷰어는 건너뛰고 읽으므로,
+ * 깨진 블록이 든 고리가 실행 블록 한도까지 경고만 쌓으며 돌았다(퍼징). 고리 없이는 줄 수를 넘지 못한다
+ */
+export const BAD_BLOCK_MAX = 10_000;
+
 export type { CornerKind } from './corner';
+
+/** 53차: 상자 a(min xyz, max xyz)를 상자 b에 합친다 — a를 이룬 점들로 b를 하나씩 넓힌 것과 같은 값(extendBox와 같은 엄격한 견줌) */
+function mergeBox(b: Float64Array, a: Float64Array): void {
+  for (let k = 0; k < 3; k++) {
+    if (a[k]! < b[k]!) b[k] = a[k]!;
+    if (a[k + 3]! > b[k + 3]!) b[k + 3] = a[k + 3]!;
+  }
+}
 
 /** 마지막으로 넣은 이동(출력 좌표) — 모서리 다듬기·접선 원호가 쓴다 */
 interface LastSeg {
@@ -435,6 +462,34 @@ export class NcEmitter {
     };
   }
 
+  /** 53차: 마지막으로 이동이 늘어난 뒤 실행한 블록 수(idleStop)와 읽을 수 없는 블록 수(badBlockStop) */
+  private idleMoves = -1;
+  private idleBlocks = 0;
+  private badBlocks = 0;
+
+  /**
+   * 53차: 블록 하나를 실행하기 전에 부른다 — 이동 없이 줄 수 + IDLE_BLOCK_MAX 블록을 넘게 돌았으면 경고하고 true(해석기는 멈춘다)
+   */
+  protected idleStop(line: number): boolean {
+    if (this.mb.count !== this.idleMoves) {
+      this.idleMoves = this.mb.count;
+      this.idleBlocks = 0;
+      return false;
+    }
+    const limit = this.src.lineCount + IDLE_BLOCK_MAX;
+    if (++this.idleBlocks <= limit) return false;
+    this.w.add(`이동 없이 ${limit}블록 넘게 실행해 멈춤(끝없는 반복일 수 있음)`, line);
+    return true;
+  }
+
+  /** 53차: 읽을 수 없는 블록을 하나 건너뛸 때 부른다 — 줄 수 + BAD_BLOCK_MAX번을 넘으면 경고하고 true(해석기는 멈춘다) */
+  protected badBlockStop(line: number): boolean {
+    const limit = this.src.lineCount + BAD_BLOCK_MAX;
+    if (++this.badBlocks <= limit) return false;
+    this.w.add(`읽을 수 없는 블록을 ${limit}번 넘게 실행해 멈춤(끝없는 반복일 수 있음)`, line);
+    return true;
+  }
+
   /**
    * 이동 하나(직선·급속·드릴, 호면 arcIdx·arcLen). 길이 0이면 넣지 않는다.
    * 한도는 mb.push가 지킨다(넣지 못하면 false). 머리의 검사는 막힌 뒤에 아무것도 바꾸지 않게 한다 — 자리가 없으면 예약한 모서리도 건드리지 않고(앞 이동을 줄이지 않는다)
@@ -445,6 +500,11 @@ export class NcEmitter {
     if (this.mb.full()) {
       // 길이 0 이동은 막혀도 빠지는 것이 없다
       if (arcIdx >= 0 || Math.hypot(x - this.pos[0]!, y - this.pos[1]!, z - this.pos[2]!) >= 1e-12) this.movesLost = true;
+      return false;
+    }
+    // 53차: 수가 아니거나 화면 좌표 한도를 넘는 끝점은 그리지 않는다(지금 자리는 그대로 — 다음 절대 이동부터 다시 그림)
+    if (!(Math.abs(x) <= COORD_MAX && Math.abs(y) <= COORD_MAX && Math.abs(z) <= COORD_MAX)) {
+      this.w.add(BAD_COORD, line);
       return false;
     }
     if (this.outXf) return this.emitOut(kind, x, y, z, line, extraFlags, arcIdx, arcLen);
@@ -857,6 +917,11 @@ export class NcEmitter {
 
   /** 호 이동: 중심 c(xyz, 직선 축 값은 시작점), 부호 있는 중심각 */
   protected emitArc(plane: number, c: readonly number[], sweep: number, x: number, y: number, z: number, line: number, extraFlags = 0): void {
+    // 53차: 중심·중심각이 수가 아니거나 한도 밖이면 그리지 않는다(끝점은 emit이 본다)
+    if (!(Math.abs(c[0]!) <= COORD_MAX && Math.abs(c[1]!) <= COORD_MAX && Math.abs(c[2]!) <= COORD_MAX && Number.isFinite(sweep))) {
+      this.w.add(BAD_COORD, line);
+      return;
+    }
     if (this.outXf) return this.emitArcOut(plane, c, sweep, x, y, z, line, extraFlags);
     const s = [this.pos[0]!, this.pos[1]!, this.pos[2]!];
     const e = [x, y, z];
@@ -1331,6 +1396,7 @@ export class NcEmitter {
       for (let j = 0; j < this.fromBelow.length; j += 2) below.fill(1, Math.min(this.fromBelow[j]!, moves.count), Math.min(this.fromBelow[j + 1]!, moves.count));
     }
     const down = below ? emptyBox() : cut;
+    const ab = emptyBox();
     for (let i = 0; i < moves.count; i++) {
       // 기계 좌표 쪽 추정 이동(안전 높이)은 범위에 넣지 않는다
       const k = i * 3;
@@ -1369,10 +1435,14 @@ export class NcEmitter {
         c[0] = arcs.center[ai * 3]!;
         c[1] = arcs.center[ai * 3 + 1]!;
         c[2] = arcs.center[ai * 3 + 2]!;
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, all);
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, cut);
-        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, tb!.box);
-        if (down !== cut && !below![i]) arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, down);
+        // 53차: 호가 지나는 범위를 한 번만 셈해 상자마다 합친다(같은 점들의 최소·최대라 같은 값 — 상자 넷에 호마다 다시 셈하던 것이
+        // 원호가 많은 SL 프로그램 해석 시간의 열에 하나쯤이었다)
+        ab.fill(Infinity, 0, 3).fill(-Infinity, 3, 6);
+        arcExtend(s, e, c, arcs.plane[ai]!, arcs.sweep[ai]!, ab);
+        mergeBox(all, ab);
+        mergeBox(cut, ab);
+        mergeBox(tb!.box, ab);
+        if (down !== cut && !below![i]) mergeBox(down, ab);
       } else {
         extendBox(all, s[0], s[1], s[2]);
         extendBox(all, e[0], e[1], e[2]);

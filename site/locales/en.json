@@ -1373,5 +1373,11 @@
   "CYCL DEF 275: 왕복 들어가기(Q366 = 2)는 공구 표 ANGLE을 몰라 곧게 내려감": "CYCL DEF 275: reciprocating plunge (Q366 = 2) needs ANGLE from the tool table, which is not known — the tool plunges vertically",
   "CYCL DEF 275: 원 운동(트로코이드)의 반지름·나눔과 벽 다듬질의 들어가기·나가기는 설명서에 자세히 없어 정해 그림": "CYCL DEF 275: the manual does not detail the radius and division of the trochoidal circles or the approach and departure for wall finishing — these were chosen for drawing",
   "CYCL DEF 275: 공구가 커서 홈 벽 다듬질은 그리지 않음": "CYCL DEF 275: the tool is too large — finishing the slot walls is not drawn",
-  "CYCL DEF 14: 윤곽 안 축별 배율로 원호가 타원이 되어 끝점·중심만 옮긴 원호로 그림": "CYCL DEF 14: axis-specific scaling inside the contour turns arcs into ellipses — drawn as arcs with only the end points and centers transformed"
+  "CYCL DEF 14: 윤곽 안 축별 배율로 원호가 타원이 되어 끝점·중심만 옮긴 원호로 그림": "CYCL DEF 14: axis-specific scaling inside the contour turns arcs into ellipses — drawn as arcs with only the end points and centers transformed",
+  "식이 {0}겹보다 깊게 겹침": "Expression nested deeper than {0} levels",
+  "값이 유한한 수가 아님(0으로 나눔·넘침)": "Value is not a finite number (division by zero or overflow)",
+  "좌표가 수가 아니거나 너무 커서 이 이동은 그리지 않음": "Coordinate is not a number or too large — this move is not drawn",
+  "이동 없이 {0}블록 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Stopped after executing more than {0} blocks without any move (possibly an infinite loop)",
+  "읽을 수 없는 블록을 {0}번 넘게 실행해 멈춤(끝없는 반복일 수 있음)": "Stopped after executing unreadable blocks more than {0} times (possibly an infinite loop)",
+  "값이 너무 큼(판재 값 한도 넘음)": "Value too large (exceeds the panel value limit)"
 }

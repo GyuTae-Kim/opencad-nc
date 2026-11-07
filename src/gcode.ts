@@ -42,7 +42,7 @@ import {
   type NcRotaryOptions,
 } from './model';
 import { G7X_MAX_LEVELS, G7X_MAX_RUNS, g71Type2, g7xCorners, g7xLine, g7xMonotonic, g7xOffset, g7xPolyline, g7xRidge, g7xRough, g7xSide, g7xSplit, polyMonotonic, type G7xCorner, type G7xEl } from './lathe-g7x';
-import { decodeRange, lineRange, makeSource, sourceLine, type NcSource } from './text';
+import { decodeRange, detectionHead, lineRange, makeSource, sourceLine, type NcSource } from './text';
 
 export interface GcodeOptions {
   /** 프로그램 이름(보통 파일 이름) */
@@ -407,7 +407,7 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
     ex.pos++;
     let v: number | undefined;
     if (/^#0(?![0-9])/.test(s.slice(ex.pos, ex.pos + 3))) ex.pos += 2;
-    else v = ex.expr();
+    else v = finite(ex.expr());
     blk.assigns.push([ref, v]);
   };
   while (ex.pos < s.length) {
@@ -479,12 +479,21 @@ function parseSlow(text: string, blk: Block, env: SlowEnv): void {
         dot = !INT_LITERAL.test(s);
         v = ex.unary();
       }
-      if (v !== undefined) blk.set(c.charCodeAt(0) - A, v, dot);
+      if (v !== undefined) blk.set(c.charCodeAt(0) - A, finite(v), dot);
       continue;
     }
     if (c === '%') return;
     throw new ExprError(`알 수 없는 글자 '${c}'`);
   }
+}
+
+/**
+ * 53차: 식 값이 유한한 수인지(아니면 ExprError — 그 블록은 읽을 수 없는 블록으로 알리고 건너뛴다). 0으로 나눔(NaN)·넘침(1e300 × 1e300)이
+ * 무한·NaN 좌표가 되어 경로와 화면 좌표에 그대로 들어갔다(퍼징에서 찾음). 컨트롤러도 0으로 나눔·범위 밖 값은 알람으로 멈춘다
+ */
+function finite(v: number): number {
+  if (!Number.isFinite(v)) throw new ExprError('값이 유한한 수가 아님(0으로 나눔·넘침)');
+  return v;
 }
 
 // ───────────────────────── 방언 판별 ─────────────────────────
@@ -624,7 +633,8 @@ export function looksOkuma(head: string): boolean {
  * Siemens로 본다(표지가 둘 넘으면 Siemens). Haas는 주석의 HAAS나 Haas만 쓰는 코드로 본다
  */
 export function detectGcodeDialect(head: string): NcDialect {
-  if (/^\s*\d*\s*BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
+  // 53차: \s*\d*\s*를 \s*(?:\d+\s*)?로(같은 뜻) — 숫자가 없을 때 두 \s*가 공백을 나눠 갖는 길을 모두 되짚어 공백이 긴 글에서 아주 느렸다
+  if (/^\s*(?:\d+\s*)?BEGIN\s+PGM\b/im.test(head) || /^\s*\d+\s+(?:L|CC|CR|CT|LP|CP|TOOL\s+CALL|CYCL\s+DEF|BLK\s+FORM)\b[^\n]*$/m.test(head))
     return 'heidenhain';
   // Heidenhain DIN/ISO: "%이름 G71 *" 머리, 블록 끝 * 과 G30/G31 공작물
   if (/^\s*%[^\s*;(]+\s+G7[01]\b/im.test(head) || /^\s*N\d+\s+G3[01]\b[^\n]*\*\s*$/im.test(head)) return 'heidenhain';
@@ -639,7 +649,8 @@ export function detectGcodeDialect(head: string): NcDialect {
   if (/\bmach\s*[34]\b/i.test(head)) return 'mach3';
   // Haas: 주석의 "HAAS"(Fusion·Mastercam 포스트 머리), Haas만 쓰는 코드 G187·G103·G154·G110~G129·G150·M130.
   // 선반 프로그램의 G112·G113(극좌표 보간)은 빼고, M97(Haas 지역 부프로그램)은 다른 기계도 쓸 수 있어 표지로 보지 않는다(어느 방언이든 읽는다)
-  if (/\(\s*[^)\n]*\bhaas\b/i.test(head)) return 'haas';
+  // 53차: 괄호 안에 '('를 받지 않는다 — 같은 뜻(haas 앞 마지막 '('부터 맞춤)이고, '('가 수만 개 이어진 글에서 자리마다 줄 끝까지 다시 훑던 것(수십 초)을 없앤다
+  if (/\(\s*[^()\n]*\bhaas\b/i.test(head)) return 'haas';
   {
     let lathe: boolean | undefined;
     const re = /(?:^|[^A-Z0-9.#])G\s*(187|103|154|1[12]\d|150)(?![\d.])/gim;
@@ -1139,6 +1150,11 @@ export class Runner extends NcEmitter {
         this.hitLimit = true;
         break;
       }
+      // 53차: 이동 없이 도는 끝없는 고리
+      if (this.idleStop(line)) {
+        this.hitLimit = true;
+        break;
+      }
       // 함께 연 다음 파일: 주 프로그램은 여기서 끝, 부프로그램이 M99 없이 파일 끝에 닿으면 돌아간다
       if (this.jobLines?.has(line)) {
         if (this.jobFileEnd()) break;
@@ -1158,6 +1174,11 @@ export class Runner extends NcEmitter {
         } catch (err) {
           if (!(err instanceof ExprError)) throw err;
           this.w.add(`읽을 수 없는 블록 — ${err.message}`, line);
+          // 53차: 깨진 블록이 든 끝없는 고리
+          if (this.badBlockStop(line)) {
+            this.hitLimit = true;
+            break;
+          }
           continue;
         }
       }
@@ -4443,10 +4464,10 @@ function wcsIndexFromName(k: string): number {
   return -1;
 }
 
-/** 원본 글 앞부분(판별용) */
+/** 원본 글 앞부분(판별용 — 53차: 긴 공백은 줄임, detectionHead) */
 function headText(src: NcSource): string {
   const n = Math.min(src.bytes.length, 256 * 1024);
-  return decodeRange(src, 0, n);
+  return detectionHead(decodeRange(src, 0, n));
 }
 
 /**
