@@ -2,7 +2,7 @@ import { metadataForLanguage } from '../site/i18n.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
-import { installLocalization } from '../src/app/i18n';
+import { installLocalization, localizeCubeFaces } from '../src/app/i18n';
 import { catalogs, currentLanguage, languageUrl, languages, translate } from '../site/i18n.mjs';
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
@@ -230,6 +230,22 @@ describe('language URLs and UI presentation', () => {
     expect(root.querySelector('canvas')).toBe(canvas);button.click();expect(clicked).toHaveBeenCalledOnce();
     expect(root.querySelector('[translate="no"]:not(.language-control):not(.language-list)')!.textContent).toBe('열기');
     dispose();dispose=undefined;dom.window.close();
+  });
+  it('translates the view cube faces the core loads later (55th — viewcube left the first-screen graph) and restores them on dispose', async () => {
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/en/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const { CUBE_FACES } = await import('opencad-viewer3d/viewcube');
+    const ko = CUBE_FACES.map(face => face.label);
+    dispose = await installLocalization(document.getElementById('app')!);
+    // 코어를 받기 전(첫 화면)에는 큐브 글을 모른다 — 받으면(core.ts loadViewerCore) 지금 언어로, 같은 목록을 다시 받아도 원래 글에서 옮긴다
+    expect(CUBE_FACES.map(face => face.label)).toEqual(ko);
+    localizeCubeFaces(CUBE_FACES);
+    localizeCubeFaces(CUBE_FACES);
+    expect(CUBE_FACES.map(face => face.label)).toEqual(ko.map(label => translate(label,'en')));
+    expect(CUBE_FACES.find(face => face.name === 'top')!.label).toBe('Top');
+    dispose(); dispose = undefined;
+    expect(CUBE_FACES.map(face => face.label)).toEqual(ko);
+    dom.window.close();
   });
   it('translates code-list tooltips and NC group names but leaves program text and named-tool groups alone', async () => {
     const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header>'

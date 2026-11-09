@@ -91,6 +91,9 @@ describe('코어 나눠 받기', () => {
     expect(rel.filter((f) => f === 'src/index.ts' || f.includes('/worker/'))).toEqual([]);
     expect([...core].filter((n) => !SMALL.has(n)).sort()).toEqual([]);
     expect(core.has('camera')).toBe(true);
+    // 55차: viewcube(뷰 큐브 글)는 core.ts가 코어 입구와 함께 import()로 받는다 — 첫 화면에서 가져오면 코어 조각이 쓰는 큐브 그리기·판정(0.44.0 손가락 큐브)이
+    // 모두 첫 화면 조각에 들어가 코어 0.51.0 빌드의 첫 화면 JS가 54차보다 1.5 kB 컸다
+    expect(core.has('viewcube')).toBe(false);
     let dynamic = 0;
     const bad: string[] = [];
     for (const f of files) {
@@ -101,7 +104,8 @@ describe('코어 나눠 받기', () => {
       else bad.push(relative(ROOT, f));
     }
     expect(bad).toEqual([]);
-    expect(dynamic).toBe(1);
+    // 코어 입구와 viewcube(55차) — 둘 다 core.ts의 loadViewerCore 안
+    expect(dynamic).toBe(2);
   });
 
   it('측정 도구(잠금·붙잡기 점·정밀 조준·원호 접선)는 첫 화면 그래프 밖, core.ts의 import() 하나로만 받는다', () => {
