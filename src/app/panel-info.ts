@@ -1,8 +1,9 @@
 /**
  * 패널 정보 탭의 공구 경로 부분(G-code·Heidenhain): 해석 설정(방언·선반 G 코드 체계·기본 단위·최소 단위), 보기 선택(보정 경로·선반 공구 표·선반 모드·회전축),
- * 공구 경로 요약, 기계·읽기 설정. 문서를 열 때 3D 뷰어 코어와 함께 받는 조각이다(54차 — 첫 화면 JS에서 뺐다. 문서가 없으면 쓰지 않는다).
+ * 공구 경로 요약, 기계·읽기 설정, 3D 보기 경고(55차 — 코어 장면 알림). 문서를 열 때 3D 뷰어 코어와 함께 받는 조각이다(54차 — 첫 화면 JS에서 뺐다. 문서가 없으면 쓰지 않는다).
  * panel.ts의 NcPanel이 정보 탭을 그릴 때 부른다(받기 전이면 받은 뒤 다시 그린다).
  */
+import type { SceneIssue, SceneIssueCode } from 'opencad-viewer3d';
 import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { formatDuration } from '../view/playback';
 import { lineAtLabel, sceneFeatures, unitLabel, type NcDoc } from './doc';
@@ -228,5 +229,47 @@ function latheSystemRow(host: PanelHost, d: NcDoc, read: NcLatheSystem): HTMLEle
     { class: 'prop-row edit', title: 'Fanuc 선반 G 코드 체계 — A: G90·G92·G94 단순 사이클·U/W 증분, B: G77·G78·G79 단순 사이클·G90/G91 절대/증분, C: G20·G21·G24 단순 사이클·G70/G71 inch/mm' },
     h('span', { class: 'k' }, '선반 G 코드'),
     sel,
+  );
+}
+
+/**
+ * 3D 보기 코어 장면 알림의 앱 글(55차 — 코어 0.50.0 SceneIssue.code마다, {0} = 개수). 코어 기본 글(sceneIssueText)은 한국어 하나이고 항목 id·필드 이름을 쓰므로
+ * 앱 말로 옮겨 쓴다(화면 번역층이 사전 열쇠로 옮긴다). 좌표는 항목 종류로 나눈다(공구 경로 선분·구멍 점·그물 꼭짓점·그물 윤곽선)
+ */
+const ISSUE_TEXT: Record<Exclude<SceneIssueCode, 'positions'>, string> = {
+  bounds: '장면 범위가 맞지 않아 그린 것에서 다시 셌습니다.',
+  placement: '놓을 자리를 알 수 없는 묶음을 그리지 않았습니다.',
+  billboard: '마주 보는 그림의 기준점이 수가 아니어서 놓인 그대로 그렸습니다.',
+  indices: '없는 꼭짓점을 가리키는 삼각형 {0}개를 그리지 않았습니다.',
+  length: '배열 길이가 맞지 않아 남는 값 {0}개를 쓰지 않았습니다.',
+  normals: '법선 수가 꼭짓점 수와 맞지 않아 평면 음영으로 그렸습니다.',
+  colors: '꼭짓점 색이 모자라거나 수가 아니어서 한 색으로 칠했습니다.',
+  uvs: '무늬 좌표 수가 맞지 않아 무늬 없이 칠했습니다.',
+  color: '색이 수가 아니어서 기본색으로 칠했습니다.',
+  material: '재질 값이 수가 아니어서 기본값을 썼습니다.',
+  width: '선 굵기가 수가 아니어서 1로 그렸습니다.',
+  size: '점 크기가 수가 아니어서 4로 그렸습니다.',
+  ids: '선분·점 번호가 {0}개 모자라 뒤쪽은 배열 안 번호로 고릅니다.',
+  'duplicate-id': '같은 이름의 묶음이 또 있어 이름으로 찾는 기능은 하나만 봅니다.',
+};
+const POSITIONS_TEXT = {
+  line: '공구 경로 선분 {0}개는 좌표가 수가 아니거나 너무 커서 그리지 않았습니다.',
+  point: '점 {0}개는 좌표가 수가 아니거나 너무 커서 그리지 않았습니다.',
+  mesh: '면 꼭짓점 {0}개는 좌표가 수가 아니거나 너무 커서 그 꼭짓점이 든 면을 그리지 않았습니다.',
+  edges: '윤곽선 {0}개는 좌표가 수가 아니거나 너무 커서 그리지 않았습니다.',
+} as const;
+
+/** 장면 알림 하나의 앱 글(개수는 ko-KR 꼴 — 다른 경고 글과 같다) */
+export function sceneIssueText(i: SceneIssue): string {
+  const t = i.code === 'positions' ? (i.kind === 'mesh' ? (i.field === 'edges' ? POSITIONS_TEXT.edges : POSITIONS_TEXT.mesh) : i.kind === 'point' ? POSITIONS_TEXT.point : POSITIONS_TEXT.line) : ISSUE_TEXT[i.code];
+  return t.replace('{0}', i.count.toLocaleString('ko-KR'));
+}
+
+/** 정보 탭 "3D 보기 경고" 묶음(해석 경고 다음 — 알림이 있을 때만 부른다) */
+export function sceneIssueGroup(list: readonly SceneIssue[]): HTMLElement {
+  return group(
+    `3D 보기 경고 ${list.length.toLocaleString('ko-KR')}개`,
+    h('ul', { class: 'warn-list' }, ...list.slice(0, 300).map((i) => h('li', {}, sceneIssueText(i)))),
+    h('p', { class: 'hint' }, '그릴 수 없는 값은 3D 보기가 빼거나 기본값으로 바꿔 그렸습니다. 해석한 이동과 코드는 그대로입니다.'),
   );
 }

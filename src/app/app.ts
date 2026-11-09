@@ -19,7 +19,7 @@
  *
  * 2dcad-viewer 커밋 d7c584a의 src/app/view3d/manager.ts에서 NC 부분을 옮겨 2D 화면 골격 없이 다시 짰다.
  */
-import type { MeasureResult, Pick3d, RenderMode, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
+import type { MeasureResult, Pick3d, RenderMode, SceneIssue, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
@@ -118,6 +118,8 @@ export interface AppState {
   tools: number;
   operations: number;
   warnings: number;
+  /** 코어가 지금 장면 입력에서 빼거나 고친 알림 수(55차 — 코어 0.50.0 sceneIssues) */
+  sceneIssues: number;
   /** 마지막 오류 글(성공하면 지운다) */
   error: string | null;
   panelOpen: boolean;
@@ -244,6 +246,8 @@ export class NcViewerApp implements PanelHost {
   private readonly snapCenters = new WeakMap<object, ArcCenters>();
   /** 지금 코어에 준 측정 붙잡기(해석 결과가 같으면 다시 주지 않고, 재생 중에는 붙잡기 한도만 바꾼다) */
   private snapKey: { src: object; limit: number | null } | null = null;
+  /** 정보 탭에 그린 코어 장면 알림(문서와 알림 열쇠 — syncSceneIssues) */
+  private sceneIssueState: { doc: NcDoc | null; key: string } = { doc: null, key: '' };
   /** 측정 도구를 받기 전에 측정을 켰을 때: 받은 뒤에 켠다(받는 동안 다시 누르면 거둔다, 받지 못하면 알린다) */
   private readonly measureFirstUse = new FirstUse<true>(
     () => this.ensureMeasureTools(),
@@ -1328,7 +1332,9 @@ export class NcViewerApp implements PanelHost {
     this.viewEl.hidden = false;
     let v: Viewer3d;
     try {
-      v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor() });
+      // 55차(코어 0.48.0 animate: 'auto'): 뷰 큐브·키 F·1~7·전체 보기·고른 것 맞춰 보기의 카메라 움직임이 움직임 줄이기 선호(prefers-reduced-motion)를 따르고,
+      // 연 뒤 OS·브라우저 설정을 바꿔도 새로 고침 없이 따른다. 처음 맞춤(fit(false))·선반 앞 보기(setView('front', false))는 인자대로 늘 바로
+      v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor(), animate: 'auto' });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
       throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
@@ -1354,6 +1360,9 @@ export class NcViewerApp implements PanelHost {
       lost?.remove();
       lost = null;
     });
+    // 55차(코어 0.50.0): 코어가 장면 입력에서 빼거나 고친 것(좌표 NaN·아주 큰 값 등 — 해석기가 이미 거르므로 드물다)을 정보 탭 경고 목록에.
+    // setScene·setMesh 안에서 찾았을 때 불린다(applyDoc도 setScene 뒤에 맞춘다)
+    v.onSceneIssues(() => this.syncSceneIssues());
     // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계)
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
@@ -1468,6 +1477,7 @@ export class NcViewerApp implements PanelHost {
     // 깎기 시뮬레이션이 켜져 있으면 문서 장면 + 소재 그물(sim.ts)
     const scene = this.sim?.sceneFor(d) ?? d.scene;
     v.setScene(scene, { keepView: !!cam });
+    this.syncSceneIssues();
     // 판재: 반투명 판 너머 고르기(측정·누르기)가 판 안 포켓·홈 그물에서 멈추게(코어 0.24.0 — 그림은 그대로, setScene이 겉모습을 비우므로 장면마다).
     // 29차(코어 0.27.0): 뚜껑(판 면 자리)은 지나가고 벽·바닥과 바닥의 구멍에서 멈춘다 — 판 위에서 포켓 바닥·그 구멍을 잰다
     const through = boardThrough(scene);
@@ -1562,6 +1572,27 @@ export class NcViewerApp implements PanelHost {
 
   fitItems(ids: string[]): void {
     if (ids.length) this.viewer?.fitItems(ids);
+  }
+
+  /** 코어가 지금 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0 sceneIssues, 정보 탭 "3D 보기 경고"). 뷰어가 없으면 빈 목록 */
+  sceneIssues(): readonly SceneIssue[] {
+    const list = this.viewer?.sceneIssues;
+    return Array.isArray(list) ? list : [];
+  }
+
+  /**
+   * 코어 장면 알림이 바뀌었으면 정보 탭을 다시 그리고, 그 문서에서 처음 생겼으면 한 번 알린다(setScene 뒤·onSceneIssues).
+   * 새 문서는 패널을 먼저 그리고 장면을 올리므로(setDoc) 문서가 바뀌면 앞 문서의 알림이 남지 않게 다시 그린다
+   */
+  private syncSceneIssues(): void {
+    const list = this.sceneIssues();
+    const key = list.map((i) => `${i.code}|${i.kind}|${i.id ?? ''}|${i.field ?? ''}|${i.count}`).join(';');
+    const s = this.sceneIssueState;
+    if (s.doc === this.doc && s.key === key) return;
+    const fresh = s.doc !== this.doc || !s.key;
+    this.sceneIssueState = { doc: this.doc, key };
+    if (this.doc?.panelTab === 'info' && (s.key || key)) this.panel.refresh();
+    if (list.length && fresh) toast(`3D 보기 경고 ${list.length.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
   }
 
   setHighlight(ids: string[]): void {
@@ -2346,6 +2377,7 @@ export class NcViewerApp implements PanelHost {
       tools: d?.nc?.tools.length ?? 0,
       operations: d && isPanelKind(d.kind) ? mprOps(d.scene).length : 0,
       warnings: d?.scene.warnings?.length ?? 0,
+      sceneIssues: d ? this.sceneIssues().length : 0,
       error: this.error,
       panelOpen: this.panelOpen && !!d,
       panelTab: this.panel.tab,
