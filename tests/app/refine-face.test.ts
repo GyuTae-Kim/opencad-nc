@@ -319,12 +319,22 @@ describe('25차: 축이 벽 삼각형을 비켜 가며 원기둥만 뚫는 자�
     }
   });
 
-  it('22차까지의 길(open 없이 — 코어 점에서 바깥쪽 근)이면 원기둥 밖 힌트는 null, 원기둥 안 힌트는 같은 근', () => {
+  it('닫힌 길(open 없이): 원기둥 안 힌트는 같은 근. 원기둥 밖 힌트는 56차까지 null — 57차부터 접선 길이가 현 반 길이 안이라 X 쪽 근(열린 후보와 같은 근), 그보다 밖이면 null', () => {
     const o: V3 = [100, YL, 3];
     const [inside, outside] = [...trisAt(MID)].sort((a, b) => Math.hypot(a.c[0] - W.cu, YL - W.cv) - Math.hypot(b.c[0] - W.cu, YL - W.cv));
-    const old = (tri: typeof inside) => refineFaceSnap({ ...openX(o, tri!, EYE(Q2), Q2), open: undefined }, tb);
-    expect(old(outside!)).toBeNull();
-    expect(dist(old(inside!)!, Q2)).toBeLessThan(1e-9);
+    const closed = (tri: typeof inside) => ({ ...openX(o, tri!, EYE(Q2), Q2), open: undefined });
+    expect(dist(refineFaceSnap(closed(inside!), tb)!, Q2)).toBeLessThan(1e-9);
+    const out = closed(outside!);
+    const rho = Math.hypot(out.point[0] - W.cu, out.point[1] - W.cv);
+    expect(rho).toBeGreaterThan(W.r);
+    expect(Math.sqrt(rho * rho - W.r * W.r)).toBeLessThan(W.r * Math.sin(W.half));
+    expect(dist(refineFaceSnap(out, tb)!, Q2)).toBeLessThan(1e-9);
+    // 같은 선 위에서 더 바깥(x = 203 — 접선 길이 2.9 > 현 반 길이 2.15, 그 삼각형 법선에서 반각 안)은 받지 않는다
+    const far: V3 = [203, YL, 3];
+    const rf = Math.hypot(far[0] - W.cu, far[1] - W.cv);
+    expect(Math.sqrt(rf * rf - W.r * W.r)).toBeGreaterThan(W.r * Math.sin(W.half));
+    expect(Math.abs(Math.atan2(far[1] - W.cv, far[0] - W.cu) - MID * D)).toBeLessThan(W.half);
+    expect(refineFaceSnap({ ...out, point: far }, tb)).toBeNull();
   });
 
   it('null: 선이 원기둥을 비켜 감(y = 310.01), 근이 그 토막 각 밖(이웃 토막 삼각형), 평면(윗면·곧은 옆면), 모르는 그물', () => {
@@ -422,6 +432,78 @@ describe('37차: 누운 구멍 벽을 비스듬한 안내 선이 스칠 때(코�
     for (const tri of trisAt(56.25)) expect(refineFaceSnap(openOn([15, 20, 13 - 0.002], tri), t)).toBeNull();
     const tri = trisAt(78.75)[0]!;
     expect(refineFaceSnap({ ...openOn([15, 20, 13 - 0.002], tri), line: { origin: [15, 20, 13 - 0.002], dir: [1, 0, 0], axis: 'x' } }, t)).toBeNull();
+  });
+});
+
+describe('57차: 벽을 스치는 선의 닫힌 코어 점이 원기둥 밖(코어가 이웃 칸 평면과의 교차를 화면 반 화소 안에서 그 칸으로 받은 자리)', () => {
+  // 수직 구멍 Ø10(중심 (150,22), Z 6~18). 선은 단면에서 중심으로부터 r(1 − δ)를 지나는 수평 선(방향 φ + 90°): 두 근 M± = P0 ± √(r² − (r(1 − δ))²)·e
+  const RD = Math.PI / 180;
+  const m = meshOf(/Ø10/);
+  const W = panelWalls(t, m.id)[0]!;
+  const gap = (a: number, b: number): number => Math.abs(((((a - b) % 360) + 540) % 360) - 180);
+  /** 단면 각 a(도)를 품는 벽 칸의 삼각형(법선은 float32 꼭짓점 외적 — 부호는 상관없다) */
+  const triAt = (a: number): { i: number; n: V3 } => {
+    const P = m.positions;
+    const I = m.indices!;
+    let best: { i: number; n: V3; g: number } | null = null;
+    for (let k = 0; k + 2 < I.length; k += 3) {
+      const v = [I[k]!, I[k + 1]!, I[k + 2]!].map((j) => [P[j * 3]!, P[j * 3 + 1]!, P[j * 3 + 2]!] as V3);
+      const nn = cross(sub(v[1]!, v[0]!), sub(v[2]!, v[0]!));
+      const l = Math.hypot(...nn);
+      if (!(l > 0) || Math.abs(nn[2] / l) > 1e-6) continue;
+      const n: V3 = [nn[0] / l, nn[1] / l, 0];
+      const g = Math.min(gap(Math.atan2(n[1], n[0]) / RD, a), gap(Math.atan2(-n[1], -n[0]) / RD, a));
+      if (!best || g < best.g) best = { i: k / 3, n, g };
+    }
+    return best!;
+  };
+  const lineAt = (phi: number, delta: number) => {
+    const c = Math.cos(phi * RD);
+    const s = Math.sin(phi * RD);
+    const d = W.r * (1 - delta);
+    const e: V3 = [-s, c, 0];
+    const P0: V3 = [W.cu + d * c, W.cv + d * s, 12];
+    const along = (k: number): V3 => [P0[0] + e[0] * k, P0[1] + e[1] * k, 12];
+    const tt = Math.sqrt(W.r * W.r - d * d);
+    return { o: along(-30), e, M: [along(-tt), along(tt)] as const, at: (rho: number, sgn: 1 | -1) => along(sgn * Math.sqrt(rho * rho - d * d)) };
+  };
+  const input = (L: ReturnType<typeof lineAt>, X: V3, kind: 'axisFace' | 'onFace' = 'axisFace'): SnapRefineFaceInput => {
+    const f = triAt(Math.atan2(X[1] - W.cv, X[0] - W.cu) / RD);
+    return { kind, point: X, face: { id: m.id, index: f.i, normal: f.n }, line: { origin: L.o, dir: L.e }, first: L.o, ray: { origin: [150, 22, 60], dir: [0, 0, -1] } };
+  };
+
+  it('전제: 벽 반지름 5·한 바퀴, 받는 바깥 끝(접선 길이 = 현 반 길이)은 원 밖 처짐 한 겹과 거의 같다', () => {
+    expect([W.cu, W.cv, W.r, W.lo, W.hi]).toEqual([150, 22, 5, 6, 18]);
+    expect(Math.abs(W.sweep)).toBeGreaterThan(6.28);
+    const limit = Math.hypot(W.r, W.r * Math.sin(W.half)) - W.r;
+    const sag = W.r * (1 - Math.cos(W.half));
+    expect(limit / sag).toBeGreaterThan(0.95);
+    expect(limit / sag).toBeLessThan(1);
+  });
+
+  for (const phi of [-63, -70, 20, 101])
+    for (const delta of [0.002, 0.02])
+      it(`φ ${phi}° δ ${delta}: 원기둥 밖 X(ρ = r + 0.003·0.012, 두 쪽)는 X 쪽 근 — 원기둥 위·선 위`, () => {
+        const L = lineAt(phi, delta);
+        for (const eps of [0.003, 0.012])
+          for (const sgn of [1, -1] as const) {
+            const X = L.at(W.r + eps, sgn);
+            const q = refineFaceSnap(input(L, X), t)!;
+            expect(q, `${eps} ${sgn}`).toBeTruthy();
+            expect(dist(q, L.M[sgn > 0 ? 1 : 0])).toBeLessThan(1e-9);
+            expect(Math.abs(Math.hypot(q[0] - W.cu, q[1] - W.cv) - W.r)).toBeLessThan(1e-9);
+            expect(Math.hypot(...cross(sub(q, L.o), L.e))).toBeLessThan(1e-9);
+            // 커서 광선과 상관없다
+            expect(refineFaceSnap({ ...input(L, X), ray: { origin: [1, 2, 3], dir: [0, 1, 0] } }, t)).toEqual(q);
+          }
+      });
+
+  it('null: 접선 길이가 현 반 길이보다 긴 원기둥 밖 점(ρ = r + 0.08), 커서 광선이 맞은 점(onFace — 늘 현 위)으로 온 원기둥 밖 점', () => {
+    const L = lineAt(-63, 0.002);
+    const far = L.at(W.r + 0.08, 1);
+    expect(Math.sqrt((W.r + 0.08) ** 2 - W.r ** 2)).toBeGreaterThan(W.r * Math.sin(W.half));
+    expect(refineFaceSnap(input(L, far), t)).toBeNull();
+    expect(refineFaceSnap(input(L, L.at(W.r + 0.012, 1), 'onFace'), t)).toBeNull();
   });
 });
 

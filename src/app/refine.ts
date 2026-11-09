@@ -352,6 +352,15 @@ function angleGap(a: number, b: number): number {
   return d > Math.PI ? TAU - d : d;
 }
 
+/**
+ * 57차: 닫힌 'axisFace' 코어 점의 반지름 rho가 받을 범위의 바깥 끝 안인지 — false = 원 안(rho ≤ r + tol, 56차까지의 길),
+ * true = 원기둥 밖이지만 그 점에서 원에 그은 접선 길이 √(rho² − r²)가 현 반 길이 r·sin(반각) + tol 안(벽을 스치는 선의 자리), null = 그보다 밖(받지 않는다).
+ * 커서 광선('onFace')의 맞은 점은 늘 삼각형(현) 위라 원 안만 받는다
+ */
+function graze(rho: number, r: number, half: number, tol: number, ray: boolean): boolean | null {
+  if (rho <= r + tol) return false;
+  return !ray && Math.sqrt(rho * rho - r * r) <= r * Math.sin(half) + tol ? true : null;
+}
 
 /**
  * 축·잠근 선이 면을 뚫는 점 다듬기(코어 0.19.0 refineFace 'axisFace' — 첫 점 축·끌어온 축 axisFaces, 잠근 선 lockFaces — 0.20.0부터 축이 아닌 잠근 선도):
@@ -386,6 +395,14 @@ function angleGap(a: number, b: number): number {
  *   27차(코어 0.24.0 면의 열린 교차 둘째 힌트): 선이 그 삼각형 위 곡면 조각을 두 번 지날 수 있으면 코어가 그 조각의 두 끝을 힌트로 더 부른다.
  *   그 끝도 현의 각 범위 둘레(중심에서 r·cos 반각~r ÷ cos(반각 × 2), 법선 방향에서 반각 × 2 안)라 같은 길로 풀려 각 끝에 가까운 근이 따로 온다 — 두 근 모두 붙는다
  * 받을지(그 삼각형 위 곡면 조각 자리·커서 붙잡기 거리 안·가림)는 코어가 정한다
+ *
+ * 57차(벽을 스치는 선의 닫힌 코어 점): 선이 구멍 벽을 반지름의 0.2~2% 안쪽으로 스치면 코어는 그 선과 커서 아래 칸 평면의 교차를 다시 맞춰 화면 반 화소(코어 meetTol)
+ * 안의 이웃 칸으로 받는다(0.18.0 axisFaceSnap). 그 점 X는 이웃 칸 평면을 꼭짓점 너머로 늘인 자리라 원기둥 밖(ρ = r + 0.003~0.012)이어서
+ * 원 안만 받던 이 길이 null을 주고 현 위 "면 위"로 남았다(56차 판재 구멍 측정 탐색 — 263,898곳 가운데 같은 칸 162곳·이웃 칸 69곳).
+ * 현은 원 안쪽이므로 원기둥 밖 X는 칸에서 반 화소만큼 떨어진 스침 자리다. 그래서 X에서 원에 그은 접선 길이 √(ρ² − r²)가 그 현의 반 길이(r·sin 반각) 안이면 받는다
+ * (그 범위는 원 밖으로 처짐 한 겹 r(1 − cos 반각)과 거의 같다 — 원 안쪽 받는 범위 r·cos 반각~r와 같은 두께). 근은 두 근 가운데 X 쪽 근 하나다:
+ * X는 두 근 사이(원 안)가 아니므로 방멱(두 근까지 거리의 곱 = ρ² − r²)으로 X 쪽 근은 단면에서 접선 길이 안 — 그 칸이나 이웃 칸 위다.
+ * 원 안 코어 점의 "바깥쪽 근" 판정은 원기둥 밖 X에서는 두 근 모두 안쪽이라 쓰지 않는다. 받을지(코어 점에서 화면 붙잡기 거리 안·그 칸 조각 자리)는 코어가 정한다
  */
 export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | null {
   // 코어가 뒤에 더하는 종류는 문자열로 견줘 null(코어 점 그대로)
@@ -444,7 +461,8 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
         if (!(qu * cm + qv * sm > 0) || !inH(q) || !lensNear(qu, qv)) continue;
       }
     } else {
-      if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
+      // 57차: 벽을 스치는 선의 코어 점은 원기둥 밖일 수 있다 — X에서 원에 그은 접선 길이가 그 현의 반 길이 안이면 받는다(머리글)
+      if (graze(rho, r, w.half, tol, ray) === null || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
       if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
     }
     const A = du * du + dv * dv;
@@ -453,7 +471,14 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     if (!(A > 1e-9) || disc < 0) continue;
     const B = ou * du + ov * dv;
     const sq = Math.sqrt(disc);
-    for (const s of [(-B - sq) / A, (-B + sq) / A]) {
+    let roots = [(-B - sq) / A, (-B + sq) / A];
+    // 57차: 원기둥 밖 코어 점이면 X 쪽 근 하나만(단면에 비춘 X의 매개변수에 가까운 근 — 다른 근은 원을 가로지른 맞은편 벽)
+    const outside = !open && graze(rho, r, w.half, tol, ray) === true;
+    if (outside) {
+      const sp = ((pu - ou) * du + (pv - ov) * dv) / A;
+      roots = [Math.abs(roots[0]! - sp) <= Math.abs(roots[1]! - sp) ? roots[0]! : roots[1]!];
+    }
+    for (const s of roots) {
       const q: V3 = [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
       // 뚫는 점이 벽 높이 안, 코어 점에서 바깥쪽(반지름 방향)으로 간 근만(열린 후보는 그 현의 각 범위 안 근)
       if (q[a2] < w.lo - tol || q[a2] > w.hi + tol) continue;
@@ -467,7 +492,7 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
         }
         continue;
       }
-      if (((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
+      if (!outside && ((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
       if (!inWall(w, qa, tol / r)) continue;
       const e = dist3(q, p);
       const key = ray ? s : e;
@@ -605,6 +630,9 @@ const trackInference = (edge: (s: SnapSegment) => boolean, faces = false): Measu
  * 벽의 정확한 교차(테두리 위)로 바뀌고 잃은 자리·엉뚱한 자리는 0이다. 다듬지 않은 현 위 "면 위"는 791 → 412곳(남은 곳은 모두 보통 거리, X와 Q 사이 17.3화소 안).
  * 남은 곳 가운데 408곳은 코어가 그 X로 이 refineFace(닫힌 'axisFace')를 불렀는데 refineFaceSnap이 null을 준 자리(Q가 X와 다른 칸인 221곳 포함 — 앱 쪽 남은 일),
  * 4곳만 Q를 줬는데 코어가 받지 않았다. G-code 공구 경로(ncSnapOptions)는 켜지 않았다(그 탐색이 없다)
+ * 57차: 그 앱 null 가운데 231곳(같은 칸 162·다른 칸 69)은 벽을 스치는 선의 코어 점이 원기둥 밖(ρ = r + 0.003~0.012)이라 받지 않던 자리였다.
+ * refineFaceSnap이 접선 길이가 현 반 길이 안인 원기둥 밖 코어 점을 받아 X 쪽 근을 주면서 같은 탐색에서 231곳 모두 현 위 "면 위" → 그 선의 원기둥 위 교차로 바뀌고
+ * (잃은 자리·엉뚱한 자리 0, 그 밖에 바뀐 자리 0) 다듬지 않은 현 위 "면 위"는 412 → 181곳이다(판 윗면 25·구멍 끝면 152·코어가 받지 않은 같은 칸 짝 4)
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
   return {
