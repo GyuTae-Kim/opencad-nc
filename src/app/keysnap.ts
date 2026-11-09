@@ -137,7 +137,10 @@ export interface KeySnapHost {
   readonly pickThrough: boolean;
   /** 알림 영역을 넣을 곳(3D 보기) */
   readonly viewEl: HTMLElement;
-  /** 키보드로 측정 점을 찍었다(첫 점은 코어 측정 알림이 없다 — 측정 띠·잠금 단추를 맞춘다) */
+  /**
+   * 키보드로 측정 점을 찍었다(첫 점은 코어 측정 알림이 없다 — 측정 띠·잠금 단추를 맞춘다).
+   * 57차: 측정 모드의 가상 커서를 켜고 옮기고 끄고 후보를 돌릴 때도 부른다(포인터 이동이 없다 — 붙잡기 툴팁·방향 잠금 안내를 맞춘다)
+   */
   keyMeasured(): void;
 }
 
@@ -213,7 +216,7 @@ export class KeySnap {
 
   private announce(a: KeyboardSnapAnnouncement): void {
     if (this.silent) return;
-    if (a.mode === 'measure' && a.reason === 'commit') this.host.keyMeasured();
+    if (a.mode === 'measure') this.host.keyMeasured();
     this.say(a.mode === 'pick' && a.reason !== 'end' ? this.pickSpeech(a) : a.text);
   }
 

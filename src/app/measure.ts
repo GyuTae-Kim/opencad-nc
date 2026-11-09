@@ -198,18 +198,6 @@ export function lockName(l: { kind: string; axis?: 'x' | 'y' | 'z' } | null | un
   return l.kind === 'parallel' ? 'parallel' : l.kind === 'perpendicular' ? 'perpendicular' : null;
 }
 
-/**
- * 잠금 안내(첫 점을 찍은 뒤 결과가 없을 때만 — 둘째 점의 방향을 잡는 동안): 잠갔으면 그 방향, 아니면 키보드 기기에만 —
- * 커서 아래에 Shift로 잠글 방향(hover — 코어 measureHoverLock)이 있으면 "Shift로 그 방향 잠그기", 없으면 화살표 안내
- * (손가락 기기는 측정 띠의 잠금 단추). 상태 줄·측정 띠는 안내 글 다음에 따로 둔다(번역이 안내 글을 한 덩어리로 찾게)
- */
-export function lockHint(points: number, hasResult: boolean, lock: LockName | null, touch = false, hover: LockName | null = null): string | null {
-  if (hasResult || points !== 1) return null;
-  if (lock) return LOCK_HINTS[lock];
-  if (touch) return null;
-  return hover ? SHIFT_LOCK_HINTS[hover] : ARROW_LOCK_HINT;
-}
-
 /** 측정 띠 안내(찍은 점 수 0~2, 결과가 있는지) */
 export function measureHint(points: number, hasResult: boolean, touch = false): string {
   if (hasResult || points >= 2) return touch ? '측정: 다시 누르면 새로 잽니다' : '측정: 다시 누르면 새로 잽니다 · Esc 지우기';

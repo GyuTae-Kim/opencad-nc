@@ -8,8 +8,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MeasureHoverSnap, MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
-import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint, lockName } from '../../src/app/measure';
-import { MeasureLock, coverRects, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
+import { MeasureLock, coverRects, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 
 type Dir = [number, number, number];
 interface Lock {
@@ -115,6 +115,10 @@ describe('잠금 글', () => {
     expect(lockHint(1, false, 'x', true)).toBe(LOCK_HINTS.x);
     expect(lockHint(0, false, null, false, 'x')).toBeNull();
     expect(lockHint(2, true, 'x')).toBeNull();
+    // 57차: 가상 커서가 켜진 동안은 화살표가 커서를 옮긴다 — 화살표 안내 없음, Shift로 잠글 방향·잠근 방향은 그대로
+    expect(lockHint(1, false, null, false, null, true)).toBeNull();
+    expect(lockHint(1, false, null, false, 'y', true)).toBe(SHIFT_LOCK_HINTS.y);
+    expect(lockHint(1, false, 'z', false, 'x', true)).toBe(LOCK_HINTS.z);
   });
 
   it('툴팁: 붙잡은 종류 이름(나란한 방향·X축 방향), 잠갔으면 잠금, 붙잡지 않은 점은 없음', () => {

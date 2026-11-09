@@ -392,7 +392,8 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
     const { root } = makeApp();
     const fine = [...root.querySelectorAll('.start .fine-only')].map((e) => e.textContent);
     const coarse = [...root.querySelectorAll('.start .coarse-only')].map((e) => e.textContent);
-    expect(fine).toEqual(['NC 파일을 여기에 끌어다 놓으십시오', '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.', expect.stringMatching(/^키: F 전체 보기/)]);
+    // 57차: 키 안내에 Enter(3D 보기 가상 커서 — 56차 키보드 붙잡기)
+    expect(fine).toEqual(['NC 파일을 여기에 끌어다 놓으십시오', '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.', expect.stringMatching(/^키: F 전체 보기 · .* · Enter 가상 커서 · Esc /)]);
     expect(coarse).toEqual(['NC 파일을 골라 여십시오', '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.', '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준']);
   });
 

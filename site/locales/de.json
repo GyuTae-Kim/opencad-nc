@@ -870,7 +870,7 @@
   "크기": "Größe",
   "크기(L × W × T)": "Größe (L × B × T)",
   "크기가 변보다 큼": "Größe ist größer als die Seitenlänge",
-  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Esc 고른 것 지우기 · Ctrl+O 열기": "Tasten: F Alle anzeigen · 1–7 Standardansicht · F7 Raster · Leertaste Wiedergabe/Pause · Esc Auswahl löschen · Strg+O Öffnen",
+  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기": "Tasten: F Alle anzeigen · 1–7 Standardansicht · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Strg+O Öffnen",
   "테마": "Design",
   "테마 바꾸기": "Design ändern",
   "톱 홈 {0} × {1}": "Sägenut {0} × {1}",
