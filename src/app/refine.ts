@@ -599,7 +599,23 @@ const trackInference = (edge: (s: SnapSegment) => boolean, faces = false): Measu
  * 35차(코어 0.33.0 refineEnds): 켠 선이 구멍 테두리·윤곽 호·판 외곽선 둥근 모서리를 나눈 꺾은선 꼭짓점을 반 화소 안으로 지나면 그 꼭짓점의 두 토막도
  * refineSnap에 물어 호 위 교차가 꼭짓점보다 먼저다(ncSnapOptions와 같다). 판 모서리처럼 곧은 꼭짓점은 끝점 그대로다.
  * 코어 0.33.0은 원근으로 아주 가까이 확대해 벽 칸의 꼭짓점이 눈 뒤로 넘어가도 그 칸을 면의 열린 교차 후보로 모은다(선택 없이 — 앱 할 일 없음)
+ * 55차(코어 0.39.0 refineSnapToExact): 선이 구멍 벽 칸·테두리 현을 얕게 뚫는 자리에서 커서가 그물 교차 X 쪽이라 원기둥 위 교차 Q가 커서에서 붙잡기 거리 밖이면
+ * 현 위 "면 위"(다듬지 않음)로 남던 자리를, X와 Q가 같은 칸·토막의 같은 교차이고 화면 30화소(붙잡기 거리의 3배) 안이면 Q로 옮긴다.
+ * 판재 구멍 측정 탐색(합성 판 구멍 7개·실제 판재 구멍 14개, 263,898곳)에서 켜면 379곳이 현 위 "면 위" → 그 선의 원기둥 위 교차, 10곳이 축 위 커서 자리 → 그 선과
+ * 벽의 정확한 교차(테두리 위)로 바뀌고 잃은 자리·엉뚱한 자리는 0이다. 다듬지 않은 현 위 "면 위"는 791 → 412곳(남은 곳은 모두 보통 거리, X와 Q 사이 17.3화소 안).
+ * 남은 곳 가운데 408곳은 코어가 그 X로 이 refineFace(닫힌 'axisFace')를 불렀는데 refineFaceSnap이 null을 준 자리(Q가 X와 다른 칸인 221곳 포함 — 앱 쪽 남은 일),
+ * 4곳만 Q를 줬는데 코어가 받지 않았다. G-code 공구 경로(ncSnapOptions)는 켜지 않았다(그 탐색이 없다)
  */
 export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
-  return { points: panelCenters(t), pointsFor: (p) => panelSnapPoints(p, t), inference: trackInference(trackDirEdge(t), true), edges: true, refine: (c) => refineSnap(c, t), refineFace: (c) => refineFaceSnap(c, t), refineEnds: true, throughTranslucent: true };
+  return {
+    points: panelCenters(t),
+    pointsFor: (p) => panelSnapPoints(p, t),
+    inference: trackInference(trackDirEdge(t), true),
+    edges: true,
+    refine: (c) => refineSnap(c, t),
+    refineFace: (c) => refineFaceSnap(c, t),
+    refineEnds: true,
+    refineSnapToExact: true,
+    throughTranslucent: true,
+  };
 }

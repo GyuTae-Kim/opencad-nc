@@ -7,6 +7,8 @@
  * - 곧은 꺾은선 꼭짓점(G1 모서리·판 모서리)을 반 화소 안으로 지나는 끌어온 축: 앱이 null이라 끝점 그대로
  * - 화면 격자: 끄고·켜서 바뀐 자리는 모두 원 위·축 위의 다듬은 교차
  * 커서는 겨냥한 점에서 화면 (1, 2)화소 옆을 가리킨다(선의 경계를 정확히 가리키지 않는다)
+ * 55차(코어 0.40.0 openEdgeLens — refine을 주면 기본 켬): 아주 가까이 확대해 현이 커서에서 붙잡기 거리 밖인 꼭대기 토막도 활꼴 띠로 모아 같은 선의 원 위 교차에 붙는다.
+ * 그래서 refineEnds만 끈 판('lens')도 원 위 교차이고, 34차 꼴(refineEnds를 꺼서 축 위 커서 자리)은 openEdgeLens까지 끈 판(false — 0.39.0과 같다)에서 본다
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureHoverSnap } from 'opencad-viewer3d';
@@ -35,7 +37,8 @@ const PANEL = `<?xml version="1.0" encoding="utf-8"?>
  </panel>
 </pgi>`;
 
-function setup(name: string, text: string, ends: boolean) {
+/** ends: true = 앱 선택 그대로, 'lens' = refineEnds만 끔(코어 0.40.0 openEdgeLens는 기본 켬), false = refineEnds·openEdgeLens 모두 끔(34차 꼴) */
+function setup(name: string, text: string, ends: boolean | 'lens') {
   const r = parseForView(name, enc(text));
   document.body.innerHTML = '';
   const host = document.createElement('div');
@@ -47,7 +50,8 @@ function setup(name: string, text: string, ends: boolean) {
   v.setMeasureMode(true);
   const opts = r.nc ? ncSnapOptions(r.nc, arcCenters(r.nc), null, (r.scene.meta as { arcAngle?: number }).arcAngle) : panelSnapOptions(r.mpr!.snap!);
   expect(opts.refineEnds).toBe(true);
-  v.setMeasureSnap(ends ? opts : { ...opts, refineEnds: false });
+  expect(opts.openEdgeLens).toBeUndefined();
+  v.setMeasureSnap(ends === true ? opts : ends === 'lens' ? { ...opts, refineEnds: false } : { ...opts, refineEnds: false, openEdgeLens: false });
   v.renderNow();
   const lock = new MeasureLock({ viewer: () => v, touch: () => false, layer: host, changed: vi.fn() });
   const ptr = (type: string, p: readonly number[], dx: number, dy: number): void => {
@@ -91,7 +95,7 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
     const xi = Math.sqrt(RA * RA - (RA - d) ** 2);
     const Q = [TOP[0]! + xi, T[1]!, 0];
     const got: Record<string, MeasureHoverSnap | null> = {};
-    for (const ends of [false, true]) {
+    for (const ends of [false, 'lens', true] as const) {
       const w = setup('a.nc', ARC, ends);
       w.v.setMeasureTrackPoints([T]);
       const px = w.zoom(TOP, 0.012);
@@ -103,13 +107,16 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
     }
     expect(got.false).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T });
     expect(got.false!.segment).toBeFalsy();
-    const h = got.true!;
-    expect(h).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
-    expect(h.segment).toMatchObject({ kind: 'line' });
-    expect(h.point[1]).toBe(T[1]);
-    expect(h.point[2]).toBe(0);
-    expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA)).toBeLessThan(1e-6);
-    expect(Math.abs(h.point[0] - Q[0]!)).toBeLessThan(1e-6);
+    // 켠 판(refineEnds)과 refineEnds만 끈 판(0.40.0 openEdgeLens)이 같은 원 위 교차
+    for (const k of ['true', 'lens']) {
+      const h = got[k]!;
+      expect(h, k).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
+      expect(h.segment, k).toMatchObject({ kind: 'line' });
+      expect(h.point[1], k).toBe(T[1]);
+      expect(h.point[2], k).toBe(0);
+      expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA), k).toBeLessThan(1e-6);
+      expect(Math.abs(h.point[0] - Q[0]!), k).toBeLessThan(1e-6);
+    }
   });
 
   it('36차: 잠근 X·Y·임의 선이 원호 꼭짓점을 스칠 때도 — 끄면 다듬지 않은 자리, 켜면 원 위 교차(잠금 그대로)', () => {
@@ -143,7 +150,7 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
       const got: Record<string, MeasureHoverSnap | null> = {};
       let first: number[] = [];
       let dir: number[] = [];
-      for (const ends of [false, true]) {
+      for (const ends of [false, 'lens', true] as const) {
         const w = setup('a.nc', text, ends);
         w.click(c.F);
         expect(w.v.measurePoints[0]).toMatchObject({ snap: 'endpoint' });
@@ -157,14 +164,17 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
         w.v.dispose();
       }
       expect(got.false?.refined ?? false).toBe(false);
-      const h = got.true!;
-      expect(h, String(c.lock)).toMatchObject({ locked: true, refined: true });
-      expect(h.segment).toMatchObject({ kind: 'line' });
-      // 원 위, 첫 점을 지나는 잠근 선 위(F는 소수 여섯째 자리로 적어 Q에서 조금 비킨다), Q 쪽 근
-      expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA)).toBeLessThan(1e-6);
-      const q = [h.point[0] - first[0]!, h.point[1] - first[1]!];
-      expect(Math.abs(q[0]! * dir[1]! - q[1]! * dir[0]!) / Math.hypot(dir[0]!, dir[1]!)).toBeLessThan(1e-6);
-      expect(Math.hypot(h.point[0] - c.Q[0]!, h.point[1] - c.Q[1]!)).toBeLessThan(1e-3);
+      // 켠 판과 refineEnds만 끈 판(0.40.0 openEdgeLens — 잠근 선의 열린 교차)이 같은 원 위 교차
+      for (const k of ['true', 'lens']) {
+        const h = got[k]!;
+        expect(h, `${String(c.lock)} ${k}`).toMatchObject({ locked: true, refined: true });
+        expect(h.segment).toMatchObject({ kind: 'line' });
+        // 원 위, 첫 점을 지나는 잠근 선 위(F는 소수 여섯째 자리로 적어 Q에서 조금 비킨다), Q 쪽 근
+        expect(Math.abs(Math.hypot(h.point[0] - 20, h.point[1] - 20) - RA)).toBeLessThan(1e-6);
+        const q = [h.point[0] - first[0]!, h.point[1] - first[1]!];
+        expect(Math.abs(q[0]! * dir[1]! - q[1]! * dir[0]!) / Math.hypot(dir[0]!, dir[1]!)).toBeLessThan(1e-6);
+        expect(Math.hypot(h.point[0] - c.Q[0]!, h.point[1] - c.Q[1]!)).toBeLessThan(1e-3);
+      }
     }
   });
 
@@ -175,7 +185,7 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
     const xi = Math.sqrt(25 - (5 - d) ** 2);
     const Q = [150 + xi, T[1]!, 18];
     const got: Record<string, MeasureHoverSnap | null> = {};
-    for (const ends of [false, true]) {
+    for (const ends of [false, 'lens', true] as const) {
       const w = setup('p.pgi', PANEL, ends);
       w.v.setMeasureTrackPoints([T]);
       const px = w.zoom(V, 0.006);
@@ -185,12 +195,15 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
       w.v.dispose();
     }
     expect(got.false?.refined ?? false).toBe(false);
-    const h = got.true!;
-    expect(h).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
-    expect(h.segment).toMatchObject({ kind: 'edge' });
-    expect(h.point[1]).toBe(T[1]);
-    expect(h.point[2]).toBe(18);
-    expect(Math.abs(Math.hypot(h.point[0] - 150, h.point[1] - 150) - 5)).toBeLessThan(1e-6);
+    // 켠 판과 refineEnds만 끈 판(0.40.0 openEdgeLens — 그물 윤곽선 꺾은선의 활꼴 띠)이 같은 테두리 위 교차
+    for (const k of ['true', 'lens']) {
+      const h = got[k]!;
+      expect(h, k).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
+      expect(h.segment, k).toMatchObject({ kind: 'edge' });
+      expect(h.point[1], k).toBe(T[1]);
+      expect(h.point[2], k).toBe(18);
+      expect(Math.abs(Math.hypot(h.point[0] - 150, h.point[1] - 150) - 5), k).toBeLessThan(1e-6);
+    }
   });
 
   it('곧은 꺾은선 꼭짓점(G1 모서리, 판 모서리)을 반 화소 안으로 지나는 끌어온 축: 켜도 끝점 그대로', () => {
@@ -227,26 +240,29 @@ describe('35차 refineEnds: 끌어온 축이 곡선을 나눈 꼭짓점을 반 �
     const grid: number[][] = [];
     for (let i = 0; i < 15; i++) for (let j = 0; j < 15; j++) grid.push([TOP[0]! - h + (2 * h * i) / 14.3 + h * 0.013, TOP[1]! - h + (2 * h * j) / 14.3 + h * 0.007, 0]);
     const rows: Record<string, (MeasureHoverSnap | null)[]> = {};
-    for (const ends of [false, true]) {
+    for (const ends of [false, 'lens', true] as const) {
       const w = setup('a.nc', ARC, ends);
       w.v.setMeasureTrackPoints([T]);
       w.zoom(TOP, 0.012);
       rows[String(ends)] = grid.map((g) => w.hover(g, 0, 0));
       w.v.dispose();
     }
-    let changed = 0;
-    for (let i = 0; i < grid.length; i++) {
-      const a = rows.false![i]!, b = rows.true![i]!;
-      if (JSON.stringify(a) === JSON.stringify(b)) continue;
-      changed++;
-      expect(b).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
-      expect(b.segment).toBeTruthy();
-      expect(b.point[1]).toBe(T[1]);
-      expect(Math.abs(Math.hypot(b.point[0] - 20, b.point[1] - 20) - RA)).toBeLessThan(1e-6);
-      // 두 근(꼭대기 양옆) 가운데 하나
-      expect(Math.abs(Math.abs(b.point[0] - 20) - xi)).toBeLessThan(1e-6);
-      expect(['endpoint', 'axis']).toContain(a?.snap);
+    // 34차 꼴(둘 다 끔) → 켠 판, 34차 꼴 → refineEnds만 끈 판(0.40.0 openEdgeLens): 바뀐 자리는 모두 축 위·원 위 다듬은 교차
+    for (const k of ['true', 'lens']) {
+      let changed = 0;
+      for (let i = 0; i < grid.length; i++) {
+        const a = rows.false![i]!, b = rows[k]![i]!;
+        if (JSON.stringify(a) === JSON.stringify(b)) continue;
+        changed++;
+        expect(b, k).toMatchObject({ snap: 'axis', axis: 'x', trackFrom: T, refined: true });
+        expect(b.segment).toBeTruthy();
+        expect(b.point[1]).toBe(T[1]);
+        expect(Math.abs(Math.hypot(b.point[0] - 20, b.point[1] - 20) - RA)).toBeLessThan(1e-6);
+        // 두 근(꼭대기 양옆) 가운데 하나
+        expect(Math.abs(Math.abs(b.point[0] - 20) - xi)).toBeLessThan(1e-6);
+        expect(['endpoint', 'axis']).toContain(a?.snap);
+      }
+      expect(changed, k).toBeGreaterThan(0);
     }
-    expect(changed).toBeGreaterThan(0);
   });
 });

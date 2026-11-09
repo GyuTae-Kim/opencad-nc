@@ -17,6 +17,7 @@ import { mixNodes, mixText } from './i18n';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
 import { panelMeasureHint, snapPair } from './measure';
+import type { SceneIssue } from 'opencad-viewer3d';
 import type { OptKey } from './panel-info';
 import type { NcJobInfo, NcOpenOptions } from './protocol';
 import type { NcSettings } from './settings';
@@ -68,6 +69,8 @@ export interface PanelHost {
   setSettings(s: NcSettings): void;
   /** "깎기" 탭(소재 깎기 시뮬레이션 — 앱이 나눠 받은 모듈로 그린다) */
   renderSimTab(body: HTMLElement, d: NcDoc): void;
+  /** 3D 보기 코어가 지금 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0, 정보 탭 "3D 보기 경고") */
+  sceneIssues?(): readonly SceneIssue[];
 }
 
 /** 이름·값 줄(이름이 섞은 글이면 지금 언어로 옮겨 담고, file이면 값은 파일 글 — 번역하지 않는다) */
@@ -802,6 +805,18 @@ export class NcPanel {
         ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
         : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
     );
+    // 3D 보기 코어가 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0). 있을 때만, 글은 문서를 열 때 받는 조각에서(받기 전이면 받은 뒤 다시 그린다)
+    const issues = this.host.sceneIssues?.() ?? [];
+    if (issues.length) {
+      if (info) this.body.append(info.sceneIssueGroup(issues));
+      else
+        loadPanelInfo().then(
+          () => {
+            if (this.doc === d && d.panelTab === 'info') this.render();
+          },
+          () => undefined,
+        );
+    }
   }
 
   /**
