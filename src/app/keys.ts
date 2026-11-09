@@ -8,6 +8,8 @@
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  * - 측정 첫 점을 찍은 뒤(둘째 점 방향을 잡는 동안) 화살표는 방향 잠금(SketchUp 추론 잠금): → X · ← Y · ↑ Z축, ↓ 지금 방향.
  *   코드 목록·메뉴·탭처럼 화살표를 스스로 쓰는 곳에 초점이 있으면 그쪽 것이다. Shift 잠금은 코어가 한다.
+ * - 56차(코어 0.46.0 키보드 붙잡기 — keysnap.ts): 캔버스의 가상 커서가 켜진 동안 화살표·Esc는 코어 것이다(커서 옮기기·끄기 — 위 앱 화살표보다 먼저).
+ *   커서는 Enter로만 켠다(커서가 꺼져 있을 때 캔버스 화살표는 keysnap.ts가 기본 동작을 막아 코어가 커서를 켜지 않는다 — 문서 종류마다 화살표 뜻이 갈리지 않게).
  */
 import type { ViewName } from 'opencad-viewer3d';
 // 숫자 키 → 표준 뷰 표는 코어의 작은 모듈에서(0.10.0 — 코어 입구는 문서를 열 때 나눠 받으므로 첫 화면 메뉴 글은 camera 모듈의 표로)
@@ -62,6 +64,8 @@ export interface KeyContext {
   arrowOwner?: boolean;
   /** 판재 파일을 깎아 보는 중(가공 하나씩 따라가기를 할 수 있음 — ← → 한 가공씩) */
   canStepOps?: boolean;
+  /** 3D 보기의 가상 커서가 켜져 있음(코어 keyboardCursor — 캔버스의 화살표·Esc는 코어가 받는다) */
+  keyCursor?: boolean;
 }
 
 /** 화살표 → 잠글 축(↓는 지금 방향 = null) */
@@ -78,6 +82,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if (!c.hasDoc) return null;
   if (c.key === 'F7') return { type: 'grid' };
   if (c.key === ' ' || c.key === 'Spacebar') return c.canPlay && !c.onButton ? { type: 'play' } : null;
+  if (c.keyCursor && c.onCanvas && (c.key.startsWith('Arrow') || c.key === 'Escape')) return null;
   if (c.key === 'Escape') return { type: 'escape', canvas: c.onCanvas };
   if (c.measureDirecting && !c.arrowOwner && !c.inCode && c.key in LOCK_KEYS) return { type: 'lock', axis: LOCK_KEYS[c.key] ?? null };
   if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canPlay) return { type: 'step', delta: (c.key === 'ArrowRight' ? 1 : -1) * (c.shift ? 10 : 1) };

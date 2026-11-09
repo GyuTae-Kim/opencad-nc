@@ -104,6 +104,31 @@ describe('키 고르기', () => {
     expect(k('Shift', m)).toEqual({ type: 'viewer' });
   });
 
+  it('56차: 가상 커서가 켜진 동안 캔버스의 화살표·Esc는 코어 것(앱 화살표는 커서가 꺼졌을 때 그대로)', () => {
+    const on = { onCanvas: true, keyCursor: true };
+    for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape']) {
+      expect(k(key, on), key).toBeNull();
+      expect(k(key, { ...on, shift: true }), `Shift+${key}`).toBeNull();
+      // 측정 방향 잠금·한 가공씩도 커서가 먼저
+      expect(k(key, { ...on, measureDirecting: true, canStepOps: true }), key).toBeNull();
+    }
+    // 커서가 꺼지면 앱 화살표 그대로(재생 걸음·줄 이동·방향 잠금·한 가공씩), Esc는 앱이 먼저 본다
+    const off = { onCanvas: true, keyCursor: false };
+    expect(k('ArrowRight', off)).toEqual({ type: 'step', delta: 1 });
+    expect(k('ArrowLeft', { ...off, shift: true })).toEqual({ type: 'step', delta: -10 });
+    expect(k('ArrowDown', off)).toEqual({ type: 'line', delta: 1 });
+    expect(k('ArrowUp', { ...off, measureDirecting: true })).toEqual({ type: 'lock', axis: 'z' });
+    expect(k('ArrowRight', { ...off, canPlay: false, canStepOps: true })).toEqual({ type: 'opStep', delta: 1 });
+    expect(k('Escape', off)).toEqual({ type: 'escape', canvas: true });
+    // 캔버스 밖(코드 목록·단추)은 커서와 상관없다(커서는 캔버스가 초점을 잃으면 꺼진다 — 코어)
+    expect(k('ArrowDown', { keyCursor: true, inCode: true })).toEqual({ type: 'line', delta: 1 });
+    expect(k('Escape', { keyCursor: true })).toEqual({ type: 'escape', canvas: false });
+    // 커서와 겹치지 않는 앱 키는 그대로
+    expect(k(' ', on)).toEqual({ type: 'play' });
+    expect(k('F7', on)).toEqual({ type: 'grid' });
+    expect(k('f', on)).toBeNull();
+  });
+
   it('F7 격자, Space 재생(단추 위·재생 못 할 때는 아님)', () => {
     expect(k('F7')).toEqual({ type: 'grid' });
     expect(k(' ')).toEqual({ type: 'play' });

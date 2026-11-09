@@ -124,6 +124,24 @@ describe('코어 나눠 받기', () => {
     expect(dyn).toEqual(['src/app/core.ts ./measure-tools']);
   });
 
+  it('56차: 3D 보기 위 앱 UI(viewer-ui.ts — 단면 손잡이·키보드 붙잡기 keysnap.ts)는 첫 화면 그래프 밖, core.ts가 코어와 함께 import() 하나로 받는다', () => {
+    const { files } = walk(join(ROOT, 'src/app/main.ts'));
+    const rel = [...files].map((f) => relative(ROOT, f));
+    expect(rel.filter((f) => f === 'src/app/viewer-ui.ts' || f === 'src/app/keysnap.ts')).toEqual([]);
+    const dyn: string[] = [];
+    for (const f of files) {
+      if (f.startsWith(CORE)) continue;
+      for (const s of dynamicSpecs(readFileSync(f, 'utf8'))) if (/^\.\/(viewer-ui|keysnap)$/.test(s)) dyn.push(`${relative(ROOT, f)} ${s}`);
+    }
+    expect(dyn).toEqual(['src/app/core.ts ./viewer-ui']);
+    // 조각 입구가 둘을 담고, 코어 값은 가져오지 않는다(앱이 받은 코어 모듈을 넘긴다 — 값으로 가져오면 번들러가 코어 keysnap 모듈을 따로 떼어
+    // 첫 화면 조각의 나눠 받기 목록이 길어졌다)
+    const ui = [...walk(join(ROOT, 'src/app/viewer-ui.ts')).files].map((f) => relative(ROOT, f));
+    expect(ui).toEqual(expect.arrayContaining(['src/app/viewer-ui.ts', 'src/app/keysnap.ts']));
+    for (const f of ['src/app/viewer-ui.ts', 'src/app/keysnap.ts'])
+      expect(staticSpecs(readFileSync(join(ROOT, f), 'utf8')).filter((s) => s.startsWith('opencad-viewer3d')), f).toEqual([]);
+  });
+
   it('훑기는 인라인 type만 쓴 가져오기와 다시 내보내기도 값 가져오기로 잡는다', () => {
     const files: Record<string, string> = {
       '/x/a.ts': "import { b } from './b';\nimport type { Viewer3d } from 'opencad-viewer3d';\n// import { Viewer3d } from 'opencad-viewer3d';\n",

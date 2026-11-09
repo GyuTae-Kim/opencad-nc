@@ -28,13 +28,19 @@ export function onceImport<T>(load: () => Promise<T>): () => Promise<T> {
   };
 }
 
+let ui: typeof import('./viewer-ui') | null = null;
+/** 코어와 함께 받은 3D 보기 위 앱 UI(56차 viewer-ui.ts — 단면 손잡이·키보드 붙잡기). 받기 전이나 받지 못했으면 null(그것만 없이 연다) */
+export const viewerUi = (): typeof ui => ui;
+
 /**
  * 코어 입구 모듈(한 번만 받는다). 55차: 뷰 큐브 면 글(viewcube 모듈 CUBE_FACES — 코어 입구가 내보내지 않는다)도 함께 받아 지금 언어로 옮긴다.
- * 첫 화면 그래프에서 viewcube를 가져오면 번들러가 코어 조각이 쓰는 큐브 그리기·판정까지 첫 화면 조각에 넣는다(코어 0.44.0부터 손가락 큐브만큼 컸다)
+ * 첫 화면 그래프에서 viewcube를 가져오면 번들러가 코어 조각이 쓰는 큐브 그리기·판정까지 첫 화면 조각에 넣는다(코어 0.44.0부터 손가락 큐브만큼 컸다).
+ * 56차: 뷰어가 생긴 뒤에만 쓰는 앱 UI(viewer-ui.ts)도 함께 받는다(viewerUi — 첫 화면 조각을 55차 이하로)
  */
 export const loadViewerCore: () => Promise<Core> = onceImport(async () => {
-  const [core, cube] = await Promise.all([import('opencad-viewer3d'), import('opencad-viewer3d/viewcube')]);
+  const [core, cube, u] = await Promise.all([import('opencad-viewer3d'), import('opencad-viewer3d/viewcube'), import('./viewer-ui').catch(() => null)]);
   localizeCubeFaces(cube.CUBE_FACES);
+  ui = u;
   return core;
 });
 

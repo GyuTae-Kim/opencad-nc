@@ -25,7 +25,8 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 // 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
 import type { TouchAim } from './aim';
-import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, measureFailText } from './core';
+import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, measureFailText, viewerUi } from './core';
+import type { KeySnap } from './keysnap';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
@@ -261,8 +262,10 @@ export class NcViewerApp implements PanelHost {
   /** 소재 깎기 시뮬레이션(켤 때 나눠 받는다 — sim.ts) */
   private sim: SimView | null = null;
   private simLoad: Promise<SimView> | null = null;
-  /** 뷰어에 올린 장면에 반투명 판이 있어 보기에서 누르면 판 너머를 고르는지(applyDoc — doc.ts boardThrough) */
-  private pickThrough = false;
+  /** 뷰어에 올린 장면에 반투명 판이 있어 보기에서 누르면 판 너머를 고르는지(applyDoc — doc.ts boardThrough, 키보드 고르기 후보도 — keysnap.ts) */
+  pickThrough = false;
+  /** 3D 보기 키보드 붙잡기·고르기(56차 keysnap.ts — 뷰어와 함께 받는다) */
+  private keySnap: KeySnap | null = null;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -270,7 +273,8 @@ export class NcViewerApp implements PanelHost {
   private readonly docNameEl: HTMLSpanElement;
   private readonly themeBtn: HTMLButtonElement;
   private readonly workspace: HTMLElement;
-  private readonly viewEl: HTMLDivElement;
+  /** 3D 보기 칸(뷰어·띠·알림 영역을 담는다) */
+  readonly viewEl: HTMLDivElement;
   private readonly startEl: HTMLDivElement;
   private readonly startError: HTMLDivElement;
   private readonly recentCard: HTMLElement;
@@ -313,8 +317,9 @@ export class NcViewerApp implements PanelHost {
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
     root.addEventListener('languagechange', () => {
       if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize);
-      // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다
+      // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다. 키보드 붙잡기 알림 틀도(56차)
       this.labelFormat();
+      this.keySnap?.sync();
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
       // 파일 글이 섞인 글(상태 줄·안내 띠·패널·재생 띠·시작 화면 오류 — 그릴 때 옮겨 넣고 번역층은 건너뛴다)을 새 언어로 다시 그린다(54차)
@@ -834,35 +839,6 @@ export class NcViewerApp implements PanelHost {
     if (arrow) el.style.setProperty('--sec-dir', `${Math.atan2(hd.dy, hd.dx)}rad`);
   }
 
-  /** 단면 손잡이 끌기 → moveSectionByPixels(UI는 알림으로 맞춘다) */
-  private makeSecHandle(): HTMLDivElement {
-    const el = h('div', { class: 'sec-handle', hidden: true, title: '끌어서 단면 옮기기', 'aria-hidden': 'true' });
-    let last: { x: number; y: number; id: number } | null = null;
-    el.addEventListener('pointerdown', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      last = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
-      el.classList.add('dragging');
-      try {
-        el.setPointerCapture(ev.pointerId);
-      } catch {
-        /* 합성 사건 */
-      }
-    });
-    el.addEventListener('pointermove', (ev) => {
-      if (!last || ev.pointerId !== last.id) return;
-      this.viewer?.moveSectionByPixels(ev.clientX - last.x, ev.clientY - last.y);
-      last = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
-    });
-    const end = (): void => {
-      last = null;
-      el.classList.remove('dragging');
-    };
-    el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', end);
-    return el;
-  }
-
   // ───────────────────────── 열기 ─────────────────────────
 
   /** 파일 고르기. add = 열린 작업에 더할 파일(부프로그램 등) */
@@ -1347,8 +1323,12 @@ export class NcViewerApp implements PanelHost {
     // 아니면 가장 앞 면(예전 그대로). 판 너머 고르기는 포켓·홈 뚜껑을 지나간다(applyDoc — 코어 0.27.0 setItemPickThrough)
     v.onPick((p, e) => this.onPick(this.pickThrough ? p : (e.front ?? null)), { throughTranslucent: true, front: true });
     v.onMeasure((m) => this.onMeasure(m));
-    this.secHandle = this.makeSecHandle();
-    this.viewEl.append(this.secHandle);
+    // 단면 손잡이·키보드 붙잡기(56차 viewer-ui.ts — 코어와 함께 받았다. 받지 못했으면 그것만 없이)
+    const ui = viewerUi();
+    if (ui) {
+      this.viewEl.append((this.secHandle = ui.makeSecHandle(() => this.viewer)));
+      this.keySnap = new ui.KeySnap(this, core);
+    }
     v.onSectionChange((st) => this.renderSection(st));
     v.onCameraChange(() => this.placeSecHandle());
     this.renderSection(null);
@@ -1368,6 +1348,12 @@ export class NcViewerApp implements PanelHost {
       if (v.measureMode) this.refreshBar();
     });
     this.attachMeasure();
+  }
+
+  /** 키보드로 측정 점을 찍었다(56차 keysnap.ts — 첫 점은 코어 측정 알림이 없어 측정 띠·잠금 단추를 맞춘다) */
+  keyMeasured(): void {
+    this.refreshBar();
+    this.mlock?.schedule();
   }
 
   /**
@@ -1487,6 +1473,7 @@ export class NcViewerApp implements PanelHost {
       if (lid) v.setItemPickThrough(id, [lid]);
     }
     this.pickThrough = !!through;
+    this.keySnap?.sync();
     if (cam) v.setCamera(cam);
     // 선반: XZ 단면이 보이게 앞에서
     else if (sceneFeatures(d.scene).lathe) v.setView('front', false);
@@ -2286,6 +2273,8 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
+    // 56차(keysnap.ts): 가상 커서가 켜진 고르기 모드의 Tab은 앱 묶음(코드 줄·가공) 단위로 돌리고, 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다
+    if (v && this.keySnap?.key(ev, t === v.canvas)) return;
     // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
     const onSlider = !!t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range';
     const a = keyAction({
@@ -2304,6 +2293,7 @@ export class NcViewerApp implements PanelHost {
       measureDirecting: !!this.mlock?.directing && !this.doc?.measure,
       arrowOwner: !!this.openMenu || !!t?.closest?.('[role="menu"], [role="tablist"], [role="listbox"], [role="tree"]'),
       canStepOps: !!this.sim?.canStepOps,
+      keyCursor: !!this.keySnap?.cursor,
     });
     if (!a) return;
     if (a.type === 'open') {
