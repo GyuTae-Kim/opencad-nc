@@ -4,7 +4,8 @@
  * - 실제 코어(가짜 WebGL): 좌표 NaN·아주 큰 값이 든 공구 경로 선분·점, 정점 수 밖 색인·NaN 윤곽선이 든 그물, 놓을 자리를 모르는 그물 → 알림마다 앱 글(개수 그대로)
  * - 모든 code의 앱 글이 네 언어 사전에 있다(옮긴 글에 한글이 없고 개수 자리를 지킨다)
  * - 앱(가짜 뷰어): 문서를 열면 알림이 있으면 한 번 알리고 정보 탭에 묶음, 알림이 바뀌면 다시 그리고, 알림이 없는 장면으로 다시 읽으면 앞 묶음이 남지 않는다.
- *   뷰어는 animate: 'auto'(코어 0.48.0)로 만든다
+ *   뷰어는 animate: 'auto'(코어 0.48.0)로 만든다. 알림이 없으면 정보 탭 묶음 차례가 그대로이고(해석 경고가 마지막) 알림도 없으며,
+ *   알림이 생기면 해석 경고 다음에 묶음 하나만 더하고, 없어지면 묶음 차례·해석 경고 묶음 글이 처음과 같다
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SceneIssue, SceneIssueCode } from 'opencad-viewer3d';
@@ -173,10 +174,20 @@ describe('앱이 코어 장면 알림을 정보 탭에 잇는다(app.ts syncScen
     window.opencadApp!.setPanelTab('info');
     expect(infoGroups()).toEqual([]);
     expect(app.state().sceneIssues).toBe(0);
-    // 코어가 알림을 내면(setMesh 등 — onSceneIssues) 정보 탭을 다시 그리고 한 번 알린다
+    // 알림이 없으면 정보 탭은 54차와 같다: 묶음 차례가 그대로이고 해석 경고 묶음이 마지막, 3D 보기 경고 묶음·알림 없음
+    const body = (): HTMLElement => document.querySelector('.prop-group')!.parentElement!;
+    const headings = (): string[] => [...body().querySelectorAll(':scope > .prop-group > h3')].map((e) => e.textContent ?? '');
+    const plain = headings();
+    expect(plain.at(-1)).toMatch(/^해석 경고/);
+    expect(toasts()).toEqual([]);
+    // 마지막 묶음(해석 경고) 글(읽은 시간처럼 다시 읽으면 바뀌는 줄이 없는 묶음)
+    const lastHtml = (): string => body().querySelector(':scope > .prop-group:last-of-type')!.outerHTML;
+    const plainLast = lastHtml();
+    // 코어가 알림을 내면(setMesh 등 — onSceneIssues) 정보 탭을 다시 그리고 한 번 알린다 — 묶음은 해석 경고 바로 다음에 하나만 더한다
     v.issues = ALL.slice(0, 2);
     v.issueCb!();
     await vi.waitFor(() => expect(infoGroups()).toEqual(['3D 보기 경고 2개']));
+    expect(headings()).toEqual([...plain, '3D 보기 경고 2개']);
     expect(toasts()).toEqual(['3D 보기 경고 2개 — 패널의 "정보" 탭에서 볼 수 있습니다.']);
     expect(app.state().sceneIssues).toBe(2);
     // 같은 알림이면 다시 그리지 않고, 알림이 늘면 다시 그리되 같은 문서에서는 다시 알리지 않는다
@@ -191,6 +202,9 @@ describe('앱이 코어 장면 알림을 정보 탭에 잇는다(app.ts syncScen
     expect(app.doc!.panelTab).toBe('info');
     expect(infoGroups()).toEqual([]);
     expect(app.state().sceneIssues).toBe(0);
+    // 알림이 없어진 정보 탭은 처음 그린 것과 묶음 차례가 같고, 마지막 묶음(해석 경고)은 글자까지 같다
+    expect(headings()).toEqual(plain);
+    expect(lastHtml()).toBe(plainLast);
     // 알림이 있는 새 문서는 다시 알린다(문서마다 한 번)
     v.issues = ALL.slice(3, 4);
     expect(await open('b.nc')).toBe(true);
