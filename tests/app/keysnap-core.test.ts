@@ -119,6 +119,11 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
     expect(app.state().playSec).toBeNull();
     expect(app.state().selLine).toBe(-1);
     expect(live()).toMatch(/^(고를 것이 없습니다|.+: X .+, Y .+, Z .+)$/);
+    // 후보가 없는 자리(화면 위 끝 — 공구 경로에서 60화소 넘게)의 Tab: 초점은 캔버스에 두고 '고를 것이 없습니다'만('후보 하나'가 아니다)
+    for (let i = 0; i < 7; i++) key('ArrowUp', { shiftKey: true });
+    expect(v.keyboardCursor!).toMatchObject({ y: 0, count: 0 });
+    expect(key('Tab').defaultPrevented).toBe(true);
+    expect(live()).toBe('고를 것이 없습니다');
     // Esc: 커서만 끈다 → 화살표는 다시 앱 것(재생 걸음·줄 이동), 커서를 켜지 않는다
     key('Escape');
     expect(v.keyboardCursor).toBeNull();

@@ -1,5 +1,5 @@
 /**
- * 3D 보기 키보드 붙잡기·고르기(56차 — 3D 뷰어 코어 0.46.0 setKeyboardSnap·0.47.0 pickCycle·messages). 뷰어를 만들 때 코어와 함께 나눠 받는다(viewer-ui.ts — core.ts loadViewerUi).
+ * 3D 보기 키보드 붙잡기·고르기(56차 — 3D 뷰어 코어 0.46.0 setKeyboardSnap·0.47.0 pickCycle·messages). 뷰어를 만들 때 코어와 함께 나눠 받는다(viewer-ui.ts — core.ts loadViewerCore·viewerUi).
  *
  * - 켜기: 3D 보기(캔버스)에 초점이 있을 때 Enter가 가상 커서를 켠다(캔버스 가운데). 커서가 켜진 동안 화살표는 커서를 옮기고(Shift면 크게),
  *   Tab·Shift+Tab은 그 자리의 후보를 돌리고, Enter는 측정 점을 찍거나 고르고, Esc는 끈다(측정 점이 있으면 측정 지우기가 먼저 — 코어).
@@ -236,7 +236,8 @@ export class KeySnap {
       const keys = v?.keyboardSnap?.keys;
       return keys ? k.formatKeySnapMessage(M.start, [body, k.keySnapHint(keys, 'pick', true, M)]) : body;
     }
-    return a.reason === 'cycle' && groups === 1 ? k.formatKeySnapMessage(M.only, [body]) : body;
+    // 후보가 없는 자리의 Tab은 '고를 것이 없습니다'만(코어도 후보가 하나일 때만 '후보 하나')
+    return a.reason === 'cycle' && a.pick && groups === 1 ? k.formatKeySnapMessage(M.only, [body]) : body;
   }
 
   /** 알림 영역에 넣는다(같은 글이 이어지면 끝에 줄 바꿈 없는 빈칸 하나를 붙였다 떼어 다시 읽게) */
