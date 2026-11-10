@@ -11,8 +11,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
 import { placeMeasureLabel } from 'opencad-viewer3d/measurelabel';
-import { ARROW_LOCK_HINT, LOCK_HINTS, MEASURE_INFERENCE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure';
-import { MeasureLock } from '../../src/app/measure-lock';
+import { ARROW_LOCK_HINT, LOCK_HINTS, MEASURE_INFERENCE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS } from '../../src/app/measure';
+import { MeasureLock, lockHint } from '../../src/app/measure-lock';
 import { installCanvasFakes } from './fake-webgl';
 
 let restore: () => void;

@@ -45,7 +45,7 @@ import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } 
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { NO_LOCK_MOUSE, NO_LOCK_TOUCH, TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
+import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
 import type { FirstPoint } from './tangent';
 
 type V3 = [number, number, number];
@@ -66,7 +66,9 @@ export type LockViewer = Pick<
   | 'setMeasureLabelAvoid'
   | 'project'
   | 'viewCubeRect'
->;
+> &
+  // 57차: 가상 커서(56차 keysnap.ts — 켜고 끄면 방향 잠금 안내가 바뀐다). 가짜 뷰어는 없어도 된다
+  Partial<Pick<Viewer3d, 'keyboardCursor'>>;
 
 export interface MeasureLockHost {
   viewer(): LockViewer | null;
@@ -122,6 +124,23 @@ const sameLine = (a: readonly number[], b: readonly number[]): boolean => Math.a
 
 /** 측정 띠 알림 종류: 잠글 방향이 없음(잠금이 걸리면 거둔다) */
 const NO_LOCK = 'no-lock';
+
+/**
+ * 잠금 안내(첫 점을 찍은 뒤 결과가 없을 때만 — 둘째 점의 방향을 잡는 동안): 잠갔으면 그 방향, 아니면 키보드 기기에만 —
+ * 커서 아래에 Shift로 잠글 방향(hover — 코어 measureHoverLock)이 있으면 "Shift로 그 방향 잠그기", 없으면 화살표 안내
+ * (손가락 기기는 측정 띠의 잠금 단추). 상태 줄·측정 띠는 안내 글 다음에 따로 둔다(번역이 안내 글을 한 덩어리로 찾게)
+ * 57차: 3D 보기의 가상 커서가 켜진 동안(cursor — 56차 keysnap.ts)은 화살표가 커서를 옮기므로 화살표 안내를 내지 않는다(Shift로 잠글 방향이 있으면 그 안내).
+ * 측정 도구가 있을 때만 쓰므로 이 조각에 둔다(56차까지 measure.ts — 첫 화면 JS를 줄이려고 옮김, 앱은 MeasureLock.hint로 묻는다)
+ */
+export function lockHint(points: number, hasResult: boolean, lock: LockName | null, touch = false, hover: LockName | null = null, cursor = false): string | null {
+  if (hasResult || points !== 1) return null;
+  if (lock) return LOCK_HINTS[lock];
+  if (touch) return null;
+  return hover ? SHIFT_LOCK_HINTS[hover] : cursor ? null : ARROW_LOCK_HINT;
+}
+
+/** 57차: 3D 보기의 가상 커서가 켜져 있는지(코어 keyboardCursor — 가짜 뷰어는 값이 없거나 객체가 아닐 수 있다) */
+const cursorOn = (v: LockViewer): boolean => typeof v.keyboardCursor === 'object' && v.keyboardCursor !== null;
 /** 툴팁과 점 사이(가로·세로), 3D 보기 가장자리 여백 */
 const TIP_GAP = 12;
 const TIP_EDGE = 4;
@@ -299,6 +318,12 @@ export class MeasureLock {
     return lockName(l);
   }
 
+  /** 상태 줄·측정 띠의 방향 잠금 안내(측정 중일 때 — lockHint, 가상 커서가 켜졌는지는 뷰어에서). hasResult = 측정 결과가 있는지, touch = 손가락 기기 */
+  hint(hasResult: boolean, touch: boolean): string | null {
+    const v = this.host.viewer();
+    return v?.measureMode ? lockHint(v.measurePointCount, hasResult, this.lock, touch, this.hoverLock, cursorOn(v)) : null;
+  }
+
   /** 잠그지 않았을 때 Shift(·잠금 단추)가 지금 잠글 방향(원호 접선, 아니면 코어 measureHoverLock). 방향을 잡는 중이 아니면 null */
   get hoverLock(): LockName | null {
     const v = this.host.viewer();
@@ -387,7 +412,8 @@ export class MeasureLock {
     this.button.setAttribute('aria-pressed', String(!!lock));
     this.button.classList.toggle('on', !!lock);
     this.button.title = lock ? '방향 잠금 풀기' : '지금 방향 잠그기(다시 누르면 풀기)';
-    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}|${this.hoverLock ?? ''}|${on ? v!.measureTrackPoints.length : 0}`;
+    // 57차: 가상 커서를 켜고 끄면 방향 잠금 안내가 바뀐다(켜진 동안 화살표 안내 없음 — lockHint)
+    const key = `${on ? v!.measurePointCount : -1}|${lock ?? ''}|${this.hoverLock ?? ''}|${on ? v!.measureTrackPoints.length : 0}|${on && cursorOn(v!) ? 1 : 0}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.host.changed();

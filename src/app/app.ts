@@ -38,7 +38,7 @@ import { mixNodes, mixText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
-import { MEASURE_LOADING, lockHint, measureHint, measureLines, snapPair, trackMarks } from './measure';
+import { MEASURE_LOADING, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import type { TrackPick } from './measure-track';
 import { NARROW_WIDTH, NcPanel, loadPanelInfo, type PanelHost } from './panel';
@@ -625,7 +625,7 @@ export class NcViewerApp implements PanelHost {
           fmt('WangShi PGI · XML', [...PGI_EXTENSIONS, ...XML_EXTENSIONS], '판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수'),
         ),
         h('p', { class: 'privacy', html: `${icon('lock')}<span><b>파일은 이 브라우저 밖으로 나가지 않습니다.</b> 서버로 올리지 않고 이 기기 안에서 읽습니다.</span>` }),
-        h('p', { class: 'keys fine-only' }, '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Esc 고른 것 지우기 · Ctrl+O 열기'),
+        h('p', { class: 'keys fine-only' }, '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기'),
         h('p', { class: 'keys coarse-only' }, '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준'),
       ),
     );
@@ -1350,7 +1350,10 @@ export class NcViewerApp implements PanelHost {
     this.attachMeasure();
   }
 
-  /** 키보드로 측정 점을 찍었다(56차 keysnap.ts — 첫 점은 코어 측정 알림이 없어 측정 띠·잠금 단추를 맞춘다) */
+  /**
+   * 키보드로 측정 점을 찍었다(56차 keysnap.ts — 첫 점은 코어 측정 알림이 없어 측정 띠·잠금 단추를 맞춘다).
+   * 57차: 측정 모드의 가상 커서를 켜고 옮기고 끌 때도(포인터 이동이 없다 — 붙잡기 툴팁·방향 잠금 안내를 맞춘다)
+   */
   keyMeasured(): void {
     this.refreshBar();
     this.mlock?.schedule();
@@ -2216,12 +2219,12 @@ export class NcViewerApp implements PanelHost {
     document.body.style.setProperty('--toast-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(vh - top + 8))}px` : '0px');
   }
 
-  /** 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표 */
+  /**
+   * 방향 잠금 안내(측정 중 첫 점을 찍은 뒤 결과가 없을 때): 잠근 방향, 키보드 기기는 Shift로 잠글 방향(코어 measureHoverLock)이나 화살표.
+   * 57차: 가상 커서가 켜진 동안은 화살표가 커서를 옮기므로 Shift 안내만. 측정 도구 조각이 정한다(measure-lock.ts lockHint — 첫 화면 JS를 줄이려고)
+   */
   private lockHintNow(): string | null {
-    const v = this.viewer;
-    const lock = this.mlock;
-    if (!v?.measureMode || !lock) return null;
-    return lockHint(v.measurePointCount, !!this.doc?.measure, lock.lock, this.touch, lock.hoverLock);
+    return this.mlock?.hint(!!this.doc?.measure, this.touch) ?? null;
   }
 
   /** 측정 띠: 측정 중이면 다음에 누를 곳 안내나 결과(거리와 dx·dy·dz), 끌어온 점 단추의 점 수. 보이는 곳은 CSS가 정한다(좁은 화면·터치) */

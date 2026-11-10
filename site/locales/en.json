@@ -870,7 +870,7 @@
   "크기": "Size",
   "크기(L × W × T)": "Size (L × W × T)",
   "크기가 변보다 큼": "Size is larger than the side",
-  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Esc 고른 것 지우기 · Ctrl+O 열기": "Keys: F - Fit to View · 1–7 - Standard Views · F7 - Grid · Space - Play/Pause · Esc - Deselect · Ctrl+O - Open",
+  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기": "Keys: F - Fit to View · 1–7 - Standard Views · F7 - Grid · Space - Play/Pause · Enter - Virtual Cursor · Esc - Deselect · Ctrl+O - Open",
   "테마": "Theme",
   "테마 바꾸기": "Change Theme",
   "톱 홈 {0} × {1}": "Saw groove {0} × {1}",

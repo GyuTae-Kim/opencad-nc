@@ -199,6 +199,32 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
     expect(app.state().measuring).toBe(true);
   });
 
+  it('57차: 가상 커서가 켜진 동안 방향 잠금 안내에 화살표가 없고(화살표는 커서), 커서를 끄면(초점이 떠남) 다시 화살표 안내 — 포인터 이동 없이 맞춘다', async () => {
+    const { app, v, center, key } = await open('a.nc', LINES);
+    app.toggleMeasure(true);
+    await vi.waitFor(() => expect(app.state().measuring).toBe(true));
+    center([20, 15, 0], 25);
+    const hint = (): string => [...document.querySelectorAll('.st-sel .st-lock')].map((e) => e.textContent).join(' ');
+    key('Enter');
+    key('Enter');
+    expect(v.measurePoints).toHaveLength(1);
+    expect(v.keyboardCursor).not.toBeNull();
+    // 첫 점 뒤 상태 줄이 다시 그려질 때까지(측정 잠금 상태는 다음 프레임에 맞춘다)
+    await vi.waitFor(() => expect(app.state().measureLock?.button).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hint()).not.toContain('화살표로 방향 잠금');
+    key('ArrowUp', { shiftKey: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hint()).not.toContain('화살표로 방향 잠금');
+    // 초점이 떠나면 코어가 커서를 끈다('end' 알림) — 점은 그대로, 화살표가 다시 방향 잠금이라 그 안내
+    v.canvas.blur();
+    expect(v.keyboardCursor).toBeNull();
+    expect(v.measurePoints).toHaveLength(1);
+    await vi.waitFor(() => expect(hint()).toContain('화살표로 방향 잠금'));
+    v.canvas.focus();
+    app.viewer!.clearMeasure();
+  });
+
   it('알림 글은 화면 언어로(사전의 같은 열쇠 틀 — 언어를 바꾸면 다시 준다)', async () => {
     const { app, root, center, key, live } = await open('a.nc', LINES);
     app.toggleMeasure(true);
