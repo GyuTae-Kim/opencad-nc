@@ -9,7 +9,8 @@
  * - 가공 면 경계: 모든 윤곽 요소를 서로의 교점에서 나누고, 조각 양쪽 가운데 한쪽만 가공 면인 조각을 가공 면이 왼쪽이 되게 돌려 고리로 잇는다.
  * - 떨어진 곡선(거리 d): 경계 고리마다 요소를 왼쪽으로 d만큼 옮기고(직선은 평행, 원호는 반지름 ∓ d — 점으로 줄면 빼고 그 양 끝을 꼭짓점으로 본다),
  *   오른쪽으로 꺾이는 모서리는 원래 꼭짓점을 중심으로 한 반지름 d 호, 왼쪽으로 꺾이는 모서리는 직선으로 이은 날 곡선을 만든다. 날 곡선끼리의 교점에서
- *   나눈 조각 가운데 가운데 점이 가공 면 안이고 경계까지 거리가 d인 것만 남겨 고리로 잇는다(가공 면 쪽이 왼쪽 — 닫히지 않으면 끝이 끊긴 가지를 빼고 다시).
+ *   나눈 조각 가운데 가운데 점이 가공 면 안이고 경계까지 거리가 d인 것만 남겨 고리로 잇는다(가공 면 쪽이 왼쪽 — 닫히지 않으면 끝이 끊긴 가지를 빼고 다시,
+ *   그래도 막히면 갈림길에서 되돌아가며 — 59차). 다른 고리가 지나는 자리에 따로 닫힌 아주 작은 고리는 뺀다(59차).
  */
 import { cornerElem, cornerIntersections } from './corner';
 import { g7xCorners, g7xLine, g7xOffset, type G7xCorner, type G7xEl } from './lathe-g7x';
@@ -675,6 +676,116 @@ function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: numbe
   return { loops, open };
 }
 
+/**
+ * 59차: 갈림길에서 되돌아가는 잇기 — 끊긴 가지를 뺀(prune) 뒤에도 chain이 잇지 못한 사슬을 남겼을 때만 부르고, 작지 않은 고리의 길이 합이
+ * 크게 늘 때(잃은 고리를 되찾을 때)만 그 답을 쓴다(offsetUpTo — 그 밖의 결과는 그대로).
+ * 바르게 남은 조각은 경계까지 거리가 d인 곡선의 조각이라 마디마다 들어오는 조각과 나가는 조각 수가 같고, 그러면 욕심 잇기(chain)는 늘 닫힌다.
+ * 판정 여유(tolD) 안이라 남은 덤 조각이나 잇기 허용 안에서 겹친 마디가 그 수를 어긋나게 하면, 갈림길에서 가장 오른쪽으로 꺾는 조각이 덤 조각이라
+ * 사슬이 막히고 그 고리를 잃을 수 있다(그 단계가 비면 안쪽을 그리지 않음 — 잇지 못함 알림).
+ * 차례·고르기는 chain과 같다 — 조각 차례대로 아직 쓰지 않은 조각에서 시작해, 끝에서 tol 안에 시작이 있는 조각 가운데 가장 오른쪽으로 꺾는 것부터
+ * 해 본다. 막히면(이을 조각이 없는데 시작으로 돌아오지 않음) 해 보지 않은 후보가 남은 가장 가까운 갈림길로 되돌아가 다음으로 오른쪽인 조각을 해 본다.
+ * 한 시작에서 들른 조각은 다시 들르지 않는다 — 조각 사이 이음은 지나온 길과 상관없어 그 조각에서 시작으로 돌아오는 길은 이미 없었다.
+ * 그래서 시작마다 들를 수 있는 조각을 많아야 한 번씩 보고, 돌아오는 길이 있으면 찾는다. 같은 쓴 조각에서 막힘 없이 닫히는 고리는 chain의 고리와 같다.
+ * 돌아오는 길이 없으면 시작 조각 하나만 버리고(open에 셈 — chain과 달리 사슬이 아니라 조각 수) 들른 다른 조각은 다음 시작에 쓴다
+ * (chain은 끊긴 사슬의 조각을 모두 버려 그 조각이 들 다른 고리까지 잃었다). 본 후보마다 일 하나(cnt) — 일이 limit을 넘으면 null
+ */
+function chainBack(ps: readonly SlEl[], tol: number, cnt: { work: number }, limit: number): { loops: SlLoop[]; open: number } | null {
+  const n = ps.length;
+  const cell = Math.max(tol * 4, 1e-12);
+  const grid = new Map<number, Map<number, number[]>>();
+  ps.forEach((p, i) => {
+    const ku = Math.round(p.su / cell);
+    const kv = Math.round(p.sv / cell);
+    let col = grid.get(ku);
+    if (!col) grid.set(ku, (col = new Map()));
+    const g = col.get(kv);
+    if (g) g.push(i);
+    else col.set(kv, [i]);
+  });
+  // used: 닫힌 고리에 들었거나 버린 조각, seen: 이번 시작에서 들른 조각(touched — 시작이 끝나면 지움)
+  const used = new Uint8Array(n);
+  const seen = new Uint8Array(n);
+  const touched: number[] = [];
+  // cur 끝에서 이을 후보 — chain의 next가 고를 것을 맨 앞에, 나머지는 오른쪽으로 꺾는 차례로
+  const cands = (cur: SlEl): number[] => {
+    const cu = Math.round(cur.eu / cell);
+    const cv = Math.round(cur.ev / cell);
+    const t = tanAt(cur, 1);
+    const js: number[] = [];
+    const turns: number[] = [];
+    let best = -1;
+    let bestTurn = Infinity;
+    for (let du = -1; du <= 1; du++)
+      for (let dv = -1; dv <= 1; dv++)
+        for (const j of grid.get(cu + du)?.get(cv + dv) ?? []) {
+          if (used[j] || seen[j]) continue;
+          cnt.work++;
+          const p = ps[j]!;
+          if (Math.hypot(p.su - cur.eu, p.sv - cur.ev) > tol) continue;
+          const s = tanAt(p, 0);
+          const turn = Math.atan2(t[0] * s[1] - t[1] * s[0], t[0] * s[0] + t[1] * s[1]);
+          if (turn < bestTurn - 1e-12) {
+            bestTurn = turn;
+            best = js.length;
+          }
+          js.push(j);
+          turns.push(turn);
+        }
+    if (js.length < 2) return js;
+    const rest = [...js.keys()].filter((k) => k !== best).sort((a, b) => turns[a]! - turns[b]!);
+    return [js[best]!, ...rest.map((k) => js[k]!)];
+  };
+  const loops: SlLoop[] = [];
+  let open = 0;
+  for (let i = 0; i < n; i++) {
+    if (used[i]) continue;
+    seen[i] = 1;
+    touched.push(i);
+    const loop: SlLoop = [{ ...ps[i]! }];
+    const path = [i];
+    // alts[k]: loop[k] 끝에서 아직 해 보지 않은 후보
+    const alts: number[][] = [];
+    let closed = false;
+    for (;;) {
+      if (cnt.work > limit) return null;
+      const cur = loop[loop.length - 1]!;
+      if (loop.length > 1 && Math.hypot(cur.eu - loop[0]!.su, cur.ev - loop[0]!.sv) <= tol) {
+        closed = true;
+        break;
+      }
+      let c = cands(cur);
+      while (!c.length && alts.length) {
+        loop.pop();
+        path.pop();
+        c = alts.pop()!.filter((j) => !seen[j]);
+      }
+      if (!c.length) break;
+      const j = c[0]!;
+      alts.push(c.slice(1));
+      seen[j] = 1;
+      touched.push(j);
+      const top = loop[loop.length - 1]!;
+      loop.push({ ...ps[j]!, su: top.eu, sv: top.ev });
+      path.push(j);
+    }
+    // 돌아오는 길이 없으면 시작 조각이 혼자 닫혔는지(온 원·아주 짧은 조각 — chain도 이을 조각이 없으면 이렇게 닫는다)
+    if (!closed && Math.hypot(loop[0]!.eu - loop[0]!.su, loop[0]!.ev - loop[0]!.sv) <= tol) closed = true;
+    if (closed) {
+      const last = loop[loop.length - 1]!;
+      last.eu = loop[0]!.su;
+      last.ev = loop[0]!.sv;
+      loops.push(loop);
+      for (const j of path) used[j] = 1;
+    } else {
+      used[i] = 1;
+      open++;
+    }
+    for (const j of touched) seen[j] = 0;
+    touched.length = 0;
+  }
+  return { loops, open };
+}
+
 /** 가공 면: 윤곽들과 경계 고리 */
 export interface SlRegion {
   pockets: SlLoop[];
@@ -1258,6 +1369,77 @@ function prune(ps: readonly SlEl[], tol: number): SlEl[] {
   return ps.filter((_, i) => !dead[i]);
 }
 
+/** 59차: 작은 고리 문턱 — 길이가 잇기 허용의 이 배 이하 */
+const RETRACE_LEN = 100;
+
+/** 59차: 작지 않은 고리(길이가 잇기 허용 tol의 RETRACE_LEN배 넘는 것)의 길이 합 */
+function bigLen(loops: readonly SlLoop[], tol: number): number {
+  let sum = 0;
+  for (const l of loops) {
+    let s = 0;
+    for (const e of l) s += slElLen(e);
+    if (s > tol * RETRACE_LEN) sum += s;
+  }
+  return sum;
+}
+
+/**
+ * 59차: 다른 고리가 이미 지나는 자리를 한 번 더 도는 작은 고리를 뺀다 — 길이가 잇기 허용(tol)의 RETRACE_LEN배 이하이고 꼭짓점이 모두
+ * 작지 않은 고리의 요소에서 tol보다 가까운 고리. chain은 끝에서 tol 안에 시작이 있는 조각 가운데 가장 오른쪽으로 꺾는 것을 골라, 긴 고리가
+ * tol보다 짧은 조각을 건너 잇는다 — 꺾임이 아주 작은 오목한 꼭짓점의 호(길이 d × 꺾임 — 거의 곧은 변의 0.0001 mm 안팎)나 판정 여유 안이라
+ * 남은 볼록한 꼭짓점의 얇은 제비꼬리(팔과 현). 건너뛴 조각은 저희끼리 tol 안에서 닫혀 따로 작은 고리가 되고, 거친 깎기가 그 자리를 한 번 더
+ * 돌았다(58차까지는 길이가 크기의 10⁻⁷ 넘는 고리를 모두 둠). 다른 고리에서 떨어진 작은 고리(가운데에서 거의 사라지는 고리 등)는 그대로 둔다.
+ * 작은 고리가 없으면 아무것도 셈하지 않고, 있으면 작은 고리 꼭짓점을 u 차례로 늘어놓아 작지 않은 고리의 요소마다 그 상자(± tol) 안의 꼭짓점까지만
+ * 거리를 본다(일 R.work에는 넣지 않음 — 요소 수에 비례하는 셈으로, 떨어진 곡선을 셈한 일보다 작다. 처음 판은 단계마다 상자 나무를 만들어
+ * 원꼴 SL이 많은 표본의 해석이 눈에 띄게 느려졌다)
+ */
+function dropRetrace(loops: SlLoop[], tol: number): SlLoop[] {
+  const lim = tol * RETRACE_LEN;
+  const small = loops.map((l) => {
+    let s = 0;
+    for (const e of l) s += slElLen(e);
+    return s <= lim;
+  });
+  if (!small.includes(true) || !small.includes(false)) return loops;
+  // 작은 고리 꼭짓점(고리 번호)과 u 차례
+  const pu: number[] = [];
+  const pv: number[] = [];
+  const owner: number[] = [];
+  loops.forEach((l, i) => {
+    if (small[i])
+      for (const e of l) {
+        pu.push(e.su);
+        pv.push(e.sv);
+        owner.push(i);
+      }
+  });
+  const order = [...pu.keys()].sort((a, b) => pu[a]! - pu[b]!);
+  const us = Float64Array.from(order, (k) => pu[k]!);
+  const close = new Uint8Array(pu.length);
+  loops.forEach((l, i) => {
+    if (small[i]) return;
+    for (const e of l) {
+      const b = box(e);
+      let lo = 0;
+      let hi = us.length;
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (us[m]! < b[0] - tol) lo = m + 1;
+        else hi = m;
+      }
+      for (let k = lo; k < us.length && us[k]! <= b[2] + tol; k++) {
+        const q = order[k]!;
+        if (close[q] || pv[q]! < b[1] - tol || pv[q]! > b[3] + tol) continue;
+        if (elDist(e, pu[q]!, pv[q]!) < tol) close[q] = 1;
+      }
+    }
+  });
+  // 먼 꼭짓점이 하나라도 있는 작은 고리는 남긴다
+  const keep = new Uint8Array(loops.length);
+  for (let q = 0; q < pu.length; q++) if (!close[q]) keep[owner[q]!] = 1;
+  return loops.filter((_, i) => !small[i] || keep[i]);
+}
+
 /**
  * slOffset과 같되 셈한 일(R.work)이 workLimit을 넘으면 그만두고 null(49차 — 고리 셈 한도).
  * plain이면 50차 버려질 팔(deadArms)을 셈하지 않고 모든 조각을 묻는다(같은 답 — 시험에서 견줄 때)
@@ -1340,8 +1522,22 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
   const tol = R.eps * 1e3;
   let c = chain(keep, tol);
   // 51차: 잇지 못한 사슬이 있으면 끊긴 가지를 빼고 다시 잇는다(모두 닫혔으면 그대로 — 결과 같음)
-  if (c.open) c = chain(prune(keep, tol), tol);
-  const loops = c.loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100);
+  if (c.open) {
+    const pk = prune(keep, tol);
+    c = chain(pk, tol);
+    // 59차: 그래도 남으면 갈림길에서 되돌아가며 잇는다. 작지 않은 고리(잇기 허용의 RETRACE_LEN배 넘는 것)의 길이 합이 그만큼 넘게 늘 때만
+    // (잃은 고리를 되찾을 때만) 그 답을 쓴다 — 조각이 잇기 허용보다 짧은 단계(멀리 떨어진 윤곽이 윤곽 크기를 키워 허용이 커진 꼴의 가운데 등)에서
+    // 잔 고리 짜임만 바뀌거나 큰 고리에 군더더기 조각이 끼는 것은 예전 답 그대로
+    if (c.open) {
+      const b = chainBack(pk, tol, cnt, workLimit);
+      if (!b) return null;
+      if (bigLen(b.loops, tol) > bigLen(c.loops, tol) + tol * RETRACE_LEN) c = b;
+    }
+  }
+  const loops = dropRetrace(
+    c.loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100),
+    tol,
+  );
   if (!loops.length && keep.length) {
     let len = 0;
     for (const p of keep) len += slElLen(p);
