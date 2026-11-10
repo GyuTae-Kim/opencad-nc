@@ -678,7 +678,7 @@ function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: numbe
 
 /**
  * 59차: 갈림길에서 되돌아가는 잇기 — 끊긴 가지를 뺀(prune) 뒤에도 chain이 잇지 못한 사슬을 남겼을 때만 부르고, 작지 않은 고리의 길이 합이
- * 늘 때만 그 답을 쓴다(offsetUpTo — 그 밖의 결과는 그대로).
+ * 크게 늘 때(잃은 고리를 되찾을 때)만 그 답을 쓴다(offsetUpTo — 그 밖의 결과는 그대로).
  * 바르게 남은 조각은 경계까지 거리가 d인 곡선의 조각이라 마디마다 들어오는 조각과 나가는 조각 수가 같고, 그러면 욕심 잇기(chain)는 늘 닫힌다.
  * 판정 여유(tolD) 안이라 남은 덤 조각이나 잇기 허용 안에서 겹친 마디가 그 수를 어긋나게 하면, 갈림길에서 가장 오른쪽으로 꺾는 조각이 덤 조각이라
  * 사슬이 막히고 그 고리를 잃을 수 있다(그 단계가 비면 안쪽을 그리지 않음 — 잇지 못함 알림).
@@ -1389,8 +1389,9 @@ function bigLen(loops: readonly SlLoop[], tol: number): number {
  * tol보다 짧은 조각을 건너 잇는다 — 꺾임이 아주 작은 오목한 꼭짓점의 호(길이 d × 꺾임 — 거의 곧은 변의 0.0001 mm 안팎)나 판정 여유 안이라
  * 남은 볼록한 꼭짓점의 얇은 제비꼬리(팔과 현). 건너뛴 조각은 저희끼리 tol 안에서 닫혀 따로 작은 고리가 되고, 거친 깎기가 그 자리를 한 번 더
  * 돌았다(58차까지는 길이가 크기의 10⁻⁷ 넘는 고리를 모두 둠). 다른 고리에서 떨어진 작은 고리(가운데에서 거의 사라지는 고리 등)는 그대로 둔다.
- * 작은 고리가 없으면 아무것도 셈하지 않고, 있으면 그 단계 고리 요소로 상자 나무를 만들어 작은 고리 꼭짓점마다 묻는다
- * (일 R.work에는 넣지 않음 — 그 단계 고리 요소 수에 비례하는 셈으로, 떨어진 곡선을 셈한 일보다 작다)
+ * 작은 고리가 없으면 아무것도 셈하지 않고, 있으면 작은 고리 꼭짓점을 u 차례로 늘어놓아 작지 않은 고리의 요소마다 그 상자(± tol) 안의 꼭짓점까지만
+ * 거리를 본다(일 R.work에는 넣지 않음 — 요소 수에 비례하는 셈으로, 떨어진 곡선을 셈한 일보다 작다. 처음 판은 단계마다 상자 나무를 만들어
+ * 원꼴 SL이 많은 표본의 해석이 눈에 띄게 느려졌다)
  */
 function dropRetrace(loops: SlLoop[], tol: number): SlLoop[] {
   const lim = tol * RETRACE_LEN;
@@ -1399,13 +1400,44 @@ function dropRetrace(loops: SlLoop[], tol: number): SlLoop[] {
     for (const e of l) s += slElLen(e);
     return s <= lim;
   });
-  if (!small.includes(true)) return loops;
-  const others = loops.filter((_, i) => !small[i]).flat();
-  if (!others.length) return loops;
-  const T = others.length >= TREE_MIN ? slTree(others) : null;
-  const scratch = { work: 0 };
-  const close = (u: number, v: number): boolean => (T ? treeNear(T, u, v, tol, scratch) : others.some((e) => elDist(e, u, v) < tol));
-  return loops.filter((l, i) => !small[i] || !l.every((e) => close(e.su, e.sv)));
+  if (!small.includes(true) || !small.includes(false)) return loops;
+  // 작은 고리 꼭짓점(고리 번호)과 u 차례
+  const pu: number[] = [];
+  const pv: number[] = [];
+  const owner: number[] = [];
+  loops.forEach((l, i) => {
+    if (small[i])
+      for (const e of l) {
+        pu.push(e.su);
+        pv.push(e.sv);
+        owner.push(i);
+      }
+  });
+  const order = [...pu.keys()].sort((a, b) => pu[a]! - pu[b]!);
+  const us = Float64Array.from(order, (k) => pu[k]!);
+  const close = new Uint8Array(pu.length);
+  loops.forEach((l, i) => {
+    if (small[i]) return;
+    for (const e of l) {
+      const b = box(e);
+      let lo = 0;
+      let hi = us.length;
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (us[m]! < b[0] - tol) lo = m + 1;
+        else hi = m;
+      }
+      for (let k = lo; k < us.length && us[k]! <= b[2] + tol; k++) {
+        const q = order[k]!;
+        if (close[q] || pv[q]! < b[1] - tol || pv[q]! > b[3] + tol) continue;
+        if (elDist(e, pu[q]!, pv[q]!) < tol) close[q] = 1;
+      }
+    }
+  });
+  // 먼 꼭짓점이 하나라도 있는 작은 고리는 남긴다
+  const keep = new Uint8Array(loops.length);
+  for (let q = 0; q < pu.length; q++) if (!close[q]) keep[owner[q]!] = 1;
+  return loops.filter((_, i) => !small[i] || keep[i]);
 }
 
 /**
@@ -1493,12 +1525,13 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
   if (c.open) {
     const pk = prune(keep, tol);
     c = chain(pk, tol);
-    // 59차: 그래도 남으면 갈림길에서 되돌아가며 잇는다. 작지 않은 고리(잇기 허용의 RETRACE_LEN배 넘는 것)의 길이 합이 늘 때만 그 답을 쓴다 —
-    // 조각이 잇기 허용보다 짧은 단계(멀리 떨어진 윤곽이 윤곽 크기를 키워 허용이 커진 꼴의 가운데 등)에서 잔 고리 짜임만 바뀌는 것은 예전 답 그대로
+    // 59차: 그래도 남으면 갈림길에서 되돌아가며 잇는다. 작지 않은 고리(잇기 허용의 RETRACE_LEN배 넘는 것)의 길이 합이 그만큼 넘게 늘 때만
+    // (잃은 고리를 되찾을 때만) 그 답을 쓴다 — 조각이 잇기 허용보다 짧은 단계(멀리 떨어진 윤곽이 윤곽 크기를 키워 허용이 커진 꼴의 가운데 등)에서
+    // 잔 고리 짜임만 바뀌거나 큰 고리에 군더더기 조각이 끼는 것은 예전 답 그대로
     if (c.open) {
       const b = chainBack(pk, tol, cnt, workLimit);
       if (!b) return null;
-      if (bigLen(b.loops, tol) > bigLen(c.loops, tol) + tol) c = b;
+      if (bigLen(b.loops, tol) > bigLen(c.loops, tol) + tol * RETRACE_LEN) c = b;
     }
   }
   const loops = dropRetrace(
