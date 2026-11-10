@@ -1,14 +1,15 @@
 /**
- * 3D 보기 키보드 붙잡기·고르기(56차 — 3D 뷰어 코어 0.46.0 setKeyboardSnap·0.47.0 pickCycle·messages). 뷰어를 만들 때 코어와 함께 나눠 받는다(viewer-ui.ts — core.ts loadViewerCore·viewerUi).
+ * 3D 보기 키보드 붙잡기·고르기(56차 — 3D 뷰어 코어 0.46.0 setKeyboardSnap·0.47.0 pickCycle·messages, 58차 — 0.53.0 pickCycle group). 뷰어를 만들 때 코어와 함께 나눠 받는다(viewer-ui.ts — core.ts loadViewerCore·viewerUi).
  *
  * - 켜기: 3D 보기(캔버스)에 초점이 있을 때 Enter가 가상 커서를 켠다(캔버스 가운데). 커서가 켜진 동안 화살표는 커서를 옮기고(Shift면 크게),
  *   Tab·Shift+Tab은 그 자리의 후보를 돌리고, Enter는 측정 점을 찍거나 고르고, Esc는 끈다(측정 점이 있으면 측정 지우기가 먼저 — 코어).
  *   커서가 꺼져 있으면 화살표는 앱 것(측정 방향 잠금·재생 걸음·한 가공씩·줄 이동 — keys.ts keyAction)이고, 앱이 쓰지 않는 화살표도 커서를 켜지 않는다.
  * - 고르기 모드(측정이 아닐 때)의 후보는 판재 보기 누르기와 같은 선택(pickCycle — 판이 있으면 판 너머, 아니면 가장 앞)으로 구하고, 앱 단위로 묶어 돌린다:
- *   공구 경로는 코드 줄(블록 — 원호를 나눈 선분·고정 사이클의 이동이 한 줄), 판재는 가공. Tab은 같은 묶음의 다음 선분을 건너뛰어 다음 묶음의 첫 후보로 간다
- *   (코어 후보는 기본 도형 단위라 촘촘한 공구 경로에서 한 줄의 선분으로 찬다 — 코어 0.47.0 README "남은 한계").
+ *   공구 경로는 코드 줄(블록 — 원호를 나눈 선분·고정 사이클의 이동이 한 줄), 판재는 가공. 58차: 묶음 열쇠(pickTarget)를 코어 pickCycle group으로 줘
+ *   코어가 같은 묶음을 가장 앞의 후보 하나로 센다 — 후보 한도(16)·Tab 차례·알림 수가 묶음 단위다(56·57차는 코어 후보를 기본 도형 단위로 받아
+ *   앱이 같은 묶음만큼 합성 Tab을 보내 건너뛰어, 한 줄의 원호 선분이 16개를 채우는 아주 촘촘한 자리에서는 뒤의 줄·가공이 목록에 들지 못했다).
  * - 알림: 화면에 보이지 않는 aria-live 영역에 넣는다(화면 읽기 프로그램이 읽는다). 측정 모드는 코어 글(사전의 같은 열쇠 틀 — messages),
- *   고르기 모드는 앱이 묶음 이름(상태 막대의 고른 것과 같은 글 — 줄·이동 종류·공구, 가공 번호·이름)과 묶음 차례로 만든다.
+ *   고르기 모드는 앱이 묶음 이름(상태 막대의 고른 것과 같은 글 — 줄·이동 종류·공구, 가공 번호·이름)과 코어 알림의 묶음 차례·수로 만든다.
  * - 알림 틀 사전 열쇠: 코어 기본 한국어 틀을 그대로 열쇠로 쓴다. 다만 '{0}축'(axisKind)은 번역층에서 '축'으로 끝나는 모든 글의 틀이 되어
  *   다른 글을 반만 옮겼다('끌어온 축' → '끌어온  axis') — 'X축'·'Y축'·'Z축' 열쇠의 번역에서 축 글자를 {0}으로 바꿔 틀을 만든다(tests/app/keysnap.test.ts).
  *   한글이 없는 틀(candidate·order·point·pickItem·hintJoin)은 네 언어가 같아 넘기지 않는다
@@ -70,7 +71,7 @@ export function keySnapTemplates(defaults: KeySnapMessages, tr: (ko: string) => 
   return out;
 }
 
-/** 고르기 후보의 앱 묶음(열쇠가 같으면 같은 것을 고른다)과 이름(상태 막대의 고른 것과 같은 글) */
+/** 고르기 후보의 앱 묶음(열쇠가 같으면 같은 것을 고른다 — 코어 pickCycle group 열쇠)과 이름(상태 막대의 고른 것과 같은 글) */
 export function pickTarget(d: NcDoc, p: Pick3d): { key: string; label: Mixed } {
   const nc = d.nc;
   if (nc && !p.section && (p.kind === 'line' || p.kind === 'point') && p.id.startsWith('nc-') && p.index >= 0 && p.index < nc.moves.count) {
@@ -87,34 +88,6 @@ export function pickTarget(d: NcDoc, p: Pick3d): { key: string; label: Mixed } {
   const item = p.kind === 'mesh' || p.kind === 'edge' ? d.scene.meshes.find((x) => x.id === p.id) : p.kind === 'line' ? d.scene.lines.find((x) => x.id === p.id) : d.scene.points?.find((x) => x.id === p.id);
   const name = itemName(d, p.id, item?.name, item?.group);
   return p.section ? { key: `cap:${p.id}`, label: mix`${name} · 단면` } : { key: `${p.kind}:${p.id}`, label: name };
-}
-
-/** 후보 목록 → 묶음 열쇠(처음 나온 차례)와 후보마다 묶음 차례 */
-export function pickGroups(d: NcDoc, list: readonly Pick3d[]): { keys: string[]; of: number[]; first: number[] } {
-  const keys: string[] = [];
-  const first: number[] = [];
-  const of = list.map((p, i) => {
-    const k = pickTarget(d, p).key;
-    let g = keys.indexOf(k);
-    if (g < 0) {
-      g = keys.push(k) - 1;
-      first.push(i);
-    }
-    return g;
-  });
-  return { keys, of, first };
-}
-
-/**
- * 묶음 단위 Tab: 지금 후보(index)에서 다음(back이면 앞) 묶음의 첫 후보까지 코어 후보를 몇 번 돌릴지(앞으로 돌리는 수 — back이면 뒤로).
- * 묶음이 하나면 그 묶음의 첫 후보까지(이미 거기면 0)
- */
-export function groupSteps(g: { of: number[]; first: number[] }, index: number, back: boolean): number {
-  const n = g.of.length;
-  const G = g.first.length;
-  if (!n || index < 0 || index >= n) return 0;
-  const target = g.first[(g.of[index]! + (back ? -1 : 1) + G) % G]!;
-  return back ? (index - target + n) % n : (target - index + n) % n;
 }
 
 /** 3D 보기 캔버스의 설명(aria-description — 화면 읽기 프로그램이 캔버스 이름 '3D 보기' 뒤에 읽는다, 번역층이 옮긴다) */
@@ -144,14 +117,17 @@ export interface KeySnapHost {
   keyMeasured(): void;
 }
 
-/** 뷰어 하나의 키보드 붙잡기(켜기·묶음 Tab·알림) */
+/** 뷰어 하나의 키보드 붙잡기(켜기·묶음 열쇠·알림) */
 export class KeySnap {
   /** 화면에 보이지 않는 알림 영역(번역층은 건너뛴다 — 지금 언어 글을 넣는다) */
   readonly live: HTMLDivElement;
   private through = false;
   private msgs: KeySnapMessages;
-  /** 묶음 Tab이 코어 후보를 여러 번 돌리는 동안 중간 알림을 버린다 */
-  private silent = false;
+  /** 고르기 후보 묶음 열쇠(코어 pickCycle group — 지금 문서의 pickTarget 열쇠, 문서가 없으면 묶지 않는다) */
+  private readonly group = (p: Pick3d): string | undefined => {
+    const d = this.host.doc;
+    return d ? pickTarget(d, p).key : undefined;
+  };
 
   constructor(
     private readonly host: KeySnapHost,
@@ -173,7 +149,7 @@ export class KeySnap {
     const lang = document.documentElement.lang || 'ko';
     const messages = keySnapTemplates(this.core.KEY_SNAP_MESSAGES, (ko) => translate(ko, lang));
     this.msgs = this.core.keySnapMessages(messages);
-    v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through }, messages, announce: (a) => this.announce(a) });
+    v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through, group: this.group }, messages, announce: (a) => this.announce(a) });
   }
 
   /** 가상 커서(켜져 있지 않으면 null — 가짜 뷰어의 값도 null) */
@@ -183,64 +159,32 @@ export class KeySnap {
   }
 
   /**
-   * 창 키(캡처 단계, 앱 키보다 먼저). 처리했으면 true(기본 동작·전파를 막았다 — 앱 키도 보지 않는다).
-   * - 커서가 꺼져 있으면 캔버스 화살표의 기본 동작만 막는다(앱 화살표는 그대로 keys.ts가 받고, 코어는 막은 키로 커서를 켜지 않는다 — Enter로만 켠다)
-   * - 커서가 켜진 고르기 모드의 Tab·Shift+Tab은 앱 묶음 단위로 돌린다(코어 후보를 같은 묶음만큼 건너뛴다).
-   *   후보가 둘 미만이거나 코어 후보와 수가 다르면 코어에 그대로 둔다
+   * 창 키(캡처 단계, 앱 키보다 먼저): 커서가 꺼져 있으면 캔버스 화살표의 기본 동작만 막는다(앱 화살표는 그대로 keys.ts가 받고,
+   * 코어는 막은 키로 커서를 켜지 않는다 — Enter로만 켠다). 58차: 고르기 모드 Tab은 코어가 묶음 단위로 돌린다(pickCycle group — 56·57차의 합성 Tab을 뺐다)
    */
-  key(ev: KeyboardEvent, onCanvas: boolean): boolean {
-    if (!onCanvas || ev.altKey || ev.ctrlKey || ev.metaKey || ev.defaultPrevented) return false;
-    const c = this.cursor;
-    if (!c && ev.key.startsWith('Arrow')) ev.preventDefault();
-    const v = this.host.viewer;
-    const d = this.host.doc;
-    if (ev.key !== 'Tab' || !c || !v || !d || c.mode !== 'pick' || c.count < 2) return false;
-    const list = v.pickCandidates(c.x, c.y, { throughTranslucent: this.through, pointerType: this.core.KEY_POINTER });
-    if (list.length !== c.count) return false;
-    ev.preventDefault();
-    ev.stopPropagation();
-    const back = ev.shiftKey;
-    const steps = groupSteps(pickGroups(d, list), c.index, back);
-    if (!steps) {
-      // 묶음이 하나뿐이고 이미 그 첫 후보: 코어를 돌리지 않고 '후보 하나'로 알린다
-      this.say(this.pickSpeech({ reason: 'cycle', x: c.x, y: c.y, pick: list[c.index] ?? null }));
-      return true;
-    }
-    for (let s = 0; s < steps; s++) {
-      this.silent = s < steps - 1;
-      v.handleKey(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: back }));
-    }
-    this.silent = false;
-    return true;
+  key(ev: KeyboardEvent, onCanvas: boolean): void {
+    if (!onCanvas || ev.altKey || ev.ctrlKey || ev.metaKey || ev.defaultPrevented) return;
+    if (!this.cursor && ev.key.startsWith('Arrow')) ev.preventDefault();
   }
 
   private announce(a: KeyboardSnapAnnouncement): void {
-    if (this.silent) return;
     if (a.mode === 'measure') this.host.keyMeasured();
     this.say(a.mode === 'pick' && a.reason !== 'end' ? this.pickSpeech(a) : a.text);
   }
 
-  /** 고르기 모드 알림 글: 코어 글 꼴(사전 틀) 그대로, 고른 것 이름은 앱 묶음 이름, 차례는 묶음 차례 */
-  private pickSpeech(a: Pick<KeyboardSnapAnnouncement, 'reason' | 'x' | 'y' | 'pick'>): string {
+  /** 고르기 모드 알림 글: 코어 글 꼴(사전 틀) 그대로, 고른 것 이름은 앱 묶음 이름, 차례·수는 코어 알림의 묶음 차례·수(pickCycle group) */
+  private pickSpeech(a: Pick<KeyboardSnapAnnouncement, 'reason' | 'pick' | 'index' | 'count'>): string {
     const k = this.core;
     const M = this.msgs;
     const d = this.host.doc;
-    const v = this.host.viewer;
     if (a.reason === 'commit') return a.pick && d ? k.formatKeySnapMessage(M.picked, [mixText(pickTarget(d, a.pick).label)]) : M.pickedNothing;
-    let body = M.noPick;
-    let groups = 1;
-    if (a.pick && d && v) {
-      const g = pickGroups(d, v.pickCandidates(a.x, a.y, { throughTranslucent: this.through, pointerType: k.KEY_POINTER }));
-      const t = pickTarget(d, a.pick);
-      groups = Math.max(1, g.keys.length);
-      body = k.orderedText(mixText(t.label), Math.max(0, g.keys.indexOf(t.key)), groups, k.pointText(a.pick.point, num, M), null, M);
-    }
+    const body = a.pick && d ? k.orderedText(mixText(pickTarget(d, a.pick).label), a.index, Math.max(1, a.count), k.pointText(a.pick.point, num, M), null, M) : M.noPick;
     if (a.reason === 'start') {
-      const keys = v?.keyboardSnap?.keys;
+      const keys = this.host.viewer?.keyboardSnap?.keys;
       return keys ? k.formatKeySnapMessage(M.start, [body, k.keySnapHint(keys, 'pick', true, M)]) : body;
     }
     // 후보가 없는 자리의 Tab은 '고를 것이 없습니다'만(코어도 후보가 하나일 때만 '후보 하나')
-    return a.reason === 'cycle' && a.pick && groups === 1 ? k.formatKeySnapMessage(M.only, [body]) : body;
+    return a.reason === 'cycle' && a.pick && a.count === 1 ? k.formatKeySnapMessage(M.only, [body]) : body;
   }
 
   /** 알림 영역에 넣는다(같은 글이 이어지면 끝에 줄 바꿈 없는 빈칸 하나를 붙였다 떼어 다시 읽게) */

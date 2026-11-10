@@ -2276,8 +2276,8 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
-    // 56차(keysnap.ts): 가상 커서가 켜진 고르기 모드의 Tab은 앱 묶음(코드 줄·가공) 단위로 돌리고, 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다
-    if (v && this.keySnap?.key(ev, t === v.canvas)) return;
+    // 56차(keysnap.ts): 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다(고르기 Tab의 묶음 단위는 58차부터 코어 pickCycle group)
+    if (v) this.keySnap?.key(ev, t === v.canvas);
     // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
     const onSlider = !!t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range';
     const a = keyAction({

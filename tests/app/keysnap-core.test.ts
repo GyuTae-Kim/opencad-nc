@@ -6,7 +6,9 @@
  *   Esc는 커서만 끄고(고른 것은 그대로) 다음 Esc가 고른 것을 지운다. 측정 첫 점 뒤에도 화살표는 커서를 옮긴다(방향 잠금은 커서가 꺼졌을 때)
  * - 알림: 화면에 보이지 않는 aria-live 영역에 지금 언어 글(측정은 코어 글 + 사전 틀, 고르기는 앱 묶음 이름)
  * - 고르기 Tab: 촘촘한 공구 경로(원호를 나눈 선분)·판재 가공(구멍 점과 그물)을 코드 줄·가공 단위로 묶어 돌리고, Enter는 그 묶음을 고른다
+ *   (58차 — 코어 0.53.0 pickCycle group: 코어가 묶음마다 한 후보로 세어 한도 16·차례·수가 묶음 단위. 한 줄의 원호 선분이 16개를 넘게 겹쳐도 뒤 줄이 든다)
  */
+import type { Pick3d } from 'opencad-viewer3d';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { installCanvasFakes } from './fake-webgl';
 
@@ -23,7 +25,7 @@ vi.mock('../../src/app/client', async () => {
 
 import '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
-import { KEY_HELP, pickGroups } from '../../src/app/keysnap';
+import { KEY_HELP, pickTarget } from '../../src/app/keysnap';
 
 let restore: () => void;
 const scroll = (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
@@ -43,6 +45,8 @@ const enc = (s: string): ArrayBuffer => new TextEncoder().encode(s).buffer as Ar
 const LINES = ['G21 G90 G17', 'G0 X0 Y15 Z5', 'G1 Z0 F300', 'G1 X40 Y15', 'G1 X40 Y30', 'G1 X0 Y30', 'G0 Z5', 'M2'].join('\n');
 // 촘촘한 공구 경로: 줄 4 위 (20,15) 둘레 반지름 0.3의 온 원(줄 8 — 원호를 선분 여럿으로 나눈다)
 const DENSE = ['G21 G90 G17', 'G0 X0 Y15 Z5', 'G1 Z0 F300', 'G1 X40 Y15', 'G0 Z5', 'G0 X20.3 Y15', 'G1 Z0', 'G2 X20.3 Y15 I-0.3 J0', 'G0 Z5', 'M2'].join('\n');
+// 아주 촘촘한 자리(58차): (20,15) 둘레 반지름 0.2 온 원(줄 8 — 72토막, 화면 3.2화소)이 커서에 가장 가깝고, 줄 4(Y15.3·Z-1 직선)는 화면 4.8화소·원 아래
+const VDENSE = ['G21 G90 G17', 'G0 X0 Y15.3 Z5', 'G1 Z-1 F300', 'G1 X40 Y15.3', 'G0 Z5', 'G0 X20.2 Y15', 'G1 Z0', 'G2 X20.2 Y15 I-0.2 J0', 'G0 Z5', 'M2'].join('\n');
 // 판재: 포켓(가공 1) 가운데에 구멍(가공 2), 떨어진 곳에 구멍 하나(가공 3)
 const PANEL = `<?xml version="1.0" encoding="utf-8"?>
 <pgi>
@@ -247,42 +251,73 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
   });
 });
 
-describe('겹친 것 고르기(56차 — pickCycle과 앱 묶음 Tab)', () => {
-  it('촘촘한 공구 경로: 원호를 나눈 선분은 한 줄로 묶어 Tab이 다음 줄로 가고, Enter는 그 줄을 고른다', async () => {
+describe('겹친 것 고르기(56차 pickCycle — 58차 코어 0.53.0 group으로 앱 묶음마다 한 후보)', () => {
+  /** 커서 자리 후보의 앱 묶음 열쇠: group을 주면 keysnap.ts가 pickCycle에 주는 것과 같은 열쇠로 묶은 목록, 안 주면 코어 기본 도형 단위(56·57차가 받던 목록) */
+  const keysAt = (app: NcViewerApp, x: number, y: number, through: boolean, group: boolean): string[] => {
+    const key = (p: Pick3d): string => pickTarget(app.doc!, p).key;
+    return app.viewer!.pickCandidates(x, y, { pointerType: 'keyboard', throughTranslucent: through, ...(group ? { group: key } : {}) }).map(key);
+  };
+
+  it('촘촘한 공구 경로: 원호를 나눈 선분은 코어가 한 줄로 묶어 Tab 한 번에 다음 줄로 가고, Enter는 그 줄을 고른다', async () => {
     const { app, v, center, key, live } = await open('d.nc', DENSE);
     center([20, 15, 0], 25);
     key('Enter');
     const c = v.keyboardCursor!;
-    const list = v.pickCandidates(c.x, c.y, { pointerType: 'keyboard' });
-    expect(c.count).toBe(list.length);
-    const g = pickGroups(app.doc!, list);
-    const G = g.keys.length;
-    // 원호(줄 8)의 선분 여럿이 한 묶음
-    expect(g.keys).toContain('line:7');
-    expect(g.of.filter((x) => x === g.keys.indexOf('line:7')).length).toBeGreaterThan(1);
-    expect(list.length).toBeGreaterThan(G);
+    const raw = keysAt(app, c.x, c.y, false, false);
+    const keys = keysAt(app, c.x, c.y, false, true);
+    const G = keys.length;
+    // 묶지 않은 목록에는 원호(줄 8)의 선분이 여럿, 코어 후보는 묶음마다 하나(가장 앞의 것 — 묶지 않은 목록에 처음 나온 차례 그대로, 그 뒤 묶음이 더 들 수 있다)
+    expect(raw.filter((k) => k === 'line:7').length).toBeGreaterThan(1);
+    const first = [...new Set(raw)];
+    expect(keys.slice(0, first.length)).toEqual(first);
+    expect(keys).toContain('line:7');
     expect(G).toBeGreaterThan(1);
+    expect(c.count).toBe(G);
     expect(live()).toMatch(new RegExp(` 1/${G}: X `));
-    // Tab 한 바퀴: 묶음마다 첫 후보, 알림은 묶음 차례
+    // Tab 한 바퀴: 한 번에 한 묶음, 알림은 묶음 차례
     const seen: string[] = [];
     for (let i = 1; i <= G; i++) {
       const e = key('Tab');
       expect(e.defaultPrevented).toBe(true);
-      const want = i % G;
-      expect(v.keyboardCursor!.index, `Tab ${i}`).toBe(g.first[want]);
-      expect(live(), `Tab ${i}`).toMatch(new RegExp(` ${want + 1}/${G}: X `));
+      expect(v.keyboardCursor!.index, `Tab ${i}`).toBe(i % G);
+      expect(live(), `Tab ${i}`).toMatch(new RegExp(` ${(i % G) + 1}/${G}: X `));
       seen.push(live());
     }
     expect(seen.some((s) => s.startsWith('줄 8 · 원호 이송'))).toBe(true);
     // Shift+Tab: 앞 묶음(맨 앞에서는 마지막 묶음)
     key('Tab', { shiftKey: true });
-    expect(v.keyboardCursor!.index).toBe(g.first[G - 1]);
+    expect(v.keyboardCursor!.index).toBe(G - 1);
     // 원호 묶음까지 가서 Enter → 줄 8
-    const arc = g.keys.indexOf('line:7');
-    while (g.of[v.keyboardCursor!.index] !== arc) key('Tab');
+    const arc = keys.indexOf('line:7');
+    while (v.keyboardCursor!.index !== arc) key('Tab');
     key('Enter');
     expect(app.state().selLine).toBe(7);
     expect(live()).toMatch(/^골랐습니다: 줄 8 · 원호 이송 · F300$/);
+  });
+
+  it('아주 촘촘한 자리: 한 줄의 원호 선분이 후보 한도(16)를 넘게 겹쳐도 그 뒤의 줄이 목록에 들고 Tab·Enter로 고른다(58차)', async () => {
+    const { app, v, center, key, live } = await open('v.nc', VDENSE);
+    center([20, 15, 0], 25);
+    key('Enter');
+    const c = v.keyboardCursor!;
+    // 묶지 않으면(56·57차) 코어 후보 16개를 원(줄 8) 토막이 채워 줄 4가 들지 못했다 — 앱이 묶어도 줄 4는 없었다
+    const raw = keysAt(app, c.x, c.y, false, false);
+    expect(raw).toHaveLength(16);
+    expect(raw.filter((k) => k === 'line:7').length).toBeGreaterThan(8);
+    expect(raw).not.toContain('line:3');
+    // 묶음 열쇠로: 원은 한 후보, 줄 4가 든다(한도는 묶음 수)
+    const keys = keysAt(app, c.x, c.y, false, true);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual(expect.arrayContaining(['line:3', 'line:7']));
+    expect(keys.length).toBeLessThan(16);
+    expect(c.count).toBe(keys.length);
+    const want = keys.indexOf('line:3');
+    for (let i = 0; i < want; i++) key('Tab');
+    expect(v.keyboardCursor!.index).toBe(want);
+    expect(live()).toMatch(new RegExp(`^줄 4 · 직선 이송 · F300 ${want + 1}/${keys.length}: X `));
+    key('Enter');
+    expect(app.state().selLine).toBe(3);
+    expect(live()).toBe('골랐습니다: 줄 4 · 직선 이송 · F300');
   });
 
   it('판재: 판 너머 후보(pickCycle throughTranslucent — 누르기와 같은 선택)를 가공 단위로 묶어 돌리고, Enter는 그 가공을 고른다', async () => {
@@ -291,38 +326,37 @@ describe('겹친 것 고르기(56차 — pickCycle과 앱 묶음 Tab)', () => {
     center([100.6, 150.4, 18], 12);
     key('Enter');
     const c = v.keyboardCursor!;
-    const list = v.pickCandidates(c.x, c.y, { pointerType: 'keyboard', throughTranslucent: true });
-    expect(c.count).toBe(list.length);
-    const g = pickGroups(app.doc!, list);
+    const keys = keysAt(app, c.x, c.y, true, true);
+    expect(c.count).toBe(keys.length);
+    expect(new Set(keys).size).toBe(keys.length);
     // 포켓(가공 1)과 구멍(가공 2)이 겹친다
-    expect(g.keys).toEqual(expect.arrayContaining(['op:0', 'op:1']));
-    const G = g.keys.length;
+    expect(keys).toEqual(expect.arrayContaining(['op:0', 'op:1']));
+    const G = keys.length;
     expect(live()).toMatch(new RegExp(`^가상 커서를 켰습니다\\. 가공 \\d · .+ 1/${G}: X `));
     const names = new Set<string>();
     for (let i = 0; i < G; i++) {
       key('Tab');
-      expect(v.keyboardCursor!.index).toBe(g.first[(i + 1) % G]);
+      expect(v.keyboardCursor!.index).toBe((i + 1) % G);
       names.add(live().replace(/ \d+\/\d+: .*$/, ''));
     }
     expect(names.size).toBe(G);
-    while (g.keys[g.of[v.keyboardCursor!.index]!] !== 'op:1') key('Tab');
+    while (keys[v.keyboardCursor!.index] !== 'op:1') key('Tab');
     key('Enter');
     expect(app.doc!.selKey).toBe('1');
     expect(document.querySelector('.st-sel')!.textContent).toMatch(/^가공 2 · /);
     expect(live()).toMatch(/^골랐습니다: 가공 2 · /);
   });
 
-  it('후보가 한 묶음뿐이면 Tab은 코어를 돌리지 않고 "후보 하나"로 알린다(초점은 캔버스에 둔다)', async () => {
+  it('후보가 한 묶음뿐이면 Tab은 그 후보 그대로 "후보 하나"로 알린다(초점은 캔버스에 둔다)', async () => {
     const { app, v, center, key, live } = await open('p.pgi', PANEL);
     // 가공이 없는 판 위(판 윗면·밑면 — 한 그물)
     center([200.3, 250.2, 18], 8);
     key('Enter');
     const c = v.keyboardCursor!;
-    const g = pickGroups(app.doc!, v.pickCandidates(c.x, c.y, { pointerType: 'keyboard', throughTranslucent: true }));
-    expect(g.keys).toEqual(['mesh:mpr-board']);
-    const before = v.keyboardCursor!.index;
+    expect(keysAt(app, c.x, c.y, true, true)).toEqual(['mesh:mpr-board']);
+    expect(c.count).toBe(1);
     expect(key('Tab').defaultPrevented).toBe(true);
-    expect(v.keyboardCursor!.index).toBe(before);
+    expect(v.keyboardCursor!.index).toBe(0);
     expect(live()).toMatch(/^판 400×300×18: X 200\.3, Y 250\.2, Z 18 \(후보 하나\)$/);
     expect(document.activeElement).toBe(v.canvas);
   });
