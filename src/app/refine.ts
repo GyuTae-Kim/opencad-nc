@@ -352,14 +352,29 @@ function angleGap(a: number, b: number): number {
   return d > Math.PI ? TAU - d : d;
 }
 
+/** 60차: 두 법선(길이는 상관없다)이 다른 평면 방향인지 — 곡면 벽의 이웃 칸은 2 × 반각만큼 기울어 있다 */
+function otherPlane(a: readonly number[], b: readonly number[]): boolean {
+  const la = Math.hypot(a[0]!, a[1]!, a[2]!);
+  const lb = Math.hypot(b[0]!, b[1]!, b[2]!);
+  if (!(la > 0) || !(lb > 0)) return false;
+  return Math.abs(a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!) < la * lb * (1 - 1e-9);
+}
+
 /**
- * 57차: 닫힌 'axisFace' 코어 점의 반지름 rho가 받을 범위의 바깥 끝 안인지 — false = 원 안(rho ≤ r + tol, 56차까지의 길),
- * true = 원기둥 밖이지만 그 점에서 원에 그은 접선 길이 √(rho² − r²)가 현 반 길이 r·sin(반각) + tol 안(벽을 스치는 선의 자리), null = 그보다 밖(받지 않는다).
- * 커서 광선('onFace')의 맞은 점은 늘 삼각형(현) 위라 원 안만 받는다
+ * 60차: 벽 w에서 법선 m(길이는 상관없다)인 평면이 코어 점 p(단면 자리 pu·pv)에서 lim 안을 지나는 그 벽의 칸(현 평면 — 기둥 축에서 r·cos(반각))이면
+ * 그 칸의 가운데 각(법선을 p 쪽으로), 아니면 null. 기둥 방향 성분이 있는 평면(윗면·바닥 등)은 null
  */
-function graze(rho: number, r: number, half: number, tol: number, ray: boolean): boolean | null {
-  if (rho <= r + tol) return false;
-  return !ray && Math.sqrt(rho * rho - r * r) <= r * Math.sin(half) + tol ? true : null;
+function cellMid(w: PanelWall, m: readonly number[], pu: number, pv: number, lim: number): number | null {
+  const ml = Math.hypot(m[0]!, m[1]!, m[2]!);
+  const l = Math.hypot(m[w.a0]!, m[w.a1]!);
+  if (!(ml > 0) || Math.abs(m[w.a2]!) > 1e-3 * ml || !(l > 0.5 * ml)) return null;
+  let ux = m[w.a0]! / l;
+  let uy = m[w.a1]! / l;
+  if (ux * pu + uy * pv < 0) {
+    ux = -ux;
+    uy = -uy;
+  }
+  return Math.abs(ux * pu + uy * pv - w.r * Math.cos(w.half)) <= lim ? Math.atan2(uy, ux) : null;
 }
 
 /**
@@ -399,10 +414,16 @@ function graze(rho: number, r: number, half: number, tol: number, ray: boolean):
  * 57차(벽을 스치는 선의 닫힌 코어 점): 선이 구멍 벽을 반지름의 0.2~2% 안쪽으로 스치면 코어는 그 선과 커서 아래 칸 평면의 교차를 다시 맞춰 화면 반 화소(코어 meetTol)
  * 안의 이웃 칸으로 받는다(0.18.0 axisFaceSnap). 그 점 X는 앞서 맞은 칸(커서 아래 칸)의 평면을 꼭짓점 너머로 늘인 자리라 받은 칸 평면 밖·원기둥 밖(ρ = r + 0.003~0.012)이어서
  * 원 안만 받던 이 길이 null을 주고 현 위 "면 위"로 남았다(56차 판재 구멍 측정 탐색 — 263,898곳 가운데 같은 칸 162곳·이웃 칸 69곳).
- * 현은 원 안쪽이므로 원기둥 밖 X는 칸에서 반 화소만큼 떨어진 스침 자리다. 그래서 X에서 원에 그은 접선 길이 √(ρ² − r²)가 그 현의 반 길이(r·sin 반각) 안이면 받는다
- * (그 범위는 원 밖으로 처짐 한 겹 r(1 − cos 반각)과 거의 같다 — 원 안쪽 받는 범위 r·cos 반각~r와 같은 두께). 근은 두 근 가운데 X 쪽 근 하나다:
- * X는 두 근 사이(원 안)가 아니므로 방멱(두 근까지 거리의 곱 = ρ² − r²)으로 X 쪽 근은 단면에서 접선 길이 안 — 그 칸이나 이웃 칸 위다.
- * 원 안 코어 점의 "바깥쪽 근" 판정은 원기둥 밖 X에서는 두 근 모두 안쪽이라 쓰지 않는다. 받을지(코어 점에서 화면 붙잡기 거리 안·그 칸 조각 자리)는 코어가 정한다
+ * 57차는 X에서 원에 그은 접선 길이 √(ρ² − r²)가 그 현의 반 길이(r·sin 반각) 안이면 X 쪽 근을 받았다(반지름에 비춘 문턱).
+ *
+ * 60차(코어 0.55.0 plane·tol): 코어가 X를 구한 평면(c.plane)과 받은 자리 허용치(c.tol — 그 깊이 화면 반 화소)를 함께 넘긴다. plane이 받은 칸(c.face)의
+ * 평면과 다르면 위 스침 자리다 — X는 코어 점을 구한 칸(A)의 평면을 꼭짓점 너머로 늘인 자리이고, 받은 칸(B) 위 점이 X에서 c.tol 안이다. 그런 선은 원기둥에 거의
+ * 닿듯 지나 B의 현을 뚫거나, 현을 지나지 않고 A·B 꼭짓점 둘레나 한 칸의 활꼴(현과 호 사이)만 지난다(판재 구멍 측정 탐색의 스침 330곳 — 현을 뚫음 157,
+ * 현 평면과의 교차가 B 바로 밖 107, 선이 B의 현과 나란함 58). 어느 꼴이든 선이 그 둘레에서 원기둥을 뚫는 점은 두 칸(A·B)의 각 범위 안 근이다.
+ * 그래서 B의 현 평면에서 X가 c.tol(+ 좌표 반올림 허용 tol) 안이면(코어가 B로 받은 근거 — 아니면 이 벽의 칸이 아니다), A가 같은 벽의 칸이면(X가 그 현 평면 위) A와 B,
+ * 아니면 B의 각 범위(± 반각) 안 근 가운데 X에 가까운 것을 준다. 그 탐색에서 고른 근은 X에서 c.tol의 2.8배 안(0.098 mm)이고 다른 근은 c.tol의 16배 넘게 멀다.
+ * 57차 접선 길이 문턱(반지름 비율)은 뺐다 — plane이 없거나 받은 칸과 같은 평면이면 56차 길 그대로(원기둥 밖 코어 점은 받지 않는다 — 같은 평면이면 X는 받은 칸 위
+ * 점에서 c.tol 안이라 처짐만큼 원기둥 밖으로 나가지 않는다). 받을지(코어 점에서 화면 붙잡기 거리 안·그 칸 조각 자리)는 코어가 정한다
  */
 export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | null {
   // 코어가 뒤에 더하는 종류는 문자열로 견줘 null(코어 점 그대로)
@@ -419,6 +440,8 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
   if (!(dl > 0) || !o.every(Number.isFinite) || !p.every(Number.isFinite)) return null;
   const d: V3 = [c.line.dir[0] / dl, c.line.dir[1] / dl, c.line.dir[2] / dl];
   const tol = 4 * pointTol(p);
+  // 60차: 닫힌 'axisFace'의 코어 점을 구한 평면(코어 0.55.0 plane)이 받은 칸 평면과 다르면 스침 자리(머리글)
+  const plane = !ray && !open && c.plane && otherPlane(c.plane.normal, n) ? c.plane : null;
   let best: V3 | null = null;
   // 축·잠근 선은 코어 점(열린 후보는 힌트)에 가까운 근, 커서 광선은 광선을 따라 먼저 닿는 근(광선 매개변수)
   let bestD = Infinity;
@@ -438,7 +461,16 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     const dv = d[a1];
     // 열린 후보: 그 현의 가운데 각(면 법선 — 바깥쪽으로)
     let mid = 0;
-    if (open) {
+    // 60차 스침: 받은 칸과 코어 점을 구한 칸(같은 벽의 칸일 때)의 가운데 각
+    let mids: number[] | null = null;
+    if (plane) {
+      // 코어는 받은 칸 위 점이 코어 점에서 c.tol 안일 때 받는다 — 코어 점이 받은 칸 현 평면에서 c.tol(+ 좌표 반올림 허용)보다 멀면 이 벽의 칸이 아니다
+      const lim = (c.tol ?? 0) + tol;
+      const mb = cellMid(w, n, pu, pv, lim);
+      if (mb === null || !inWall(w, mb, tol / r)) continue;
+      const ma = cellMid(w, plane.normal, pu, pv, tol);
+      mids = ma === null ? [mb] : [mb, ma];
+    } else if (open) {
       if (!(nl > 0.5)) continue;
       mid = Math.atan2(n[a1], n[a0]) + (n[a0] * pu + n[a1] * pv < 0 ? Math.PI : 0);
       if (!inWall(w, mid, tol / r)) continue;
@@ -461,8 +493,8 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
         if (!(qu * cm + qv * sm > 0) || !inH(q) || !lensNear(qu, qv)) continue;
       }
     } else {
-      // 57차: 벽을 스치는 선의 코어 점은 원기둥 밖일 수 있다 — X에서 원에 그은 접선 길이가 그 현의 반 길이 안이면 받는다(머리글)
-      if (graze(rho, r, w.half, tol, ray) === null || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
+      // 코어 점이 그 현과 호 사이·면 법선에서 반각 안
+      if (rho > r + tol || rho < r * Math.cos(w.half) - tol || !inWall(w, Math.atan2(pv, pu), tol / r)) continue;
       if (!(nl > 0.5) || Math.abs(n[a0] * pu + n[a1] * pv) < nl * rho * (Math.cos(w.half) - 1e-6)) continue;
     }
     const A = du * du + dv * dv;
@@ -471,14 +503,7 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
     if (!(A > 1e-9) || disc < 0) continue;
     const B = ou * du + ov * dv;
     const sq = Math.sqrt(disc);
-    let roots = [(-B - sq) / A, (-B + sq) / A];
-    // 57차: 원기둥 밖 코어 점이면 X 쪽 근 하나만(단면에 비춘 X의 매개변수에 가까운 근 — 다른 근은 원을 가로지른 맞은편 벽)
-    const outside = !open && graze(rho, r, w.half, tol, ray) === true;
-    if (outside) {
-      const sp = ((pu - ou) * du + (pv - ov) * dv) / A;
-      roots = [Math.abs(roots[0]! - sp) <= Math.abs(roots[1]! - sp) ? roots[0]! : roots[1]!];
-    }
-    for (const s of roots) {
+    for (const s of [(-B - sq) / A, (-B + sq) / A]) {
       const q: V3 = [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
       // 뚫는 점이 벽 높이 안, 코어 점에서 바깥쪽(반지름 방향)으로 간 근만(열린 후보는 그 현의 각 범위 안 근)
       if (q[a2] < w.lo - tol || q[a2] > w.hi + tol) continue;
@@ -492,7 +517,17 @@ export function refineFaceSnap(c: SnapRefineFaceInput, t: PanelSnapTable): V3 | 
         }
         continue;
       }
-      if (!outside && ((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
+      // 60차 스침: 두 칸의 각 범위 안 근 가운데 코어 점에 가까운 것
+      if (mids) {
+        if (!mids.some((m) => angleGap(qa, m) <= w.half + tol / r) || !inWall(w, qa, tol / r)) continue;
+        const k = dist3(q, p);
+        if (k <= r && k < bestD) {
+          bestD = k;
+          best = q;
+        }
+        continue;
+      }
+      if (((q[a0] - p[a0]) * pu + (q[a1] - p[a1]) * pv) / rho < -tol) continue;
       if (!inWall(w, qa, tol / r)) continue;
       const e = dist3(q, p);
       const key = ray ? s : e;

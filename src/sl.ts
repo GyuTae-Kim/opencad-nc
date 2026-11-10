@@ -546,8 +546,11 @@ interface SlArms {
   b: Float64Array;
 }
 
-/** 요소들을 서로의 교점에서 나눈 조각들(cnt가 있으면 견준 짝 수를 일로 더함 — 49차). arms가 있으면 버려질 팔 안의 조각은 내지 않는다(50차) */
-function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, arms?: SlArms): SlEl[] {
+/**
+ * 요소들을 서로의 교점에서 나눈 조각들(cnt가 있으면 견준 짝 수를 일로 더함 — 49차). arms가 있으면 버려질 팔 안의 조각은 내지 않는다(50차).
+ * from이 있으면 조각마다 나온 요소의 raw 번호를 넣는다(60차 — 무리마다 셈한 고리의 차례)
+ */
+function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, arms?: SlArms, from?: number[]): SlEl[] {
   const n = raw.length;
   const boxes = raw.map((r) => box(r.e));
   const order = [...Array(n).keys()].sort((a, b) => boxes[a]![0] - boxes[b]![0]);
@@ -606,18 +609,27 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, ar
     let t0 = 0;
     for (const t of ts) {
       if ((t - t0) * len <= eps) continue;
-      if (keep(t0, t)) out.push(part(r.e, t0, t));
+      if (keep(t0, t)) {
+        out.push(part(r.e, t0, t));
+        from?.push(i);
+      }
       t0 = t;
     }
-    if ((1 - t0) * len > eps && keep(t0, 1)) out.push(t0 === 0 ? { ...r.e } : part(r.e, t0, 1));
+    if ((1 - t0) * len > eps && keep(t0, 1)) {
+      out.push(t0 === 0 ? { ...r.e } : part(r.e, t0, 1));
+      from?.push(i);
+    }
   });
   // 상자 견주기는 요소 거리 셈보다 가벼워 넷을 하나로 센다
   if (cnt) cnt.work += Math.ceil(pairs / 4);
   return out;
 }
 
-/** 조각들을 끝 → 시작으로 이어 닫힌 고리로(닫히지 않은 사슬 수 = open). 갈림길에서는 가장 오른쪽으로 꺾는 조각 */
-function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: number } {
+/**
+ * 조각들을 끝 → 시작으로 이어 닫힌 고리로(닫히지 않은 사슬 수 = open). 갈림길에서는 가장 오른쪽으로 꺾는 조각.
+ * starts가 있으면 고리마다 시작 조각 번호를 넣는다(60차)
+ */
+function chain(ps: readonly SlEl[], tol: number, starts?: number[]): { loops: SlLoop[]; open: number } {
   const cell = Math.max(tol * 4, 1e-12);
   // 50차: 칸 열쇠를 글자 대신 두 단계 수 표로(칸마다 넣은 차례는 그대로라 고르는 차례도 같다)
   const grid = new Map<number, Map<number, number[]>>();
@@ -671,6 +683,7 @@ function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: numbe
       last.eu = loop[0]!.su;
       last.ev = loop[0]!.sv;
       loops.push(loop);
+      starts?.push(i);
     } else open++;
   }
   return { loops, open };
@@ -687,9 +700,10 @@ function chain(ps: readonly SlEl[], tol: number): { loops: SlLoop[]; open: numbe
  * 한 시작에서 들른 조각은 다시 들르지 않는다 — 조각 사이 이음은 지나온 길과 상관없어 그 조각에서 시작으로 돌아오는 길은 이미 없었다.
  * 그래서 시작마다 들를 수 있는 조각을 많아야 한 번씩 보고, 돌아오는 길이 있으면 찾는다. 같은 쓴 조각에서 막힘 없이 닫히는 고리는 chain의 고리와 같다.
  * 돌아오는 길이 없으면 시작 조각 하나만 버리고(open에 셈 — chain과 달리 사슬이 아니라 조각 수) 들른 다른 조각은 다음 시작에 쓴다
- * (chain은 끊긴 사슬의 조각을 모두 버려 그 조각이 들 다른 고리까지 잃었다). 본 후보마다 일 하나(cnt) — 일이 limit을 넘으면 null
+ * (chain은 끊긴 사슬의 조각을 모두 버려 그 조각이 들 다른 고리까지 잃었다). 본 후보마다 일 하나(cnt) — 일이 limit을 넘으면 null.
+ * starts가 있으면 고리마다 시작 조각 번호를 넣는다(60차)
  */
-function chainBack(ps: readonly SlEl[], tol: number, cnt: { work: number }, limit: number): { loops: SlLoop[]; open: number } | null {
+function chainBack(ps: readonly SlEl[], tol: number, cnt: { work: number }, limit: number, starts?: number[]): { loops: SlLoop[]; open: number } | null {
   const n = ps.length;
   const cell = Math.max(tol * 4, 1e-12);
   const grid = new Map<number, Map<number, number[]>>();
@@ -775,6 +789,7 @@ function chainBack(ps: readonly SlEl[], tol: number, cnt: { work: number }, limi
       last.eu = loop[0]!.su;
       last.ev = loop[0]!.sv;
       loops.push(loop);
+      starts?.push(i);
       for (const j of path) used[j] = 1;
     } else {
       used[i] = 1;
@@ -1025,9 +1040,10 @@ function capsuleSpan(pu: number, pv: number, du: number, dv: number, au: number,
  * 증인 요소: 날 요소의 출처 이웃(옮긴 요소 i면 i ± 1, 모서리 잇기 i → j면 i·j)과, 경계 고리를 따라 거리가 줄어드는 쪽으로 걸어 찾은 가까운 요소
  * (앞 날 요소에서 찾은 자리부터 — 원꼴 윤곽 가운데 고리는 맞은편 요소가 가깝다)와 그 이웃. 증인마다 날 요소가 그 캡슐(반지름 t − 2μ) 안인 범위를 어림하고
  * 범위 두 끝에서 실제 거리가 lim보다 가까운지 확인한다 — 직선 위에서 선분·점까지 거리는 볼록이라 두 끝이 가까우면 사이도 가깝다.
- * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 arcArms(51차)
+ * 원호 증인은 현(반원 이하 — 현까지 거리 + 활 높이가 원호까지 거리의 위 한계)이나 두 끝점으로 본다. 원호 날 요소는 arcArms(51차).
+ * eps = 길이 허용(60차 — 셈하는 윤곽 무리의 것, 무리가 하나면 R.eps)
  */
-function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: Int32Array, t: number, mu: number, cnt: { work: number }): SlArms {
+function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: Int32Array, t: number, mu: number, cnt: { work: number }, eps: number): SlArms {
   const n = raw.length;
   const A = new Float64Array(n).fill(-1);
   const B = new Float64Array(n).fill(2);
@@ -1042,14 +1058,14 @@ function deadArms(R: SlRegion, raw: readonly RawEl[], srcA: Int32Array, srcB: In
   for (let q = 0; q < n; q++) {
     const K = raw[q]!.e;
     if (K.arc) {
-      const ab = arcArms(R, K, raw[q]!.loop, srcA[q]!, srcB[q]!, r, lim, arcCarry, cnt);
+      const ab = arcArms(R, K, raw[q]!.loop, srcA[q]!, srcB[q]!, r, lim, arcCarry, cnt, eps);
       A[q] = ab[0];
       B[q] = ab[1];
       continue;
     }
     const du = K.eu - K.su;
     const dv = K.ev - K.sv;
-    if (!(Math.hypot(du, dv) > R.eps)) continue;
+    if (!(Math.hypot(du, dv) > eps)) continue;
     const k = raw[q]!.loop;
     const loop = R.loops[k]!;
     const m = loop.length;
@@ -1153,11 +1169,11 @@ const ARC_PARTS = 64;
  * 증인은 직선과 같다(출처 이웃, 경계 고리를 따라 걸어 찾은 가까운 요소와 그 이웃 — 원호 증인은 반원 이하면 현 + 활 높이, 두 끝점).
  * 50차까지 원호 날 요소(옮긴 원호·오목 모서리 호)는 팔이 없어, 원호가 수백 개 이어진 원꼴 윤곽의 가운데 가까운 고리에서 버려질 조각을 모두 물었다
  */
-function arcArms(R: SlRegion, K: SlEl, k: number, sa: number, sb: number, r: number, lim: number, carry: Int32Array, cnt: { work: number }): [number, number] {
+function arcArms(R: SlRegion, K: SlEl, k: number, sa: number, sb: number, r: number, lim: number, carry: Int32Array, cnt: { work: number }, eps: number): [number, number] {
   const rho = arcR(K);
   const span = Math.abs(K.sweep);
   // 범위는 직선과 같은 캡슐(반지름 r = t − 2μ)에서 토막·증인의 활 높이를 뺀 것으로 어림하고(어림일 뿐), 확인은 lim = t − μ로 한다
-  if (!(rho * span > R.eps) || !(r > 0)) return [-1, 2];
+  if (!(rho * span > eps) || !(r > 0)) return [-1, 2];
   const loop = R.loops[k]!;
   const m = loop.length;
   // 토막의 활 높이 ≤ r/50(토막 각 θ에서 rho·(1 − cos(θ/2)) ≤ r/50) — 많아야 ARC_PARTS토막(넘으면 활 높이만큼 캡슐이 줄 뿐)
@@ -1312,9 +1328,10 @@ function bridge(loop: readonly SlEl[], i: number, j: number, A: SlEl, B: SlEl, d
  * 51차: 남는 조각 가운데 끝에서 이어지는 조각이 없거나(끝이 다른 조각의 시작과 tol 안에서 만나지 않음) 시작으로 들어오는 조각이 없는 것을
  * 되풀이해 뺀다 — 닫힌 고리에 들 수 없는 가지. 볼록한 꼭짓점의 아주 얇은 제비꼬리(날 곡선이 스스로 엇갈려 생긴 작은 고리 — 거의 없어진 원호 끝,
  * 요소가 아주 잘고 꼭짓점이 반올림된 원꼴 윤곽)는 경계까지 거리가 d보다 판정 여유(tolD) 안에서만 가까우면 그 조각이 남고, 갈림길에서 그 가지로
- * 들어간 사슬이 끊겨 고리 전체를 잃었다(48~50차). 51차에 여유를 좁혀 거의 남지 않지만, 남으면 이것이 받는다. 칸·허용은 잇기(chain)와 같다
+ * 들어간 사슬이 끊겨 고리 전체를 잃었다(48~50차). 51차에 여유를 좁혀 거의 남지 않지만, 남으면 이것이 받는다. 칸·허용은 잇기(chain)와 같다.
+ * alive가 있으면 남긴 조각의 ps 번호를 넣는다(60차)
  */
-function prune(ps: readonly SlEl[], tol: number): SlEl[] {
+function prune(ps: readonly SlEl[], tol: number, alive?: number[]): SlEl[] {
   const n = ps.length;
   const cell = Math.max(tol * 4, 1e-12);
   const grid = new Map<number, Map<number, number[]>>();
@@ -1366,6 +1383,7 @@ function prune(ps: readonly SlEl[], tol: number): SlEl[] {
     for (const j of succ[i]!) drop(nIn, j);
     for (const j of pred[i]!) drop(nOut, j);
   }
+  if (alive) for (let i = 0; i < n; i++) if (!dead[i]) alive.push(i);
   return ps.filter((_, i) => !dead[i]);
 }
 
@@ -1440,18 +1458,116 @@ function dropRetrace(loops: SlLoop[], tol: number): SlLoop[] {
   return loops.filter((_, i) => !small[i] || keep[i]);
 }
 
+/** 60차: 떨어진 곡선을 따로 셈할 경계 고리 무리(고리 번호 오름차순)와 그 무리의 크기·길이 허용 */
+interface SlGroup {
+  loops: number[];
+  scale: number;
+  eps: number;
+}
+
+/**
+ * 60차: 경계 고리를 떨어진 곡선 d를 따로 셈할 무리로 나눈다 — 고리마다 둘레 상자를 d + 잇기 허용(R.eps × 10³)만큼 키워 겹치는 것끼리 잇는다
+ * (날 곡선은 그 고리에서 d 안이라 무리가 다른 조각은 서로 만나지도 잇기 허용 안에 들지도 않는다). 무리가 하나면 null(예전 길 그대로).
+ * 무리 크기 = 그 고리들 둘레 상자 대각선(그 무리 좌표 크기의 1/SHIFT_RATIO보다 작지 않게 — 53차 반올림 여유), 길이 허용 = 크기 × 10⁻⁹(regionOf와 같은 꼴).
+ * 59차까지는 모든 무리에 가공 면 전체 크기의 허용을 썼다 — 멀리 떨어진 윤곽이 함께 있으면 작은 윤곽에는 잇기 허용·판정 여유가 커서, 조각이 잇기 허용보다
+ * 짧은 가운데 단계의 고리가 잘게 엉킨 잔 고리로 남았다(59차 원꼴 다각형 + 멀리 떨어진 작은 포켓 400경우 가운데 39경우)
+ */
+function loopGroups(R: SlRegion, d: number): SlGroup[] | null {
+  const n = R.loops.length;
+  if (n < 2) return null;
+  const boxes = R.loops.map((l) => {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const e of l) {
+      const x = box(e);
+      b[0] = Math.min(b[0]!, x[0]);
+      b[1] = Math.min(b[1]!, x[1]);
+      b[2] = Math.max(b[2]!, x[2]);
+      b[3] = Math.max(b[3]!, x[3]);
+    }
+    return b;
+  });
+  const pad = d + R.eps * 1e3;
+  const root = Int32Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => {
+    while (root[i] !== i) i = root[i] = root[root[i]!]!;
+    return i;
+  };
+  const order = [...Array(n).keys()].sort((a, b) => boxes[a]![0]! - boxes[b]![0]!);
+  for (let x = 0; x < n; x++) {
+    const a = boxes[order[x]!]!;
+    for (let y = x + 1; y < n; y++) {
+      const b = boxes[order[y]!]!;
+      // 유한하지 않은 상자는 견줌이 거짓이라 무리를 나누지 않게 같은 무리로
+      if (b[0]! - pad > a[2]! + pad) break;
+      if (!(b[1]! - pad > a[3]! + pad) && !(a[1]! - pad > b[3]! + pad)) root[find(order[y]!)] = find(order[x]!);
+    }
+  }
+  const byRoot = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    const g = byRoot.get(r);
+    if (g) g.push(i);
+    else byRoot.set(r, [i]);
+  }
+  if (byRoot.size < 2) return null;
+  return [...byRoot.values()].map((ks) => {
+    const lo = [Infinity, Infinity];
+    const hi = [-Infinity, -Infinity];
+    for (const k of ks) {
+      const b = boxes[k]!;
+      lo[0] = Math.min(lo[0]!, b[0]!);
+      lo[1] = Math.min(lo[1]!, b[1]!);
+      hi[0] = Math.max(hi[0]!, b[2]!);
+      hi[1] = Math.max(hi[1]!, b[3]!);
+    }
+    const big = Math.max(Math.abs(lo[0]!), Math.abs(lo[1]!), Math.abs(hi[0]!), Math.abs(hi[1]!));
+    const scale = Math.max(Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!), big / SHIFT_RATIO, 1e-6);
+    return { loops: ks, scale, eps: Math.max(scale * 1e-9, 1e-12) };
+  });
+}
+
 /**
  * slOffset과 같되 셈한 일(R.work)이 workLimit을 넘으면 그만두고 null(49차 — 고리 셈 한도).
- * plain이면 50차 버려질 팔(deadArms)을 셈하지 않고 모든 조각을 묻는다(같은 답 — 시험에서 견줄 때)
+ * plain이면 50차 버려질 팔(deadArms)을 셈하지 않고 모든 조각을 묻는다(같은 답 — 시험에서 견줄 때).
+ * 60차: 경계 고리 무리(loopGroups)가 둘 넘으면 무리마다 그 크기의 길이 허용·잇기 허용·판정 여유로 따로 셈한다(offsetGroup). 고리 차례는 한 번에 셈할 때와 같게
+ * 시작 조각의 경계 고리 번호 차례(같은 경계 고리면 그 무리 안 차례 — 한 번에 셈할 때 조각은 경계 고리 차례로 놓이고 고리는 시작 조각 차례로 나온다).
+ * 잇지 못함(R.unclosed)은 모든 무리에 고리가 없을 때, 고리 없이 남은 조각 길이가 그 무리 크기의 1/1000 넘는 무리들의 합
  */
 function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): SlLoop[] | null {
   R.unclosed = 0;
   if (!(d > R.eps)) return R.loops.map((l) => l.map((e) => ({ ...e })));
+  const groups = loopGroups(R, d);
+  if (!groups) {
+    const g = offsetGroup(R, d, workLimit, plain, null, R.scale, R.eps);
+    if (!g) return null;
+    if (!g.loops.length && g.keepLen > R.scale * 1e-3) R.unclosed = g.keepLen;
+    return g.loops;
+  }
+  const all: { l: SlLoop; k: number }[] = [];
+  let unclosed = 0;
+  for (const gr of groups) {
+    const g = offsetGroup(R, d, workLimit, plain, gr.loops, gr.scale, gr.eps);
+    if (!g) return null;
+    g.loops.forEach((l, i) => all.push({ l, k: g.keys![i]! }));
+    if (!g.loops.length && g.keepLen > gr.scale * 1e-3) unclosed += g.keepLen;
+  }
+  // 같은 경계 고리에서 시작한 고리는 한 무리 안이라 차례가 그대로다(sort는 안정)
+  all.sort((a, b) => a.k - b.k);
+  if (!all.length) R.unclosed = unclosed;
+  return all.map((x) => x.l);
+}
+
+/**
+ * offsetUpTo의 속: 경계 고리 ks(null이면 모두)의 떨어진 곡선을 크기 scale·길이 허용 eps로 셈한다(일 한도를 넘으면 null).
+ * loops와 남은 조각 길이 합(keepLen), ks가 있으면 고리마다 시작 조각의 경계 고리 번호(keys)
+ */
+function offsetGroup(R: SlRegion, d: number, workLimit: number, plain: boolean, ks: readonly number[] | null, scale: number, eps: number): { loops: SlLoop[]; keepLen: number; keys?: number[] } | null {
   const raw: RawEl[] = [];
   // 50차: 날 요소마다 출처 경계 요소(옮긴 요소 i면 [i, -1], 모서리 잇기 i → j면 [i, j])
   const srcA: number[] = [];
   const srcB: number[] = [];
-  R.loops.forEach((loop, k) => {
+  for (const k of ks ?? R.loops.keys()) {
+    const loop = R.loops[k]!;
     const n = loop.length;
     const moved: (SlEl | null)[] = loop.map((e) => {
       if (!e.arc) {
@@ -1463,7 +1579,7 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
       }
       const r = arcR(e);
       const r2 = r - Math.sign(e.sweep) * d;
-      if (!(r2 > R.eps) || r < 1e-15) return null;
+      if (!(r2 > eps) || r < 1e-15) return null;
       const f = r2 / r;
       return { ...e, su: e.cu + (e.su - e.cu) * f, sv: e.cv + (e.sv - e.cv) * f, eu: e.cu + (e.eu - e.cu) * f, ev: e.cv + (e.ev - e.cv) * f };
     });
@@ -1488,62 +1604,77 @@ function offsetUpTo(R: SlRegion, d: number, workLimit: number, plain = false): S
       const B = moved[j];
       if (!B) continue;
       // 51차: 건너뛴 자리에 오른쪽으로 꺾이는 꼭짓점이 있으면 그 둘레 호를 넣어 잇는다
-      if (skipped && bridge(loop, i, j, A, B, d, R.eps, put)) continue;
+      if (skipped && bridge(loop, i, j, A, B, d, eps, put)) continue;
       const gap = Math.hypot(B.su - A.eu, B.sv - A.ev);
-      if (gap <= R.eps * 10) continue;
+      if (gap <= eps * 10) continue;
       const V = loop[i]!;
       // 오른쪽으로 꺾임(가공 면의 오목한 꼭짓점): 꼭짓점 둘레 반지름 d 호(시계)
       if (!skipped && rightTurn(tanAt(loop[i]!, 1), tanAt(loop[(i + 1) % n]!, 0))) put(cornerArc(V.eu, V.ev, A.eu, A.ev, B.su, B.sv), i, j);
       else put(g7xLine(A.eu, A.ev, B.su, B.sv), i, j);
     }
     out.forEach((e, i) => raw.push({ e, loop: k, idx: i, n: out.length }));
-  });
-  if (!raw.length) return [];
+  }
+  if (!raw.length) return { loops: [], keepLen: 0, keys: ks ? [] : undefined };
   const cnt = counter(R);
   // 남는 조각의 판정 여유: 경계까지 거리가 d − tolD보다 가까우면 버린다. 51차: 10⁻⁷에서 10⁻⁹(R.eps 꼴)로 — 볼록한 꼭짓점의 날 곡선이 스스로
   // 엇갈린 얇은 제비꼬리(꺾임 θ에서 깊이 ≈ d·θ²/8 — 요소 천 개 넘는 원꼴 다각형·반올림된 꼭짓점·거의 곧은 원호 끝)가 여유 안이라 남아,
   // 사슬이 그 가지로 들어가 고리가 끊기거나(잇지 못함) 고리를 통째로 잃었다(1000각형 d 0.5는 길이 0.006 삼각형만). 바른 조각의 거리는
-  // 옮긴 요소·꼭짓점 호 위 점이라 반올림(좌표의 10⁻¹⁴쯤)만큼만 d에서 벗어난다
-  const tolD = Math.max(R.scale, d) * 1e-9;
+  // 옮긴 요소·꼭짓점 호 위 점이라 반올림(좌표의 10⁻¹⁴쯤)만큼만 d에서 벗어난다. 60차: 크기는 그 무리 크기
+  const tolD = Math.max(scale, d) * 1e-9;
   // 50차: 확실히 버려질 팔(μ는 반올림을 덮는 여유 — 좌표 크기·윤곽 크기의 10억분의 1)
   let arms: SlArms | undefined;
   if (!plain) {
     let big = 0;
-    for (const l of R.loops) for (const e of l) big = Math.max(big, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
-    arms = deadArms(R, raw, Int32Array.from(srcA), Int32Array.from(srcB), d - tolD, Math.max(R.scale, d, big) * 1e-9, cnt);
+    for (const k of ks ?? R.loops.keys()) for (const e of R.loops[k]!) big = Math.max(big, Math.abs(e.su), Math.abs(e.sv), Math.abs(e.eu), Math.abs(e.ev));
+    arms = deadArms(R, raw, Int32Array.from(srcA), Int32Array.from(srcB), d - tolD, Math.max(scale, d, big) * 1e-9, cnt, eps);
   }
-  const pieces = splitAll(raw, R.eps * 10, cnt, arms);
+  // 60차: 무리마다 셈하면 조각이 나온 경계 고리 번호를 따라간다(고리 차례)
+  const from: number[] | undefined = ks ? [] : undefined;
+  const pieces = splitAll(raw, eps * 10, cnt, arms, from);
   const keep: SlEl[] = [];
-  for (const p of pieces) {
+  const keepK: number[] = [];
+  for (let i = 0; i < pieces.length; i++) {
     if (cnt.work > workLimit) return null;
+    const p = pieces[i]!;
     const m = at(p, 0.5);
-    if (!near(R, m[0], m[1], d - tolD) && inside(R, m[0], m[1])) keep.push(p);
-  }
-  const tol = R.eps * 1e3;
-  let c = chain(keep, tol);
-  // 51차: 잇지 못한 사슬이 있으면 끊긴 가지를 빼고 다시 잇는다(모두 닫혔으면 그대로 — 결과 같음)
-  if (c.open) {
-    const pk = prune(keep, tol);
-    c = chain(pk, tol);
-    // 59차: 그래도 남으면 갈림길에서 되돌아가며 잇는다. 작지 않은 고리(잇기 허용의 RETRACE_LEN배 넘는 것)의 길이 합이 그만큼 넘게 늘 때만
-    // (잃은 고리를 되찾을 때만) 그 답을 쓴다 — 조각이 잇기 허용보다 짧은 단계(멀리 떨어진 윤곽이 윤곽 크기를 키워 허용이 커진 꼴의 가운데 등)에서
-    // 잔 고리 짜임만 바뀌거나 큰 고리에 군더더기 조각이 끼는 것은 예전 답 그대로
-    if (c.open) {
-      const b = chainBack(pk, tol, cnt, workLimit);
-      if (!b) return null;
-      if (bigLen(b.loops, tol) > bigLen(c.loops, tol) + tol * RETRACE_LEN) c = b;
+    if (!near(R, m[0], m[1], d - tolD) && inside(R, m[0], m[1])) {
+      keep.push(p);
+      if (from) keepK.push(raw[from[i]!]!.loop);
     }
   }
+  const tol = eps * 1e3;
+  let starts: number[] | undefined = ks ? [] : undefined;
+  let srcK = keepK;
+  let c = chain(keep, tol, starts);
+  // 51차: 잇지 못한 사슬이 있으면 끊긴 가지를 빼고 다시 잇는다(모두 닫혔으면 그대로 — 결과 같음)
+  if (c.open) {
+    const alive: number[] | undefined = ks ? [] : undefined;
+    const pk = prune(keep, tol, alive);
+    if (alive) srcK = alive.map((j) => keepK[j]!);
+    starts = ks ? [] : undefined;
+    c = chain(pk, tol, starts);
+    // 59차: 그래도 남으면 갈림길에서 되돌아가며 잇는다. 작지 않은 고리(잇기 허용의 RETRACE_LEN배 넘는 것)의 길이 합이 그만큼 넘게 늘 때만
+    // (잃은 고리를 되찾을 때만) 그 답을 쓴다 — 조각이 잇기 허용보다 짧은 단계에서 잔 고리 짜임만 바뀌거나 큰 고리에 군더더기 조각이 끼는 것은 예전 답 그대로
+    if (c.open) {
+      const backStarts: number[] | undefined = ks ? [] : undefined;
+      const b = chainBack(pk, tol, cnt, workLimit, backStarts);
+      if (!b) return null;
+      if (bigLen(b.loops, tol) > bigLen(c.loops, tol) + tol * RETRACE_LEN) {
+        c = b;
+        starts = backStarts;
+      }
+    }
+  }
+  // 고리마다 시작 조각의 경계 고리 번호(거르기 뒤에도 같은 고리 객체로 찾는다)
+  const keyOf = new Map<SlLoop, number>();
+  if (starts) c.loops.forEach((l, i) => keyOf.set(l, srcK[starts![i]!]!));
   const loops = dropRetrace(
-    c.loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > R.eps * 100),
+    c.loops.filter((l) => l.reduce((s, e) => s + slElLen(e), 0) > eps * 100),
     tol,
   );
-  if (!loops.length && keep.length) {
-    let len = 0;
-    for (const p of keep) len += slElLen(p);
-    if (len > R.scale * 1e-3) R.unclosed = len;
-  }
-  return loops;
+  let keepLen = 0;
+  for (const p of keep) keepLen += slElLen(p);
+  return { loops, keepLen, keys: ks ? loops.map((l) => keyOf.get(l)!) : undefined };
 }
 
 /** 요소 위 비율 t(0 시작 ~ 1 끝)의 점(50차 — 사이클 275 홈 가운데 선) */

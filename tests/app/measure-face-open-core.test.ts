@@ -4,7 +4,8 @@
  * 해석기가 읽은 합성 PGI 판(위쪽 변에 볼록 호 — 중심 (200,260), R50, 37°→121°, 17토막. 꼭대기 90°가 86.412°~91.353° 토막 안)을 진짜 Viewer3d에 올리고
  * 앱과 같은 붙잡기 선택(refine.ts panelSnapOptions)으로 첫 점 (100, 309.995, z)의 X축이 호 꼭대기를 그 현 바깥(활꼴)으로 스치는 자리를 가리킨다.
  * - 높이 3: 커서 쪽 근(x ≈ 200.707)의 삼각형은 무게중심 쪽 힌트가 원기둥 밖이다. 22차까지의 길(코어 점에서 바깥쪽 근)은 null이라 축 위 커서 자리였고,
- *   25차 열린 후보 길은 원기둥 위 교차 — 'X축 · 면 위', 거리 100.707. 57차부터는 닫힌 길(open 없이)도 원기둥 밖 점을 접선 길이 안에서 X 쪽 근으로 받아 같은 점이다
+ *   25차 열린 후보 길은 원기둥 위 교차 — 'X축 · 면 위', 거리 100.707. 57차는 닫힌 길(open 없이)도 원기둥 밖 점을 접선 길이 안에서 X 쪽 근으로 받아 같은 점이었고,
+ *   60차부터 원기둥 밖 닫힌 점은 코어 0.55.0 plane이 받은 칸과 다른 스침 자리만 받는다(open만 지운 이 꼴은 plane이 없어 22차 길처럼 축 위 커서 자리)
  * - 높이 9: 힌트가 원기둥 안인 삼각형 — 22차 길로도 같은 점
  * - 같은 축의 다른 근(x ≈ 199.293)은 한 삼각형 위를 선이 두 번 지나는 자리다. 코어 0.22.0·0.23.0은 힌트 쪽 근 하나만 받았고(25차 코어 요청),
  *   27차(코어 0.24.0 면의 열린 교차 둘째 힌트 — 그 조각의 두 끝)부터 이 근도 원기둥 위 교차 — 'X축 · 면 위', 거리 99.293.
@@ -120,14 +121,15 @@ describe('축이 판 외곽선 볼록 호 꼭대기를 그 현 바깥으로 스�
     const m = w.v.measurement()!;
     expect(Math.abs(m.distance - (Q[0]! - 100))).toBeLessThan(1e-9);
     expect(snapPair({ ...m, ...trackMarks(w.v.measurePoints) })![1]).toBe('X축 · 면 위');
-    // 닫힌 길(열린 후보도 open 없이): 56차까지는 힌트가 원기둥 밖이라 null — 축 위 커서 자리였다.
-    // 57차부터 닫힌 길도 원기둥 밖 점을 접선 길이(√(ρ² − r²))가 현 반 길이 안이면 X 쪽 근으로 받아 같은 원기둥 위 교차다
-    expect(Math.sqrt(Math.hypot(c.point[0] - W.cu, c.point[1] - W.cv) ** 2 - W.r ** 2)).toBeLessThan(W.r * Math.sin(W.half));
+    // 닫힌 길(열린 후보를 open 없이 — 코어 0.55.0 plane이 없다): 힌트가 원기둥 밖이라 null — 축 위 커서 자리(22차 길·56차와 같다).
+    // 57차는 접선 길이(√(ρ² − r²))가 현 반 길이 안이면 X 쪽 근으로 받았고, 60차부터 원기둥 밖 닫힌 점은 plane이 받은 칸과 다른 스침만 받는다
+    expect(c.plane).toBeUndefined();
     const o = setup(3, true);
     o.hover(Q);
     const g = o.v.measureHoverSnap!;
-    expect(g).toMatchObject({ snap: 'axis', axis: 'x', refined: true });
-    expect(g.point).toEqual(h.point);
+    expect(g).toMatchObject({ snap: 'axis', axis: 'x' });
+    expect(g.refined).toBeFalsy();
+    expect(Math.abs(g.point[0] - Q[0]!)).toBeGreaterThan(1e-4);
   });
 
   it('높이 9: 원기둥 안 힌트의 삼각형 — 25차·22차 길 모두 같은 원기둥 위 교차', () => {
@@ -186,11 +188,7 @@ describe('축이 판 외곽선 볼록 호 꼭대기를 그 현 바깥으로 스�
       // 원기둥 밖(중심에서 50보다 멀다) — 56차까지 닫힌 길(open 없이 — 처짐 안·코어 점에서 바깥쪽 근)로는 풀지 못했다
       expect(rho).toBeGreaterThan(W.r);
     }
-    // 57차 닫힌 길: 두 끝 모두 접선 길이(√(ρ² − r²))가 현 반 길이 안이라 X 쪽 근 — 열린 후보와 같은 근
-    for (const k of [0, 2]) {
-      const c = cs[k]!;
-      expect(Math.sqrt(Math.hypot(c.point[0] - W.cu, c.point[1] - W.cv) ** 2 - W.r ** 2)).toBeLessThan(W.r * Math.sin(W.half));
-      expect(refine({ ...c, open: undefined })).toEqual(got[k]);
-    }
+    // 닫힌 길(open만 지움 — plane 없음): 원기둥 밖 두 끝은 받지 않는다(57차는 접선 길이 안이라 X 쪽 근을 줬다 — 60차부터 스침은 코어 plane으로만)
+    for (const k of [0, 2]) expect(refine({ ...cs[k]!, open: undefined })).toBeNull();
   });
 });
