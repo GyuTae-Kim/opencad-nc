@@ -4,7 +4,7 @@
  * 해석 워커만 같은 스레드의 parseForView로 바꾼다. 가상 커서는 캔버스 가운데에서 켜지므로 겨냥할 점을 화면 가운데로 맞춘다(경계를 정확히 가리키지 않는다).
  * - 키: 커서가 꺼져 있으면 캔버스 화살표는 앱 것(재생 걸음·줄 이동 — 앱이 쓰지 않는 화살표도 커서를 켜지 않는다), Enter로 켜면 화살표·Shift+화살표는 커서,
  *   Esc는 커서만 끄고(고른 것은 그대로) 다음 Esc가 고른 것을 지운다. 측정 첫 점 뒤에도 화살표는 커서를 옮긴다(방향 잠금은 커서가 꺼졌을 때)
- * - 알림: 화면에 보이지 않는 aria-live 영역에 지금 언어 글(측정은 코어 글 + 사전 틀, 고르기는 앱 묶음 이름)
+ * - 알림: 화면에 보이지 않는 aria-live 영역에 지금 언어 글(측정은 코어 글 + 앱 글 함수, 고르기는 앱 묶음 이름) — 58차: 네 언어 글이 56·57차와 같다
  * - 고르기 Tab: 촘촘한 공구 경로(원호를 나눈 선분)·판재 가공(구멍 점과 그물)을 코드 줄·가공 단위로 묶어 돌리고, Enter는 그 묶음을 고른다
  *   (58차 — 코어 0.53.0 pickCycle group: 코어가 묶음마다 한 후보로 세어 한도 16·차례·수가 묶음 단위. 한 줄의 원호 선분이 16개를 넘게 겹쳐도 뒤 줄이 든다)
  */
@@ -229,24 +229,34 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
     app.viewer!.clearMeasure();
   });
 
-  it('알림 글은 화면 언어로(사전의 같은 열쇠 틀 — 언어를 바꾸면 다시 준다)', async () => {
+  it('알림 글은 화면 언어로(앱 글 함수 — 언어를 바꾸면 다시 준다): 네 언어 측정 알림이 56·57차 글과 같다(58차)', async () => {
     const { app, root, center, key, live } = await open('a.nc', LINES);
     app.toggleMeasure(true);
     await vi.waitFor(() => expect(app.state().measuring).toBe(true));
     center([20, 15, 0], 25);
-    document.documentElement.lang = 'en';
+    const P = 'X 20\\.0+, Y 15\\.0+, Z 0\\.0+';
+    const want: Record<string, [RegExp, RegExp, string]> = {
+      en: [new RegExp(`^Virtual cursor on\\. Midpoint: ${P}\\. Move ←→↑↓ · Next candidate Tab · Pick point Enter · Turn off Esc$`), new RegExp(`^First point picked\\. Midpoint: ${P}$`), 'Virtual cursor off'],
+      ja: [new RegExp(`^仮想カーソルをオンにしました。中点: ${P}。移動 ←→↑↓ · 次の候補 Tab · 点を打つ Enter · オフ Esc$`), new RegExp(`^1点目を打ちました。中点: ${P}$`), '仮想カーソルをオフにしました'],
+      'zh-CN': [new RegExp(`^已打开虚拟光标。中点: ${P}。移动 ←→↑↓ · 下一个候选 Tab · 选点 Enter · 关闭 Esc$`), new RegExp(`^已选第一个点。中点：${P}$`), '已关闭虚拟光标'],
+      de: [new RegExp(`^Virtueller Cursor eingeschaltet\\. Mitte: ${P}\\. Bewegen ←→↑↓ · Nächster Kandidat Tab · Punkt setzen Enter · Ausschalten Esc$`), new RegExp(`^Erster Punkt gesetzt\\. Mitte: ${P}$`), 'Virtueller Cursor ausgeschaltet'],
+    };
     try {
-      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'en' }));
-      key('Enter');
-      expect(live()).toMatch(/^Virtual cursor on\. Midpoint: X 20\.0+, Y 15\.0+, Z 0\.0+\. Move ←→↑↓ · Next candidate Tab · Pick point Enter · Turn off Esc$/);
-      expect(live()).not.toMatch(/[가-힣]/);
-      key('Enter');
-      expect(live()).toMatch(/^First point picked\. Midpoint: X 20\.0+, Y 15\.0+, Z 0\.0+$/);
-      key('Escape');
-      key('Escape');
-      expect(live()).toBe('Virtual cursor off');
+      for (const [l, [on, first, off]] of Object.entries(want)) {
+        document.documentElement.lang = l;
+        root.dispatchEvent(new CustomEvent('languagechange', { detail: l }));
+        key('Enter');
+        expect(live(), l).toMatch(on);
+        expect(live(), l).not.toMatch(/[가-힣]/);
+        key('Enter');
+        expect(live(), l).toMatch(first);
+        key('Escape');
+        key('Escape');
+        expect(live(), l).toBe(off);
+      }
     } finally {
       document.documentElement.lang = 'ko';
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
     }
   });
 });
