@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as core from 'opencad-viewer3d';
 import { KEY_SNAP_KEYS, KEY_SNAP_MESSAGES, candidateText, keySnapHint, keySnapText, type KeySnapMessageKey } from 'opencad-viewer3d';
 import { catalogs, registerCatalog, translate } from '../../site/i18n.mjs';
-import { KEY_HELP, KEY_SNAP_DICT_PREFIX, keySnapDictKey, keySnapMessageFn } from '../../src/app/keysnap';
+import { KEY_HELP, KEY_SNAP_DICT_PREFIX, dictLookup, keySnapDictKey, keySnapMessageFn } from '../../src/app/keysnap';
 
 const ROOT = resolve(__dirname, '../..');
 const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
@@ -51,15 +51,22 @@ describe('키보드 붙잡기 알림 글 함수(58차 — 코어 0.53.0 messages
   });
 
   it('한국어 화면·한글이 없는 틀·고르기 종류는 코어 기본 틀(함수가 undefined), 네 언어 대표 알림 글은 56·57차와 같다', () => {
-    const ko = keySnapMessageFn(core, undefined);
+    const ko = keySnapMessageFn(core, dictLookup('ko'));
     for (const k of Object.keys(KEY_SNAP_MESSAGES) as KeySnapMessageKey[]) expect(ko(k, ['a', 'b', 'c', 'd']), k).toBeUndefined();
-    const en = keySnapMessageFn(core, catalogs.en);
+    const en = keySnapMessageFn(core, dictLookup('en'));
     for (const k of ['candidate', 'order', 'point', 'pickItem', 'hintJoin', 'pick.line', 'pick.point'] as const) expect(en(k, ['a', 'b', 'c']), k).toBeUndefined();
-    // 사전에 없는 열쇠도 코어 기본(빈 사전)
-    expect(keySnapMessageFn(core, {})('start', ['a', 'b'])).toBeUndefined();
+    // 사전에 없는 열쇠도 코어 기본: 빈 사전, 사전에서 열쇠를 뺐을 때(번역기 틀이 반만 옮긴 글 — 한글이 남는다 — 도 쓰지 않는다)
+    expect(keySnapMessageFn(core, () => undefined)('start', ['a', 'b'])).toBeUndefined();
+    const lack = KEY_SNAP_DICT_PREFIX + KEY_SNAP_MESSAGES.hintMove;
+    registerCatalog('en', Object.fromEntries(Object.entries(saved.en!).filter(([k]) => k !== lack)));
+    expect(translate(lack, 'en')).not.toBe('Move {0}');
+    expect(dictLookup('en')(lack)).toBeUndefined();
+    expect(keySnapMessageFn(core, dictLookup('en'))('hintMove', ['←'])).toBeUndefined();
+    registerCatalog('en', saved.en!);
+    expect(keySnapMessageFn(core, dictLookup('en'))('hintMove', ['←'])).toBe('Move ←');
     const num = (v: number): string => String(v);
     const say = (l: (typeof LANGS)[number]) => {
-      const M = keySnapMessageFn(core, catalogs[l]);
+      const M = keySnapMessageFn(core, dictLookup(l));
       return [
         keySnapText(M, 'start', [candidateText({ kind: 'endpoint', point: [40, 15, 0] }, 0, 2, num, 5, 'mm', M), keySnapHint(KEY_SNAP_KEYS, 'measure', true, M)]),
         candidateText({ kind: 'axis', axis: 'z', locked: true, point: [0, 0, 1] }, 0, 1, num, null, 'mm', M),
@@ -103,7 +110,7 @@ describe('키보드 붙잡기 알림 글 함수(58차 — 코어 0.53.0 messages
     ]);
     // 축 이름: 네 언어의 축 셋
     for (const l of LANGS) {
-      const M = keySnapMessageFn(core, catalogs[l]);
+      const M = keySnapMessageFn(core, dictLookup(l));
       expect(['x', 'y', 'z'].map((a) => keySnapText(M, 'axisKind', [a.toUpperCase()])), l).toEqual(
         { en: ['X axis', 'Y axis', 'Z axis'], ja: ['X軸', 'Y軸', 'Z軸'], 'zh-CN': ['X 轴', 'Y 轴', 'Z 轴'], de: ['X-Achse', 'Y-Achse', 'Z-Achse'] }[l],
       );

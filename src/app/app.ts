@@ -2276,8 +2276,8 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
-    // 56차(keysnap.ts): 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다(고르기 Tab의 묶음 단위는 58차부터 코어 pickCycle group)
-    if (v) this.keySnap?.key(ev, t === v.canvas);
+    // 56차(keysnap.ts): 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다(고르기 Tab의 묶음 단위는 58차부터 코어 pickCycle group — 처리해 막는 키는 없다)
+    if (v && this.keySnap?.key(ev, t === v.canvas)) return;
     // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
     const onSlider = !!t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range';
     const a = keyAction({

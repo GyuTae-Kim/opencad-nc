@@ -21,7 +21,7 @@
  */
 import type { KeyboardCursorState, KeyboardSnapAnnouncement, KeySnapMessageFn, KeySnapText, Pick3d, Viewer3d } from 'opencad-viewer3d';
 import { isPanelKind } from '../extensions';
-import { catalogs } from '../../site/i18n-core.mjs';
+import { translate } from '../../site/i18n-core.mjs';
 import { itemName, lineLabel, moveSummary, mprOps, opLabel, type NcDoc } from './doc';
 import { h } from './dom';
 import { mix, type Mixed } from './filetext';
@@ -38,15 +38,29 @@ export function keySnapDictKey(ko: string): string {
   return /\{\d+\}/.test(ko) ? KEY_SNAP_DICT_PREFIX + ko : ko;
 }
 
+/** 사전 열쇠 하나 → 지금 언어 글(없으면 undefined) */
+export type DictLookup = (key: string) => string | undefined;
+
 /**
- * 알림 글 함수(코어 0.53.0 setKeyboardSnap messages): 열쇠의 코어 기본 틀로 지금 언어 사전(catalog — 한국어면 없음)의 글을 찾아 값을 끼운다.
- * 한글이 없는 틀·고르기 종류(pick.*)·사전에 없는 열쇠는 undefined(코어가 기본 틀로 만든다)
+ * 언어 lang의 사전 찾기: 번역기(translate)는 같은 글 열쇠를 먼저 찾는다. 한국어·사전에 없는 열쇠·한글이 남은 글(틀이 반만 옮긴 것)은 undefined.
+ * 사전 객체(catalogs)를 바로 가져오지 않는 것은 첫 화면 조각이 다른 조각에 내보내는 이름을 늘리지 않으려는 것(translate는 이미 내보낸다)
  */
-export function keySnapMessageFn(core: Pick<Core, 'KEY_SNAP_MESSAGES' | 'formatKeySnapMessage'>, catalog: Readonly<Record<string, string>> | undefined): KeySnapMessageFn {
+export function dictLookup(lang: string): DictLookup {
+  return (key) => {
+    const t = translate(key, lang);
+    return t === key || /[가-힣]/.test(t) ? undefined : t;
+  };
+}
+
+/**
+ * 알림 글 함수(코어 0.53.0 setKeyboardSnap messages): 열쇠의 코어 기본 틀로 지금 언어 사전(lookup)의 글을 찾아 값을 끼운다.
+ * 한글이 없는 틀·고르기 종류(pick.*)·사전에 없는 열쇠(한국어 화면 포함)는 undefined(코어가 기본 틀로 만든다)
+ */
+export function keySnapMessageFn(core: Pick<Core, 'KEY_SNAP_MESSAGES' | 'formatKeySnapMessage'>, lookup: DictLookup): KeySnapMessageFn {
   return (key, values) => {
     const ko: string | undefined = core.KEY_SNAP_MESSAGES[key];
-    if (!catalog || !ko || key.startsWith('pick.') || !/[가-힣]/.test(ko)) return undefined;
-    const t = catalog[keySnapDictKey(ko)];
+    if (!ko || key.startsWith('pick.') || !/[가-힣]/.test(ko)) return undefined;
+    const t = lookup(keySnapDictKey(ko));
     return t === undefined ? undefined : core.formatKeySnapMessage(t, values);
   };
 }
@@ -128,7 +142,7 @@ export class KeySnap {
     if (!v) return;
     this.through = this.host.pickThrough;
     const lang = document.documentElement.lang || 'ko';
-    const messages = keySnapMessageFn(this.core, lang === 'ko' ? undefined : catalogs[lang]);
+    const messages = keySnapMessageFn(this.core, dictLookup(lang));
     this.msgs = messages;
     v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through, group: this.group }, messages, announce: (a) => this.announce(a) });
   }
@@ -140,12 +154,13 @@ export class KeySnap {
   }
 
   /**
-   * 창 키(캡처 단계, 앱 키보다 먼저): 커서가 꺼져 있으면 캔버스 화살표의 기본 동작만 막는다(앱 화살표는 그대로 keys.ts가 받고,
-   * 코어는 막은 키로 커서를 켜지 않는다 — Enter로만 켠다). 58차: 고르기 모드 Tab은 코어가 묶음 단위로 돌린다(pickCycle group — 56·57차의 합성 Tab을 뺐다)
+   * 창 키(캡처 단계, 앱 키보다 먼저). 처리해 앱 키가 보지 않아야 하면 true — 58차부터는 늘 false(앱 키가 이어 받는다):
+   * 커서가 꺼져 있으면 캔버스 화살표의 기본 동작만 막는다(앱 화살표는 그대로 keys.ts가 받고, 코어는 막은 키로 커서를 켜지 않는다 — Enter로만 켠다).
+   * 고르기 모드 Tab은 코어가 묶음 단위로 돌린다(pickCycle group — 56·57차의 합성 Tab을 뺐다). app.ts의 부름 꼴은 56차 그대로 둔다(첫 화면 조각을 main 이하로)
    */
-  key(ev: KeyboardEvent, onCanvas: boolean): void {
-    if (!onCanvas || ev.altKey || ev.ctrlKey || ev.metaKey || ev.defaultPrevented) return;
-    if (!this.cursor && ev.key.startsWith('Arrow')) ev.preventDefault();
+  key(ev: KeyboardEvent, onCanvas: boolean): boolean {
+    if (onCanvas && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.defaultPrevented && !this.cursor && ev.key.startsWith('Arrow')) ev.preventDefault();
+    return false;
   }
 
   private announce(a: KeyboardSnapAnnouncement): void {
