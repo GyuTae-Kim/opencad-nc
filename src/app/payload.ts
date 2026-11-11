@@ -8,7 +8,7 @@ import { ncLineMoves, ncTimeline, type NcProgram } from '../model';
 import { xmlRootName } from '../xml';
 import { panelSimSource } from '../sim/panel-source';
 import { BINARY_MESSAGE, looksBinary } from './format';
-import type { NcOpenOptions, NcPayload, ParseResult } from './protocol';
+import type { NcJobInfo, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
 /** 형식마다 워커 진행 글 */
 const READING: Record<NcFileKind, string> = {
@@ -94,6 +94,18 @@ export function parseOptions(kind: NcFileKind | null, o: NcOpenOptions): NcParse
 }
 
 /**
+ * 여러 파일 작업: 이은 글의 줄(0부터) → 글 하나에 끼우는 "파일 · 그 파일의 줄"(doc.ts jobLineOf와 같은 줄 — 표지 줄 뒤부터 1).
+ * 파일 하나면 그 줄 번호. 보정 경로 경고가 정보 탭에 글 하나로 들어가 화면에서 줄을 바꿀 수 없으므로 워커에서 적는다(62차)
+ */
+export function jobLineText(job: NcJobInfo, line: number): string {
+  const n = Math.min(job.starts.length, job.files.length);
+  if (n < 2) return String(line + 1);
+  let k = 0;
+  while (k + 1 < n && job.starts[k + 1]! <= line) k++;
+  return `${job.files[k]} · ${k ? line - job.starts[k]! : line + 1}`;
+}
+
+/**
  * 파일 하나를 화면 자료로(워커가 부른다. 시험도 같은 길로): 확인 → 해석 → 장면 → 패널 자료.
  * 읽을 수 없으면 Error(사람이 읽는 글)
  */
@@ -131,11 +143,18 @@ export function parseForView(
   progress(0.15, READING[check.kind ?? 'gcode']);
   const parsed = parseNcFile(base, bytes, parseOptions(check.kind, o));
   progress(0.7, '공구 경로 만드는 중');
+  const info = job;
+  if (info) {
+    // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄
+    const marks = 'part' in parsed ? null : jobFileLines(parsed.program.source);
+    info.starts = [0, ...(marks ? [...marks.keys()] : [])].slice(0, info.files.length);
+  }
   // 측정 붙잡기 자료: 보정 경로 조각, 판재 원호 중심·윤곽 요소(장면과 같은 묶음 id)
   let comp: NcCompPath | null = null;
   let snap: PanelSnapTable | null = null;
   const scene = ncParsedToScene(parsed, {
-    nc: o.comp ? { compPath: true, onCompPath: (c) => (comp = c) } : {},
+    // 보정 경로 경고는 글 하나로 정보 탭에 들어가므로 여기서 원래 파일의 줄로 적는다(62차)
+    nc: o.comp ? { compPath: info ? { lineText: (l) => jobLineText(info, l) } : true, onCompPath: (c) => (comp = c) } : {},
     mpr: { ...(o.mprDisabled ? { disabled: true } : {}), onSnapTable: (t) => (snap = t) },
   });
   progress(0.95, '화면으로 보내는 중');
@@ -147,12 +166,7 @@ export function parseForView(
     const c = comp as NcCompPath | null;
     if (c && c.count) out.nc.comp = { count: c.count, kind: c.kind, move: c.move, points: c.points, center: c.center, sweep: c.sweep, plane: c.plane };
   }
-  if (job) {
-    // 파일마다 시작 줄(코드 탭에서 그 파일로 가기): 주 프로그램 0, 그다음은 표지 줄
-    const marks = 'part' in parsed ? null : jobFileLines(parsed.program.source);
-    job.starts = [0, ...(marks ? [...marks.keys()] : [])].slice(0, job.files.length);
-    out.job = job;
-  }
+  if (info) out.job = info;
   out.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
   return out;
 }

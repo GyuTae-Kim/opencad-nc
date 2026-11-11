@@ -585,7 +585,7 @@ export class NcPanel {
       const cur = items.length > 0 && d.highlight.length === items.length && items.every((id) => d.highlight.includes(id));
       const tr = h(
         'tr',
-        { class: `clickable${cur ? ' current' : ''}${visible ? '' : ' off'}`, title: `처음 나온 줄 ${t.firstLine + 1}` },
+        { class: `clickable${cur ? ' current' : ''}${visible ? '' : ' off'}`, title: `처음 나온 줄 ${lineNumberText(d, t.firstLine)}` },
         h('td', {}, eye),
         h('td', {}, h('span', { class: 'swatch', style: `background:${rgbCss(t.color ?? [0.5, 0.5, 0.5])}` })),
         h('td', {}, label),
@@ -672,7 +672,7 @@ export class NcPanel {
       const detailCell = h('td', { class: 'wrap' }, ...detail.flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nb' }, t)]));
       const tr = h(
         'tr',
-        { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, title: typeof o.line === 'number' ? `줄 ${o.line + 1}` : '' },
+        { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, title: o.line != null ? `줄 ${o.line + 1}` : '' },
         h('td', { class: 'num faint' }, String(o.index + 1)),
         // MPR 가공 이름(MNM·주석·매크로 이름)은 파일 글, PGI·XML은 앱이 지은 이름(옮긴다)
         h('td', { class: 'wrap', translate: o.label && d.kind === 'mpr' ? 'no' : null }, o.label || MPR_KIND[o.kind] || o.kind),

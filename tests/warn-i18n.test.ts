@@ -30,6 +30,25 @@ describe('보정 경로 경고(정보 탭 목록 — 글 하나로)', () => {
     expect(translate(got.find((g) => g.includes('공구 반지름을 몰라'))!, 'en')).toBe('Compensation path: Line 3: Compensation section (line 3): tool radius unknown — the compensation path is not drawn');
   });
 
+  it('여러 파일 작업: 경고의 줄은 이은 글의 줄이 아니라 파일 이름과 그 파일의 줄(62차)', () => {
+    const SUB = ['O1001', 'G41 D7 G1 X10 F100', 'Y10', 'G40 X0', 'M99', ''].join('\n');
+    const job = (main: string, sub: string): string[] => (parseForView('main.nc', enc(main), { comp: true }, () => {}, [{ name: sub, bytes: enc(SUB) }]).scene.warnings ?? []).filter((w) => w.startsWith('보정 경로: '));
+    const MAIN = ['G21 G90 G17', 'G0 X0 Y0 Z0', 'M98 P1001', 'G1 X1 F100', 'G1 X2', 'M30', ''].join('\n');
+    // 이은 글에서는 표지 줄 + 주 프로그램 6줄 뒤라 9번째 줄이지만 O1001.nc에서는 2번째 줄
+    expect(job(MAIN, 'O1001.nc')).toEqual(['보정 경로: O1001.nc · 2번 줄: 보정 구간(O1001.nc · 2번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음']);
+    // 주 프로그램의 구간도 파일 이름을 붙인다(정보 탭 경고 줄 표기와 같은 꼴), 불린 부프로그램은 그 파일의 줄
+    const inMain = ['G21 G90 G17', 'G0 X0 Y0 Z0', 'G41 D7 G1 X10 F100', 'Y10', 'G40 X0', 'M98 P1001', 'M30', ''].join('\n');
+    expect(job(inMain, 'O1001.nc')).toEqual(['보정 경로: main.nc · 3번 줄: 보정 구간(main.nc · 3번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음', '보정 경로: O1001.nc · 2번 줄: 보정 구간(O1001.nc · 2번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음']);
+    // 파일 이름에 한글이 있어도 사전 틀이 통째로 잡아 네 언어에서 앱 글은 옮기고 파일 이름은 그대로 둔다
+    const name = '부품 가공.nc';
+    const [t] = job(MAIN, name);
+    expect(t).toBe(`보정 경로: ${name} · 2번 줄: 보정 구간(${name} · 2번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음`);
+    for (const code of codes) expect(translate(t!, code).replaceAll(name, ''), code).not.toMatch(hangul);
+    expect(translate(t!, 'en')).toBe(`Compensation path: Line ${name} · 2: Compensation section (line ${name} · 2): tool radius unknown — the compensation path is not drawn`);
+    // 파일 하나는 예전 그대로(줄 번호만)
+    expect(compWarnings(inMain)).toEqual(['보정 경로: 3번 줄: 보정 구간(3번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음']);
+  });
+
   it('comp.ts의 모든 글 꼴(줄 번호 있음·없음, 숫자 자리)', () => {
     const texts = [
       '보정 경로: 12번 줄: 보정 구간(12번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음',
