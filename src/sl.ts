@@ -563,6 +563,17 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, ar
     live[n] = n;
     for (let y = n - 1; y >= 0; y--) live[y] = dead(order[y]!) ? live[y + 1]! : y;
   }
+  // 61차: 요소마다 버려질 팔 밖(살아 있는 구간)의 둘레 상자. 교점이 어느 쪽 요소의 팔 위든 그 점은 경계에서 lim보다 가까워 두 요소 모두 그 둘레가 버려지므로
+  // (그 점에서 나뉘어도 남는 조각은 같다) 두 요소의 살아 있는 구간 상자가 겹칠 때만 교점을 구한다. 원꼴 다각형 가운데 고리는 요소마다 교점이 14개쯤이고 거의 팔 위라
+  // splitAll이 셈의 시간 대부분을 썼다(n각형 고리 셈 ms의 60%, 그 가운데 절반이 교점 셈). 일(짝 수)은 그대로다
+  const liveBox: (readonly number[] | null)[] | null = arms
+    ? raw.map((r, i) => {
+        const lo = Math.max(arms.a[i]!, 0);
+        const hi = Math.min(arms.b[i]!, 1);
+        if (lo >= hi) return null;
+        return lo <= 0 && hi >= 1 ? boxes[i]! : box(part(r.e, lo, hi));
+      })
+    : null;
   let pairs = 0;
   for (let x = 0; x < n; x++) {
     const i = order[x]!;
@@ -574,6 +585,12 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, ar
       if (bj[0] > bi[2] + eps) break;
       pairs++;
       if (bj[1] > bi[3] + eps || bj[3] < bi[1] - eps) continue;
+      if (liveBox) {
+        // 교점은 두 요소에서 eps 안 — 여유 2 × eps
+        const la = liveBox[i];
+        const lb = liveBox[j];
+        if (!la || !lb || la[0]! > lb[2]! + 2 * eps || lb[0]! > la[2]! + 2 * eps || la[1]! > lb[3]! + 2 * eps || lb[1]! > la[3]! + 2 * eps) continue;
+      }
       const A = raw[i]!;
       const B = raw[j]!;
       const same = A.loop === B.loop;
