@@ -54,6 +54,7 @@ vi.mock('../../src/app/client', async () => {
 
 import { NcViewerApp } from '../../src/app/app';
 import { jobLineOf, jobLineToGlobal, lineAtLabel, lineLabel, lineNumberText } from '../../src/app/doc';
+import { jobLineText } from '../../src/app/payload';
 import { plainText } from '../../src/app/filetext';
 import { RecentStore } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
@@ -178,6 +179,20 @@ describe('여러 파일을 한 작업으로 열기', () => {
     expect(jobLineToGlobal(job, 1, 99)).toBe(19);
     expect(jobLineToGlobal(job, 0, 4)).toBe(3);
     expect(jobLineToGlobal(null, 0, 4)).toBe(3);
+    // 글 하나에 끼우는 줄 표기(62차 — 보정 경로 경고)
+    expect([3, 15, 21].map((l) => jobLineText(job, l))).toEqual(['main.nc · 4', 'O1001.nc · 4', '1002.nc · 1']);
+    expect(jobLineText({ ...job, files: ['main.nc'], starts: [0] }, 15)).toBe('16');
+  });
+
+  it('공구 표의 "처음 나온 줄" 풍선 글도 그 파일 안의 줄(62차)', async () => {
+    const SUB = 'O1001\nT7 M6\nG1 Z-1 F100\nM99\n';
+    const { app, root } = makeApp();
+    await app.openFiles([textFile('main.nc', MAIN), textFile('O1001.nc', SUB)]);
+    window.opencadApp!.setPanelTab('tools');
+    const titles = [...root.querySelectorAll('tr.clickable')].map((r) => r.getAttribute('title'));
+    // T1은 주 프로그램 4번 줄, T7은 O1001.nc 2번 줄(이은 글에서는 13번째 줄)
+    expect(titles[0]).toBe('처음 나온 줄 4');
+    expect(titles[1]).toMatch(/^처음 나온 줄 2( · |$)/);
   });
 
   it('정보 탭에서 주 프로그램을 바꾸면 다시 잇고(이름도 바뀜), 다시 읽기는 같은 작업을 유지한다', async () => {

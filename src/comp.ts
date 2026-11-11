@@ -42,6 +42,8 @@ export interface CompPathOptions {
   radius?: number;
   /** 프로그램에서 반지름을 찾지 못한 구간에 쓸 값(없으면 그 구간은 계산하지 않음) */
   defaultRadius?: number;
+  /** 경고 글의 줄 표기(0부터 줄 → 뒤에 "번 줄"이 붙는 글). 여러 파일 작업이면 앱이 이은 글의 줄 대신 파일 이름과 그 파일의 줄을 준다(없으면 줄 번호) */
+  lineText?: (line: number) => string;
 }
 
 /** 계산한 보정 경로: 조각(직선·호) 구조 배열 */
@@ -294,6 +296,7 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
   const W = (msg: string, line: number): void => {
     if (!warn.has(msg)) warn.set(msg, line);
   };
+  const at = opts.lineText ?? ((line: number): string => String(line + 1));
   const buf = new PieceBuf();
   const runs: NcCompPath['runs'] = [];
   const srcRuns = p.compRuns ?? [];
@@ -305,7 +308,7 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     const rec: NcCompPath['runs'][number] = { ...run, used: r, computed: false };
     runs.push(rec);
     if (!Number.isFinite(r)) {
-      W(`보정 구간(${run.line + 1}번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음`, run.line);
+      W(`보정 구간(${at(run.line)}번 줄): 공구 반지름을 몰라 보정 경로를 그리지 않음`, run.line);
       carry = null;
       continue;
     }
@@ -363,7 +366,7 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
     rec.computed = true;
     if (lathe) {
       if (tipDir && (tipDir[0] || tipDir[1])) rec.tip = true;
-      if (!tipDir) W(`보정 구간(${run.line + 1}번 줄): 선반 공구 방향(1~9)을 몰라 노즈 반지름 중심 경로로 그림`, run.line);
+      if (!tipDir) W(`보정 구간(${at(run.line)}번 줄): 선반 공구 방향(1~9)을 몰라 노즈 반지름 중심 경로로 그림`, run.line);
       else if (rec.tip && p.dialect !== 'linuxcnc') W('선반 공구 방향 번호는 LinuxCNC 설명서의 그림대로 읽음 — 다른 컨트롤러는 번호가 다를 수 있음', -1);
     }
     const contiguous = carry && carry.run.end === run.first && carry.run.plane === run.plane;
@@ -474,11 +477,11 @@ export function ncCompPath(p: NcProgram, opts: CompPathOptions = {}): NcCompPath
       buf.line3(ex, s3, [pts[k]!, pts[k + 1]!, pts[k + 2]!]);
       carry = null;
     }
-    if (gouges > 1) W(`보정 구간(${run.line + 1}번 줄)에 간섭 의심 ${gouges}곳`, run.line);
+    if (gouges > 1) W(`보정 구간(${at(run.line)}번 줄)에 간섭 의심 ${gouges}곳`, run.line);
   }
   const n = buf.kind.length;
   const lines: string[] = [];
-  for (const [msg, line] of warn) lines.push(line >= 0 ? `${line + 1}번 줄: ${msg}` : msg);
+  for (const [msg, line] of warn) lines.push(line >= 0 ? `${at(line)}번 줄: ${msg}` : msg);
   return {
     count: n,
     kind: Uint8Array.from(buf.kind),
