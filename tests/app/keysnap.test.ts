@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as core from 'opencad-viewer3d';
 import { KEY_SNAP_KEYS, KEY_SNAP_MESSAGES, candidateText, keySnapHint, keySnapText, type KeySnapMessageKey } from 'opencad-viewer3d';
 import { catalogs, registerCatalog, translate } from '../../site/i18n.mjs';
-import { KEY_HELP, KEY_SNAP_DICT_PREFIX, dictLookup, keySnapDictKey, keySnapMessageFn } from '../../src/app/keysnap';
+import { KEY_HELP, KEY_SNAP_DICT_PREFIX, dictLookup, keySnapDictKey, keySnapMessageFn, keySnapNumber } from '../../src/app/keysnap';
 
 const ROOT = resolve(__dirname, '../..');
 const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
@@ -30,6 +30,24 @@ const ADDED = new Set<string>([...MSG_KEYS.map((k) => keySnapDictKey(KEY_SNAP_ME
 const saved = Object.fromEntries(LANGS.map((l) => [l, catalogs[l]]));
 afterEach(() => {
   for (const l of LANGS) registerCatalog(l, saved[l]);
+});
+
+describe('측정 알림 수 꼴(61차 — 코어 0.56.0 formatNumber)', () => {
+  const core = (kind: 'x' | 'distance' | 'dz', unit: string) => ({ kind, text: '코어 글', digits: 2, unit });
+  it('mm는 고정 소수 셋째 자리, 인치는 넷째 — 자리 나눔 쉼표 없이, 작은 음수의 -0은 0', () => {
+    const mm = keySnapNumber('mm');
+    expect(mm(12.3456, core('x', 'mm'))).toBe('12.346');
+    expect(mm(-3, core('dz', 'mm'))).toBe('-3.000');
+    expect(mm(1234567.5, core('x', 'mm'))).toBe('1234567.500');
+    expect(mm(-0.0001, core('x', 'mm'))).toBe('0.000');
+    const inch = keySnapNumber('inch');
+    expect(inch(1.23456, core('x', 'in'))).toBe('1.2346');
+  });
+  it('거리에만 코어 단위 글을 잇고(단위를 모르면 글만), 유한하지 않은 값은 코어 글', () => {
+    expect(keySnapNumber('mm')(25, core('distance', 'mm'))).toBe('25.000 mm');
+    expect(keySnapNumber(undefined)(25, core('distance', ''))).toBe('25.000');
+    expect(keySnapNumber('mm')(Infinity, core('x', 'mm'))).toBe('코어 글');
+  });
 });
 
 describe('키보드 붙잡기 알림 글 함수(58차 — 코어 0.53.0 messages 함수)', () => {

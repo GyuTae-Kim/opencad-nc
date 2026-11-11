@@ -68,3 +68,57 @@ describe('윤곽 무리마다 길이 허용(60차)', () => {
     for (const ls of L.levels) expect(ls.map((l) => Math.round(l.reduce((s, e) => s + e.su, 0) / l.length / 50))).toEqual([0, 1]);
   });
 });
+
+describe('둘레 상자가 겹쳐도 떨어진 윤곽은 따로(61차 — 고리 사이 가장 짧은 거리)', () => {
+  // 원꼴 400각형(꼭짓점 소수 넷째 자리 반올림, 시계) — 반지름 25, 가운데 (cx, cy)
+  const N = 400;
+  const q = (x: number): number => Number(x.toFixed(4));
+  const circle = (cx: number, cy: number): [number, number][] => [...Array(N).keys()].map((k) => [q(cx + 25 * Math.cos((-k / N) * Math.PI * 2)), q(cy + 25 * Math.sin((-k / N) * Math.PI * 2))]);
+  // ㄴ자 큰 포켓(시계) — 둘레 상자 30000 × 30000, 오목한 자리 [10000, 30000]²
+  const ell: [number, number][] = [
+    [0, 0],
+    [0, 30000],
+    [10000, 30000],
+    [10000, 10000],
+    [30000, 10000],
+    [30000, 0],
+  ];
+
+  it('ㄴ자 포켓의 오목한 자리(둘레 상자 안, 포켓 밖)에 있는 작은 원꼴 포켓은 큰 포켓의 허용을 물려받지 않는다 — 단계마다 따로 셈과 같다', () => {
+    const big = poly(ell);
+    const small = poly(circle(20000, 20000));
+    const both = slLevels(slRegion([{ els: big, pocket: true }, { els: small, pocket: true }]), 1, 0.4, 60);
+    const a = slLevels(slRegion([{ els: big, pocket: true }]), 1, 0.4, 60);
+    const b = slLevels(slRegion([{ els: small, pocket: true }]), 1, 0.4, 60);
+    expect(b.levels.length).toBe(60);
+    expect(both.levels.length).toBe(60);
+    both.levels.forEach((ls, k) => expect(ls, `단계 ${k}`).toEqual([...a.levels[k]!, ...b.levels[k]!]));
+    // 원꼴 포켓의 가운데 단계(d 24.6)는 작은 고리 하나(60차까지는 상자가 겹쳐 한 무리 — 잇기 허용 0.04보다 짧은 조각이 잔 고리로)
+    const last = both.levels[59]!.filter((l) => Math.min(...l.map((e) => e.su)) > 19000);
+    expect(last.length).toBe(1);
+    expect(loopLen(last[0]!)).toBeGreaterThan(1);
+  });
+
+  it('큰 포켓 안의 작은 섬도 고리 사이가 멀면 섬만 셈한 것과 같다 — 고리 차례는 경계 고리 차례(포켓 고리 다음 섬 고리)', () => {
+    const P = poly(rect(0, 0, 30000, 30000));
+    const I = poly(circle(15000, 15000).reverse() as [number, number][]);
+    const both = slLevels(slRegion([{ els: P, pocket: true }, { els: I, pocket: false }]), 1, 5, 20);
+    const a = slLevels(slRegion([{ els: P, pocket: true }]), 1, 5, 20);
+    const b = slLevels(slRegion([{ els: I, pocket: false }]), 1, 5, 20);
+    expect(both.levels.length).toBe(20);
+    both.levels.forEach((ls, k) => expect(ls, `단계 ${k}`).toEqual([...a.levels[k]!, ...b.levels[k]!]));
+  });
+
+  it('고리 사이가 2d + 잇기 허용 안으로 들면 한 무리 — 섬 둘레 곡선과 포켓 벽 곡선이 서로 지나 네 귀퉁이 고리로 나뉜다', () => {
+    // 포켓 벽과 섬 사이 40: d 1·6·11·16은 고리 둘(포켓 벽 쪽 하나와 섬 둘레 하나), d 21(2d > 40)은 두 곡선이 서로 지나 귀퉁이마다 고리 하나
+    const L = slLevels(slRegion([{ els: poly(rect(0, 0, 100, 100)), pocket: true }, { els: poly(rect(40, 40, 60, 60).reverse() as [number, number][]), pocket: false }]), 1, 5, 100);
+    expect(L.levels.map((l) => l.length)).toEqual([2, 2, 2, 2, 4]);
+    expect(L.capped).toBe(false);
+  });
+
+  it('맞닿은 고리(거리 0)는 한 무리 — 사각 포켓 두 개의 원호 없는 꼭짓점 닿음', () => {
+    const L = slLevels(slRegion([{ els: poly(rect(0, 0, 40, 40)), pocket: true }, { els: poly(rect(40, 40, 80, 80)), pocket: true }]), 1, 5, 100);
+    expect(L.levels.length).toBeGreaterThan(1);
+    for (const ls of L.levels) expect(ls.length).toBeLessThanOrEqual(2);
+  });
+});

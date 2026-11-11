@@ -19,7 +19,7 @@
  * - 코어의 값(키 글 함수·기본 틀)은 앱이 받아 둔 코어 입구 모듈을 넘겨받아 쓴다(값으로 가져오면 번들러가 코어 keysnap 모듈을 따로 떼어
  *   첫 화면 조각의 나눠 받기 목록이 길어진다)
  */
-import type { KeyboardCursorState, KeyboardSnapAnnouncement, KeySnapMessageFn, KeySnapText, Pick3d, Viewer3d } from 'opencad-viewer3d';
+import type { KeyboardCursorState, KeyboardSnapAnnouncement, KeySnapMessageFn, KeySnapNumberFn, KeySnapText, Pick3d, Viewer3d } from 'opencad-viewer3d';
 import { isPanelKind } from '../extensions';
 import { translate } from '../../site/i18n-core.mjs';
 import { itemName, lineLabel, moveSummary, mprOps, opLabel, type NcDoc } from './doc';
@@ -96,6 +96,21 @@ const num = (v: number): string => {
   return Object.is(r, -0) || r === 0 ? '0' : String(r);
 };
 
+/**
+ * 측정 모드 알림의 점 좌표·거리 글(61차 — 코어 0.56.0 formatNumber): 코어 기본(장면 크기를 따라 자릿수가 바뀌는 측정 글 자릿수) 대신 제어기 위치 표시처럼
+ * 고정 소수 셋째 자리(인치 넷째)로. 고르기 모드는 앱 글(pickSpeech)이 그대로 num을 쓴다. 코어는 formatNumber를 주면 거리에 단위를 붙이지 않아 코어 단위 글을 잇는다
+ */
+export function keySnapNumber(units: string | undefined): KeySnapNumberFn {
+  const digits = units === 'inch' ? 4 : 3;
+  const zero = `-${(0).toFixed(digits)}`;
+  return (v, core) => {
+    if (!Number.isFinite(v)) return core.text;
+    const s = v.toFixed(digits);
+    const t = s === zero ? s.slice(1) : s;
+    return core.kind === 'distance' && core.unit ? `${t} ${core.unit}` : t;
+  };
+}
+
 /** 앱(app.ts NcViewerApp)이 주는 것 */
 export interface KeySnapHost {
   readonly viewer: Viewer3d | null;
@@ -144,7 +159,7 @@ export class KeySnap {
     const lang = document.documentElement.lang || 'ko';
     const messages = keySnapMessageFn(this.core, dictLookup(lang));
     this.msgs = messages;
-    v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through, group: this.group }, messages, announce: (a) => this.announce(a) });
+    v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through, group: this.group }, messages, formatNumber: keySnapNumber(this.host.doc?.scene.units), announce: (a) => this.announce(a) });
   }
 
   /** 가상 커서(켜져 있지 않으면 null — 가짜 뷰어의 값도 null) */

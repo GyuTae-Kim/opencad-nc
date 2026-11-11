@@ -563,6 +563,17 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, ar
     live[n] = n;
     for (let y = n - 1; y >= 0; y--) live[y] = dead(order[y]!) ? live[y + 1]! : y;
   }
+  // 61차: 요소마다 버려질 팔 밖(살아 있는 구간)의 둘레 상자. 교점이 어느 쪽 요소의 팔 위든 그 점은 경계에서 lim보다 가까워 두 요소 모두 그 둘레가 버려지므로
+  // (그 점에서 나뉘어도 남는 조각은 같다) 두 요소의 살아 있는 구간 상자가 겹칠 때만 교점을 구한다. 원꼴 다각형 가운데 고리는 요소마다 교점이 14개쯤이고 거의 팔 위라
+  // splitAll이 셈의 시간 대부분을 썼다(n각형 고리 셈 ms의 60%, 그 가운데 절반이 교점 셈). 일(짝 수)은 그대로다
+  const liveBox: (readonly number[] | null)[] | null = arms
+    ? raw.map((r, i) => {
+        const lo = Math.max(arms.a[i]!, 0);
+        const hi = Math.min(arms.b[i]!, 1);
+        if (lo >= hi) return null;
+        return lo <= 0 && hi >= 1 ? boxes[i]! : box(part(r.e, lo, hi));
+      })
+    : null;
   let pairs = 0;
   for (let x = 0; x < n; x++) {
     const i = order[x]!;
@@ -574,6 +585,12 @@ function splitAll(raw: readonly RawEl[], eps: number, cnt?: { work: number }, ar
       if (bj[0] > bi[2] + eps) break;
       pairs++;
       if (bj[1] > bi[3] + eps || bj[3] < bi[1] - eps) continue;
+      if (liveBox) {
+        // 교점은 두 요소에서 eps 안 — 여유 2 × eps
+        const la = liveBox[i];
+        const lb = liveBox[j];
+        if (!la || !lb || la[0]! > lb[2]! + 2 * eps || lb[0]! > la[2]! + 2 * eps || la[1]! > lb[3]! + 2 * eps || lb[1]! > la[3]! + 2 * eps) continue;
+      }
       const A = raw[i]!;
       const B = raw[j]!;
       const same = A.loop === B.loop;
@@ -830,6 +847,8 @@ export interface SlRegion {
    */
   ou?: number;
   ov?: number;
+  /** 61차: 경계 고리 짝(i < j — 열쇠 i × 고리 수 + j) 사이 가장 짧은 거리, 물어본 짝만(loopGroups — 단계마다 다시 셈하지 않는다) */
+  gaps?: Map<number, number>;
 }
 
 /** 셈한 일을 더할 자리(R.work) */
@@ -1466,11 +1485,105 @@ interface SlGroup {
 }
 
 /**
- * 60차: 경계 고리를 떨어진 곡선 d를 따로 셈할 무리로 나눈다 — 고리마다 둘레 상자를 d + 잇기 허용(R.eps × 10³)만큼 키워 겹치는 것끼리 잇는다
+ * 61차: 두 요소 사이 가장 짧은 거리(서로 만나면 0). 가장 가까운 짝은 네 끝점 가운데 하나에서 상대에 내린 자리, 서로 지나는 교점이거나
+ * 안쪽끼리일 때 — 직선·원호면 원 중심에서 직선에 내린 수선 위(직선이 원 밖일 때), 원호·원호면 두 중심을 잇는 직선 위. 넣는 값은 모두 두 요소 위 점 짝의 거리다.
+ * eps가 음수면 교점을 보지 않는다(둘레 상자가 떨어진 짝)
+ */
+function elGap(a: SlEl, b: SlEl, eps: number): number {
+  let g = Math.min(elDist(a, b.su, b.sv), elDist(a, b.eu, b.ev), elDist(b, a.su, a.sv), elDist(b, a.eu, a.ev));
+  if (eps >= 0 && intersect(a, b, eps).length) return 0;
+  if (a.arc && b.arc) {
+    const du = b.cu - a.cu;
+    const dv = b.cv - a.cv;
+    const D = Math.hypot(du, dv);
+    if (D > 0) {
+      const ra = arcR(a);
+      const rb = arcR(b);
+      for (const sa of [1, -1])
+        for (const sb of [1, -1]) {
+          const pu = a.cu + (sa * ra * du) / D;
+          const pv = a.cv + (sa * ra * dv) / D;
+          const qu = b.cu + (sb * rb * du) / D;
+          const qv = b.cv + (sb * rb * dv) / D;
+          if (arcAngle(a, pu, pv) <= Math.abs(a.sweep) && arcAngle(b, qu, qv) <= Math.abs(b.sweep)) g = Math.min(g, Math.hypot(pu - qu, pv - qv));
+        }
+    }
+  } else if (a.arc || b.arc) {
+    const c = a.arc ? a : b;
+    const l = a.arc ? b : a;
+    const du = l.eu - l.su;
+    const dv = l.ev - l.sv;
+    const l2 = du * du + dv * dv;
+    const t = l2 > 0 ? ((c.cu - l.su) * du + (c.cv - l.sv) * dv) / l2 : -1;
+    if (t >= 0 && t <= 1) {
+      const fu = l.su + du * t;
+      const fv = l.sv + dv * t;
+      const h = Math.hypot(fu - c.cu, fv - c.cv);
+      const r = arcR(c);
+      if (h > r && arcAngle(c, c.cu + ((fu - c.cu) / h) * r, c.cv + ((fv - c.cv) / h) * r) <= Math.abs(c.sweep)) g = Math.min(g, h - r);
+    }
+  }
+  return g;
+}
+
+/** 61차: 상자 [u0, v0, u1, v1] 둘 사이 거리(겹치면 0) */
+function boxGap(x: readonly number[], y: readonly number[]): number {
+  return Math.hypot(Math.max(x[0]! - y[2]!, y[0]! - x[2]!, 0), Math.max(x[1]! - y[3]!, y[1]! - x[3]!, 0));
+}
+
+/**
+ * 61차: 두 경계 고리 사이 가장 짧은 거리(loopGroups — 가공 면 하나에 짝마다 한 번). 고리를 요소 차례로 √n개씩 덩이 지어(고리에서 이웃한 요소는 자리도 이웃)
+ * 덩이 상자 거리 오름차순으로 짝을 보고, 상자 거리가 지금 답 이상인 짝부터는 보지 않는다. 상자로 이미 답을 넘는 요소 짝은 거리를 셈하지 않는다
+ */
+function loopGap(A: SlLoop, B: SlLoop, eps: number): number {
+  const parts = (L: SlLoop): { boxes: number[][]; b: number[]; lo: number; hi: number }[] => {
+    const size = Math.max(1, Math.ceil(Math.sqrt(L.length)));
+    const boxes = L.map(box) as number[][];
+    const out: { boxes: number[][]; b: number[]; lo: number; hi: number }[] = [];
+    for (let lo = 0; lo < L.length; lo += size) {
+      const hi = Math.min(L.length, lo + size);
+      const b = [Infinity, Infinity, -Infinity, -Infinity];
+      for (let i = lo; i < hi; i++) {
+        const x = boxes[i]!;
+        b[0] = Math.min(b[0]!, x[0]!);
+        b[1] = Math.min(b[1]!, x[1]!);
+        b[2] = Math.max(b[2]!, x[2]!);
+        b[3] = Math.max(b[3]!, x[3]!);
+      }
+      out.push({ boxes, b, lo, hi });
+    }
+    return out;
+  };
+  const PA = parts(A);
+  const PB = parts(B);
+  const pairs: { g: number; a: number; b: number }[] = [];
+  for (let a = 0; a < PA.length; a++) for (let b = 0; b < PB.length; b++) pairs.push({ g: boxGap(PA[a]!.b, PB[b]!.b), a, b });
+  pairs.sort((x, y) => x.g - y.g);
+  let best = Infinity;
+  for (const p of pairs) {
+    if (p.g >= best) break;
+    const x = PA[p.a]!;
+    const y = PB[p.b]!;
+    for (let i = x.lo; i < x.hi; i++) {
+      const bi = x.boxes[i]!;
+      if (boxGap(bi, y.b) >= best) continue;
+      for (let j = y.lo; j < y.hi; j++) {
+        const g = boxGap(bi, y.boxes[j]!);
+        if (g < best) best = Math.min(best, elGap(A[i]!, B[j]!, g > 0 ? -1 : eps));
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * 60차: 경계 고리를 떨어진 곡선 d를 따로 셈할 무리로 나눈다 — 고리 짝 사이가 2 × (d + 잇기 허용 R.eps × 10³)보다 멀면 다른 무리, 아니면 잇는다
  * (날 곡선은 그 고리에서 d 안이라 무리가 다른 조각은 서로 만나지도 잇기 허용 안에 들지도 않는다). 무리가 하나면 null(예전 길 그대로).
  * 무리 크기 = 그 고리들 둘레 상자 대각선(그 무리 좌표 크기의 1/SHIFT_RATIO보다 작지 않게 — 53차 반올림 여유), 길이 허용 = 크기 × 10⁻⁹(regionOf와 같은 꼴).
  * 59차까지는 모든 무리에 가공 면 전체 크기의 허용을 썼다 — 멀리 떨어진 윤곽이 함께 있으면 작은 윤곽에는 잇기 허용·판정 여유가 커서, 조각이 잇기 허용보다
- * 짧은 가운데 단계의 고리가 잘게 엉킨 잔 고리로 남았다(59차 원꼴 다각형 + 멀리 떨어진 작은 포켓 400경우 가운데 39경우)
+ * 짧은 가운데 단계의 고리가 잘게 엉킨 잔 고리로 남았다(59차 원꼴 다각형 + 멀리 떨어진 작은 포켓 400경우 가운데 39경우).
+ * 61차: 60차는 고리 둘레 상자가 겹치면 한 무리로 어림해 ㄴ자 포켓의 오목한 자리처럼 큰 포켓 상자 안의 떨어진 작은 포켓, 큰 포켓 안의 작은 섬이 큰 포켓의 허용을
+ * 물려받았다. 이제 상자가 겹치는 짝은 고리 사이 가장 짧은 거리(loopGap — 짝마다 한 번 셈해 R.gaps에 둔다)로 가른다
  */
 function loopGroups(R: SlRegion, d: number): SlGroup[] | null {
   const n = R.loops.length;
@@ -1493,13 +1606,22 @@ function loopGroups(R: SlRegion, d: number): SlGroup[] | null {
     return i;
   };
   const order = [...Array(n).keys()].sort((a, b) => boxes[a]![0]! - boxes[b]![0]!);
+  const gaps = (R.gaps ??= new Map());
+  const gapOf = (i: number, j: number): number => {
+    const key = Math.min(i, j) * n + Math.max(i, j);
+    let g = gaps.get(key);
+    if (g === undefined) gaps.set(key, (g = loopGap(R.loops[i]!, R.loops[j]!, R.eps)));
+    return g;
+  };
   for (let x = 0; x < n; x++) {
     const a = boxes[order[x]!]!;
     for (let y = x + 1; y < n; y++) {
       const b = boxes[order[y]!]!;
       // 유한하지 않은 상자는 견줌이 거짓이라 무리를 나누지 않게 같은 무리로
       if (b[0]! - pad > a[2]! + pad) break;
-      if (!(b[1]! - pad > a[3]! + pad) && !(a[1]! - pad > b[3]! + pad)) root[find(order[y]!)] = find(order[x]!);
+      if (b[1]! - pad > a[3]! + pad || a[1]! - pad > b[3]! + pad) continue;
+      // 61차: 상자는 겹쳐도 고리끼리 2 × pad 넘게 떨어졌으면 다른 무리(견줌이 거짓 — 유한하지 않은 값 — 이면 같은 무리)
+      if (!(gapOf(order[x]!, order[y]!) > 2 * pad)) root[find(order[y]!)] = find(order[x]!);
     }
   }
   const byRoot = new Map<number, number[]>();
