@@ -10,7 +10,7 @@
  * meta에 모델 요약(공구 목록·통계·가공 목록)을 넣는다.
  */
 import type { Box3, LineSet3d, Mesh3d, PointSet3d, Rgba, Scene3d } from 'opencad-viewer3d/types';
-import { FLAG_MACHINE_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
+import { FLAG_MACHINE_EST, FLAG_START_EST, MOVE_ARC, MOVE_DRILL, MOVE_RAPID, NC_DIALECT_NAMES, PLANE_AXES, emptyBox, extendBox, boxOf, ncPathSetId, type NcProgram, type PathPoint } from './model';
 import { compPathSegments, ncCompPath, type CompPathOptions, type NcCompPath } from './comp';
 import { MeshAccum, TOOL_COLORS, cylinderAxes, rampColor, type TriRange } from './mesh';
 import { pathPolyline, type MprEdgeOp, type MprHole, type MprPart, type MprWorkpiece, type PanelFace, type PrismArcs } from './mpr';
@@ -153,12 +153,15 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     ids: Uint32Array;
     col?: Float32Array;
     k: number;
+    /** 출발점만 추정 안전 높이인 이동(FLAG_START_EST)이 들었는지 — 들었으면 맞춤 상자(fitOf) */
+    est: boolean;
   }
   const mk = (cnt: number, withColor: boolean): Buf => ({
     pos: new Float32Array(cnt * 6),
     ids: new Uint32Array(cnt),
     col: withColor ? new Float32Array(cnt * 8) : undefined,
     k: 0,
+    est: false,
   });
   const rapid = mk(opts.rapids === false ? 0 : segRapid, false);
   const mach = mk(segMach, false);
@@ -197,16 +200,22 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
       put(mach, i, x0, y0, z0, x1, y1, z1);
       continue;
     }
+    const est = (m.flags[i]! & FLAG_START_EST) !== 0;
     if (k === MOVE_RAPID) {
-      if (opts.rapids !== false) put(rapid, i, x0, y0, z0, x1, y1, z1);
+      if (opts.rapids !== false) {
+        put(rapid, i, x0, y0, z0, x1, y1, z1);
+        if (est) rapid.est = true;
+      }
       continue;
     }
     const s = toolSet.get(m.tool[i]!)!;
     const c = byFeed ? rampColor(m.feed[i]! > 0 ? (m.feed[i]! - feedMin) / span : 0) : undefined;
     if (k === MOVE_DRILL) {
       put(drill[s]!, i, x0, y0, z0, x1, y1, z1, c);
+      if (est) drill[s]!.est = true;
       continue;
     }
+    if (est) cut[s]!.est = true;
     if (k !== MOVE_ARC) {
       put(cut[s]!, i, x0, y0, z0, x1, y1, z1, c);
       continue;
@@ -256,9 +265,29 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     }
   }
 
+  // 출발점만 추정 안전 높이인 이동(FLAG_START_EST — G28 뒤 G1 진입 등)이 든 묶음의 화면 맞춤 상자(코어 0.67.0 LineSet3d.fitBox, 72차):
+  // Scene3d.bounds(해석기 build)처럼 그 이동은 끝점만(호를 나눈 조각은 마지막 조각 끝), 나머지 선분은 두 끝 — 장면 float32 좌표 그대로.
+  // 코어는 아무것도 숨기지 않으면 Scene3d.bounds로, 묶음 하나라도 숨기면 보이는 묶음 범위의 합으로 맞추므로 이 상자가 없으면 그 합에 추정 높이의
+  // 출발점이 들어 다른 묶음 하나를 숨겼을 때 맞춤이 추정 높이(+25 mm·1 inch)까지 넓어졌다(70차가 남긴 것). 그런 이동이 없는 묶음은 상자를 주지 않는다
+  const fitOf = (b: Buf): { fitBox: Box3 } | Record<string, never> => {
+    if (!b.est) return {};
+    const box = emptyBox();
+    const { pos, ids } = b;
+    for (let j = 0; j < b.k; j++) {
+      const o = j * 6;
+      const i = ids[j]!;
+      if (m.flags[i]! & FLAG_START_EST) {
+        if (j + 1 < b.k && ids[j + 1] === i) continue;
+      } else extendBox(box, pos[o]!, pos[o + 1]!, pos[o + 2]!);
+      extendBox(box, pos[o + 3]!, pos[o + 4]!, pos[o + 5]!);
+    }
+    const fb = boxOf(box);
+    return fb ? { fitBox: fb } : {};
+  };
+
   const lines: LineSet3d[] = [];
   if (rapid.k > 0)
-    lines.push({ id: 'nc-rapid', name: '급속 이송', positions: rapid.pos, color: RAPID_COLOR, dashed: true, group: '급속 이송', segmentIds: rapid.ids });
+    lines.push({ id: 'nc-rapid', name: '급속 이송', positions: rapid.pos, color: RAPID_COLOR, dashed: true, group: '급속 이송', segmentIds: rapid.ids, ...fitOf(rapid) });
   // 기계 좌표 쪽 추정 이동(G53·G28·M91 등 — 안전 높이로 그림): 범위에 넣지 않는 따로 점선.
   // 화면 맞춤에서도 뺀다(코어 0.65.0 fit: false) — 코어는 아무것도 숨기지 않으면 Scene3d.bounds, 묶음 하나라도 숨기면 보이는 묶음 범위 합으로 맞추므로
   // 빼지 않으면 공구 하나를 숨겼을 때 맞춤이 추정 안전 높이(+25 mm·1 inch)까지 넓어졌다(70차)
@@ -275,13 +304,13 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
     const group = toolName(t);
     const c = cut[s]!;
     if (c.k > 0) {
-      const ls: LineSet3d = { id: ncPathSetId(MOVE_ARC, 0, t), name: `${group} 이송`, positions: c.pos, color: col, group, segmentIds: c.ids, width: 1.5 };
+      const ls: LineSet3d = { id: ncPathSetId(MOVE_ARC, 0, t), name: `${group} 이송`, positions: c.pos, color: col, group, segmentIds: c.ids, width: 1.5, ...fitOf(c) };
       if (c.col) ls.colors = c.col;
       lines.push(ls);
     }
     const d = drill[s]!;
     if (d.k > 0) {
-      const ls: LineSet3d = { id: ncPathSetId(MOVE_DRILL, 0, t), name: `${group} 드릴`, positions: d.pos, color: col, group, segmentIds: d.ids, width: 3 };
+      const ls: LineSet3d = { id: ncPathSetId(MOVE_DRILL, 0, t), name: `${group} 드릴`, positions: d.pos, color: col, group, segmentIds: d.ids, width: 3, ...fitOf(d) };
       if (d.col) ls.colors = d.col;
       lines.push(ls);
     }
