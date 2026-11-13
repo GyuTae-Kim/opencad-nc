@@ -259,9 +259,11 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
   const lines: LineSet3d[] = [];
   if (rapid.k > 0)
     lines.push({ id: 'nc-rapid', name: '급속 이송', positions: rapid.pos, color: RAPID_COLOR, dashed: true, group: '급속 이송', segmentIds: rapid.ids });
-  // 기계 좌표 쪽 추정 이동(G53·G28·M91 등 — 안전 높이로 그림): 범위에 넣지 않는 따로 점선
+  // 기계 좌표 쪽 추정 이동(G53·G28·M91 등 — 안전 높이로 그림): 범위에 넣지 않는 따로 점선.
+  // 화면 맞춤에서도 뺀다(코어 0.65.0 fit: false) — 코어는 아무것도 숨기지 않으면 Scene3d.bounds, 묶음 하나라도 숨기면 보이는 묶음 범위 합으로 맞추므로
+  // 빼지 않으면 공구 하나를 숨겼을 때 맞춤이 추정 안전 높이(+25 mm·1 inch)까지 넓어졌다(70차)
   if (mach.k > 0)
-    lines.push({ id: 'nc-machine', name: '기계 원점 쪽 이동(추정)', positions: mach.pos, color: MACHINE_COLOR, dashed: true, group: '기계 원점 쪽 이동(추정)', segmentIds: mach.ids });
+    lines.push({ id: 'nc-machine', name: '기계 원점 쪽 이동(추정)', positions: mach.pos, color: MACHINE_COLOR, dashed: true, group: '기계 원점 쪽 이동(추정)', segmentIds: mach.ids, fit: false });
   // 묶음 이름: T번호(이름만 있는 공구는 이름), 공구 없으면 '공구 없음'
   const toolName = (t: number): string => {
     if (t < 0) return '공구 없음';
@@ -328,12 +330,12 @@ export function ncToScene(p: NcProgram, opts: NcSceneOptions = {}): Scene3d {
       lines.push({ id: 'nc-comp', name, positions: q, color: COMP_COLOR, group: '보정 경로', segmentIds: seg.ids, width: 2 });
     }
   }
-  // 선반: 회전축(Z) 표시
+  // 선반: 회전축(Z) 표시 — 범위 둘레로 늘인 보조선이라 Scene3d.bounds처럼 화면 맞춤에서도 뺀다(70차 — 숨김과 상관없이 같은 맞춤)
   if (p.lathe && p.bounds) {
     const z0 = Math.min(p.bounds.min[2], 0);
     const z1 = Math.max(p.bounds.max[2], 0);
     const pad = Math.max(1, (z1 - z0) * 0.05);
-    lines.push({ id: 'lathe-axis', name: '회전축(Z)', positions: new Float32Array([0, 0, z0 - pad, 0, 0, z1 + pad]), color: AXIS_COLOR, dashed: true, group: '회전축' });
+    lines.push({ id: 'lathe-axis', name: '회전축(Z)', positions: new Float32Array([0, 0, z0 - pad, 0, 0, z1 + pad]), color: AXIS_COLOR, dashed: true, group: '회전축', fit: false });
   }
 
   const meshes: Mesh3d[] = [];
