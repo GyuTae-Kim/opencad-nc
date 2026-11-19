@@ -21,7 +21,7 @@
  */
 import type { MeasureResult, Pick3d, RenderMode, SceneIssue, SectionAxis, SectionState, ViewName, Viewer3d } from 'opencad-viewer3d';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
-import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
+import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, NC_EXTENSIONS, PGI_EXTENSIONS, XML_EXTENSIONS, isPanelKind } from '../extensions';
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 // 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
 import type { TouchAim } from './aim';
@@ -45,6 +45,7 @@ import { NARROW_WIDTH, NcPanel, loadPanelInfo, type PanelHost } from './panel';
 import type { ArcCenters } from './snap';
 import { errorText, sceneHasGeometry, type NcKind, type NcOpenOptions } from './protocol';
 import { canUseServiceWorker, consumeLaunchFiles, registerServiceWorker, whenVisible, type SwContainer } from 'opencad-site-kit/pwa/client';
+import { acceptEmbeddedFiles, isFramed } from 'opencad-site-kit/embed/app';
 import { otherTheme, readThemePref, resolveTheme, safeStorage, writeThemePref, type ThemeName } from './theme';
 import type { SimHost, SimState, SimView } from './sim';
 
@@ -62,6 +63,8 @@ function settleWithin(p: Promise<unknown>, ms: number): Promise<void> {
 export const APP_TITLE = 'OpenCAD NC 뷰어';
 const TOOLS_URL = 'https://gyutae-kim.github.io/opencad';
 const REPO_URL = 'https://github.com/GyuTae-Kim/opencad-nc';
+/** 다른 웹페이지에 넣었을 때 부모 페이지에서 받는 확장자(점 포함, 소문자 — 여는 확장자 NC_EXTENSIONS 그대로) */
+export const EMBED_ACCEPT: readonly string[] = NC_EXTENSIONS.map((e) => `.${e.toLowerCase()}`);
 
 const RENDER_MODES: [RenderMode, string][] = [
   ['shaded', '음영'],
@@ -362,7 +365,8 @@ export class NcViewerApp implements PanelHost {
     themeChoice.addEventListener('click', () => this.setTheme(otherTheme(this.theme), true));
     const analyticsChoice = h('button', { type: 'button', role: 'menuitem' }, '방문 통계 설정');
     analyticsChoice.addEventListener('click', showAnalyticsSettings);
-    const settings = this.menu('settings', this.themeBtn, [themeChoice, analyticsChoice], false);
+    // 다른 웹페이지에 넣은 화면(iframe)에서는 방문 통계를 켜지 않으므로 그 설정 항목도 뺀다
+    const settings = this.menu('settings', this.themeBtn, isFramed() ? [themeChoice] : [themeChoice, analyticsChoice], false);
     const toolsLink = h('a', { class: 'tbtn', href: TOOLS_URL, title: 'OpenCAD 도구 모음', 'aria-label': 'OpenCAD 도구', html: `${icon('apps')}<span class="lbl">OpenCAD 도구</span>` });
     const repoLink = h('a', { class: 'tbtn', href: REPO_URL, target: '_blank', rel: 'noopener', title: 'GitHub 저장소(소스 코드)', 'aria-label': 'GitHub', html: `${icon('code')}<span class="lbl">GitHub</span>` });
     this.docNameEl = h('span', { class: 'docname' });
@@ -1157,6 +1161,8 @@ export class NcViewerApp implements PanelHost {
       void registerServiceWorker(navigator.serviceWorker as unknown as SwContainer, new URL('sw.js', document.baseURI),
         (apply) => toast('새 버전이 있습니다.', 'info', 60_000, { label: '새로 고침', run: apply }), undefined, { onVisible: whenVisible });
     consumeLaunchFiles((files) => void (files.length > 1 ? this.openFiles(files) : this.openFile(files[0]!)));
+    // 다른 웹페이지에 넣었을 때(iframe) 부모 페이지가 넘기는 파일(여럿이면 한 작업으로) — 열기를 마치면 풀리는 Promise를 돌려줘 부모가 끝을 안다
+    acceptEmbeddedFiles((files) => (files.length > 1 ? this.openFiles(files) : this.openFile(files[0]!)), { accept: EMBED_ACCEPT });
     // 공유 받기(?recent=·?share=·?share-error=)는 한 번만: 주소에서 지운다(다시 읽어도 또 열지 않게)
     const once = parseOnceParams(location.search);
     if (once.recent || once.share || once.shareError) {

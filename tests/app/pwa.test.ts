@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * 홈 화면 앱(공용 도구 opencad-site-kit/pwa/client를 이 앱이 부르는 꼴)과 공유 받기 시작 인자(format.ts·app.ts): 서비스 워커 등록·새 판 알림,
- * 데스크톱 파일 열기(launchQueue — 여러 파일),
+ * 데스크톱 파일 열기(launchQueue — 여러 파일), 다른 웹페이지에 넣었을 때 부모가 넘긴 파일 열기(opencad-site-kit/embed/app — 가짜 창),
  * ?recent=·?share=·?share-error=로 공유 받은 파일 열기. 뷰어 코어(WebGL)는 가짜로, 해석은 워커와 같은 길(parseForView)로 바로 부른다.
  */
 import { Blob as NodeBlob, File as NodeFile } from 'node:buffer';
@@ -32,10 +32,25 @@ const fake = vi.hoisted(() => {
       return [];
     }
   }
-  return { FakeViewer, opens: [] as { name: string; extra: string[] }[] };
+  return {
+    FakeViewer,
+    opens: [] as { name: string; extra: string[] }[],
+    /** 넣은 화면(iframe)인 척: isFramed와 acceptEmbeddedFiles가 받을 가짜 창 */
+    framed: false,
+    frame: undefined as EmbedWindow | undefined,
+  };
 });
 
 vi.mock('opencad-viewer3d', async (importOriginal) => ({ ...(await importOriginal<object>()), Viewer3d: fake.FakeViewer }));
+// 앱이 부르는 꼴 그대로 진짜 acceptEmbeddedFiles에 가짜 창만 넘긴다(frame이 없으면 jsdom 창 — 넣지 않은 화면)
+vi.mock('opencad-site-kit/embed/app', async (importOriginal) => {
+  const real = await importOriginal<typeof import('opencad-site-kit/embed/app')>();
+  return {
+    ...real,
+    isFramed: () => fake.framed,
+    acceptEmbeddedFiles: (open: (files: File[]) => unknown, options?: EmbedOptions) => real.acceptEmbeddedFiles(open, options, fake.frame),
+  };
+});
 vi.mock('../../src/app/client', async () => {
   const { parseForView } = await import('../../src/app/payload');
   class ParseWorkerClient {
@@ -54,7 +69,9 @@ vi.mock('../../src/app/client', async () => {
   return { ParseWorkerClient };
 });
 
-import { NcViewerApp } from '../../src/app/app';
+import { EMBED_ACCEPT, NcViewerApp } from '../../src/app/app';
+import { NC_EXTENSIONS } from '../../src/extensions';
+import type { EmbedOptions, EmbedWindow } from 'opencad-site-kit/embed/app';
 import { parseOnceParams, shareErrorText, withoutOnceParams } from '../../src/app/format';
 import { consumeLaunchFiles, registerServiceWorker, type SwContainer, type SwRegistration, type SwWorker } from 'opencad-site-kit/pwa/client';
 import { RecentStore, recentId } from '../../src/app/recent';
@@ -91,6 +108,8 @@ beforeEach(() => {
   vi.stubGlobal('Blob', NodeBlob);
   vi.stubGlobal('File', NodeFile);
   fake.opens.length = 0;
+  fake.framed = false;
+  fake.frame = undefined;
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -240,5 +259,53 @@ describe('공유 받기 시작 인자', () => {
     await tick();
     expect([...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' ')).toMatch(/너무 커서/);
     expect(location.search).toBe('');
+  });
+});
+
+describe('다른 웹페이지에 넣기(임베드)', () => {
+  /** iframe 안의 앱 창 흉내: 부모에게 보낸 글을 모으고, 부모가 보낸 글을 넣는다 */
+  function frame() {
+    const posted: { message: Record<string, unknown>; origin: string }[] = [];
+    const parent = { postMessage: (message: unknown, origin: string) => void posted.push({ message: message as Record<string, unknown>, origin }) };
+    const listeners: ((event: MessageEvent) => void)[] = [];
+    const marks: string[] = [];
+    const w: EmbedWindow = {
+      self: {},
+      top: {},
+      parent,
+      addEventListener: (_type, listener) => void listeners.push(listener),
+      document: { documentElement: { setAttribute: (name: string) => void marks.push(name) } },
+    };
+    const send = (data: unknown) => listeners.forEach((listener) => listener({ data, source: parent, origin: 'https://host.example' } as unknown as MessageEvent));
+    return { w, posted, marks, send };
+  }
+  const bytes = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
+  const menuItems = (root: HTMLElement): string[] => [...root.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent ?? '');
+
+  it('부모가 넘긴 주 프로그램·부프로그램을 한 작업으로 열고, 열기를 마치면 알린다. 방문 통계 설정은 뺀다', async () => {
+    const f = frame();
+    fake.framed = true;
+    fake.frame = f.w;
+    const { root } = makeApp(memoryBackend());
+    // 앱이 여는 확장자 그대로(점 포함, 소문자) 알리고 넣은 화면임을 표시한다
+    expect(EMBED_ACCEPT).toEqual(NC_EXTENSIONS.map((e) => `.${e}`));
+    expect(f.posted).toEqual([{ message: { type: 'opencad:ready', protocol: 1, accept: EMBED_ACCEPT }, origin: '*' }]);
+    expect(f.marks).toEqual(['data-embedded']);
+    expect(menuItems(root)).not.toContain('방문 통계 설정');
+    // 여는 확장자가 아닌 파일은 빼고 넘긴다 — 열기를 마칠 때까지 done을 보내지 않는다
+    f.send({ type: 'opencad:open', protocol: 1, id: 'j1', files: [
+      { name: 'O1001.nc', data: bytes(SUB) },
+      { name: 'main.NC', data: new NodeBlob([MAIN]) as unknown as Blob },
+      { name: 'notes.pdf', data: bytes('%PDF-1.7') },
+    ] });
+    await until(() => f.posted.length > 1, 20_000);
+    expect(f.posted[1]).toEqual({ message: { protocol: 1, type: 'opencad:done', id: 'j1' }, origin: 'https://host.example' });
+    expect(fake.opens.at(-1)).toEqual({ name: 'O1001.nc', extra: ['main.NC'] });
+    expect(window.opencadApp!.state.jobFiles).toEqual(['main.NC', 'O1001.nc']);
+  });
+
+  it('넣지 않은 화면에서는 방문 통계 설정을 그대로 둔다', () => {
+    const { root } = makeApp(memoryBackend());
+    expect(menuItems(root).filter((t) => t === '방문 통계 설정')).toHaveLength(1);
   });
 });

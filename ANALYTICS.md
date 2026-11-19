@@ -6,7 +6,8 @@
 [개인 속성 관리](https://analytics.google.com/analytics/web/?authuser=0#/a412270261p559257929/admin)
 
 홈페이지와 DWG/DXF·NC·STEP·SKP 웹앱은 GA4 속성 하나와 웹 데이터 스트림 하나를 공유한다.
-측정 ID와 수집 코드는 OpenCAD 앱이 함께 쓰는 사이트 도구(`opencad-site-kit`의 `analytics/config.ts`·`analytics/analytics.ts`)에 둔다. 3D 뷰어 코어 라이브러리에는 태그를 넣지 않는다.
+측정 ID와 수집 코드는 OpenCAD 앱이 함께 쓰는 사이트 도구(`opencad-site-kit`의 `presets/opencad.mjs` `OPENCAD_ANALYTICS`·`analytics/analytics.ts`)에 둔다. 앱은 `src/app/main.ts`에서 `initAnalytics(OPENCAD_ANALYTICS, 'nc')`로 켠다.
+다른 웹페이지에 넣은 화면(iframe)에서는 수집하지 않고 동의 상자·설정 메뉴 항목도 보이지 않는다. 3D 뷰어 코어 라이브러리에는 태그를 넣지 않는다.
 GitHub 저장소 방문은 웹앱 통계와 별개이며 저장소의 Insights → Traffic에서 확인한다.
 
 ## 수집 범위
@@ -58,7 +59,7 @@ GA 기본 측정기준인 **콘텐츠 그룹**으로 소개·가이드·실행 �
 
 1. 개인 홈페이지·OpenCAD용 속성을 정하고 시간대를 서울, 통화를 KRW로 설정한다.
 2. 홈페이지 루트 주소의 웹 스트림을 만들고 **향상된 측정을 전부 끈다**. 페이지 조회와 클릭·파일 사용은 앱에서 직접 보낸다. 자동 페이지 제목·검색어·다운로드 수집이 파일 정보를 수집하지 않도록 하는 설정이다.
-3. 실제 측정 ID를 각 배포 앱의 `GA4_MEASUREMENT_ID`에 같은 값으로 넣는다. ID가 비어 있으면 태그와 설정 UI 모두 비활성화된다.
+3. 실제 측정 ID는 공용 사이트 도구의 `OPENCAD_ANALYTICS.measurementId` 하나에 두고 홈페이지와 네 앱이 같이 쓴다. ID가 `G-…` 꼴이 아니면 태그와 설정 UI 모두 비활성화된다.
 4. 이벤트 범위 맞춤 측정기준을 `tool`, `target_tool`, `input_kind`, `file_format`, `error_code`, `export_format`으로 등록한다.
 5. `duration_ms`는 이벤트 범위 맞춤 측정항목(밀리초)으로 등록한다. `file_open_success`를 주요 이벤트로 지정한다. 예제 성공은 여기에 포함되지 않는다.
 6. 이벤트 데이터 보관은 14개월로 설정했다. 홈페이지 루트의 Search Console 속성 `https://gyutae-kim.github.io/`를 같은 웹 스트림에 연결했다.

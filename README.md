@@ -612,6 +612,9 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
    **데스크톱 파일 열기**: `file_handlers`(뷰어가 여는 확장자 전부 — `NC_EXTENSIONS`에서 빌드 때 만듦)와 `launchQueue`로 설치한 앱을
    파일 탐색기의 "연결 프로그램"으로 쓸 수 있고, 여러 파일을 함께 고르면 창 하나에서 한 작업으로 엽니다(`launch_type: single-client`,
    이미 열린 창이 있으면 그 창으로). 앱 정보에는 `id`를 두지 않습니다(언어 페이지마다 start_url이 id). 개발 서버는 서비스 워커를 등록하지 않습니다.
+   **다른 웹페이지에 넣기**: 다른 페이지에 iframe으로 넣으면(공용 사이트 도구의 `<opencad-viewer>` 요소 — 도구의 `docs/EMBED.md`) 부모 페이지가 넘긴 파일을
+   여러 개면 한 작업으로 엽니다(`acceptEmbeddedFiles` — 여는 확장자 `NC_EXTENSIONS`만 받고, 열기를 마치면 부모에게 알림). 넣은 화면에서는 방문 통계·서비스 워커를 쓰지 않고
+   설정 메뉴의 "방문 통계 설정"도 뺍니다. 넣은 화면에서 연 파일도 최근 문서에 남지만, 브라우저가 그 사이트 몫의 저장소에 따로 둡니다.
 
 | 키 | 하는 일 |
 |---|---|
@@ -983,7 +986,8 @@ GL 호출이 모두 그대로입니다(24,940번 — 숨은 선 모드에서 x �
 
 **공용 사이트 도구**: 다섯 언어 페이지·검색 정보·사이트맵·내용 수정일·언어별 앱 정보·서비스 워커 빌드, 공용 번역기, 언어 메뉴, 서비스 워커 등록·새 판 알림,
 방문 통계, 휴대폰 성능 비교는 다른 OpenCAD 앱과 함께 쓰는 [opencad-site-kit](https://github.com/GyuTae-Kim/opencad-site-kit)
-(`github:GyuTae-Kim/opencad-site-kit#v0.1.5`, 잠금 커밋 `43ec8da`, 빌드 때만 써서 `devDependencies`)에 있습니다.
+(0.2.0 후보 커밋 `99989f9` — `github:GyuTae-Kim/opencad-site-kit#99989f9…`, 빌드 때만 써서 `devDependencies`)에 있습니다.
+다른 웹페이지에 넣기(`embed/app`)와 OpenCAD 설정 묶음(`presets/opencad` — 방문 통계 `OPENCAD_ANALYTICS`, 언어 주소 규칙 `OPENCAD_SITE`)도 이 도구에 있습니다.
 이 앱에만 있는 값은 `tools/site.mjs`(앱 정보 원본 `site/manifest.webmanifest`와 파일 연결, 검색 정보 자리의 앱 정보 링크, 서비스 워커 판 이름 짓기)와
 `tools/sw-source.mjs`(서비스 워커 본문)에 둡니다. `check:seo`·`check:i18n`·`test:seo`·`update:content-dates`는 도구의 `opencad-site` 명령입니다.
 도구 판을 올릴 때는 빌드 결과를 견줍니다.
