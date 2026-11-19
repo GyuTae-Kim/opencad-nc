@@ -30,7 +30,7 @@
     "sim:bench": "vite-node scripts/sim/bench.ts --"
   },
   "dependencies": {
-    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#4c930c4abdff8f423fac4cc08c77e0786e143506"
+    "opencad-viewer3d": "github:GyuTae-Kim/opencad-viewer3d#253bd67fb50cf98c3389f669c4e914ac062bda8a"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
