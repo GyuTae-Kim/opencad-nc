@@ -5,12 +5,12 @@ import { installLocalization } from './i18n';
 import '../view/vlist.css';
 import './styles.css';
 import { initAnalytics } from 'opencad-site-kit/analytics';
-import { GA4_MEASUREMENT_ID } from 'opencad-site-kit/analytics/config';
+import { OPENCAD_ANALYTICS } from 'opencad-site-kit/presets/opencad';
 import { NcViewerApp } from './app';
 
 const root = document.getElementById('app');
 if (root) {
-  initAnalytics(GA4_MEASUREMENT_ID, 'nc');
+  initAnalytics(OPENCAD_ANALYTICS, 'nc');
   new NcViewerApp(root);
 }
 
