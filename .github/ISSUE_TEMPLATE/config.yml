@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: 보안 문제 (Security)
+    url: https://github.com/GyuTae-Kim/opencad-nc/security/advisories/new
+    about: 공개 이슈 대신 비공개로 알려 주십시오 (Report vulnerabilities privately)
   - name: OpenCAD NC 뷰어 열기
     url: https://gyutae-kim.github.io/opencad-nc/
     about: 설치 없이 브라우저에서 바로 씁니다 (Use it in the browser)
