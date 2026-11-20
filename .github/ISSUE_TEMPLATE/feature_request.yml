@@ -1,0 +1,19 @@
+name: 바라는 기능 (Feature request)
+description: OpenCAD NC 뷰어에 있었으면 하는 것 (Something you'd like it to do)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: 하려는 일 (What you are trying to do)
+      description: 어떤 파일로 무엇을 하려는지 (the files and what you want to achieve)
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 생각한 방법 (Proposed solution)
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 지금 쓰는 방법 (Current workaround)
