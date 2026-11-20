@@ -1004,7 +1004,7 @@ GL 호출이 모두 그대로입니다(24,940번 — 숨은 선 모드에서 x �
 
 **공용 사이트 도구**: 다섯 언어 페이지·검색 정보·사이트맵·내용 수정일·언어별 앱 정보·서비스 워커 빌드, 공용 번역기, 언어 메뉴, 서비스 워커 등록·새 판 알림,
 방문 통계, 휴대폰 성능 비교는 다른 OpenCAD 앱과 함께 쓰는 [opencad-site-kit](https://github.com/GyuTae-Kim/opencad-site-kit)
-(`github:GyuTae-Kim/opencad-site-kit#v0.3.2`, 잠금 커밋 `c7f001c`, 빌드 때만 써서 `devDependencies`)에 있습니다.
+(`github:GyuTae-Kim/opencad-site-kit#v0.3.3`, 잠금 커밋 `689d26b`, 빌드 때만 써서 `devDependencies`)에 있습니다.
 다른 웹페이지에 넣기(`embed/app`)와 OpenCAD 설정 묶음(`presets/opencad` — 방문 통계 `OPENCAD_ANALYTICS`, 언어 주소 규칙 `OPENCAD_SITE`)도 이 도구에 있습니다.
 이 앱에만 있는 값은 `tools/site.mjs`(앱 정보 원본 `site/manifest.webmanifest`와 파일 연결, 검색 정보 자리의 앱 정보 링크, 서비스 워커 판 이름 짓기)와
 `tools/sw-source.mjs`(서비스 워커 본문)에 둡니다. `check:seo`·`check:i18n`·`test:seo`·`update:content-dates`는 도구의 `opencad-site` 명령입니다.
