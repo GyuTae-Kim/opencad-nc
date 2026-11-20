@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OpenCAD NC 뷰어 열기
+    url: https://gyutae-kim.github.io/opencad-nc/
+    about: 설치 없이 브라우저에서 바로 씁니다 (Use it in the browser)
+  - name: 내 웹사이트에 넣기 (Embed in your site)
+    url: https://github.com/GyuTae-Kim/opencad-site-kit#%EB%82%B4-%EC%9B%B9%EC%82%AC%EC%9D%B4%ED%8A%B8%EC%97%90-opencad-%EC%84%A4%EC%B9%98%ED%95%98%EA%B8%B0
+    about: <opencad-viewer> 스크립트 한 줄로 넣는 법
