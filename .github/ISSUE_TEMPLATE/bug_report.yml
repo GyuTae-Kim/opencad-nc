@@ -7,6 +7,7 @@ body:
       value: |
         한국어나 영어로 쓰시면 됩니다. 이슈는 누구나 볼 수 있으니 회사 도면이나 고객 파일은 올리지 마시고, 같은 문제가 나는 작은 파일이나 만든 프로그램과 판을 적어 주십시오.
         다른 웹페이지에 넣은 `<opencad-viewer>` 문제는 [opencad-site-kit](https://github.com/GyuTae-Kim/opencad-site-kit/issues)에 올려 주십시오.
+        보안 문제는 이슈 대신 [비공개 신고](https://github.com/GyuTae-Kim/opencad-nc/security/advisories/new)를 써 주십시오.
         (Korean or English is fine. Issues are public, so don't attach confidential drawings. Embed problems belong in opencad-site-kit.)
   - type: textarea
     id: what
