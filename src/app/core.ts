@@ -60,7 +60,7 @@ export function isChunkLoadError(e: unknown): boolean {
 export function measureFailText(online: boolean): string {
   return online
     ? '측정 도구를 받지 못했습니다. 앱의 새 버전이 나왔을 수 있으니 새로 고친 뒤 파일을 최근 문서에서 다시 여십시오.'
-    : '인터넷 연결이 끊겨 측정 도구를 받지 못했습니다. 연결되면 측정 단추를 다시 누르십시오.';
+    : '인터넷 연결이 끊겨 측정 도구를 받지 못했습니다. 연결되면 측정 버튼을 다시 누르십시오.';
 }
 
 /**

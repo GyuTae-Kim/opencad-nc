@@ -29,7 +29,7 @@ async (page) => {
   await page.touchscreen.tap(canvas.x + mid[0] + 4, canvas.y + mid[1] + 3);
   await page.locator('.measure-bar .mb-value').waitFor();
   assert(await page.locator('.measure-bar .mb-value').textContent() === '20 mm', 'Centre to arc midpoint measures the radius');
-  assert(await page.locator('.measure-bar .mb-snap').textContent() === '중심 → 가운데 점', 'Measure bar names both snapped points');
+  assert(await page.locator('.measure-bar .mb-snap').textContent() === '중심 → 중간점', 'Measure bar names both snapped points');
   assert(await page.evaluate(() => { const shown = [...document.querySelectorAll('.measure-bar .mb-btn')].filter(b => !b.hidden); return shown.length >= 2 && shown.every(b => { const r = b.getBoundingClientRect(); return r.width >= 38 && r.height >= 38; }); }), 'Visible measure bar buttons have 38x38 touch targets');
   await page.screenshot({path:'.runtime/performance/measure-mobile.png'});
   await page.getByRole('button',{name:'측정 끝내기',exact:true}).click();

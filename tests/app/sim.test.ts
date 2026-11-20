@@ -214,7 +214,7 @@ afterEach(() => {
 });
 
 describe('깎기 시뮬레이션 켜고 끄기', () => {
-  it('켜면 문서 장면 + 소재 그물(조각·옆면·바닥)을 카메라를 지킨 채 올리고, 끄면 문서 장면으로', async () => {
+  it('켜면 문서 장면 + 소재 메시(조각·옆면·바닥)을 카메라를 지킨 채 올리고, 끄면 문서 장면으로', async () => {
     const { app, root } = makeApp();
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     const api = window.opencadApp!;
@@ -267,7 +267,7 @@ describe('깎기 시뮬레이션 켜고 끄기', () => {
     expect(api.state.sim!.grid).not.toBeNull();
   });
 
-  it('소재가 처음 다 모였을 때만 장면 전체를 올리고, 그 뒤 바뀐 조각은 그물 하나 바꾸기(setMesh)로 — 측정 중에도 기다리지 않는다', async () => {
+  it('소재가 처음 다 모였을 때만 장면 전체를 올리고, 그 뒤 바뀐 조각은 메시 하나 바꾸기(setMesh)로 — 측정 중에도 기다리지 않는다', async () => {
     const { app, root } = makeApp();
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     const api = window.opencadApp!;
@@ -464,8 +464,8 @@ describe('깎기 탭', () => {
   });
 });
 
-describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 0.24.0 setItemPickOpaque)', () => {
-  it('판재 문서 장면을 올릴 때마다 반투명 포켓 그물만 켜고(판·구멍은 아님), 판을 뺀 소재 장면에서는 켜지 않는다', async () => {
+describe('판 너머 고르기에서 멈출 포켓·홈 메시(27차 — 코어 0.24.0 setItemPickOpaque)', () => {
+  it('판재 문서 장면을 올릴 때마다 반투명 포켓 메시만 켜고(판·구멍은 아님), 판을 뺀 소재 장면에서는 켜지 않는다', async () => {
     const { app } = makeApp();
     await open(app, 'p.mpr', PANEL_MPR);
     const api = window.opencadApp!;
@@ -497,7 +497,7 @@ describe('판 너머 고르기에서 멈출 포켓·홈 그물(27차 — 코어 
     expect([...FakeViewer().pickThrough]).toEqual([]);
   });
 
-  it('보기에서 누르기: 판이 있는 문서 장면은 판 너머 고르기(구멍을 누르면 그 가공), 소재 장면은 예전처럼 가장 앞 면(겹친 포켓 그물을 누르면 그 가공)', async () => {
+  it('보기에서 누르기: 판이 있는 문서 장면은 판 너머 고르기(구멍을 누르면 그 가공), 소재 장면은 예전처럼 가장 앞 면(겹친 포켓 메시를 누르면 그 가공)', async () => {
     // jsdom에는 없다(가공 탭에서 고른 줄을 보이게 할 때 부른다)
     const proto = Element.prototype as { scrollIntoView?: unknown };
     const had = proto.scrollIntoView;
@@ -643,7 +643,7 @@ describe('판재 가공 하나씩 따라가기', () => {
 });
 
 describe('장면 합치기·번역', () => {
-  it('공작물 상자(nc-stock)를 빼고 소재 그물을 더하며 범위를 넓힌다', () => {
+  it('공작물 상자(nc-stock)를 빼고 소재 메시를 더하며 범위를 넓힌다', () => {
     const base = { name: 'a', units: 'mm' as const, meshes: [{ id: 'nc-stock', positions: new Float32Array(9), color: [1, 1, 1, 1] as const }], lines: [{ id: 'nc-cut-1', positions: new Float32Array(6) }], points: [], bounds: { min: [0, 0, -1] as [number, number, number], max: [10, 10, 5] as [number, number, number] } };
     const m = { id: 'sim-walls', positions: new Float32Array(9), color: [1, 1, 1, 1] as const };
     const s = composeSimScene(base, [m], false, { min: [-5, 0, -20], max: [10, 12, 0] });
@@ -657,7 +657,7 @@ describe('장면 합치기·번역', () => {
     expect(composeSimScene(panel, [m], false, null).meshes.map((x) => x.id)).toEqual(['sim-walls']);
   });
 
-  it('그물 하나씩 바꾸기와 장면 전체: 바뀐 바이트가 장면 전체의 반을 넘으면 장면 전체', () => {
+  it('메시 하나씩 바꾸기와 장면 전체: 바뀐 바이트가 장면 전체의 반을 넘으면 장면 전체', () => {
     const tile = { id: 'sim-tile-0-0', positions: new Float32Array(30), colors: new Float32Array(30), indices: new Uint32Array(12), color: [1, 1, 1, 1] as const };
     expect(sumBytes([tile])).toBe(30 * 4 * 2 + 12 * 4);
     expect(sumBytes([{ id: 'nc-cut-1', positions: new Float32Array(6), name: 'x' }])).toBe(24);
@@ -734,7 +734,7 @@ describe('장면 합치기·번역', () => {
       '경로(지름 모름)',
       // 판재 가공 하나씩 따라가기(13차)
       '가공 하나씩 따라가기',
-      '가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 단추가 남습니다.',
+      '가공 목록 차례대로 한 가공씩 깎아 봅니다. 지금 가공은 가공 그림(가공 그림도 보이기)과 가공 탭에서 강조합니다. 패널을 닫으면 3D 보기 아래에 같은 버튼이 남습니다.',
       '처음으로(깎기 전)',
       '이전 가공',
       '다음 가공',

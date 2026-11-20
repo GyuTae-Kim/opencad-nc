@@ -119,7 +119,7 @@ function load(text = PROGRAM) {
 
 const linePick = (id: string, index: number): Pick3d => ({ kind: 'line', id, index, raw: 0, point: [0, 0, 0] }) as unknown as Pick3d;
 
-describe('원호 중심 붙잡기 점', () => {
+describe('원호 중심 스냅 점', () => {
   const { nc, scene } = load();
   const c = arcCenters(nc);
 
@@ -177,7 +177,7 @@ describe('선분 묶음 id 규칙(장면과 같음)', () => {
   });
 });
 
-describe('이동 가운데 점', () => {
+describe('이동 중간점', () => {
   const { nc, scene } = load();
   const arcs = [...Array(nc.moves.count).keys()].filter((i) => nc.moves.kind[i] === MOVE_ARC);
 
@@ -212,7 +212,7 @@ describe('이동 가운데 점', () => {
     }
   });
 
-  it('고른 선분(이동 번호)에서 더할 점: 직선은 가운데 점, 원호는 호 위 가운데 점과 중심', () => {
+  it('고른 선분(이동 번호)에서 더할 점: 직선은 중간점, 원호는 호 위 중간점과 중심', () => {
     const line = [...Array(nc.moves.count).keys()].find((i) => nc.moves.kind[i] === 1 && nc.moves.points[i * 3] === 0 && nc.moves.points[i * 3 + 3] === 40)!;
     expect(moveSnapPoints(linePick('nc-cut-1', line), nc)).toEqual([{ point: [20, 0, -1], kind: 'midpoint' }]);
     const arc = moveSnapPoints(linePick('nc-cut-1', arcs[0]!), nc)!;
@@ -236,17 +236,17 @@ describe('이동 가운데 점', () => {
 });
 
 describe('붙잡은 종류 글', () => {
-  it('이름과 두 점 짝(붙잡기를 켠 결과만)', () => {
+  it('이름과 두 점 짝(스냅을 켠 결과만)', () => {
     expect(snapPair({ snapA: 'center', snapB: 'endpoint' })).toEqual(['중심', '끝점', false]);
-    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['가운데 점', '붙잡지 않은 점', false]);
+    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['중간점', '붙잡지 않은 점', false]);
     expect(snapPair({ snapA: null, snapB: null })).toBeNull();
     expect(snapPair({})).toBeNull();
     expect(snapLabel('vertex')).toBe('꼭짓점');
     expect(snapLabel('point')).toBe('붙잡은 점');
   });
 
-  it('추론 붙잡기(코어 0.9.0): 교차점·수직 발, 축 방향은 코어가 준 축(axisB, 코어 0.9.1)', () => {
-    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular' })).toEqual(['교차점', '수직 발', false]);
+  it('추론 스냅(코어 0.9.0): 교차점·수직점, 축 방향은 코어가 준 축(axisB, 코어 0.9.1)', () => {
+    expect(snapPair({ snapA: 'intersection', snapB: 'perpendicular' })).toEqual(['교차점', '수직점', false]);
     expect(snapPair({ snapA: 'center', snapB: 'axis', axisB: 'y' })).toEqual(['중심', 'Y축 방향', false]);
     expect(snapPair({ snapA: 'endpoint', snapB: 'axis', axisB: 'z' })).toEqual(['끝점', 'Z축 방향', false]);
     // 축이 없으면(옛 결과) 그냥 '축 방향' — dx·dy·dz로 짐작하지 않는다
@@ -271,7 +271,7 @@ describe('붙잡은 종류 글', () => {
   });
 });
 
-describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인다', () => {
+describe('앱: 측정 중에만 스냅을 켜고 결과에 종류를 보인다', () => {
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', class { observe(): void {} disconnect(): void {} });
     vi.stubGlobal('matchMedia', (q: string) => ({ media: q, matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
@@ -286,7 +286,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
   const measureBtn = (root: HTMLElement) => [...root.querySelectorAll<HTMLButtonElement>('.toolbar .tbtn')].find((b) => b.getAttribute('aria-label') === '측정')!;
   type Snap = { points: SnapPoint[]; pointsFor: (p: Pick3d) => SnapPoint[] | null } | null;
 
-  it('G-code: 측정을 켜면 원호 중심과 고른 이동의 가운데 점, 끄면 끈다', async () => {
+  it('G-code: 측정을 켜면 원호 중심과 고른 이동의 중간점, 끄면 끈다', async () => {
     const { app, root } = makeApp();
     expect(await app.openBuffer('snap-test.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer)).toBe(true);
     const v = fake.FakeViewer.last!;
@@ -314,7 +314,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     expect(v.snaps.at(-1)).toBeNull();
   });
 
-  it('재생 중에는 그린 이동까지의 중심만(코어 붙잡기 한도 — 점 목록은 다시 주지 않는다), 재생을 끝내면 모두', async () => {
+  it('재생 중에는 그린 이동까지의 중심만(코어 스냅 한도 — 점 목록은 다시 주지 않는다), 재생을 끝내면 모두', async () => {
     const { app, root } = makeApp();
     await app.openBuffer('snap-test.nc', new TextEncoder().encode(PROGRAM).buffer as ArrayBuffer);
     const v = fake.FakeViewer.last!;
@@ -382,7 +382,7 @@ describe('앱: 측정 중에만 붙잡기를 켜고 결과에 종류를 보인�
     }
   });
 
-  it('판재 가공(MPR): 워커가 보낸 붙잡기 표로 원호 중심과 고른 윤곽 요소의 가운데 점, 추론 붙잡기', async () => {
+  it('판재 가공(MPR): 워커가 보낸 스냅 표로 원호 중심과 고른 윤곽 요소의 중간점, 추론 스냅', async () => {
     const { app, root } = makeApp();
     const mpr = '[H\nVERSION="4.0 Alpha"\n_BSX=100.000000\n_BSY=50.000000\n_BSZ=19.000000\n\n]1\n$E0\nKP\nX=10\nY=10\nZ=19\n\n$E1\nKA\nX=30\nY=10\nDS=1\nI=20\nJ=10\n\n<100 \\WerkStck\\\nLA="100"\nBR="50"\nDI="19"\n\n<102 \\BohrVert\\\nXA="20"\nYA="25"\nTI="10"\nDU="8"\n!\n';
     expect(await app.openBuffer('panel.mpr', new TextEncoder().encode(mpr).buffer as ArrayBuffer)).toBe(true);
