@@ -32,7 +32,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
   const u = unitLabel(d.scene.units);
   const f = sceneFeatures(d.scene);
   if (nc.kind === 'gcode') {
-    const dialect = h('select', { class: 'select', 'aria-label': 'G-code 방언' });
+    const dialect = h('select', { class: 'select', 'aria-label': 'G-code 형식' });
     dialect.append(h('option', { value: 'auto' }, `자동 (${NC_DIALECT_NAMES[nc.dialect]})`));
     for (const k of G_DIALECTS) dialect.append(h('option', { value: k }, NC_DIALECT_NAMES[k]));
     dialect.value = d.ncOptions.dialect ?? 'auto';
@@ -45,7 +45,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
     p.body.append(
       group(
         '해석 설정',
-        h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '방언'), dialect),
+        h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, 'G-code 형식'), dialect),
         f.lathe && nc.latheSystem ? latheSystemRow(p.host, d, nc.latheSystem) : null,
         h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
         p.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
@@ -101,7 +101,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
   p.body.append(
     group(
       '공구 경로',
-      row('방언 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 평문' : NC_DIALECT_NAMES[nc.dialect]}${f.lathe ? ' · 선반' : ''} · ${nc.units}`),
+      row('G-code 형식 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 대화식' : NC_DIALECT_NAMES[nc.dialect]}${f.lathe ? ' · 선반' : ''} · ${nc.units}`),
       row('줄 · 실행 블록', `${nc.source.lineCount.toLocaleString('ko-KR')} · ${st.blocks.toLocaleString('ko-KR')}`),
       row('이동', st.moveCount.toLocaleString('ko-KR')),
       row('이송 길이', `${fmtNum(st.feedLength, 1)} ${u}`),

@@ -20,7 +20,7 @@ const READING: Record<NcFileKind, string> = {
 };
 
 /** 확장자도 내용도 NC로 보이지 않을 때 */
-export const NOT_NC_MESSAGE = 'NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 평문(.h)·woodWOP MPR(.mpr)·WangShi PGI(.pgi)·XML(.xml) 파일을 여십시오.';
+export const NOT_NC_MESSAGE = 'NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 대화식(.h)·woodWOP MPR(.mpr)·WangShi PGI(.pgi)·XML(.xml) 파일을 여십시오.';
 /** woodWOP MPRX(XML 형식)를 열었을 때 */
 export const MPRX_MESSAGE = 'woodWOP MPRX(XML 형식)는 읽지 못합니다. woodWOP에서 MPR(.mpr)로 저장해 여십시오.';
 /** WangShi가 아닌 XML을 열었을 때 */

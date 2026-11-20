@@ -85,7 +85,7 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
     case 'endpoint':
       return '끝점';
     case 'midpoint':
-      return '가운데 점';
+      return '중간점';
     case 'center':
       return '중심';
     case 'point':
@@ -93,7 +93,7 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
     case 'intersection':
       return '교차점';
     case 'perpendicular':
-      return '수직 발';
+      return '수직점';
     case 'axis':
       return axis === 'x' ? 'X축 방향' : axis === 'y' ? 'Y축 방향' : axis === 'z' ? 'Z축 방향' : '축 방향';
     case 'parallel':
@@ -212,8 +212,8 @@ export function measureHint(points: number, hasResult: boolean, touch = false): 
 export function panelMeasureHint(touch = false, paths = false): string {
   if (paths)
     return touch
-      ? '측정: 두 점을 누르십시오(끝점·중심·가운데 점·교차점에 붙고, 둘째 점은 수직 발·축 방향에도 붙습니다) · 길게 누르면 정밀 조준'
-      : '측정: 두 점을 누르십시오(끝점·중심·가운데 점·교차점에 붙고, 둘째 점은 수직 발·축 방향에도 붙습니다). Esc = 지우기';
+      ? '측정: 두 점을 누르십시오(끝점·중심·중간점·교차점에 붙고, 둘째 점은 수직점·축 방향에도 붙습니다) · 길게 누르면 정밀 조준'
+      : '측정: 두 점을 누르십시오(끝점·중심·중간점·교차점에 붙고, 둘째 점은 수직점·축 방향에도 붙습니다). Esc = 지우기';
   return touch ? '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다) · 길게 누르면 정밀 조준' : '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다). Esc = 지우기';
 }
 

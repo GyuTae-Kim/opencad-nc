@@ -61,7 +61,7 @@ export const NC_DIALECT_NAMES: Record<NcDialect, string> = {
   linuxcnc: 'LinuxCNC',
   grbl: 'GRBL',
   mach3: 'Mach3/Mach4',
-  heidenhain: 'Heidenhain 평문',
+  heidenhain: 'Heidenhain 대화식',
 };
 
 /** 이동 목록(구조 배열) */

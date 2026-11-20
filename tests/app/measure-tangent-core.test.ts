@@ -113,7 +113,7 @@ function setup(touch = false, src: Src = { nc, scene }) {
 const dot = (a: readonly number[], b: readonly number[]): number => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
 
 describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
-  it('첫 점이 원호 시작이고 커서가 원호 가운데 점이면 Shift가 접선 방향으로 잠그고, 떼면 푼다', () => {
+  it('첫 점이 원호 시작이고 커서가 원호 중간점이면 Shift가 접선 방향으로 잠그고, 떼면 푼다', () => {
     const w = setup();
     const { v, lock } = w;
     w.click(A);
@@ -123,7 +123,7 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     expect(v.measureHoverSnap).toMatchObject({ snap: 'midpoint' });
     // 코어 혼자서는 원호 위 점에서 잠글 방향이 없다
     expect(v.measureHoverLock).toBeNull();
-    expect(lock.snapshot()).toMatchObject({ tip: '가운데 점', lock: null, hoverLock: 'tangent' });
+    expect(lock.snapshot()).toMatchObject({ tip: '중간점', lock: null, hoverLock: 'tangent' });
     expect(w.hint()).toBe(SHIFT_LOCK_HINTS.tangent);
     w.shiftDown();
     const l = v.measureInferenceLock!;
@@ -164,7 +164,7 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     expect(v.measureInferenceLock).toBeNull();
   });
 
-  it('원호 끝(직선이 이어짐) — 휴대폰 잠금 단추: 직선을 따라 가리키면 코어 판정(X축), 원호 위면 접선, 결과 이름은 접선 방향', () => {
+  it('원호 끝(직선이 이어짐) — 휴대폰 잠금 버튼: 직선을 따라 가리키면 코어 판정(X축), 원호 위면 접선, 결과 이름은 접선 방향', () => {
     const w = setup(true);
     const { v, lock } = w;
     w.click(B, 'touch');
@@ -179,7 +179,7 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     expect(v.measureInferenceLock).toBeNull();
     // 원호 가운데 점: 끝 (40,40)에서 원호 쪽(왼쪽 위)으로
     w.hover(MID, 'pen');
-    expect(lock.snapshot()).toMatchObject({ tip: '가운데 점', hoverLock: 'tangent' });
+    expect(lock.snapshot()).toMatchObject({ tip: '중간점', hoverLock: 'tangent' });
     w.press();
     expect(dot(v.measureInferenceLock!.direction, [-H, H, 0])).toBeCloseTo(1, 12);
     expect(lock.snapshot()).toMatchObject({ lock: 'tangent', flash: null, tip: '접선 방향 · 잠금' });
@@ -197,7 +197,7 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
     expect(lock.tangentResult(m)).toBe(false);
   });
 
-  it('방향 추론(축)은 코어 판정 그대로이고, 커서가 떠난 뒤 잠금 단추는 마지막으로 본 것(접선이면 접선, 축이면 축)', () => {
+  it('방향 추론(축)은 코어 판정 그대로이고, 커서가 떠난 뒤 잠금 버튼은 마지막으로 본 것(접선이면 접선, 축이면 축)', () => {
     const w = setup(true);
     const { v, lock } = w;
     w.click(A, 'touch');
@@ -225,7 +225,7 @@ describe('원호 끝에서 접선 방향 잠금(실제 코어 판정)', () => {
   });
 });
 
-describe('원호 가운데 점에서 접선 방향 잠금(14차, 실제 코어 판정)', () => {
+describe('원호 중간점에서 접선 방향 잠금(14차, 실제 코어 판정)', () => {
   // (20,0) → (0,20) 반시계 1/4 원(중심 (0,0)) → 직선 (0,40): 가운데 점 (14.14, 14.14)의 접선은 (−H, H) — 축과 나란하지 않다
   const p2 = parseNcFile('mid.nc', ['G21 G90 G17', 'G0 X20 Y0 Z0', 'G3 X0 Y20 I-20 J0 F500', 'G1 X0 Y40'].join('\n'));
   const src = { nc: (p2 as { program: NcProgram }).program, scene: ncParsedToScene(p2) };
@@ -233,7 +233,7 @@ describe('원호 가운데 점에서 접선 방향 잠금(14차, 실제 코어 �
   const mid = movePointAt(src.nc, arc, 0.5)!;
   const T = [-H, H, 0];
 
-  it('첫 점이 원호 가운데 점이고 커서가 그 원호 위면 Shift가 그 점의 접선으로 잠그고, 잠근 선 위에 찍은 결과는 접선 방향', () => {
+  it('첫 점이 원호 중간점이고 커서가 그 원호 위면 Shift가 그 점의 접선으로 잠그고, 잠근 선 위에 찍은 결과는 접선 방향', () => {
     const w = setup(false, src);
     const { v, lock } = w;
     w.click(mid);
@@ -258,11 +258,11 @@ describe('원호 가운데 점에서 접선 방향 잠금(14차, 실제 코어 �
     expect(m).toMatchObject({ snapA: 'midpoint', snapB: 'parallel', lockedB: true });
     expect(m.b[0] - m.a[0]).toBeCloseTo(-(m.b[1] - m.a[1]), 6);
     expect(lock.tangentResult(m)).toBe(true);
-    expect(snapPair({ ...m, tangentB: true })).toEqual(['가운데 점', '접선 방향', true]);
+    expect(snapPair({ ...m, tangentB: true })).toEqual(['중간점', '접선 방향', true]);
     w.shiftUp();
   });
 
-  it('↓·휴대폰 잠금 단추도 같은 접선(원호 끝을 가리켜도), 원호 밖 빈 곳에서는 코어 판정', () => {
+  it('↓·휴대폰 잠금 버튼도 같은 접선(원호 끝을 가리켜도), 원호 밖 빈 곳에서는 코어 판정', () => {
     const w = setup(true, src);
     const { v, lock } = w;
     w.click(mid, 'touch');
@@ -298,7 +298,7 @@ describe('원호 위 아무 점에서 접선 방향 잠금(15차, 실제 코어 
   /** 첫 점(코어 점)에서 원호 위 가장 가까운 자리의 진행 방향 접선 */
   const tangentOf = (a: readonly number[]): number[] => arcTangentAtF(nc, ARC, arcNearest(nc, ARC, a)!.f)!;
 
-  it('현 위(모서리 붙잡기)에 찍은 첫 점: 커서가 원호 앞쪽이면 Shift가 그 자리의 접선(커서 쪽)으로 잠그고, 결과는 접선 방향', () => {
+  it('현 위(모서리 스냅)에 찍은 첫 점: 커서가 원호 앞쪽이면 Shift가 그 자리의 접선(커서 쪽)으로 잠그고, 결과는 접선 방향', () => {
     const w = setup();
     const { v, lock } = w;
     w.click(CHORD);
@@ -331,7 +331,7 @@ describe('원호 위 아무 점에서 접선 방향 잠금(15차, 실제 코어 
     w.shiftUp();
   });
 
-  it('커서가 원호 뒤쪽이면 반대 방향(같은 선) — 휴대폰 잠금 단추·↓, 원호 밖 빈 곳은 코어 판정', () => {
+  it('커서가 원호 뒤쪽이면 반대 방향(같은 선) — 휴대폰 잠금 버튼·↓, 원호 밖 빈 곳은 코어 판정', () => {
     const w = setup(true);
     const { v, lock } = w;
     w.click(CHORD, 'touch');
@@ -355,7 +355,7 @@ describe('원호 위 아무 점에서 접선 방향 잠금(15차, 실제 코어 
     expect(lock.snapshot()).toMatchObject({ tip: 'Y축 방향', hoverLock: 'y' });
   });
 
-  it('현의 끝(코어 끝점 붙잡기 — 원호 끝·가운데 점이 아님)도 그 자리의 접선', () => {
+  it('현의 끝(코어 끝점 스냅 — 원호 끝·중간점이 아님)도 그 자리의 접선', () => {
     const w = setup();
     const { v, lock } = w;
     const v6 = movePointAt(nc, ARC, 6 / 18)!;
@@ -446,7 +446,7 @@ describe('판재 윤곽 호의 접선 방향 잠금(15차, 실제 코어 판정)
     expect(lock.hoverLock).toBe('x');
   });
 
-  it('호의 가운데 점(앱 붙잡기)과 현 위의 첫 점: 커서 쪽 접선 — 휴대폰 잠금 단추, 결과 이름은 접선 방향', () => {
+  it('호의 중간점(앱 스냅)과 현 위의 첫 점: 커서 쪽 접선 — 휴대폰 잠금 버튼, 결과 이름은 접선 방향', () => {
     const w = setup(true, src);
     const { v, lock } = w;
     w.click(at(-45), 'touch');
