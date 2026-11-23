@@ -61,7 +61,7 @@ export function trackMark(p: { snap?: SnapKind | null; trackFrom?: readonly numb
 }
 
 /**
- * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '붙잡지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
+ * 붙잡은 종류 → 이름(번역층이 옮긴다). 붙잡지 않은 점(선·면 위 아무 자리)은 '스냅하지 않은 점'. 축 방향은 축을 알면 'X축 방향'처럼,
  * tracked(trackMark — 다른 점에서 끌어온 축, 코어 0.16.0·0.17.0 inference.track)면 '끌어온 점에서 X축', 모서리와 만나면
  * '끌어온 점에서 X축 · 모서리 위', 끌어온 축끼리의 교차면 '끌어온 X축과 Y축의 교차'(사전에 9개 모두 있다).
  * 0.18.0: 면을 뚫으면 '끌어온 점에서 X축 · 면 위', 첫 점 축이 모서리·면과 만나면 'X축 · 모서리 위'·'X축 · 면 위'(사전에 9개 더).
@@ -89,7 +89,7 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
     case 'center':
       return '중심';
     case 'point':
-      return '붙잡은 점';
+      return '스냅한 점';
     case 'intersection':
       return '교차점';
     case 'perpendicular':
@@ -99,7 +99,7 @@ export function snapLabel(kind: SnapKind | null | undefined, axis?: SnapAxis | n
     case 'parallel':
       return '나란한 방향';
     default:
-      return '붙잡지 않은 점';
+      return '스냅하지 않은 점';
   }
 }
 

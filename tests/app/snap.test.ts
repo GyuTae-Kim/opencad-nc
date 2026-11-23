@@ -238,11 +238,11 @@ describe('이동 중간점', () => {
 describe('붙잡은 종류 글', () => {
   it('이름과 두 점 짝(스냅을 켠 결과만)', () => {
     expect(snapPair({ snapA: 'center', snapB: 'endpoint' })).toEqual(['중심', '끝점', false]);
-    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['중간점', '붙잡지 않은 점', false]);
+    expect(snapPair({ snapA: 'midpoint', snapB: null })).toEqual(['중간점', '스냅하지 않은 점', false]);
     expect(snapPair({ snapA: null, snapB: null })).toBeNull();
     expect(snapPair({})).toBeNull();
     expect(snapLabel('vertex')).toBe('꼭짓점');
-    expect(snapLabel('point')).toBe('붙잡은 점');
+    expect(snapLabel('point')).toBe('스냅한 점');
   });
 
   it('추론 스냅(코어 0.9.0): 교차점·수직점, 축 방향은 코어가 준 축(axisB, 코어 0.9.1)', () => {

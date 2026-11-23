@@ -39,7 +39,7 @@ export interface TrackPickHost {
 
 /** 단추 이름(화면 읽기)과 풀이(마우스를 올리면) */
 export const TRACK_LABEL = '끌어온 점 기억';
-export const TRACK_TITLE = '지금 붙잡은 점을 끌어온 점으로 기억(그 점의 X·Y·Z축에도 붙습니다)';
+export const TRACK_TITLE = '지금 스냅한 점을 끌어온 점으로 기억(그 점의 X·Y·Z축에도 붙습니다)';
 /** 기억했을 때 띠 위 알림 */
 export const TRACKED = '끌어온 점으로 기억했습니다: 그 점의 X·Y·Z축에도 붙습니다';
 /** 기억할 점이 없을 때(손가락 기기·마우스) */
