@@ -178,11 +178,11 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
     center([20, 15, 0], 25);
     key('Enter');
     expect(v.keyboardCursor).toMatchObject({ mode: 'measure' });
-    // 측정 글의 수 꼴은 코어(측정 거리 글상자와 같은 자릿수)
-    expect(live()).toMatch(/^가상 커서를 켰습니다\. 가운데 점: X 20\.0+, Y 15\.0+, Z 0\.0+\. 옮기기 ←→↑↓ · 후보 Tab · 찍기 Enter · 끄기 Esc$/);
+    // 측정 글의 수 꼴은 코어(측정 거리 글상자와 같은 자릿수). 한국어 붙잡기 종류는 코어 기본 글(90차 — 코어 0.86.0부터 '중간점', 0.85.0까지 '가운데 점')
+    expect(live()).toMatch(/^가상 커서를 켰습니다\. 중간점: X 20\.0+, Y 15\.0+, Z 0\.0+\. 옮기기 ←→↑↓ · 후보 Tab · 찍기 Enter · 끄기 Esc$/);
     key('Enter');
     expect(v.measurePoints).toHaveLength(1);
-    expect(live()).toMatch(/^첫 점을 찍었습니다\. 가운데 점: X 20\.0+, Y 15\.0+, Z 0\.0+$/);
+    expect(live()).toMatch(/^첫 점을 찍었습니다\. 중간점: X 20\.0+, Y 15\.0+, Z 0\.0+$/);
     expect(app.state().measureLock?.lock).toBeNull();
     // 둘째 점 방향을 잡는 동안에도 화살표는 커서(앱 방향 잠금이 아니다 — → 가 X축을 잠그지 않는다)
     for (let i = 0; i < 6; i++) key('ArrowRight', { shiftKey: true });
