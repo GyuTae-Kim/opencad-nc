@@ -163,14 +163,25 @@ const TIP_EDGE = 4;
  * '잠근 Z축 · 끌어온 점과 나란히'(이름에 잠금이 들어 있어 "잠금"을 다시 붙이지 않는다).
  * 31차(코어 0.29.0 trackDirs { meets }): 끌어온 점에서 모서리와 나란한 선·수직인 선이 다른 것과 만나는 점은 '끌어온 점에서 모서리와 나란히 · X축 위'처럼(trackDirName).
  * 32차(코어 0.30.0 meets { guides }): 다른 끌어온 점의 나란한 선·수직인 선과 만나는 점은 '끌어온 점에서 모서리에 수직 · 끌어온 점 나란한 선 위'처럼
+ * 109차(코어 0.115.0 perpendicularDirs): 첫 점에서 지나간 모서리에 수직인 방향 위 점(perpendicularDir)은 '모서리에 수직'(수직 발 '수직점'과 가른다 — perpDirName)
  */
 export function snapTip(hv: TrackDirPoint | null | undefined): { name: string; locked: boolean } | null {
   if (!hv?.snap) return null;
-  return { name: trackDirName(hv) ?? snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
+  return { name: perpDirName(hv) ?? trackDirName(hv) ?? snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
 }
 
 /** 붙잡은 점(미리 보기 measureHoverSnap·찍은 점 measurePoints)에서 이름을 가르는 값 */
-type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction' | 'trackGuide'>;
+type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction' | 'trackGuide' | 'perpendicularDir'>;
+
+/**
+ * 첫 점에서 지나간 모서리에 수직인 방향 위의 점 이름(109차 — 코어 0.115.0 inference.perpendicularDirs, 툴팁·측정 결과). 코어 종류는 수직 발과 같은 'perpendicular'이라
+ * perpendicularDir로 가른다. 말은 끌어온 점의 「끌어온 점에서 모서리에 수직」(TRACK_PERPENDICULAR_LABEL)에서 끌어온 점을 뺀 것(첫 점의 「나란한 방향」에도 첫 점이라는 말이 없다)이고
+ * SketchUp 「모서리에 수직」 추론과 같다. 측정 도구가 있을 때만 쓰므로 이 조각에 둔다(첫 화면 measure.ts snapLabel은 그대로 — 결과에는 trackDirNames가 이름을 붙인다)
+ */
+export const PERPENDICULAR_DIR_LABEL = '모서리에 수직';
+
+/** 수직 방향 위 점이면 그 이름(잠그지 않은 값에만 perpendicularDir이 실린다 — 잠근 뒤는 수직 발 잠금과 같은 값), 아니면 null */
+const perpDirName = (p: TrackDirPoint | null | undefined): string | null => (p?.perpendicularDir && p.snap === 'perpendicular' ? PERPENDICULAR_DIR_LABEL : null);
 
 /**
  * 끌어온 점에서 모서리와 나란한 선·수직인 선이 만난 것(31차 — 코어 0.29.0 trackDirs { meets }, 코어 README의 가르는 법): 첫 점 축이면 그 축('x'·'y'·'z' — axis·direction),
@@ -215,11 +226,12 @@ export function trackDirName(p: TrackDirPoint | null | undefined): string | null
 
 /**
  * 측정 결과 두 점의 만나는 점 이름(31차 — app.ts onMeasure가 찍은 점 measurePoints로 붙이고 첫 화면 snapPair가 그 이름을 그대로 쓴다.
- * 코어 결과 MeasureResult에는 만난 것이 없다). 만나는 점이 아닌 점은 빼고, 둘 다 아니면 빈 객체
+ * 코어 결과 MeasureResult에는 만난 것이 없다). 만나는 점이 아닌 점은 빼고, 둘 다 아니면 빈 객체.
+ * 109차: 첫 점에서 지나간 모서리에 수직인 방향 위에 찍은 점도 '모서리에 수직'(코어 결과는 수직 발과 같은 snapB 'perpendicular' — 찍은 점의 perpendicularDir로 가른다)
  */
 export function trackDirNames(points: readonly (TrackDirPoint | null | undefined)[]): { nameA?: string; nameB?: string } {
-  const a = trackDirName(points[0]);
-  const b = trackDirName(points[1]);
+  const a = perpDirName(points[0]) ?? trackDirName(points[0]);
+  const b = perpDirName(points[1]) ?? trackDirName(points[1]);
   return { ...(a ? { nameA: a } : {}), ...(b ? { nameB: b } : {}) };
 }
 
