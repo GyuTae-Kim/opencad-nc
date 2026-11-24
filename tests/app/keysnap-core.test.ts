@@ -7,6 +7,7 @@
  * - 알림: 화면에 보이지 않는 aria-live 영역에 지금 언어 글(측정은 코어 글 + 앱 글 함수, 고르기는 앱 묶음 이름) — 58차: 네 언어 글이 56·57차와 같다
  * - 고르기 Tab: 촘촘한 공구 경로(원호를 나눈 선분)·판재 가공(구멍 점과 그물)을 코드 줄·가공 단위로 묶어 돌리고, Enter는 그 묶음을 고른다
  *   (58차 — 코어 0.53.0 pickCycle group: 코어가 묶음마다 한 후보로 세어 한도 16·차례·수가 묶음 단위. 한 줄의 원호 선분이 16개를 넘게 겹쳐도 뒤 줄이 든다)
+ * - 111차: 첫 점에서 지나간 모서리에 수직인 방향 위 후보(코어 0.115.0 perpendicularDir)는 측정 알림도 툴팁처럼 「모서리에 수직」(코어 틀은 수직 발과 같은 「수직점」)
  */
 import type { Pick3d } from 'opencad-viewer3d';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -369,5 +370,69 @@ describe('겹친 것 고르기(56차 pickCycle — 58차 코어 0.53.0 group으�
     expect(v.keyboardCursor!.index).toBe(0);
     expect(live()).toMatch(/^판 400×300×18: X 200\.3, Y 250\.2, Z 18 \(후보 하나\)$/);
     expect(document.activeElement).toBe(v.canvas);
+  });
+});
+
+// 111차: 109차 장면(measure-perp-tab-core.test.ts) — 위에서 본 기운 직선 (0,0) → (40,20), 급속 → (100,100) → (60,50). 첫 점 (60,50)에서 기운 직선에 수직인 방향은 (1,-2)
+const PERP_DIR = ['G21 G90 G17', 'G0 X0 Y0 Z0', 'G1 X40 Y20 F500', 'G0 X100 Y100', 'G0 X60 Y50', 'M2'].join('\n');
+
+describe('111차: 가상 커서 측정 알림의 「모서리에 수직」(코어 0.115.0 perpendicularDir — 코어 틀은 수직 발과 같은 「수직점」)', () => {
+  const frames = async (n = 8): Promise<void> => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it('첫 점 뒤 기운 직선을 지나간 다음 그 직선에 수직인 방향 위에 가상 커서를 켜면 알림의 이름이 「모서리에 수직」(영어 화면도)이고 「수직점」은 없다', async () => {
+    const { app, root, v, center, key, live } = await open('perp.nc', PERP_DIR);
+    app.toggleMeasure(true);
+    await vi.waitFor(() => expect(app.state().measuring).toBe(true));
+    // 문서를 연 뒤 두 프레임 늦게 오는 전체 보기(app.ts — 패널 배치가 정해진 뒤)를 먼저 지나 보낸다(그 뒤에 화면을 맞춘다)
+    await frames();
+    const u = Math.sqrt(5);
+    // 첫 점에서 수직 방향으로 15 mm(선 위를 조금 비킨다 — 109차 시험과 같은 자리)를 화면 가운데(가상 커서가 켜지는 자리)로
+    const at = [60 + 15 / u + 0.07, 50 - 30 / u + 0.05, 0];
+    const slant = [40 / u + 0.07, 20 / u + 0.05, 0];
+    center(at, 60);
+    /** 마우스 포인터 사건(세계 점의 화면 자리에서 1화소 비킨다) */
+    const ptr = async (type: string, p: readonly number[]): Promise<void> => {
+      const s = v.project(p)!;
+      expect(s.onScreen).toBe(true);
+      const e = new MouseEvent(type, { clientX: s.x + 1, clientY: s.y + 1, bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
+      Object.defineProperty(e, 'pointerId', { value: 1 });
+      Object.defineProperty(e, 'pointerType', { value: 'mouse' });
+      v.canvas.dispatchEvent(e);
+      v.renderNow();
+      await frames();
+    };
+    // 마우스로 첫 점(급속 끝 (60,50))을 찍고 기운 직선을 지나간다(첫 점 나란함·수직 방향의 기준 선분)
+    await ptr('pointermove', [60, 50, 0]);
+    await ptr('pointerdown', [60, 50, 0]);
+    await ptr('pointerup', [60, 50, 0]);
+    expect(v.measurePoints).toHaveLength(1);
+    await ptr('pointermove', slant);
+    v.canvas.focus();
+    key('Enter');
+    expect(v.keyboardCursor).toMatchObject({ x: 400, y: 300, mode: 'measure' });
+    expect(v.measureHoverSnap).toMatchObject({ snap: 'perpendicular', perpendicularDir: true });
+    expect(live()).toMatch(/^가상 커서를 켰습니다\. 모서리에 수직( \d+\/\d+)?: X [-\d.]+, Y [-\d.]+, Z [-\d.]+, 거리 [\d.]+ mm\. 옮기기 /);
+    expect(live()).not.toContain('수직점');
+    // 영어 화면: 커서를 끄고(초점이 떠나면 코어가 끈다 — 찍은 첫 점은 그대로) 언어를 바꿔 기운 직선을 다시 지나간 뒤 다시 켠다
+    v.canvas.blur();
+    expect(v.keyboardCursor).toBeNull();
+    expect(v.measurePoints).toHaveLength(1);
+    try {
+      document.documentElement.lang = 'en';
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'en' }));
+      await ptr('pointermove', slant);
+      v.canvas.focus();
+      key('Enter');
+      expect(v.measureHoverSnap).toMatchObject({ snap: 'perpendicular', perpendicularDir: true });
+      expect(live()).toMatch(/^Virtual cursor on\. Perpendicular to edge( \d+\/\d+)?: X [-\d.]+, Y [-\d.]+, Z [-\d.]+, distance [\d.]+ mm\. Move /);
+      expect(live()).not.toMatch(/[가-힣]/);
+    } finally {
+      v.canvas.blur();
+      document.documentElement.lang = 'ko';
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+      v.clearMeasure();
+    }
   });
 });

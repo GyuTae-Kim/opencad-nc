@@ -10,6 +10,7 @@
  *   앱이 같은 묶음만큼 합성 Tab을 보내 건너뛰어, 한 줄의 원호 선분이 16개를 채우는 아주 촘촘한 자리에서는 뒤의 줄·가공이 목록에 들지 못했다).
  * - 알림: 화면에 보이지 않는 aria-live 영역에 넣는다(화면 읽기 프로그램이 읽는다). 측정 모드는 코어 글(앱 글 함수 — messages),
  *   고르기 모드는 앱이 묶음 이름(상태 막대의 고른 것과 같은 글 — 줄·이동 종류·공구, 가공 번호·이름)과 코어 알림의 묶음 차례·수로 만든다.
+ *   111차: 측정 글에서 첫 점의 모서리 수직 방향 위 점(코어 0.115.0 perpendicularDir)은 코어 글의 수직 발 이름을 툴팁과 같은 「모서리에 수직」으로 바꾼다(perpDirSpeech).
  * - 알림 글 함수(58차 — 코어 0.53.0 messages 함수, keySnapMessageFn): 코어 열쇠와 값을 받아 지금 언어 사전에서 바로 옮긴다.
  *   {N} 자리가 있는 틀은 앱 제 열쇠(머리 KEY_SNAP_DICT_PREFIX + 코어 기본 한국어 틀), 자리가 없는 글(붙잡기 종류 이름·'가상 커서를 껐습니다' 등)은 같은 글 열쇠로 찾는다.
  *   화면 번역층(site-kit translate)은 사전의 {N} 열쇠를 모든 화면 글의 틀로 맞춰 보는데, 제 열쇠는 머리 글이 화면 글에 없어 다른 글의 틀이 되지 못한다
@@ -19,7 +20,7 @@
  * - 코어의 값(키 글 함수·기본 틀)은 앱이 받아 둔 코어 입구 모듈을 넘겨받아 쓴다(값으로 가져오면 번들러가 코어 keysnap 모듈을 따로 떼어
  *   첫 화면 조각의 나눠 받기 목록이 길어진다)
  */
-import type { KeyboardCursorState, KeyboardSnapAnnouncement, KeySnapMessageFn, KeySnapNumberFn, KeySnapText, Pick3d, Viewer3d } from 'opencad-viewer3d';
+import type { KeyboardCursorState, KeyboardSnapAnnouncement, KeySnapMessageFn, KeySnapNumberFn, KeySnapText, MeasureHoverSnap, MeasurePoint, Pick3d, Viewer3d } from 'opencad-viewer3d';
 import { isPanelKind } from '../extensions';
 import { translate } from '../../site/i18n-core.mjs';
 import { itemName, lineLabel, moveSummary, mprOps, opLabel, type NcDoc } from './doc';
@@ -63,6 +64,38 @@ export function keySnapMessageFn(core: Pick<Core, 'KEY_SNAP_MESSAGES' | 'formatK
     const t = lookup(keySnapDictKey(ko));
     return t === undefined ? undefined : core.formatKeySnapMessage(t, values);
   };
+}
+
+/**
+ * 첫 점에서 지나간 모서리에 수직인 방향 위 점의 이름(111차 — 측정 알림). 측정 도구 조각 measure-lock.ts PERPENDICULAR_DIR_LABEL(툴팁·상태 막대·결과 이름)과 같은 글·같은 사전 열쇠다.
+ * 그 모듈에서 가져오면 코어와 함께 받는 이 조각과 측정 도구 조각이 서로 묶여 따로 둔다(tests/app/keysnap.test.ts가 같은 글인지 본다)
+ */
+export const KEY_PERP_DIR_NAME = '모서리에 수직';
+
+/** 지금 언어의 그 이름(사전에 없거나 한국어 화면이면 한국어 글) */
+export function keySnapPerpName(lookup: DictLookup): string {
+  return lookup(KEY_PERP_DIR_NAME) ?? KEY_PERP_DIR_NAME;
+}
+
+/** perpDirSpeech가 보는 알림 값(코어 KeyboardSnapAnnouncement의 일부) */
+export type PerpSpeechInput = Pick<KeyboardSnapAnnouncement, 'mode' | 'reason' | 'text'> & {
+  snap: Pick<MeasureHoverSnap, 'snap' | 'perpendicularDir'> | null;
+  point?: Pick<MeasurePoint, 'snap' | 'perpendicularDir'>;
+  measurement?: unknown;
+};
+
+/**
+ * 측정 모드 알림 글(111차 — 코어 0.115.0 남은 한계): 첫 점에서 지나간 모서리에 수직인 방향 위 점(perpendicularDir)은 코어 종류가 수직 발과 같은 'perpendicular'이라
+ * 코어 글에는 수직 발 이름(틀 'snap.perpendicular' — 「수직점」)이 든다. 그 이름 하나를 툴팁·상태 막대·결과와 같은 이름(name — 「모서리에 수직」)으로 바꾼다.
+ * 이름이 든 글은 미리 보기 후보 글(켜기·옮기기·돌리기·다시 구함 — 알림의 snap)과 첫 점 글(찍기 — 찍은 점 point. 알림의 snap은 찍은 뒤 그 자리 미리 보기다)뿐이고,
+ * 둘째 점 글(measurement)·끄기·찍을 점 없음과 고르기 모드는 그대로다. 코어 틀 열쇠를 더하지 않고 앱에서 가르는 것은 번역 틀을 주는 앱의 다른 언어 화면에
+ * 한국어 기본 글이 섞이지 않게 하려는 것(코어 0.117.0 README 앱이 할 일). 이름은 같은 글 함수(msgs)로 구한 코어 글에서 처음 한 곳만 바꾼다(종류 이름은 글 앞쪽 한 번 — 점·거리 글은 수)
+ */
+export function perpDirSpeech(core: Pick<Core, 'keySnapText'>, msgs: KeySnapText, a: PerpSpeechInput, name: string): string {
+  if (a.mode !== 'measure') return a.text;
+  const p = a.reason === 'commit' ? (a.measurement ? null : a.point) : a.snap;
+  if (!p?.perpendicularDir || p.snap !== 'perpendicular') return a.text;
+  return a.text.replace(core.keySnapText(msgs, 'snap.perpendicular'), () => name);
 }
 
 /** 고르기 후보의 앱 묶음(열쇠가 같으면 같은 것을 고른다 — 코어 pickCycle group 열쇠)과 이름(상태 막대의 고른 것과 같은 글) */
@@ -137,6 +170,8 @@ export class KeySnap {
   private through = false;
   /** 지금 언어의 알림 글 함수(sync — 처음은 코어 기본 틀) */
   private msgs: KeySnapText;
+  /** 지금 언어의 「모서리에 수직」(111차 — 측정 알림, sync) */
+  private perpName = KEY_PERP_DIR_NAME;
   /** 고르기 후보 묶음 열쇠(코어 pickCycle group — 지금 문서의 pickTarget 열쇠, 문서가 없으면 묶지 않는다) */
   private readonly group = (p: Pick3d): string | undefined => {
     const d = this.host.doc;
@@ -161,8 +196,10 @@ export class KeySnap {
     if (!v) return;
     this.through = this.host.pickThrough;
     const lang = document.documentElement.lang || 'ko';
-    const messages = keySnapMessageFn(this.core, dictLookup(lang));
+    const lookup = dictLookup(lang);
+    const messages = keySnapMessageFn(this.core, lookup);
     this.msgs = messages;
+    this.perpName = keySnapPerpName(lookup);
     v.setKeyboardSnap({ pickCycle: { throughTranslucent: this.through, group: this.group }, messages, formatNumber: keySnapNumber(this.host.doc?.scene.units), announce: (a) => this.announce(a) });
   }
 
@@ -184,7 +221,8 @@ export class KeySnap {
 
   private announce(a: KeyboardSnapAnnouncement): void {
     if (a.mode === 'measure') this.host.keyMeasured();
-    this.say(a.mode === 'pick' && a.reason !== 'end' ? this.pickSpeech(a) : a.text);
+    // 111차: 측정 글의 모서리 수직 방향 이름은 툴팁과 같게(perpDirSpeech — 그 밖의 글·고르기 모드 끄기는 코어 글 그대로)
+    this.say(a.mode === 'pick' && a.reason !== 'end' ? this.pickSpeech(a) : perpDirSpeech(this.core, this.msgs, a, this.perpName));
   }
 
   /** 고르기 모드 알림 글: 코어 글 꼴(알림 글 함수) 그대로, 고른 것 이름은 앱 묶음 이름, 차례·수는 코어 알림의 묶음 차례·수(pickCycle group) */

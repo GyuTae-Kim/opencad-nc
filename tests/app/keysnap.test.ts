@@ -14,9 +14,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as core from 'opencad-viewer3d';
-import { KEY_SNAP_KEYS, KEY_SNAP_MESSAGES, candidateText, keySnapHint, keySnapText, type KeySnapMessageKey } from 'opencad-viewer3d';
+import { KEY_SNAP_KEYS, KEY_SNAP_MESSAGES, candidateText, keySnapHint, keySnapText, orderedText, pointText, type KeySnapMessageKey, type MeasureHoverSnap } from 'opencad-viewer3d';
 import { catalogs, registerCatalog, translate } from '../../site/i18n.mjs';
-import { KEY_HELP, KEY_SNAP_DICT_PREFIX, dictLookup, keySnapDictKey, keySnapMessageFn, keySnapNumber } from '../../src/app/keysnap';
+import { KEY_HELP, KEY_PERP_DIR_NAME, KEY_SNAP_DICT_PREFIX, dictLookup, keySnapDictKey, keySnapMessageFn, keySnapNumber, keySnapPerpName, perpDirSpeech } from '../../src/app/keysnap';
+import { PERPENDICULAR_DIR_LABEL } from '../../src/app/measure-lock';
 
 const ROOT = resolve(__dirname, '../..');
 const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
@@ -172,5 +173,46 @@ describe('키보드 붙잡기 알림 글 함수(58차 — 코어 0.53.0 messages
     registerCatalog('en', saved.en!);
     expect(translate('끌어온 축', 'en')).toBe('끌어온 축');
     expect(translate('후보 목록', 'en')).toBe('후보 목록');
+  });
+});
+
+describe('111차: 측정 알림의 「모서리에 수직」(perpDirSpeech — 코어 0.115.0 perpendicularDir 후보도 코어 틀은 수직 발과 같은 「수직점」)', () => {
+  it('미리 보기 후보 글·첫 점 글의 종류 이름만 툴팁 이름으로 바꾸고(다섯 언어), 수직 발·둘째 점 글·고르기 모드는 그대로', () => {
+    // 측정 도구 조각(measure-lock.ts)의 툴팁·결과 이름과 같은 글·같은 사전 열쇠(가져오면 코어와 함께 받는 조각이 측정 도구 조각과 묶여 따로 둔다)
+    expect(KEY_PERP_DIR_NAME).toBe(PERPENDICULAR_DIR_LABEL);
+    const num = (v: number): string => String(v);
+    const dir: MeasureHoverSnap = { snap: 'perpendicular', point: [40, 15, 0], direction: [1, 0, 0], perpendicularDir: true };
+    const foot: MeasureHoverSnap = { snap: 'perpendicular', point: [40, 15, 0], direction: [1, 0, 0] };
+    const said: Record<string, string> = {};
+    for (const l of ['ko', ...LANGS]) {
+      const lookup = dictLookup(l);
+      const M = keySnapMessageFn(core, lookup);
+      const name = keySnapPerpName(lookup);
+      expect(name, l).toBe(l === 'ko' ? KEY_PERP_DIR_NAME : translate(KEY_PERP_DIR_NAME, l));
+      const footName = keySnapText(M, 'snap.perpendicular');
+      expect(name, l).not.toBe(footName);
+      const pt = pointText([40, 15, 0], num, M);
+      const start = (label: string): string => keySnapText(M, 'start', [orderedText(label, 0, 2, pt, '5 mm', M), keySnapHint(KEY_SNAP_KEYS, 'measure', true, M)]);
+      const only = (label: string): string => keySnapText(M, 'only', [orderedText(label, 0, 1, pt, null, M)]);
+      const first = (label: string): string => keySnapText(M, 'firstPoint', [label, pt]);
+      // 미리 보기 후보(켜기·옮기기·돌리기 — 알림의 snap)
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'start', snap: dir, text: start(footName) }, name), l).toBe(start(name));
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'move', snap: dir, text: orderedText(footName, 1, 2, pt, '5 mm', M) }, name), l).toBe(orderedText(name, 1, 2, pt, '5 mm', M));
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'cycle', snap: dir, text: only(footName) }, name), l).toBe(only(name));
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'start', snap: foot, text: start(footName) }, name), l).toBe(start(footName));
+      // 첫 점 글: 찍은 점(point)으로 가른다(알림의 snap은 찍은 뒤 그 자리 미리 보기라 보지 않는다)
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'commit', snap: foot, point: { snap: 'perpendicular', perpendicularDir: true }, text: first(footName) }, name), l).toBe(first(name));
+      const endName = keySnapText(M, 'snap.endpoint');
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'commit', snap: dir, point: { snap: 'endpoint' }, text: first(endName) }, name), l).toBe(first(endName));
+      // 둘째 점 글(종류 이름이 없다)·끄기·고르기 모드는 그대로
+      const second = keySnapText(M, 'secondPoint', ['12 mm', '3', '4', '0']);
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'commit', snap: dir, point: { snap: 'perpendicular', perpendicularDir: true }, measurement: {}, text: second }, name), l).toBe(second);
+      expect(perpDirSpeech(core, M, { mode: 'measure', reason: 'end', snap: dir, text: keySnapText(M, 'end') }, name), l).toBe(keySnapText(M, 'end'));
+      expect(perpDirSpeech(core, M, { mode: 'pick', reason: 'move', snap: null, text: start(footName) }, name), l).toBe(start(footName));
+      if (l !== 'ko') expect(start(name), l).not.toMatch(HANGUL);
+      said[l] = start(name);
+    }
+    expect(said.ko).toBe('가상 커서를 켰습니다. 모서리에 수직 1/2: X 40, Y 15, Z 0, 거리 5 mm. 옮기기 ←→↑↓ · 후보 Tab · 찍기 Enter · 끄기 Esc');
+    expect(said.en).toBe('Virtual cursor on. Perpendicular to edge 1/2: X 40, Y 15, Z 0, distance 5 mm. Move ←→↑↓ · Next candidate Tab · Pick point Enter · Turn off Esc');
   });
 });
