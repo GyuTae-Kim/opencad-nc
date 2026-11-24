@@ -82,6 +82,13 @@ G0 X52. Z2.
 M30
 %`;
 
+// 시험이 건 타이머(rAF 대신 쓰는 setTimeout 포함)를 적어 두고 시험마다 지운다. 남은 콜백이 파일 끝 뒤 jsdom을 내린 다음 돌면 전역 document가 없어
+// 처리되지 않은 오류(ReferenceError: document is not defined)로 시험이 흔들렸다(110차) — 코드 목록 다시 그리기(패널 setOpen·renderCode의 rAF,
+// 코드 찾기 250 ms 타이머)가 줄을 그리며 document.createElement를 부른다. 앱은 한 페이지에 하나라 dispose가 없고, 시험만 앱을 여럿 만든다
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+const timers = new Set<unknown>();
+
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -90,11 +97,25 @@ beforeEach(() => {
       disconnect(): void {}
     },
   );
+  vi.stubGlobal('setTimeout', (cb: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+    const id: unknown = realSetTimeout(() => {
+      timers.delete(id);
+      cb(...args);
+    }, ms);
+    timers.add(id);
+    return id;
+  });
+  vi.stubGlobal('clearTimeout', (id: unknown) => {
+    timers.delete(id);
+    realClearTimeout(id as Parameters<typeof clearTimeout>[0]);
+  });
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
   fake.opens.length = 0;
 });
 afterEach(() => {
+  for (const id of timers) realClearTimeout(id as Parameters<typeof clearTimeout>[0]);
+  timers.clear();
   vi.unstubAllGlobals();
 });
 
