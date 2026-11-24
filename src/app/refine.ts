@@ -616,9 +616,12 @@ const compEnd = (p: Float64Array, k: number, o: number): V3 => [p[k * 6 + o]!, p
  * 35차(코어 0.33.0 refineEnds — 30차부터 요청): 켠 선(첫 점 축·끌어온 축·끌어온 점 안내 선·잠근 선)이 원호·나선·스플라인을 나눈 꺾은선 꼭짓점을
  * 그 깊이에서 화면 반 화소 안으로 지나면 그 꼭짓점의 두 토막도 refineSnap('axisEdge'·open)에 물어, 곡선과의 정확한 교차가 꼭짓점에서 반 화소 넘게
  * 떨어져 있으면 꼭짓점(끝점)보다 먼저 붙는다(원호 꼭대기를 스치는 축 — 23차 재현의 남은 단). 곧은 이동의 꼭짓점은 앱이 null이라 끝점 그대로다
+ * 109차(코어 0.116.0 tabCycle): 마우스 미리 보기 자리에 후보(끝점·중간점·중심·교차점·축 등)가 둘 이상 겹치면 캔버스 Tab·Shift+Tab이 그 후보를 돌리고
+ * 누르면 보인 후보를 찍는다. 돌리는 중 Esc는 돌리기만 푼다(측정 지우기보다 먼저 — 코어). 후보가 하나·없으면 Tab은 초점 이동 그대로다(가두지 않는다).
+ * 앱 창 키 듣기는 캔버스 Tab을 받지 않고(keys.ts keyAction null), 캔버스 Esc는 측정 중이면 앱이 아무것도 하지 않아 코어가 먼저 받는다. 툴팁은 코어 미리 보기 알림으로 따라온다
  */
 export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number | null = null, arcAngle?: number): MeasureSnapOptions {
-  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), refineEnds: true, throughTranslucent: true };
+  return { points: centers.points, pointsFor: (p) => moveSnapPoints(p, nc), inference: trackInference(trackDirEdge(nc)), limit, refine: (c) => refineSnap(c, nc, arcAngle), refineEnds: true, throughTranslucent: true, tabCycle: true };
 }
 
 /**
@@ -633,10 +636,14 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 34차(코어 0.32.0 meets { openFaces } — 판재만, faces): 그 선이 원기둥 벽(구멍·둥근 포켓 벽, 판 외곽선 둥근 모서리)을 나눈 삼각형을 비켜 가며 벽 곡면만 뚫는 자리
  * (벽에 거의 닿듯 지나는 선)에서도 원기둥 위 교차점에 붙는다. 코어가 refineFace를 'axisFace'·open: true로 부르고 refineFaceSnap이 이미 그 꼴(22차 축의 면의 열린 교차)을 푼다.
  * 이름은 0.29.0 만나는 점의 면과 같다('… · 면 위')
+ * 109차(코어 0.115.0 perpendicularDirs): 첫 점에서 지나간 곧은 모서리(첫 점 나란함과 같은 기준 — 같은 거르기)에 수직인 방향에도 붙는다(SketchUp 「모서리에 수직」).
+ * 코어 값은 수직 발과 같은 'perpendicular'에 perpendicularDir이 실리고, 툴팁·결과 이름은 「모서리에 수직」으로 가른다(measure-lock.ts PERPENDICULAR_DIR_LABEL).
+ * Shift·화살표 ↓·잠금 단추는 그 방향으로 잠근다(잠금 이름은 수직 발과 같은 「수직 방향으로 잠금」). MEASURE_INFERENCE(첫 화면 measure.ts)가 아니라 여기서 켠다
  */
 const trackInference = (edge: (s: SnapSegment) => boolean, faces = false): MeasureSnapOptions['inference'] => ({
   ...MEASURE_INFERENCE,
   parallelEdge: edge,
+  perpendicularDirs: true,
   trackDirs: { edge, meets: faces ? { guides: true, open: true, openFaces: true } : { guides: true, open: true } },
 });
 
@@ -680,5 +687,7 @@ export function panelSnapOptions(t: PanelSnapTable): MeasureSnapOptions {
     refineEnds: true,
     refineSnapToExact: true,
     throughTranslucent: true,
+    // 109차(코어 0.116.0): 마우스 미리 보기 자리 후보를 Tab·Shift+Tab으로 돌리기(ncSnapOptions와 같다)
+    tabCycle: true,
   };
 }
