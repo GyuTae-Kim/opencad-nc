@@ -8,6 +8,8 @@
  *   코어는 미리 보기를 그리기(rAF) 때 구하므로 포인터 이동·키 뒤 다음 프레임에 읽는다. 글은 DOM이라 번역층이 옮긴다.
  *   97차: 마우스를 멈춘 채 재생으로 장면이 바뀌어(깎기 시뮬레이션 메시 바꾸기·재생 붙잡기 한도) 코어가 미리 보기를 다시 구할 때도 맞춘다.
  *   99차: 그 길 목록(97차 sceneChanged — 층 사건·한도)을 걷고 코어 0.103.0 onMeasureHoverChange(미리 보기 값이 바뀐 그림 뒤 한 번) 하나로 맞춘다(attach).
+ *   100차: 카메라만 움직이면(휠·보기 키 F·1~7·카메라 움직임·3D 보기 크기) 코어는 미리 보기를 다시 구하지 않아(세계 점 그대로) 그 알림이 없다 —
+ *   코어 onCameraChange에서 툴팁이 있을 때만 그 점을 다시 투영해 자리만 옮긴다(follow — 글은 그대로).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -69,8 +71,9 @@ export type LockViewer = Pick<
   | 'project'
   | 'viewCubeRect'
 > &
-  // 57차: 가상 커서(56차 keysnap.ts — 켜고 끄면 방향 잠금 안내가 바뀐다). 99차: 측정 미리 보기 바뀜 알림(코어 0.103.0 — attach). 가짜 뷰어는 없어도 된다
-  Partial<Pick<Viewer3d, 'keyboardCursor' | 'onMeasureHoverChange'>>;
+  // 57차: 가상 커서(56차 keysnap.ts — 켜고 끄면 방향 잠금 안내가 바뀐다). 99차: 측정 미리 보기 바뀜 알림(코어 0.103.0 — attach).
+  // 100차: 카메라 바뀜 알림(attach — 툴팁 자리만 다시 놓기). 가짜 뷰어는 없어도 된다
+  Partial<Pick<Viewer3d, 'keyboardCursor' | 'onMeasureHoverChange' | 'onCameraChange'>>;
 
 export interface MeasureLockHost {
   viewer(): LockViewer | null;
@@ -278,6 +281,11 @@ export class MeasureLock {
   private avoidKey = 'null';
   /** 툴팁을 붙인 점(캔버스 기준 화면 좌표 — 크기가 바뀌면 다시 놓는다) */
   private tipAt: { x: number; y: number } | null = null;
+  /**
+   * 100차: 툴팁을 붙인 점의 세계 좌표(update가 툴팁을 보일 때 미리 보기 점으로 정하고, 툴팁 글이 없으면 null). 카메라만 바뀌면 이것을 다시 투영한다(follow).
+   * 카메라로 화면 밖에 나가 숨긴 동안도 남겨 두어 다시 들어오면 같은 글로 보인다
+   */
+  private tipPoint: readonly number[] | null = null;
 
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
@@ -312,11 +320,17 @@ export class MeasureLock {
    * 측정 중이 아니면 바로 돌아간다(측정을 끌 때 오는 null은 reset이 이미 거뒀다 — 측정을 끈 재생은 미리 보기가 없어 알림도 없다).
    * 포인터 길(두 프레임 뒤 update)은 그대로 둔다: 코어 머무르기로 기억한 끌어온 점(measureTrackPoints)은 코어가 미리 보기를 다시 구하지도 알리지도 않아(0.103.0·0.104.0
    * 남은 한계) 다음 포인터 이동에서 알아채 상태 줄·측정 띠의 끌어온 점 수와 다시 재기 버튼을 맞춘다 — 미리 보기 값이 그대로인 이동에는 알림이 없다.
-   * 미리 보기가 바뀐 이동에서는 같은 값을 한 번 더 읽을 뿐이다
+   * 미리 보기가 바뀐 이동에서는 같은 값을 한 번 더 읽을 뿐이다.
+   * 100차(코어 onCameraChange — 카메라가 바뀐 그림 끝, 같은 그림의 onMeasureHoverChange보다 먼저): 휠·보기 키 F·1~7·카메라 움직임(뷰 큐브·전체 보기 —
+   * 움직이는 동안 프레임마다)·3D 보기 크기로 카메라만 바뀌면 미리 보기 값이 그대로라 위 알림이 없다. 툴팁이 있을 때만(tipPoint — 측정을 끄면 reset이 지운다)
+   * 그 점을 다시 투영해 자리만 옮긴다(follow — 글·잠금 상태는 그대로, 투영 하나와 DOM 자리 놓기). 툴팁이 없거나 측정 중이 아니면 바로 돌아간다
    */
   attach(v: LockViewer): void {
     v.onMeasureHoverChange?.(() => {
       if (v.measureMode) this.update();
+    });
+    v.onCameraChange?.(() => {
+      if (this.tipPoint && v.measureMode) this.follow(v, this.tipPoint);
     });
     const canvas = v.canvas;
     const parent = canvas.parentElement ?? canvas;
@@ -409,11 +423,13 @@ export class MeasureLock {
     if (!tip || !sp || !sp.onScreen) {
       this.tip.hidden = true;
       this.tipAvoid = null;
+      this.tipPoint = null;
     } else {
       this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked && !lockMeet(meet) ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
       this.tip.classList.toggle('locked', tip.locked);
       this.tip.hidden = false;
       this.tipAt = { x: sp.x, y: sp.y };
+      this.tipPoint = hv!.point;
       this.placeTipNow(v!);
     }
     this.coverAvoid = on ? this.covers(v!) : [];
@@ -455,6 +471,24 @@ export class MeasureLock {
     const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid);
     this.tip.style.left = `${Math.round(at.x)}px`;
     this.tip.style.top = `${Math.round(at.y)}px`;
+  }
+
+  /**
+   * 100차: 카메라만 바뀐 그림 뒤(attach — onCameraChange) 툴팁을 붙인 점 p를 다시 투영해 자리만 옮긴다. 글·잠금 상태·상태 줄은 그대로다(미리 보기 값이 같다).
+   * 화면 밖으로 나가면 숨기고(update와 같다), 다시 들어오면 같은 글로 보인다. 코어 글상자가 비킬 툴팁 첫 자리도 새 자리로 넘긴다(바뀌었을 때만 — pushAvoid)
+   */
+  private follow(v: LockViewer, p: readonly number[]): void {
+    const sp = v.project(p);
+    if (!sp || !sp.onScreen) {
+      if (this.tip.hidden) return;
+      this.tip.hidden = true;
+      this.tipAvoid = null;
+    } else {
+      this.tip.hidden = false;
+      this.tipAt = { x: sp.x, y: sp.y };
+      this.placeTipNow(v);
+    }
+    this.pushAvoid();
   }
 
   /** 잠금 단추: 잠겼으면 풀고, 아니면 지금 방향(원호 접선이나 코어 — Shift와 같은 판정, 없으면 첫 점 뒤 마지막으로 본 방향)을 잠근다 — 잠글 것이 없으면 맞추는 법을 알린다 */
@@ -565,6 +599,7 @@ export class MeasureLock {
   reset(): void {
     this.tip.hidden = true;
     this.tipAvoid = null;
+    this.tipPoint = null;
     this.aimAvoid = null;
     this.coverAvoid = [];
     this.measuring = false;
