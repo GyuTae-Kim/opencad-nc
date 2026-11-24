@@ -6,6 +6,7 @@
  * - 툴팁: 측정 중 커서 아래 붙잡을 점의 종류(끝점·중심·교차점·X축 방향·나란한 방향 …)를 그 점 오른쪽 아래에, 잠갔으면 "잠금"을 덧붙인다.
  *   코어가 그린 거리 글상자(measureLabelRect)와 겹치거나 3D 보기 밖으로 나가면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 옮긴다(placeTip).
  *   코어는 미리 보기를 그리기(rAF) 때 구하므로 포인터 이동·키 뒤 다음 프레임에 읽는다. 글은 DOM이라 번역층이 옮긴다.
+ *   97차: 마우스를 멈춘 채 재생으로 장면이 바뀌어(깎기 시뮬레이션 메시 바꾸기·재생 붙잡기 한도) 코어가 미리 보기를 다시 구할 때도 맞춘다(sceneChanged).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -67,8 +68,8 @@ export type LockViewer = Pick<
   | 'project'
   | 'viewCubeRect'
 > &
-  // 57차: 가상 커서(56차 keysnap.ts — 켜고 끄면 방향 잠금 안내가 바뀐다). 가짜 뷰어는 없어도 된다
-  Partial<Pick<Viewer3d, 'keyboardCursor'>>;
+  // 57차: 가상 커서(56차 keysnap.ts — 켜고 끄면 방향 잠금 안내가 바뀐다). 97차: 재생 붙잡기 한도(snapLimit). 가짜 뷰어는 없어도 된다
+  Partial<Pick<Viewer3d, 'keyboardCursor' | 'setMeasureSnapLimit'>>;
 
 export interface MeasureLockHost {
   viewer(): LockViewer | null;
@@ -280,6 +281,8 @@ export class MeasureLock {
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
     host.layer.append(this.tip);
+    // 97차: 깎기 시뮬레이션이 측정 중 소재 메시를 바꿨다(sim.ts patch가 3D 보기 층에 보내는 사건 — 두 조각이 서로 가져오지 않게 사건 이름을 두 곳에 그대로 적는다)
+    host.layer.addEventListener('opencad-sim-mesh', () => this.sceneChanged());
     // 번역층이 툴팁 글을 바꿔 크기가 달라지면 다시 놓는다(같은 프레임 — 그리기 전에 온다). 크기를 알리지 않는 환경(jsdom)은 update의 자리 그대로
     if (typeof ResizeObserver === 'function')
       new ResizeObserver(() => {
@@ -377,6 +380,27 @@ export class MeasureLock {
         if (this.want !== w) this.schedule();
       });
     });
+  }
+
+  /**
+   * 97차: 장면 조각이 바뀌었다(깎기 시뮬레이션의 메시 바꾸기 — sim.ts가 3D 보기 층 사건으로, 재생 붙잡기 한도 — snapLimit).
+   * 코어는 다음 그림에서 마지막 커서 자리의 측정 미리 보기를 다시 구하지만(rehover — 0.10.0·0.11.0) 마우스 미리 보기에는 알림이 없어
+   * (가상 커서는 'refresh' 알림 — keysnap.ts가 듣는다) 포인터를 멈춘 채면 툴팁·방향 잠금 안내가 다음 이동까지 앞 것으로 남았다.
+   * 측정 중이고 맞출 것(보이는 툴팁·코어 미리 보기·가상 커서 — 코어 0.98.0은 미리 보기가 없던 커서 후보를 알리지 않고 다시 구한다)이 있을 때만
+   * 다음 프레임(코어가 다시 구한 뒤)에 맞춘다. 측정을 끈 재생은 아무것도 하지 않는다
+   */
+  sceneChanged(): void {
+    const v = this.host.viewer();
+    if (v?.measureMode && (!this.tip.hidden || !!v.measureHoverSnap || cursorOn(v))) this.schedule();
+  }
+
+  /**
+   * 97차: 재생 붙잡기 한도(코어 0.10.0 setMeasureSnapLimit — 그린 이동까지의 원호 중심)를 주고 툴팁을 맞춘다(app.ts syncMeasureSnap이 측정 중 한도가 바뀔 때).
+   * 코어가 미리 보기를 다시 구하는 길이라 sceneChanged와 함께 이 조각에 둔다(첫 화면 조각을 늘리지 않는다)
+   */
+  snapLimit(n: number | null): void {
+    this.host.viewer()?.setMeasureSnapLimit?.(n);
+    this.sceneChanged();
   }
 
   /** 툴팁·잠금 단추·알림을 지금 상태로(잠금·찍은 점 수·Shift로 잠글 방향이 바뀌었으면 앱에 알린다) */

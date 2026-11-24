@@ -655,6 +655,9 @@ export class SimView {
       this.uploads.meshes++;
     }
     this.live = v.scene;
+    // 97차: 측정 중이면 3D 보기 층에 알린다 — 코어는 다음 그림에서 마지막 커서 자리의 측정 미리 보기를 바뀐 메시로 다시 구하지만(0.11.0) 마우스에는 알림이 없어
+    // 붙잡기 툴팁·방향 잠금 안내가 다음 포인터 이동까지 앞 것으로 남았다(measure-lock.ts sceneChanged가 듣는다 — 사건 이름을 두 곳에 그대로 적는다). 측정을 끈 재생은 그대로
+    if (v.measureMode) this.host.viewLayer.dispatchEvent(new Event('opencad-sim-mesh'));
     return true;
   }
 

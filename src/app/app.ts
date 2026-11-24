@@ -2007,7 +2007,9 @@ export class NcViewerApp implements PanelHost {
     const limit = pos && pos.move >= 0 ? pos.move + 1 : null;
     if (this.snapKey?.src === nc) {
       if (this.snapKey.limit === limit) return;
-      v.setMeasureSnapLimit(limit);
+      // 97차: 측정 도구 조각이 코어에 주고 붙잡기 툴팁도 맞춘다 — 코어는 그 커서 자리의 미리 보기를 다시 구하지만 마우스에는 알림이 없어
+      // 마우스를 멈춘 채 재생하면 툴팁이 다음 이동까지 앞 한도의 것이었다(measure-lock.ts snapLimit — 첫 화면 조각에 코드를 더하지 않는다)
+      this.mlock?.snapLimit(limit);
     } else {
       const angle = (d.scene.meta as { arcAngle?: unknown } | undefined)?.arcAngle;
       v.setMeasureSnap(m.ncSnapOptions(nc, c, limit, typeof angle === 'number' && angle > 0 ? angle : undefined));
