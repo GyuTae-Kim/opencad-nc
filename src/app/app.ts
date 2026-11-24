@@ -1775,6 +1775,7 @@ export class NcViewerApp implements PanelHost {
     const d = this.doc;
     if (!v || !d) return;
     try {
+      // 106차(코어 0.114.0): 그래픽 문맥을 잃은 동안(가운데 안내가 뜬 동안)은 코어가 빈 그림 대신 거절해 아래 catch 알림이 된다
       const b = await v.toBlob('image/png');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(b);
