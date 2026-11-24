@@ -18,6 +18,7 @@ import { MPR_KIND, lineAtLabel, mprOps, opLabel, playPosition, sceneFeatures, un
 import { fileSpan, h, mixSpan, toast } from './dom';
 import type { FileText } from './filetext';
 import { fmtNum } from './format';
+import { uiText } from './i18n';
 import { icon, type IconName } from './icons';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
@@ -706,7 +707,9 @@ export class SimView {
 
   private statusText(): string {
     if (!this.on) return '꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.';
-    if (this.error) return this.error;
+    // 108차: "시뮬레이션을 계산하지 못했습니다: {0}"에 끼운 까닭(「워커가 멈췄습니다(…)」 같은 앱 글)까지 화면 언어로 — 그릴 때 옮겨
+    // 언어를 바꾸면 패널을 다시 그릴 때 따라간다(번역층은 {0} 자리 값을 그대로 둔다)
+    if (this.error) return uiText(this.error);
     if (this.block) return '시뮬레이션하지 않음';
     const u = this.last;
     const count = this.host.doc ? this.moveCount(this.host.doc) : 0;

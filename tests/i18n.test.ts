@@ -7,7 +7,9 @@ import { catalogs, currentLanguage, languageUrl, languages, translate } from '..
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
 import { noticeViews } from '../src/app/doc';
-import { plainText } from '../src/app/filetext';
+import { fileText, mix, plainText, type Mixed } from '../src/app/filetext';
+import { BINARY_MESSAGE } from '../src/app/format';
+import { errorText } from '../src/app/protocol';
 
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); vi.unstubAllGlobals(); });
@@ -217,6 +219,44 @@ describe('language URLs and UI presentation', () => {
     dispose(); dispose = undefined;
     // 한국어 화면(닫은 뒤)은 그대로
     expect(uiText(shown[0]!)).toBe(shown[0]);
+    dom.window.close();
+  });
+  it('shows the app reason inside the measure, simulation load and simulation compute messages in the screen language, but leaves file names alone (108th)', async () => {
+    // 앱이 지은 틀에 끼우는 앱 글: errorText가 네트워크 오류를 바꾼 글(측정 도구·시뮬레이션 조각을 받지 못함 — Safari "Load failed"), 계산 워커가 멈춘 글
+    const network = errorText(new TypeError('Load failed'));
+    const worker = '워커가 멈췄습니다(메모리가 모자랄 수 있습니다)';
+    expect(network).toBe('파일을 받지 못했습니다(네트워크 오류).');
+    const shown = [`측정 도구를 열 수 없습니다: ${network}`, `시뮬레이션을 불러오지 못했습니다: ${network}`, `시뮬레이션을 계산하지 못했습니다: ${worker}`];
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) {
+      for (const text of [network, worker]) expect(catalogs[code]?.[text], `${code}: ${text}`).toBeTruthy();
+      for (const text of shown) {
+        // 화면 번역층(잡은 값 그대로)은 까닭을 한국어로 남긴다 — 앱은 uiText로 잡은 값까지 옮긴다
+        expect(translate(text, code), `${code}: ${text}`).toMatch(/[가-힣]/);
+        expect(translate(text, code, true), `${code}: ${text}`).not.toMatch(/[가-힣]/);
+      }
+    }
+    expect(translate(shown[1]!, 'en', true)).toBe('Could not load the simulation: Failed to receive the file (network error).');
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header><p class="start-error" hidden></p></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/de/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const [{ NcViewerApp }, { SimView }] = await Promise.all([import('../src/app/app'), import('../src/app/sim')]);
+    dispose = await installLocalization(document.getElementById('app')!);
+    expect(uiText(shown[0]!)).toBe('Messwerkzeuge können nicht geöffnet werden: Datei konnte nicht empfangen werden (Netzwerkfehler).');
+    // 깎기 탭 상태 줄(sim.ts): 계산 워커가 멈추면 원문은 그대로 두고 그릴 때 까닭까지 독일어로
+    const sim = SimView.prototype as unknown as { fail(message: string): void; statusText(): string };
+    const state = { on: true, error: null as string | null, stop: () => undefined, host: { refreshPanel: () => undefined } };
+    sim.fail.call(state, worker);
+    expect(state.error).toBe(shown[2]);
+    expect(sim.statusText.call(state)).toBe('Simulation konnte nicht berechnet werden: Worker beendet (möglicherweise nicht genügend Arbeitsspeicher)');
+    // 파일 이름이 끼는 열기 오류(mix로 섞어 showError)는 감싸지 않는다: 사전 낱말과 같은 파일 이름("열기")도 그대로, 앱 글만 독일어
+    const proto = NcViewerApp.prototype as unknown as { showError(msg: Mixed): void; errorNodes(): (string | Node)[] };
+    const startError = document.querySelector<HTMLElement>('.start-error')!;
+    proto.showError.call({ doc: null, startError, errorNodes: proto.errorNodes }, mix`${fileText('열기')}: ${BINARY_MESSAGE}`);
+    expect(startError.hidden).toBe(false);
+    expect(startError.textContent).toBe(catalogs.de![`{0}: ${BINARY_MESSAGE}`]!.replace('{0}', '열기'));
+    // uiText로 감쌌다면 파일 이름까지 사전에서 옮겼다
+    expect(uiText(`열기: ${BINARY_MESSAGE}`)).toMatch(/^Öffnen: /);
+    dispose(); dispose = undefined;
+    expect(sim.statusText.call(state)).toBe(shown[2]);
     dom.window.close();
   });
   it('updates dynamic UI and switches languages without changing document data or listeners', async () => {
