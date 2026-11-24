@@ -2,7 +2,7 @@ import { metadataForLanguage } from '../site/i18n.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
-import { installLocalization, localizeCubeFaces } from '../src/app/i18n';
+import { installLocalization, localizeCubeFaces, uiText } from '../src/app/i18n';
 import { catalogs, currentLanguage, languageUrl, languages, translate } from '../site/i18n.mjs';
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
@@ -192,6 +192,32 @@ describe('language URLs and UI presentation', () => {
     for (const {code} of languages.filter(item => item.code !== 'ko'))
       for (const name of Object.values(NC_DIALECT_NAMES)) expect(translate(`자동 (${name})`, code), `${code}: ${name}`).not.toMatch(/[가-힣]/);
     expect(translate('자동 (일반 ISO)', 'en')).toBe('Automatic (General ISO)');
+  });
+  it('shows the core error reason inside app error messages in the screen language: PNG save failure and 3D view creation (107th)', async () => {
+    // 3D 뷰어 코어(0.114.0)가 앱에 던지는 한국어 Error 글: 문맥을 잃은 동안 toBlob, 캔버스 toBlob이 null, WebGL2 없음(뷰어를 만들 때)
+    const core = ['3D 보기 문맥이 없어 그림을 만들 수 없습니다', '그림을 만들지 못했습니다', '이 브라우저는 WebGL2를 지원하지 않아 3D 보기를 열 수 없습니다'];
+    const shown = [`그림을 저장하지 못했습니다: ${core[0]}`, `그림을 저장하지 못했습니다: ${core[1]}`, `3D 보기를 만들지 못했습니다: ${core[2]}`];
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) {
+      for (const text of core) expect(catalogs[code]?.[text], `${code}: ${text}`).toBeTruthy();
+      // 화면 번역층(잡은 값 그대로)은 까닭을 한국어로 남긴다 — 앱은 uiText로 잡은 값까지 옮긴다
+      expect(translate(shown[0]!, code), code).toMatch(/[가-힣]/);
+      for (const text of shown) expect(translate(text, code, true), `${code}: ${text}`).not.toMatch(/[가-힣]/);
+    }
+    expect(translate(shown[0]!, 'en', true)).toBe('Failed to save picture: Cannot create the picture because the 3D view has no graphics context');
+    // PNG 저장(savePng): 문맥을 잃은 동안 코어 toBlob이 거절하면 알림이 그 언어 글만
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"></header></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/de/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    const { NcViewerApp } = await import('../src/app/app');
+    dispose = await installLocalization(document.getElementById('app')!);
+    expect(uiText(shown[2]!)).toBe(translate(shown[2]!, 'de', true));
+    const savePng = (NcViewerApp.prototype as unknown as { savePng(): Promise<void> }).savePng;
+    await savePng.call({ viewer: { toBlob: () => Promise.reject(new Error(core[0])) }, doc: { name: 'a.nc' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(document.querySelector('.toast.error')!.firstChild!.textContent).toBe('Bild konnte nicht gespeichert werden: Bild kann nicht erstellt werden, weil die 3D-Ansicht keinen Grafikkontext hat');
+    dispose(); dispose = undefined;
+    // 한국어 화면(닫은 뒤)은 그대로
+    expect(uiText(shown[0]!)).toBe(shown[0]);
+    dom.window.close();
   });
   it('updates dynamic UI and switches languages without changing document data or listeners', async () => {
     const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"><button>열기</button><span class="docname">열기</span></header><canvas></canvas><div class="anno-layer">열기</div><input value="열기" placeholder="열기"><div contenteditable="true">열기</div><div translate="no">열기</div><p id="status">열기</p></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-skp/en/?sample#view'});

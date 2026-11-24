@@ -13,6 +13,7 @@
   "// 첫 화면이 깜빡이지 않게 테마를 먼저 정한다(기억한 선택 → 없으면 시스템 설정). 저장소가 막혀도 넘어간다. (function () { var t = null; try { t = localStorage.getItem('opencad-nc.theme'); } catch (e) {} if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); })();": "// Design zuerst festlegen, damit der erste Bildschirm nicht flackert (gemerkte Wahl → sonst Systemeinstellung). Läuft weiter, auch wenn der Speicher gesperrt ist. (function () { var t = null; try { t = localStorage.getItem('opencad-nc.theme'); } catch (e) {} if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); })();",
   "0으로 나눔": "Durch 0 dividieren",
   "3D 보기": "3D-Ansicht",
+  "3D 보기 문맥이 없어 그림을 만들 수 없습니다": "Bild kann nicht erstellt werden, weil die 3D-Ansicht keinen Grafikkontext hat",
   "3D 보기를 만들지 못했습니다: {0}": "Fehler beim Erstellen der 3D-Ansicht: {0}",
   "3D 셰이더 연결 실패: {0}": "3D-Shader-Verbindungsfehler: {0}",
   "3D 셰이더 컴파일 실패: {0}": "3D-Shader-Kompilierung fehlgeschlagen: {0}",

@@ -34,7 +34,7 @@ import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, t
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { h, mixSpan, pieces, toast } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
-import { mixNodes, mixText } from './i18n';
+import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, keyAction, viewKeyOf } from './keys';
@@ -1306,7 +1306,7 @@ export class NcViewerApp implements PanelHost {
     try {
       core = await loadViewerCore();
     } catch (e) {
-      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
+      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`));
     }
     if (measure) await settleWithin(measure, MEASURE_WAIT_MS);
     await settleWithin(info, MEASURE_WAIT_MS);
@@ -1319,7 +1319,8 @@ export class NcViewerApp implements PanelHost {
       v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor(), animate: 'auto' });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
-      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
+      // 107차: 코어 Error 글(WebGL2 없음 등)까지 지금 언어로 옮겨 던진다 — 받는 쪽이 파일 이름과 섞는 "{파일}: …"에는 맞는 틀이 없어 통째로 한국어로 남았다
+      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`));
     }
     this.viewer = v;
     this.applyThemeUi();
@@ -1785,7 +1786,8 @@ export class NcViewerApp implements PanelHost {
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('지금 화면을 PNG로 저장했습니다.', 'info', 2500);
     } catch (e) {
-      toast(`그림을 저장하지 못했습니다: ${errorText(e)}`, 'error');
+      // 107차: 까닭(코어 Error 글)까지 화면 언어로 — 번역층은 {0} 자리 값을 그대로 둔다(uiText)
+      toast(uiText(`그림을 저장하지 못했습니다: ${errorText(e)}`), 'error');
     }
   }
 

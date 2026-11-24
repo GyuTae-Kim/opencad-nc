@@ -42,6 +42,11 @@ export function mixText(parts: Mixed): string {
   const [text, files] = mixed(parts);
   return Array.from(text, c => slot(c, files) ?? c).join('');
 }
+/**
+ * 앱이 지은 틀에 앱·코어 글(코어 Error 글 등 — 파일 글이 아님)을 끼운 글을 지금 언어로(107차): 화면 번역층은 {0}이 잡은 값을 파일 자료로 보고
+ * 그대로 끼워 "Failed to save picture: 3D 보기 문맥이 …"처럼 까닭이 한국어로 남았다 — 잡은 값도 사전에서 옮긴다. 파일 이름이 끼는 글은 mix·mixText
+ */
+export const uiText = (text: string): string => translate(text, active, true);
 /** 섞은 글 → 화면 마디(파일 글은 translate="no" 묶음). 담는 요소에 data-i18n-skip을 둔다 */
 export function mixNodes(parts: Mixed): (string | Node)[] {
   const [text, files] = mixed(parts);
