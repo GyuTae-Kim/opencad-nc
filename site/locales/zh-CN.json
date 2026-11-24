@@ -13,6 +13,7 @@
   "// 첫 화면이 깜빡이지 않게 테마를 먼저 정한다(기억한 선택 → 없으면 시스템 설정). 저장소가 막혀도 넘어간다. (function () { var t = null; try { t = localStorage.getItem('opencad-nc.theme'); } catch (e) {} if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); })();": "// 先设定主题，避免首屏闪烁（记住的选择 → 没有则用系统设置）。存储被阻止时也继续。 (function () { var t = null; try { t = localStorage.getItem('opencad-nc.theme'); } catch (e) {} if (t !== 'light' && t !== 'dark') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); })();",
   "0으로 나눔": "除以 0",
   "3D 보기": "3D视图",
+  "3D 보기 문맥이 없어 그림을 만들 수 없습니다": "3D 视图没有图形上下文，无法创建图片",
   "3D 보기를 만들지 못했습니다: {0}": "无法创建 3D 视图：{0}",
   "3D 셰이더 연결 실패: {0}": "3D 着色器连接失败：{0}",
   "3D 셰이더 컴파일 실패: {0}": "3D 着色器编译失败：{0}",
