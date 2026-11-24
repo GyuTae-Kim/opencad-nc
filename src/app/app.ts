@@ -1741,7 +1741,8 @@ export class NcViewerApp implements PanelHost {
   /** 측정을 켤 때 받던 측정 도구 조각이 왔다(또는 받지 못했다): 그때까지 바랐으면 켜고, 받지 못했으면 바랐을 때만 알린다 */
   private measureArrived(want: true | null, error: unknown): void {
     if (error) {
-      if (want) toast(isChunkLoadError(error) ? measureFailText(navigator.onLine !== false) : `측정 도구를 열 수 없습니다: ${errorText(error)}`, 'error', 8000);
+      // 108차: 끼운 까닭(「파일을 받지 못했습니다(네트워크 오류).」 같은 앱 글)까지 화면 언어로(uiText — 번역층은 {0} 자리 값을 그대로 둔다)
+      if (want) toast(isChunkLoadError(error) ? measureFailText(navigator.onLine !== false) : uiText(`측정 도구를 열 수 없습니다: ${errorText(error)}`), 'error', 8000);
     } else if (want && this.mlock && this.viewer && this.doc) {
       this.toggleMeasure(true);
       return;
@@ -1832,7 +1833,8 @@ export class NcViewerApp implements PanelHost {
     try {
       s = await this.ensureSim();
     } catch (e) {
-      toast(`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`, 'error');
+      // 108차: 조각을 받지 못한 까닭(errorText가 앱 글로 바꾼 네트워크 오류 등)까지 화면 언어로
+      toast(uiText(`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`), 'error');
       return;
     }
     if (opts) s.setOptions(opts);

@@ -695,6 +695,7 @@
   "와이어": "Wire",
   "와이어프레임": "Wireframe",
   "왼쪽": "Left",
+  "워커가 멈췄습니다(메모리가 모자랄 수 있습니다)": "Worker stopped (possibly due to insufficient memory)",
   "원근": "Perspective",
   "원근 무늬": "Perspective texture",
   "원근 투영": "Perspective projection",
