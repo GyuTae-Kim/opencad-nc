@@ -1349,7 +1349,8 @@ export class NcViewerApp implements PanelHost {
     // 55차(코어 0.50.0): 코어가 장면 입력에서 빼거나 고친 것(좌표 NaN·아주 큰 값 등 — 해석기가 이미 거르므로 드물다)을 정보 탭 경고 목록에.
     // setScene·setMesh 안에서 찾았을 때 불린다(applyDoc도 setScene 뒤에 맞춘다)
     v.onSceneIssues(() => this.syncSceneIssues());
-    // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계)
+    // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계).
+    // 101차: 손가락 탭으로 찍은 첫 점은 미리 보기도 없어 미리 보기 알림이 오지 않으므로 툴팁·잠금 버튼도 이 길(refreshBar → mlock.update)로만 맞는다
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
     });
