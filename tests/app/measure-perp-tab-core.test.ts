@@ -5,6 +5,8 @@
  *   (첫 점에서 내린 수직 발 「수직점」과 가른다 — 끌어온 점의 「끌어온 점에서 모서리에 수직」과 같은 말). Shift로 잠글 방향은 수직(잠금 이름 그대로)
  * - 마우스 미리 보기 자리에 후보가 둘 이상이면 캔버스 Tab·Shift+Tab이 후보를 돌리고(앱 창 키 듣기가 가로채지 않는다) 툴팁 이름이 코어 미리 보기 알림으로 따라온다.
  *   돌리는 중 Esc는 돌리기만 풀어 첫 후보로 돌아가고(찍은 첫 점은 그대로 — 앱이 측정을 지우지 않는다) 그 자리의 다음 Tab은 초점 이동(기본 동작 그대로)
+ * - 112차(코어 0.118.0 MeasureHoverSnap.cycle): 돌린 동안만 툴팁 이름 뒤에 「i+1/n」을 붙이고 같은 글을 가상 커서 알림 영역에 넣는다.
+ *   Esc로 풀거나 포인터가 그 자리를 벗어나면 전과 같은 이름만
  * 가리키는 자리는 선 위를 조금 비킨다.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -210,33 +212,57 @@ describe('109차: 마우스 미리 보기 자리 후보를 Tab으로 돌리기(�
     const name = (i: number): string | null => snapTip(list[i])?.name ?? null;
     expect(app.state().measureLock!.tip).toBe(name(0));
     v.canvas.focus();
+    // 112차(코어 0.118.0 cycle): Tab으로 돌린 동안만 툴팁 이름 뒤 「i+1/n」, 같은 글을 가상 커서 알림 영역에(화면 읽기)
+    const n = list.length;
+    const live = document.querySelector('.key-live')!;
+    expect(live).toBeTruthy();
+    expect(v.measureHoverSnap!.cycle).toBeUndefined();
+    expect(live.textContent).toBe('');
 
     const tab = key(v, 'Tab');
     expect(tab.defaultPrevented).toBe(true);
     await frames();
     expect(sameSnap(v.measureHoverSnap, list[1])).toBe(true);
+    expect(v.measureHoverSnap!.cycle).toEqual({ index: 1, count: n });
     expect(name(1)).not.toBe(name(0));
-    expect(app.state().measureLock!.tip).toBe(name(1));
+    expect(app.state().measureLock!.tip).toBe(`${name(1)} 2/${n}`);
     expect(app.state().measureLock).toEqual(fresh(app));
+    expect(live.textContent).toBe(`${name(1)} 2/${n}`);
 
     const back = key(v, 'Tab', true);
     expect(back.defaultPrevented).toBe(true);
     await frames();
     expect(sameSnap(v.measureHoverSnap, list[0])).toBe(true);
-    expect(app.state().measureLock!.tip).toBe(name(0));
+    expect(app.state().measureLock!.tip).toBe(`${name(0)} 1/${n}`);
+    expect(live.textContent).toBe(`${name(0)} 1/${n}`);
 
     expect(key(v, 'Tab').defaultPrevented).toBe(true);
     await frames();
-    expect(app.state().measureLock!.tip).toBe(name(1));
+    expect(app.state().measureLock!.tip).toBe(`${name(1)} 2/${n}`);
     const esc = key(v, 'Escape');
     expect(esc.defaultPrevented).toBe(true);
     await frames();
-    // 돌리기만 풀었다 — 찍은 첫 점·측정 모드는 그대로
+    // 돌리기만 풀었다 — 찍은 첫 점·측정 모드는 그대로, 툴팁은 차례·수 없이 전과 같은 글(알림은 그대로 — 칸이 없으면 알리지 않는다)
     expect(v.measurePointCount).toBe(1);
     expect(app.state().measuring).toBe(true);
     expect(sameSnap(v.measureHoverSnap, list[0])).toBe(true);
+    expect(v.measureHoverSnap!.cycle).toBeUndefined();
     expect(app.state().measureLock!.tip).toBe(name(0));
+    expect(live.textContent).toBe(`${name(1)} 2/${n}`);
     // 푼 뒤 그 자리의 Tab은 막지 않는다(키보드 덫이 아니다)
     expect(key(v, 'Tab').defaultPrevented).toBe(false);
+
+    // 다시 돌린 뒤 포인터가 그 자리를 벗어나면(4화소 넘게) 칸이 없어져 툴팁에서도 차례·수가 빠진다
+    await hoverAt(v, [40, 0, 0]);
+    await hoverAt(v, [20.2, 0, 0]);
+    expect(sameSnap(v.measureHoverSnap, list[0])).toBe(true);
+    expect(key(v, 'Tab').defaultPrevented).toBe(true);
+    await frames();
+    expect(app.state().measureLock!.tip).toBe(`${name(1)} 2/${n}`);
+    await hoverAt(v, [40, 0, 0]);
+    expect(v.measureHoverSnap?.cycle).toBeUndefined();
+    const away = app.state().measureLock!.tip;
+    expect(away).toBe(snapTip(v.measureHoverSnap)?.name ?? null);
+    expect(away ?? '').not.toMatch(/\d+\/\d+$/);
   });
 });

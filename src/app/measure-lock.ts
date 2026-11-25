@@ -13,6 +13,8 @@
  *   104차: 코어 0.110.0부터 카메라가 멈춘 첫 그림에서 코어가 그 커서 자리에서 다시 구해 값이 바뀌면 그 알림이 한 번 온다(follow는 움직이는 동안과 앱 API 카메라 함수 뒤에 그대로).
  *   105차: 코어 0.111.0부터 빈 곳 위 커서(미리 보기 null)도 그 자리에 그대로면 카메라가 멈춘 그림·단면·겉모습 뒤 다시 구해, 형상이 오면 null 다음 그 값으로 그 알림이 한 번 온다(앱 코드는 그대로).
  *   101차: 코어 0.107.0부터 끌어온 점 목록이 바뀐 그림 뒤에도 그 미리 보기 알림이 와, 99차가 남긴 포인터 길(pointermove·pointerleave·pointerup → 두 프레임 뒤 update)을 걷었다(attach).
+ *   112차: 코어 0.118.0부터 마우스 미리 보기 자리 후보를 Tab·Shift+Tab으로 돌린 동안만 미리 보기 값에 차례·수(cycle)가 실려 이름 뒤에 「2/4」를 붙이고(cycleOrder),
+ *   같은 글을 가상 커서 알림 영역에 넣는다(sayCycle — 화면 읽기).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -49,6 +51,7 @@
  *   host.changed로 알린다.
  */
 import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
+import { translate } from '../../site/i18n-core.mjs';
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
@@ -169,6 +172,17 @@ export function snapTip(hv: TrackDirPoint | null | undefined): { name: string; l
   if (!hv?.snap) return null;
   return { name: perpDirName(hv) ?? trackDirName(hv) ?? snapLabel(hv.snap, hv.axis, trackMark(hv)), locked: !!hv.locked };
 }
+
+/**
+ * 112차(코어 0.118.0 MeasureHoverSnap.cycle — setMeasureSnap tabCycle로 마우스 미리 보기 자리 후보를 Tab·Shift+Tab으로 돌린 동안만 있다): 툴팁 이름 뒤에 붙이는 차례·수
+ * (「끝점 2/4」의 ' 2/4'). 가상 커서 알림의 차례 글(코어 틀 열쇠 'order' — '{0} {1}/{2}')에서 이름 {0} 뒤 글과 같다. 그 틀은 한글이 없어 keysnap.ts keySnapMessageFn이
+ * 다섯 언어 모두 코어 기본 틀로 두므로 사전 항목이 없다(tests/app/measure-lock.test.ts가 코어 keySnapText로 견준다 — 코어 틀 값을 가져오면 이 조각이 코어 keysnap 모듈과 묶인다).
+ * 툴팁에서는 이름과 다른 마디라 화면 번역층은 이름만 옮긴다(수는 한글이 없어 그대로). 돌리지 않으면 빈 글
+ */
+export const cycleOrder = (c: MeasureHoverSnap['cycle']): string => (c ? ` ${c.index + 1}/${c.count}` : '');
+
+/** 줄 바꿈 없는 빈칸(U+00A0 — 같은 알림 글을 다시 읽게 붙인다, keysnap.ts say와 같다) */
+const NBSP = String.fromCharCode(0xa0);
 
 /** 붙잡은 점(미리 보기 measureHoverSnap·찍은 점 measurePoints)에서 이름을 가르는 값 */
 type TrackDirPoint = Pick<MeasureHoverSnap, 'snap' | 'axis' | 'locked' | 'trackFrom' | 'trackOther' | 'segment' | 'face' | 'direction' | 'trackGuide' | 'perpendicularDir'>;
@@ -301,6 +315,8 @@ export class MeasureLock {
    * 카메라로 화면 밖에 나가 숨긴 동안도 남겨 두어 다시 들어오면 같은 글로 보인다
    */
   private tipPoint: readonly number[] | null = null;
+  /** 112차: 마지막으로 맞춘 돌리기 글(이름 + 차례·수 — 칸이 없으면 빈 글. 같은 값으로 다시 맞출 때 또 알리지 않는다) */
+  private cycleSaid = '';
 
   constructor(private readonly host: MeasureLockHost) {
     this.tip = h('div', { class: 'snap-tip', 'aria-hidden': 'true', hidden: true });
@@ -433,12 +449,15 @@ export class MeasureLock {
     const tan = !!snap && snap.locked && hv?.snap === 'parallel' && !!v!.measureInferenceLock && this.tangentLocked(v!.measureInferenceLock);
     const tip = tan ? { ...snap!, name: lockMeet(meet) ? lockMeetLabel(TANGENT_LABEL, meet) : TANGENT_LABEL } : snap;
     const sp = tip && hv ? v!.project(hv.point) : null;
+    // 112차: Tab으로 돌린 동안만 이름 뒤 차례·수(칸이 없으면 빈 글 — 툴팁 마디는 전과 같다)
+    const order = tip ? cycleOrder(hv?.cycle) : '';
+    this.sayCycle(order ? tip!.name : null, order);
     if (!tip || !sp || !sp.onScreen) {
       this.tip.hidden = true;
       this.tipAvoid = null;
       this.tipPoint = null;
     } else {
-      this.tip.replaceChildren(h('span', {}, tip.name), ...(tip.locked && !lockMeet(meet) ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
+      this.tip.replaceChildren(h('span', {}, tip.name), ...(order ? [order] : []), ...(tip.locked && !lockMeet(meet) ? [' · ', h('b', { class: 'st-lock' }, '잠금')] : []));
       this.tip.classList.toggle('locked', tip.locked);
       this.tip.hidden = false;
       this.tipAt = { x: sp.x, y: sp.y };
@@ -461,6 +480,22 @@ export class MeasureLock {
       this.lastKey = key;
       this.host.changed();
     }
+  }
+
+  /**
+   * 112차: 마우스 미리 보기 Tab 돌리기의 화면 읽기 알림(코어 0.118.0 남은 한계 — 코어는 가상 커서에만 알린다). 차례·수 칸이 있을 때만, 이름·차례가 바뀐 때 한 번
+   * 같은 3D 보기 층의 가상 커서 알림 영역(keysnap.ts KeySnap.live — 번역층이 건너뛰어 지금 언어 글을 넣는다)에 툴팁과 같은 글을 지금 언어로 넣는다.
+   * 칸은 Tab·Shift+Tab을 받은 때 생기고 포인터가 벗어나거나 Esc·찍기에 없어지므로 마우스만 쓰면 알리지 않고, 가상 커서가 켜진 동안은 칸이 없어 그 알림과 겹치지 않는다.
+   * 영역은 3D 보기 조각을 받았을 때만 있다(없으면 알리지 않는다 — 앱이 넘기지 않고 층에서 찾아 첫 화면 조각을 그대로 둔다). 같은 글이 이어지면 끝에 NBSP를 붙여 다시 읽게
+   */
+  private sayCycle(name: string | null, order: string): void {
+    const said = name === null ? '' : name + order;
+    if (said === this.cycleSaid) return;
+    this.cycleSaid = said;
+    const live = said ? this.host.layer.querySelector<HTMLElement>('.key-live') : null;
+    if (!live) return;
+    const text = translate(name!, document.documentElement.lang || 'ko') + order;
+    live.textContent = live.textContent === text ? text + NBSP : text;
   }
 
   /**

@@ -6,10 +6,11 @@
  * 실제 코어 판정(모서리 끝에서 바로 Shift 등)은 measure-lock-core.test.ts가 본다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeasureHoverSnap, MeasureLabelRect } from 'opencad-viewer3d';
+import { KEY_SNAP_MESSAGES, formatKeySnapMessage, keySnapText, type MeasureHoverSnap, type MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
+import { dictLookup, keySnapMessageFn } from '../../src/app/keysnap';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
-import { MeasureLock, coverRects, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { MeasureLock, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 
 type Dir = [number, number, number];
 interface Lock {
@@ -466,5 +467,83 @@ describe('툴팁 크기가 바뀌면 다시 놓기(31차 — 번역층이 글을
     Object.defineProperty(tip, 'offsetWidth', { configurable: true, value: 100 });
     ro.fire!();
     expect(tip.style.left).toBe('36px');
+  });
+});
+
+describe('112차: 마우스 미리 보기 Tab 돌리기의 차례·수(코어 0.118.0 MeasureHoverSnap.cycle)', () => {
+  it('글 꼴: 이름 뒤 「i+1/n」은 가상 커서 알림의 차례 글(코어 틀 열쇠 order)과 같다 — 한글이 없는 틀이라 다섯 언어 모두 코어 기본 틀, 돌리지 않으면 빈 글', () => {
+    expect(cycleOrder(undefined)).toBe('');
+    expect(cycleOrder({ index: 1, count: 4 })).toBe(' 2/4');
+    expect(cycleOrder({ index: 0, count: 2 })).toBe(' 1/2');
+    for (const lang of ['ko', 'en', 'ja', 'zh-CN', 'de']) {
+      const msgs = keySnapMessageFn({ KEY_SNAP_MESSAGES, formatKeySnapMessage }, dictLookup(lang));
+      const name = translate('끝점', lang);
+      expect(keySnapText(msgs, 'order', [name, 2, 4]), lang).toBe(name + cycleOrder({ index: 1, count: 4 }));
+    }
+  });
+
+  it('툴팁: cycle이 있으면 이름 뒤에 차례·수(잠금은 그 뒤), 없으면 전과 같은 마디. 이름은 따로 둔 마디라 번역층이 이름만 옮긴다', () => {
+    const { v, lock, layer } = setup();
+    v.hover = END;
+    lock.update();
+    const tip = layer.querySelector<HTMLElement>('.snap-tip')!;
+    const plain = tip.innerHTML;
+    expect(lock.snapshot().tip).toBe('끝점');
+    v.hover = { ...END, cycle: { index: 1, count: 4 } };
+    lock.update();
+    expect(lock.snapshot().tip).toBe('끝점 2/4');
+    expect(tip.querySelector('span')!.textContent).toBe('끝점');
+    v.hover = { point: [50, 0, 0], snap: 'midpoint', cycle: { index: 2, count: 4 } };
+    lock.update();
+    expect(lock.snapshot().tip).toBe('중간점 3/4');
+    v.hover = { ...END, locked: true, cycle: { index: 0, count: 2 } };
+    lock.update();
+    expect(lock.snapshot().tip).toBe('끝점 1/2 · 잠금');
+    // Esc로 풀거나 포인터가 벗어남(칸 없음): 전과 바이트까지 같은 마디
+    v.hover = END;
+    lock.update();
+    expect(tip.innerHTML).toBe(plain);
+    expect(lock.snapshot().tip).toBe('끝점');
+  });
+
+  it('화면 읽기: 같은 3D 보기 층의 가상 커서 알림 영역(.key-live)에 cycle이 있을 때만, 차례·이름이 바뀐 때 한 번 지금 언어로 알린다', () => {
+    const { v, lock, layer } = setup();
+    const live = document.createElement('div');
+    live.className = 'key-live';
+    layer.append(live);
+    v.hover = END;
+    lock.update();
+    expect(live.textContent).toBe('');
+    v.hover = { ...END, cycle: { index: 1, count: 4 } };
+    lock.update();
+    expect(live.textContent).toBe('끝점 2/4');
+    // 같은 값으로 다시 맞춤(키·카메라·다음 프레임 — 포인터가 4화소 안에서 움직여도 값은 같다): 다시 알리지 않는다
+    live.textContent = '';
+    lock.update();
+    expect(live.textContent).toBe('');
+    v.hover = { point: [50, 0, 0], snap: 'midpoint', cycle: { index: 2, count: 4 } };
+    lock.update();
+    expect(live.textContent).toBe('중간점 3/4');
+    // 칸이 없어지면 알리지 않고, 다음 Tab이 같은 글이면 줄 바꿈 없는 빈칸을 붙여 다시 읽게 한다
+    v.hover = END;
+    lock.update();
+    expect(live.textContent).toBe('중간점 3/4');
+    v.hover = { point: [50, 0, 0], snap: 'midpoint', cycle: { index: 2, count: 4 } };
+    lock.update();
+    expect(live.textContent).toBe(`중간점 3/4${String.fromCharCode(0xa0)}`);
+    // 다른 언어 화면: 이름을 지금 언어 사전으로
+    document.documentElement.lang = 'en';
+    try {
+      v.hover = { ...END, cycle: { index: 0, count: 2 } };
+      lock.update();
+      expect(live.textContent).toBe('Endpoint 1/2');
+    } finally {
+      document.documentElement.lang = '';
+    }
+    // 측정을 끄면 알리지 않는다
+    v.measureMode = false;
+    v.hover = { ...END, cycle: { index: 1, count: 2 } };
+    lock.update();
+    expect(live.textContent).toBe('Endpoint 1/2');
   });
 });
