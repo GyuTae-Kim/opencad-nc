@@ -4,10 +4,15 @@ on:
     branches: [main]
 permissions:
   contents: read
+# 같은 PR에 새 커밋을 올리면 앞 실행을 멈춘다
+concurrency:
+  group: mobile-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   validate-mobile:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 시험(npm test)은 CI 워크플로(ci.yml)가 같은 PR에서 함께 돌려 여기서는 다시 돌리지 않는다
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -15,7 +20,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
       - run: npm run test:seo
       - uses: actions/upload-artifact@v4
         with:
