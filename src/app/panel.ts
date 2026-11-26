@@ -104,6 +104,8 @@ export class NcPanel {
   private code: VirtualList | null = null;
   private codeFor: object | null = null;
   private lastPlayLine = -2;
+  /** 137차: 지금 몸통의 칸 → 열쇠(render가 그린 바로 뒤 적는다) */
+  private keys = new Map<Element, string>();
   private playEls: { btn: HTMLButtonElement; range: HTMLInputElement; time: HTMLSpanElement; line: HTMLSpanElement; speed: HTMLSelectElement; state: HTMLDivElement; toHere: HTMLButtonElement } | null = null;
 
   constructor(
@@ -279,6 +281,8 @@ export class NcPanel {
       this.tabsEl.append(b);
       if (k === focused) b.focus({ preventScroll: true });
     }
+    // 137차: 몸통도 같은 꼴 — 초점이 몸통 칸에 있었으면 그 칸의 열쇠(지난번 그린 바로 뒤 적어 둔 것)
+    const key = this.keys.get(document.activeElement as Element);
     const scroll = this.body.scrollTop;
     const sameTab = this.body.dataset.tab === d.panelTab;
     this.body.dataset.tab = d.panelTab;
@@ -292,6 +296,14 @@ export class NcPanel {
       else if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d);
       else this.renderInfo(d);
       if (sameTab) this.body.scrollTop = scroll;
+    }
+    // 137차: 몸통 칸마다 열쇠(태그 · data-key, 없으면 aria-label·감싼 label·글 — 121차 깎기 탭 꼴)를 그린 바로 뒤(화면 번역층이 옮기기 전 한국어 원문) 적고,
+    // 초점이 있던 칸과 같은 열쇠의 첫 칸으로 옮긴다(정보 탭 설정을 바꿔 다시 읽거나 공구 탭 눈 버튼으로 새로 그려도 떼어진 칸에서 문서로 빠지지 않게)
+    this.keys = new Map();
+    for (const el of this.body.querySelectorAll<HTMLElement>('button, input, select')) {
+      const k = `${el.tagName}|${el.dataset.key ?? el.getAttribute('aria-label') ?? el.closest('label')?.textContent ?? el.textContent}`;
+      this.keys.set(el, k);
+      if (k === key && !this.body.contains(document.activeElement)) el.focus({ preventScroll: true });
     }
     this.renderFoot();
     this.onPlayback();
@@ -576,7 +588,8 @@ export class NcPanel {
       const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
       // 단추 이름: 이름만 있는 공구는 그 이름(파일 글 — 자리를 지켜 옮겨 넣고 번역층은 건너뛴다)
       const who = t.number >= 100000 && t.name !== undefined ? fileText(t.name) : label;
-      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': mixText(mix`${who} ${visible ? '숨기기' : '보이기'}`), 'data-i18n-keep': 'aria-label', 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
+      // data-key(137차): 이름은 누를 때 「숨기기 ↔ 보이기」로 바뀌어 다시 그린 몸통의 같은 버튼을 공구 번호로 찾는다(render)
+      const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': mixText(mix`${who} ${visible ? '숨기기' : '보이기'}`), 'data-i18n-keep': 'aria-label', 'data-key': `eye${t.number}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
       eye.disabled = !g;
       eye.addEventListener('click', (ev) => {
         ev.stopPropagation();
