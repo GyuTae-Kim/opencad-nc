@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, mixSpan, pieces, toast } from './dom';
+import { h, mixSpan, pieces, toast, toastArea } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -516,6 +516,8 @@ export class NcViewerApp implements PanelHost {
     root.textContent = '';
     root.classList.add('no-doc');
     root.append(titlebar, toolbar, this.workspace, status, this.fileInput, this.dropMask);
+    // 156차: 알림 상자(aria-live)는 빈 채로 지금 붙여 둔다 — 첫 알림 때 상자째 붙이면 그 첫 안내를 화면 읽기 프로그램이 읽지 않을 수 있다(dom.ts toastArea)
+    toastArea();
 
     this.bindDrop();
     window.addEventListener('keydown', (ev) => this.onKey(ev), true);
