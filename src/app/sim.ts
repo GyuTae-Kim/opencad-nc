@@ -208,6 +208,21 @@ export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, bo
   return { ...base, meshes, lines: paths ? base.lines : [], points: paths ? (base.points ?? []) : [], ...(bounds ? { bounds } : {}) };
 }
 
+/**
+ * 135차: 깎기 탭 상태 글 칸의 알림 꼴 — 계산하지 못했으면(켜져 있고 오류: 소재 상자가 올바르지 않음·워커 실패) role=alert, 아니면 aria-live=polite.
+ * 오류는 탭을 통째로 다시 그린 새 칸(redrawTab)의 처음 글로만 나오는데, polite 영역은 이미 있던 영역의 글이 바뀌어야 화면 읽기 프로그램이 읽어
+ * (117차 측정 띠 위 알림과 같은 까닭) 친 값이 막힌 것을 듣지 못했다. alert는 새로 붙어도 읽는다(알림 상자의 오류 — dom.ts toast와 같다). 진행·끝·꺼짐 글은 polite 그대로
+ */
+function statusLive(el: HTMLElement, alert: boolean): void {
+  if (alert) {
+    el.setAttribute('role', 'alert');
+    el.removeAttribute('aria-live');
+  } else {
+    el.removeAttribute('role');
+    el.setAttribute('aria-live', 'polite');
+  }
+}
+
 /** 121차: 깎기 탭에서 초점을 받는 칸 */
 type TabControl = HTMLButtonElement | HTMLInputElement | HTMLSelectElement;
 const TAB_CONTROLS = 'button, input, select';
@@ -767,7 +782,12 @@ export class SimView {
 
   private updateStatus(): void {
     this.updateChip();
-    if (this.statusEl?.isConnected) this.statusEl.textContent = this.statusText();
+    const el = this.statusEl;
+    if (!el?.isConnected) return;
+    // 135차: 오류였던 칸에 진행 글이 들어가면 alert로 거듭 읽지 않게(또 그 반대) 꼴을 먼저 바꾼다
+    const alert = this.on && !!this.error;
+    if (alert !== (el.getAttribute('role') === 'alert')) statusLive(el, alert);
+    el.textContent = this.statusText();
   }
 
   // ───────────────────────── 패널 "깎기" 탭 ─────────────────────────
@@ -792,7 +812,8 @@ export class SimView {
       cb.addEventListener('change', () => run(cb.checked));
       return [h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label)), hint ? h('p', { class: 'hint coarse-only' }, hint) : null];
     };
-    this.statusEl = h('p', { class: 'hint sim-status', 'aria-live': 'polite' }, this.statusText());
+    this.statusEl = h('p', { class: 'hint sim-status' }, this.statusText());
+    statusLive(this.statusEl, this.on && !!this.error);
     const head: (Node | null)[] = [
       ...(panel
         ? check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '판 윗면 가공으로 판을 깎은 모양을 그립니다.')
