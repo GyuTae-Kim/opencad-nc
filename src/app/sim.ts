@@ -806,8 +806,9 @@ export class SimView {
     const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
     // 127차: 풀이(title — 마우스를 올려야 뜨는 풍선 글)는 휴대폰·태블릿에서 볼 수 없어 같은 글을 상자 바로 밑의 손가락 기기 안내 줄로도 둔다
     // (styles.css coarse-only — 마우스 기기는 감춘다, panel-info.ts withTips와 같은 길). 풀이가 없으면 줄도 없다
+    // 142차: 풀이는 상자 자신의 title에도 — 화면 읽기의 설명은 상자 자신의 title 차례이고(HTML-AAM) 감싼 label의 title은 쓰지 않는다
     const check = (label: string, on: boolean, run: (on: boolean) => void, hint = ''): (HTMLElement | null)[] => {
-      const cb = h('input', { type: 'checkbox' });
+      const cb = h('input', { type: 'checkbox', title: hint || null });
       cb.checked = on;
       cb.addEventListener('change', () => run(cb.checked));
       return [h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label)), hint ? h('p', { class: 'hint coarse-only' }, hint) : null];

@@ -212,6 +212,16 @@ describe('여러 파일을 한 작업으로 열기', () => {
     expect(window.opencadApp!.state.docName).toBe('O1001.nc');
   });
 
+  it('142차: 주 프로그램 고르기의 풀이(title)는 감싼 label과 고르기 자신에 함께 — 고르기에 초점을 두면 화면 읽기가 설명으로 읽음(이름은 aria-label 그대로)', async () => {
+    const { app, root } = makeApp();
+    await app.openFiles([textFile('main.nc', MAIN), textFile('O1001.nc', SUB_A), textFile('1002.nc', SUB_B)]);
+    window.opencadApp!.setPanelTab('info');
+    const sel = root.querySelector<HTMLSelectElement>('select[aria-label="주 프로그램"]')!;
+    // HTML-AAM 설명 차례는 aria-describedby → 고르기 자신의 title(감싼 label의 title은 쓰지 않음)
+    const tip = '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일';
+    expect([sel.closest('label')!.getAttribute('title'), sel.getAttribute('title'), sel.getAttribute('aria-label')]).toEqual([tip, tip, '주 프로그램']);
+  });
+
   it('끌어다 놓은 여러 파일도 한 작업으로', async () => {
     const { root } = makeApp();
     const drop = new Event('drop', { bubbles: true, cancelable: true });

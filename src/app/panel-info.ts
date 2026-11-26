@@ -29,10 +29,15 @@ export interface InfoPanel {
  * 127차: 묶음 g의 바로 아래 칸 가운데 풀이(title)가 있는 칸마다 같은 글의 손가락 기기 안내 줄을 그 칸 바로 밑에 둔다.
  * 풀이는 마우스를 올려야 뜨는 풍선 글이라 휴대폰·태블릿에서는 볼 수 없었다(HTML 표준 title 절 — 풍선 글에 포인터 기기가 필요해 손가락만 쓰는 사용자가 빠진다).
  * 안내 줄은 styles.css coarse-only(마우스 기기는 감춘다 — 시작 화면 손가락 안내와 같은 길)라 마우스 기기의 보이는 것은 같고, 풍선 글도 그대로다.
- * 글은 풍선 글과 같아 같은 사전 항목으로 옮겨진다. 값 칸(.v — 잘린 값의 온 글)은 칸 안이라 닿지 않는다
+ * 글은 풍선 글과 같아 같은 사전 항목으로 옮겨진다. 값 칸(.v — 잘린 값의 온 글)은 칸 안이라 닿지 않는다.
+ * 142차: 그 칸 안의 상자·숫자 칸·고르기 자신에도 같은 title을 둔다 — 화면 읽기의 설명은 aria-describedby → 칸 자신의 title 차례이고(HTML-AAM 설명 계산)
+ * 감싼 label·div의 title은 쓰이지 않아 칸에 초점을 두면 풀이를 듣지 못했다. 칸 이름은 aria-label·감싼 label 글이 따로 있어 title은 설명이 된다(풍선 글은 같은 글)
  */
 function withTips(g: HTMLElement): HTMLElement {
-  for (const el of g.querySelectorAll<HTMLElement>(':scope > [title]')) el.after(h('p', { class: 'hint coarse-only' }, el.title));
+  for (const el of g.querySelectorAll<HTMLElement>(':scope > [title]')) {
+    el.after(h('p', { class: 'hint coarse-only' }, el.title));
+    for (const c of el.querySelectorAll('input, select')) c.setAttribute('title', el.title);
+  }
   return g;
 }
 
