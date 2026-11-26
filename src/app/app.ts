@@ -542,7 +542,15 @@ export class NcViewerApp implements PanelHost {
     try {
       window.matchMedia(PHONE_QUERY).addEventListener('change', () => {
         // 넓은 화면 ↔ 휴대폰: 막대 단추가 바뀌므로 펼친 메뉴를 닫는다
+        // 153차: 초점이 닫는 메뉴·상자(그 버튼 포함) 안이나 이 폭에서 숨는 칸(styles.css — 막대의 폭 전용 버튼, 마우스 기기의 측정 띠)에 있으면
+        // HTML focus fixup이 문서로 보낸다 — 연 버튼이 이 폭에도 보이면 그리로(Esc와 같은 곳), 아니면 3D 보기로(138차). 초점이 그 밖이면 그대로
+        const had = document.activeElement;
+        const wrap = this.openMenu?.wrap;
         this.closeMenu();
+        const gone = isPhone() ? '.toolbar .wide-only' : `.toolbar .narrow-only${this.coarse?.matches ? '' : ', .measure-bar'}`;
+        const btn = wrap?.contains(had) ? wrap.querySelector('button') : null;
+        if (btn && !btn.closest(gone)) btn.focus();
+        else if (btn || had?.closest(gone)) this.viewer?.canvas.focus({ preventScroll: true });
         this.viewer?.setViewCubeSize(this.cubeSizeFor());
         this.mlock?.schedule();
       });
