@@ -53,6 +53,8 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   close.addEventListener('click', () => el.remove());
   el.append(close);
   toastHost.append(el);
-  while (toastHost.childElementCount > 4) toastHost.firstElementChild?.remove();
+  // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
+  // 모두 오류면 가장 오래된 것(한도는 늘 지킨다). 오류가 없으면 전과 같다
+  while (toastHost.childElementCount > 4) (toastHost.querySelector(':scope>.info') ?? toastHost.firstElementChild)?.remove();
   setTimeout(() => el.remove(), ms);
 }
