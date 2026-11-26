@@ -360,7 +360,8 @@ describe('깎기 탭', () => {
     await until(() => !!root.querySelector('.panel-body .sim-status'));
     let body = root.querySelector('.panel-body')!;
     expect(body.textContent).toContain('깎인 소재 보이기');
-    expect(body.textContent).toContain('꺼져 있습니다');
+    // 129차: G-code는 재생 막대를 따라 깎으므로 끈 상태 줄은 그대로(판재만 판재 글)
+    expect(body.querySelector('.sim-status')!.textContent).toBe('꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.');
     // 127차: 상자 풀이는 그 상자 바로 밑에 같은 글의 손가락 기기 안내 줄로도(풍선 글은 그대로). 풀이가 없는 「공구 경로도 보이기」는 줄 없음
     const simHint = '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).';
     expect(coarseTips(body)).toEqual([['P', 'hint coarse-only', simHint, simHint]]);
@@ -663,6 +664,9 @@ describe('깎기 탭', () => {
     api.togglePanel(true);
     expect([...root.querySelectorAll('.panel-tabs [role=tab]')].map((b) => b.textContent)).toContain('깎기');
     api.setPanelTab('sim');
+    // 129차: 끈 깎기 탭 상태 줄은 판재에 없는 재생 막대 대신 판 윗면 가공으로 끝까지 깎는다고 알린다(README — 판재는 재생 막대가 없어 기본은 끝까지)
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    expect(root.querySelector('.panel-body .sim-status')!.textContent).toBe('꺼져 있습니다 — 켜면 판 윗면 가공으로 판을 끝까지 깎아 보입니다.');
     await api.setSim(true);
     await until(settled);
     const s = api.state.sim!;
@@ -1061,6 +1065,7 @@ describe('장면 합치기·번역', () => {
       // 판재
       ...Object.values(PANEL_SKIP_TEXT),
       '판 윗면 가공으로 판을 깎은 모양을 그립니다.',
+      '꺼져 있습니다 — 켜면 판 윗면 가공으로 판을 끝까지 깎아 보입니다.',
       '가공 그림도 보이기',
       '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.',
       '판 윗면에서 위→아래로 하는 가공(수직 구멍·홈·포켓·자유 형상 포켓·윤곽)을 3축 높이 지도로 깎은 근사 결과입니다. 구멍은 구멍 지름의 평 끝 공구로, 홈·포켓은 파일이 정한 모양 그대로(공구 모서리 R 없이), 윤곽은 공구 보정(왼쪽·오른쪽)을 넣어 깎습니다. 칸보다 작은 모양은 보지 않습니다.',

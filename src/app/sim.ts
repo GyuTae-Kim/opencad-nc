@@ -745,7 +745,8 @@ export class SimView {
   }
 
   private statusText(): string {
-    if (!this.on) return '꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.';
+    // 129차: 판재(MPR·PGI·XML)는 재생 막대가 없어 켜면 끝까지 깎는다(가공 하나씩 따라가기는 켠 뒤) — 상자 풀이처럼 판재 글로
+    if (!this.on) return this.host.doc && !this.host.doc.nc ? '꺼져 있습니다 — 켜면 판 윗면 가공으로 판을 끝까지 깎아 보입니다.' : '꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.';
     // 108차: "시뮬레이션을 계산하지 못했습니다: {0}"에 끼운 까닭(「워커가 멈췄습니다(…)」 같은 앱 글)까지 화면 언어로 — 그릴 때 옮겨
     // 언어를 바꾸면 패널을 다시 그릴 때 따라간다(번역층은 {0} 자리 값을 그대로 둔다)
     if (this.error) return uiText(this.error);

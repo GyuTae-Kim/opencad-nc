@@ -997,6 +997,7 @@
   "공구 경로도 보이기": "Werkzeugwege ebenfalls anzeigen",
   "재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).": "Zeigt das Rohteil so, wie das Werkzeug es bis zur Wiedergabeposition abgetragen hat (Vorspulen rechnet weiter, Zurückspulen ab einem Sicherungspunkt neu).",
   "꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.": "Aus — einschalten, um den Materialabtrag entlang der Wiedergabeleiste zu sehen.",
+  "꺼져 있습니다 — 켜면 판 윗면 가공으로 판을 끝까지 깎아 보입니다.": "Aus — einschalten, um die Platte nach allen Bearbeitungen der Oberseite zerspant zu sehen.",
   "시뮬레이션하지 않음": "Nicht simuliert",
   "3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.": "Näherung aus einer 3-Achs-Höhenkarte (Werkzeug in Z). Formen kleiner als eine Zelle, Hinterschnitte unter dem Werkzeug und Kollisionen von Halter oder Schaft werden nicht geprüft.",
   "급속이 깎은 자리는 빨갛게 그립니다(지금 재생 자리까지).": "Von Eilgängen abgetragene Stellen werden rot gezeichnet (bis zur aktuellen Wiedergabeposition).",
