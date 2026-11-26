@@ -386,6 +386,37 @@ describe('측정 띠(휴대폰·터치)', () => {
     // 십자선 층은 3D 보기 위에
     expect(root.querySelector('.view > .aim-layer .aim-reticle')).not.toBeNull();
   });
+
+  it('138차: 키보드로 누른 다시 재기가 지워 막히면 초점을 3D 보기로(문서로 빠지지 않게) — 초점이 그 버튼에 없거나 막히지 않으면 그대로', async () => {
+    const { app, root } = makeApp(true);
+    await app.openSample();
+    menuButton(root, '측정').click();
+    expect(app.state().measuring).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    const [clear] = [...bar.querySelectorAll<HTMLButtonElement>('.mb-btn:not(.mb-lock):not(.mb-track)')];
+    const v = fake.FakeViewer.last!;
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    v.canvas.tabIndex = 0;
+    v.emitMeasure({ distance: 50, dx: 30, dy: -40, dz: 0 });
+    expect(clear!.disabled).toBe(false);
+    // 막히지 않으면 띠를 다시 맞춰도 초점은 그 버튼 그대로
+    clear!.focus();
+    v.canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    expect(document.activeElement).toBe(clear);
+    // 키보드로 누름(jsdom click은 초점을 옮기지 않고 focus fixup이 없어 막힌 버튼에 초점이 남는다 — 브라우저는 문서로 보낸다)
+    clear!.click();
+    expect(v.measurePts).toBe(0);
+    expect(clear!.disabled).toBe(true);
+    expect(document.activeElement).toBe(v.canvas);
+    // 초점이 다른 곳이면 막혀도 건드리지 않는다
+    v.emitMeasure({ distance: 50, dx: 30, dy: -40, dz: 0 });
+    expect(clear!.disabled).toBe(false);
+    const other = document.body.appendChild(document.createElement('button'));
+    other.focus();
+    clear!.click();
+    expect(clear!.disabled).toBe(true);
+    expect(document.activeElement).toBe(other);
+  });
 });
 
 describe('손가락 기기의 파일 고르기와 시작 화면', () => {
