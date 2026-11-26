@@ -4,6 +4,8 @@
  * 공구 방향을 고르면 기계·읽기 설정에 기억하고 다시 읽어 보정 구간에 쓴다(파일에 값이 없을 때). 뷰어 코어(WebGL)는 가짜로,
  * 해석은 워커와 같은 길(parseForView)로 바로 부른다.
  */
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
@@ -52,6 +54,9 @@ import { SETTINGS_KEY } from '../../src/app/settings';
 
 /** Fanuc 선반(T0101 — 노즈 R·공구 방향은 기계의 보정 표에 있어 파일에 없다) */
 const LATHE = `O1000\nG18 G21 G40 G99\nT0101\nG0 X80. Z5.\nG42 G1 X40. Z2. F0.2\nG1 Z-20.\nX60.\nG40 G0 X80.\nM30\n`;
+/** 밀링 반경 보정 구간 둘(6번 줄 G41 왼쪽·9번 줄 G42 오른쪽 — 공구 지름은 주석) */
+const MILL = `G21 G90 G17\n(T1 D=10.)\nT1 M6\nG0 X-20 Y-20 Z5\nG1 Z-2 F100\nG41 D1 X0 Y0 F500\nY50\nG40 X-20 Y70\nG42 D1 X0 Y100\nX50\nG40 X70 Y120\nM30\n`;
+const ROOT = resolve(__dirname, '../..');
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 const until = async (ok: () => boolean): Promise<void> => {
@@ -262,5 +267,46 @@ describe('정보 탭: 판재 보기 선택의 손가락 기기 안내 줄(145차
     const n = label.nextElementSibling;
     expect([label.title, label.querySelector('input')!.title, n?.tagName, n?.className, n?.textContent]).toEqual([off, off, 'P', 'hint coarse-only', off]);
     expect(group('보기 선택')!.querySelectorAll('.coarse-only')).toHaveLength(1);
+  });
+});
+
+/**
+ * 148차: 정보 탭 보기 선택의 보정 구간 줄(20개까지)·공구 방향 줄은 div.prop-row가 이어질 뿐이라 화면 읽기 프로그램이 몇 구간인지·몇째인지 듣지 못했다(135차 감사 표 3).
+ * 구간마다 그 줄(선반이면 바로 밑 공구 방향 줄과 함께)을 role=listitem 칸에 담아 role=list로 묶는다(WAI-ARIA list·listitem — SKP 156차처럼 ul·li의 들여쓰기·글머리표를 지울 스타일시트 없이).
+ * 묶음에 상자·안내 줄·선반 공구 표 줄이 섞여 묶음 자신을 목록으로 할 수 없어 감싼다 — 감싼 칸은 블록 div이고 묶음·정보 탭 몸통은 블록, 묶음·줄을 결합자로 꾸미는 규칙이 없어 모양 그대로
+ */
+describe('정보 탭: 보정 구간 줄을 목록으로(148차)', () => {
+  it('구간마다 한 항목(선반은 공구 방향 줄과 함께)을 보기 선택 묶음 바로 아래 목록에, 선반 공구 표는 목록 밖, 스타일시트는 감싼 칸에 닿지 않음', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    const group = (t: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.prop-group')].find((g) => g.querySelector('h3')?.textContent === t);
+    /** 보기 선택 묶음 안 목록마다 [부모가 그 묶음인지, 항목마다 [role, 그 항목 바로 아래 줄의 이름…]] */
+    const lists = (): unknown[] =>
+      [...(group('보기 선택')?.querySelectorAll<HTMLElement>('[role="list"]') ?? [])].map((l) => [
+        l.parentElement === group('보기 선택'),
+        [...l.children].map((li) => [li.getAttribute('role'), ...[...li.querySelectorAll(':scope > .prop-row > .k')].map((k) => k.textContent)]),
+      ]);
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    await until(() => !!group('기계·읽기 설정'));
+    expect(lists()).toEqual([[true, [['listitem', '5번 줄 오른쪽', '공구 방향']]]]);
+    // 선반 공구 표(넣는 칸 줄)는 목록 밖 — 묶음 바로 아래 그대로
+    expect(group('보기 선택')!.querySelector(':scope > .prop-row.edit > .k')?.textContent).toBe('T1 노즈 R(mm) · 방향');
+    // 밀링: 구간 둘 → 항목 둘(공구 방향 줄 없음)
+    await api.open('m.nc', MILL, { comp: true });
+    await until(() => api.state.docName === 'm.nc' && api.state.parsed);
+    api.setPanelTab('info');
+    await until(() => !!group('기계·읽기 설정') && lists().length > 0);
+    expect(lists()).toEqual([[true, [['listitem', '6번 줄 왼쪽'], ['listitem', '9번 줄 오른쪽']]]]);
+    // 스타일시트: role로 꾸미는 목록 규칙이 없고, 묶음·줄 선택자에 자식·형제 결합자가 없으며, 묶음 자신과 정보 탭 몸통은 블록(감싼 블록 div가 자리·간격을 바꾸지 않음)
+    const css = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const sels = [...css.matchAll(/([^{}]*)\{/g)].map((m) => m[1]!.trim()).filter((s) => /prop-(group|row)/.test(s));
+    expect(sels).toContain('.prop-row');
+    expect(css).not.toMatch(/\[role=['"]?list/);
+    expect(sels.filter((s) => /[>+~]/.test(s) || s.split(',').some((x) => x.trim() === '.prop-group'))).toEqual([]);
+    expect(css.match(/(^|\n)\.panel-body\s*\{([^}]*)\}/)![2]).not.toMatch(/display/);
   });
 });
