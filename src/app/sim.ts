@@ -1054,11 +1054,18 @@ export class SimView {
     else if (k === 0) s.name.replaceChildren(h('span', {}, '깎기 전'));
     // 가공 이름: MPR은 파일 글(번역하지 않는다), PGI·XML은 앱이 지은 이름
     else s.name.replaceChildren(h('span', {}, `가공 ${(op ?? 0) + 1}`), ...(row ? [' · ', this.opName(row.label ? opLabel(this.host.doc!, row) : MPR_KIND[row.kind] || row.kind)] : []));
+    const had = document.activeElement;
     s.first.disabled = this.step === 0;
     s.prev.disabled = k === 0;
     // 모든 가공(따라가기 전)에서 다음 가공은 첫 가공부터 — → 키·G-code 재생 띠의 다음 이동과 같은 차례(stepBy)
     s.next.disabled = this.step !== null && k >= n;
     if (s.all.closest('.play-strip') === null) s.all.disabled = this.step === null;
+    // 120차: 초점이 있던 버튼이 막히면(키보드로 누른 처음으로·끝까지, 끝에 닿은 이전·다음) HTML focus fixup이 초점을 문서로 옮겨 제자리를 잃는다 —
+    // 반대쪽으로 가는 버튼으로 옮긴다(초점이 이 묶음 버튼에 없거나 막히지 않았으면 그대로)
+    if (had instanceof HTMLButtonElement && had.disabled && [s.first, s.prev, s.next, s.all].includes(had)) {
+      const to = had === s.next || had === s.all ? s.prev : s.next;
+      if (!to.disabled) to.focus({ preventScroll: true });
+    }
     s.range.max = String(n);
     s.range.value = String(k);
     s.range.setAttribute('aria-valuetext', `${k} / ${n}`);
