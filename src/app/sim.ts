@@ -535,7 +535,7 @@ export class SimView {
     const box = this.stockBox();
     if (!box || !(box.max[0] > box.min[0] && box.max[1] > box.min[1] && box.max[2] > box.min[2])) {
       this.error = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
-      redrawTab(this.host, this);
+      this.showError();
       return;
     }
     const spec = gridFor(box, this.longCells(d, box));
@@ -605,7 +605,18 @@ export class SimView {
   private fail(message: string): void {
     this.error = `시뮬레이션을 계산하지 못했습니다: ${message}`;
     this.stop();
+    this.showError();
+  }
+
+  /**
+   * 144차: 계산하지 못한 오류를 깎기 탭에 다시 그리고, 그 상태 글 칸이 보이지 않으면 — 패널을 닫았거나(칸은 닫힌 패널 안 — 휴대폰은 처음부터 닫혀 메뉴로 켜고
+   * 재생 띠로 재생) 다른 탭이라 칸을 그리지 않음 — 시뮬레이션을 불러오지 못한 오류(app.ts setSim)와 같은 알림 상자(오류 — role=alert)로 같은 글을 알린다.
+   * 진행 칩은 멈추며 거두고 장면은 문서 장면으로 돌아가 그 밖에 알릴 곳이 없었다. 탭이 보이면 탭 글(135차 alert)만 — 두 번 읽지 않게
+   */
+  private showError(): void {
     redrawTab(this.host, this);
+    const el = this.statusEl;
+    if (this.error && !(el?.isConnected && !el.closest('[hidden]'))) toast(uiText(this.error), 'error');
   }
 
   private post(msg: SimRequest): void {

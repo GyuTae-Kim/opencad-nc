@@ -99,10 +99,16 @@ vi.mock('../../src/app/client', async () => {
   }
   return { ParseWorkerClient };
 });
+// 144차: 알림 상자(toast)는 그대로 띄우되 부른 글을 볼 수 있게 감싼다(mobile.test와 같은 꼴)
+vi.mock('../../src/app/dom', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../../src/app/dom')>();
+  return { ...m, toast: vi.fn(m.toast) };
+});
 
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 import { mprOps } from '../../src/app/doc';
+import { toast } from '../../src/app/dom';
 import { installLocalization } from '../../src/app/i18n';
 import { SIM_GROUP, composeSimScene, fullSceneCheaper, panelToolLabel, sumBytes } from '../../src/app/sim';
 import { PANEL_SKIP_TEXT, panelOpSteps, panelStepTarget } from '../../src/sim/panel';
@@ -114,6 +120,8 @@ import { ncSampleProgram } from '../../src/view/sample';
 /** 워커 대신: 같은 실행기를 이 스레드에서(메시지는 다음 틱에) */
 class FakeWorker {
   static made = 0;
+  /** 144차: 마지막에 만든 워커(onerror로 멈춤을 흉내 낸다) */
+  static last: FakeWorker | null = null;
   /** 받은 처음 요청(벽 문턱 등) */
   static inits: Extract<SimRequest, { type: 'init' }>[] = [];
   onmessage: ((ev: { data: unknown }) => void) | null = null;
@@ -122,6 +130,7 @@ class FakeWorker {
   private readonly runner = new SimRunner((msg) => setTimeout(() => !this.dead && this.onmessage?.({ data: msg }), 0));
   constructor() {
     FakeWorker.made++;
+    FakeWorker.last = this;
   }
   postMessage(msg: SimRequest): void {
     if (msg.type === 'init') FakeWorker.inits.push(msg);
@@ -520,6 +529,56 @@ describe('깎기 탭', () => {
     expect(status().slice(1)).toEqual([null, 'polite']);
     await until(settled);
     expect(status()).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite']);
+  });
+
+  /**
+   * 144차: 계산하지 못한 오류(워커 멈춤 등)는 깎기 탭 상태 글 칸에만 쓰여, 패널을 닫았거나(휴대폰은 처음부터 — 메뉴 「소재 깎기」로 켜고 재생 띠로 재생)
+   * 다른 탭을 보고 있으면 닫힌 패널 안 칸·그리지 않은 탭으로 가 보이지도 읽히지도 않았다(진행 칩은 멈추며 거두고 장면은 문서 장면으로).
+   * 그때는 시뮬레이션을 불러오지 못한 오류(app.ts setSim)와 같은 알림 상자(오류 — role=alert)로 같은 글을, 깎기 탭이 보이면 탭 글(135차 alert)만
+   */
+  it('144차: 계산하지 못한 오류는 깎기 탭 상태 글이 보이지 않으면(패널 닫힘·다른 탭) 알림 상자(오류)로도, 탭이 보이면 탭 글만', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    const ERR = '시뮬레이션을 계산하지 못했습니다: 워커가 멈췄습니다(메모리가 모자랄 수 있습니다)';
+    // 그 오류 글로 부른 알림 상자 [글, 종류]
+    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => m === ERR).map(([m, k]) => [m, k]);
+    // 깎기 탭 상태 글 칸 [글, role, 숨은 조상(닫힌 패널) 안인지] — 칸이 없으면 null
+    const status = (): unknown[] | null => {
+      const el = root.querySelector('.panel-body .sim-status');
+      return el ? [el.textContent, el.getAttribute('role'), !!el.closest('[hidden]')] : null;
+    };
+    // 다 깎은 뒤 워커가 멈춤(글 없는 ErrorEvent — 메모리가 모자람 등)
+    const crash = async (): Promise<void> => {
+      await until(settled);
+      (FakeWorker.last!.onerror as (e: object) => void)({ message: '', preventDefault: () => {} });
+    };
+    vi.mocked(toast).mockClear();
+    // ① 깎기 탭을 지금 탭으로 두고 패널을 닫은 채 켬: 칸은 닫힌 패널 안 — 알림 상자로
+    api.setPanelTab('sim');
+    api.togglePanel(false);
+    await api.setSim(true);
+    await crash();
+    expect(status()).toEqual([ERR, 'alert', true]);
+    expect(said()).toEqual([[ERR, 'error']]);
+    // ② 패널을 열고 코드 탭: 칸을 그리지 않음 — 알림 상자로
+    api.togglePanel(true);
+    api.setPanelTab('code');
+    await api.setSim(false);
+    await api.setSim(true);
+    await crash();
+    expect(status()).toBeNull();
+    expect(said()).toEqual([
+      [ERR, 'error'],
+      [ERR, 'error'],
+    ]);
+    // ③ 깎기 탭이 보이면 탭 글(alert)만 — 알림 상자는 더 부르지 않는다
+    api.setPanelTab('sim');
+    await api.setSim(false);
+    await api.setSim(true);
+    await crash();
+    expect(status()).toEqual([ERR, 'alert', false]);
+    expect(said()).toHaveLength(2);
   });
 
   /**
