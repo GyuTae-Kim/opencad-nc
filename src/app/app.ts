@@ -720,14 +720,17 @@ export class NcViewerApp implements PanelHost {
       }
     });
     list.addEventListener('keydown', (ev) => {
+      // 151차 APG Menu: Tab·Shift+Tab은 메뉴를 닫는다(기본 동작은 막지 않음 — 닫힌 항목은 초점 차례에서 빠져 다음 칸·메뉴 버튼으로 간다)
+      if (ev.key === 'Tab') return close();
       // 숨긴 항목(문서에 따라 — 소재 깎기)은 건너뛴다
       const shown = items.filter((b) => !b.hidden);
+      const n = shown.length;
       const i = shown.indexOf(document.activeElement as HTMLButtonElement);
-      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-        ev.preventDefault();
-        const n = shown.length;
-        shown[(i + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n]?.focus();
-      }
+      // ↓↑는 끝에서 둘레를 돌고, 151차: Home·End는 처음·끝 항목(창 키 onKey는 이 둘을 흘려보낸다)
+      const j = ev.key === 'ArrowDown' ? (i + 1) % n : ev.key === 'ArrowUp' ? (i + n - 1) % n : ev.key === 'Home' ? 0 : ev.key === 'End' ? n - 1 : -1;
+      if (j < 0) return;
+      ev.preventDefault();
+      shown[j]?.focus();
     });
     this.tools[key] = { el: button, needsDoc };
     return wrap;
