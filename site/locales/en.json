@@ -997,6 +997,7 @@
   "공구 경로도 보이기": "Also show toolpaths",
   "재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).": "Draws the stock as the tool has cut it up to the playback position (fast-forward continues; rewinding recomputes from a checkpoint).",
   "꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.": "Off — turn it on to see the stock being cut along the playback bar.",
+  "꺼져 있습니다 — 켜면 판 윗면 가공으로 판을 끝까지 깎아 보입니다.": "Off — turn it on to see the panel cut by all of its top-face operations.",
   "시뮬레이션하지 않음": "Not simulated",
   "3축(공구 방향 Z) 높이 지도로 깎은 근사 결과입니다. 칸보다 작은 모양, 공구 아래로 파인 곳(언더컷), 공구 홀더·자루 충돌은 보지 않습니다.": "Approximate result from a 3-axis (tool along Z) height map. Features smaller than a cell, undercuts beneath the tool, and holder or shank collisions are not checked.",
   "급속이 깎은 자리는 빨갛게 그립니다(지금 재생 자리까지).": "Areas cut by rapid moves are drawn in red (up to the current playback position).",
