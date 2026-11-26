@@ -194,3 +194,50 @@ describe('정보 탭: 손가락 기기의 칸 풀이(127차)', () => {
     expect(group('공구 경로')!.querySelector('.v[title]')).not.toBeNull();
   });
 });
+
+/**
+ * 142차: 칸 풀이(title)가 감싼 label·div에만 있으면 칸에 초점을 둔 화면 읽기 프로그램이 풀이를 칸의 설명으로 듣지 못한다(HTML-AAM 설명 차례는
+ * aria-describedby → 칸 자신의 title이고 감싼 요소의 title은 쓰지 않는다). 풀이가 있는 칸마다 그 안의 상자·숫자 칸·고르기 자신에도 같은 title을 둔다
+ * (이름은 aria-label이나 감싼 label 글이 따로 있어 title은 이름이 아니라 설명이 된다). 감싼 요소의 title(마우스 풍선 글)·손가락 기기 안내 줄은 그대로
+ */
+describe('정보 탭: 칸 풀이를 칸 자신의 설명으로(142차)', () => {
+  it('해석 설정·보기 선택·기계·읽기 설정의 풀이 칸마다 상자·숫자 칸·고르기 자신에도 같은 title, 판재 보기 선택 상자도', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const group = (t: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.prop-group')].find((g) => g.querySelector('h3')?.textContent === t);
+    await until(() => !!group('기계·읽기 설정'));
+    /** 묶음 바로 아래 풀이 칸마다 그 안의 칸(상자·숫자 칸·고르기 — 하나 이상)마다 [감싼 요소의 풀이, 칸 이름(aria-label 또는 감싼 label 글), 칸 자신의 title] */
+    const fields = (t: string): (string | null)[][] =>
+      [...group(t)!.querySelectorAll<HTMLElement>(':scope > [title]')].flatMap((el) => {
+        const cs = [...el.querySelectorAll<HTMLElement>('input, select')];
+        expect(cs.length, `${t}: ${el.title}`).toBeGreaterThan(0);
+        return cs.map((c) => [el.title, c.getAttribute('aria-label') ?? c.closest('label')?.querySelector('.name')?.textContent ?? null, c.getAttribute('title')]);
+      });
+    for (const t of ['해석 설정', '보기 선택', '기계·읽기 설정'])
+      for (const [tip, name, own] of fields(t)) {
+        expect(name, `${t}: ${tip}`).toBeTruthy();
+        expect(own, `${t}: ${name}`).toBe(tip);
+      }
+    expect(fields('해석 설정').map((f) => f[1])).toContain('기본 단위');
+    expect(fields('보기 선택').map((f) => f[1])).toEqual(['보정 경로 보기', '선반 모드']);
+    // 기계·읽기 설정: 숫자 칸 둘·상자 넷·세 칸 줄 넷(12칸) = 18칸
+    expect(fields('기계·읽기 설정')).toHaveLength(18);
+    expect(fields('기계·읽기 설정').find((f) => f[1] === '허용 범위 최대(mm) — Z')).toEqual([
+      '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.',
+      '허용 범위 최대(mm) — Z',
+      '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.',
+    ]);
+    // 판재 정보 탭의 보기 선택(첫 화면 panel.ts optToggle — 손가락 기기 안내 줄 밖)도 상자 자신에
+    await api.open('s.mpr', '[H\nVERSION="4.0 Alpha"\n_BSX=600\n_BSY=400\n_BSZ=19\n\n<103 \\BohrHoriz\\\nXA="0"\nYA="100"\nZA="9.5"\nDU="8"\nTI="30"\nBM="XP"\n!\n', { mprDisabled: true });
+    await until(() => api.state.docName === 's.mpr' && api.state.parsed);
+    api.setPanelTab('info');
+    await until(() => !!group('보기 선택') && !group('기계·읽기 설정'));
+    const off = '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.';
+    expect(fields('보기 선택')).toEqual([[off, '꺼진 가공도 그리기', off]]);
+  });
+});

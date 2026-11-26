@@ -522,6 +522,37 @@ describe('깎기 탭', () => {
     expect(status()).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite']);
   });
 
+  /**
+   * 142차: 상자 풀이(title)가 감싼 label에만 있으면 상자에 초점을 둔 화면 읽기 프로그램이 풀이를 상자의 설명으로 듣지 못한다(HTML-AAM 설명 차례는
+   * aria-describedby → 상자 자신의 title — 감싼 label의 title은 쓰지 않는다). 상자 자신에도 같은 title(이름은 감싼 label 글이라 title은 설명), 풀이 없는 상자는 없음
+   */
+  it('142차: 깎기 탭 상자의 풀이(title)는 감싼 label과 상자 자신에 함께(G-code·판재), 풀이 없는 상자는 둘 다 없음', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    /** 깎기 탭 상자마다 [이름(감싼 label 글), 감싼 label의 title, 상자 자신의 title] */
+    const boxes = (): (string | null)[][] =>
+      [...root.querySelectorAll<HTMLElement>('.panel-body label.group-item.opt')].map((l) => [l.querySelector('.name')!.textContent, l.getAttribute('title'), l.querySelector('input[type=checkbox]')!.getAttribute('title')]);
+    const simHint = '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).';
+    expect(boxes()).toEqual([
+      ['깎인 소재 보이기', simHint, simHint],
+      ['공구 경로도 보이기', null, null],
+    ]);
+    await open(app, 'p.mpr', PANEL_MPR);
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status') && root.querySelector('.panel-body')!.textContent!.includes('가공 그림도 보이기'));
+    expect(boxes()).toEqual(
+      [
+        ['깎인 소재 보이기', '판 윗면 가공으로 판을 깎은 모양을 그립니다.'],
+        ['가공 그림도 보이기', '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.'],
+      ].map(([n, t]) => [n, t, t]),
+    );
+  });
+
   /** 123차: 이름으로 부른 공구(Heidenhain TOOL CALL "이름" — 해석기가 번호 100000부터 붙인다) 셋 — 불 노즈(모서리 R 칸), 이름에 사전 낱말·나눔 글이 든 드릴(끝 각 칸), 빈 이름 */
   const NAMED_H = [
     '0 BEGIN PGM NAMED MM',

@@ -843,7 +843,9 @@ export class NcPanel {
    * 파일 더하기, 잇지 않은 파일과 찾지 못한 부르기
    */
   private jobGroup(d: NcDoc, job: NcJobInfo): HTMLElement {
-    const main = h('select', { class: 'select', 'aria-label': '주 프로그램' });
+    // 142차: 풀이는 감싼 label과 고르기 자신에 함께(optToggle과 같은 까닭 — 고르기에 초점을 두면 설명으로 읽힘)
+    const tip = '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일';
+    const main = h('select', { class: 'select', 'aria-label': '주 프로그램', title: tip });
     for (const f of job.files) main.append(h('option', { value: f, translate: 'no' }, f));
     main.value = job.main;
     main.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, jobMain: main.value }));
@@ -868,7 +870,7 @@ export class NcPanel {
     const missing = d.nc?.notices?.find((n) => n.kind === 'missing-program')?.programs ?? [];
     return group(
       `작업 파일 ${job.files.length}개`,
-      h('label', { class: 'prop-row edit', title: '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일' }, h('span', { class: 'k' }, '주 프로그램'), main),
+      h('label', { class: 'prop-row edit', title: tip }, h('span', { class: 'k' }, '주 프로그램'), main),
       list,
       // 파일·프로그램 이름은 파일 글
       job.skipped.length ? h('p', { class: 'hint' }, mixSpan(mix`잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${fileText(job.skipped.join(', '))}`)) : null,
@@ -909,7 +911,8 @@ export class NcPanel {
 
   /** 다시 읽는 켜고 끄기(선택 기능 — panel-info.ts도 쓴다) */
   optToggle(d: NcDoc, key: OptKey, label: string, hint: string): HTMLElement {
-    const cb = h('input', { type: 'checkbox' });
+    // 142차: 풀이는 감싼 label(마우스 풍선 글)과 상자 자신에 함께 — 화면 읽기의 설명은 상자 자신의 title 차례(HTML-AAM), 감싼 label의 title은 쓰지 않는다
+    const cb = h('input', { type: 'checkbox', title: hint });
     // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다
     cb.checked = key === 'lathe' ? sceneFeatures(d.scene).lathe : !!d.ncOptions[key];
     cb.addEventListener('change', () => this.host.reparse({ ...d.ncOptions, [key]: cb.checked }));
