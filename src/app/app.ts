@@ -237,6 +237,8 @@ export class NcViewerApp implements PanelHost {
   speed: PlaySpeed = 10;
   private busy = false;
   private stage = '';
+  /** 155차: 숨었던 덮개를 보인 차례(그린 뒤 단계 글을 넣을 때까지 — 다시 열거나 닫으면 바뀌어 늦은 글을 버린다) */
+  private busyHold: object | null = null;
   private error: string | null = null;
   private loadSeq = 0;
   private ready = false;
@@ -1241,14 +1243,32 @@ export class NcViewerApp implements PanelHost {
   }
 
   private setBusy(stage: string | null, fraction = 0, name = ''): void {
+    const shown = stage !== null && this.busyEl.hidden;
     this.busy = stage !== null;
     this.stage = stage ?? '';
     this.busyEl.hidden = !this.busy;
     this.root.classList.toggle('is-busy', this.busy);
     this.refreshBar();
-    if (!this.busy) return;
+    if (!this.busy) {
+      this.busyHold = null;
+      return;
+    }
     // 줄임표는 따로 둔다(단계 글만 번역 사전에서 찾게)
-    this.busyStage.replaceChildren(document.createTextNode(this.stage), document.createTextNode('…'));
+    const put = (): void => this.busyStage.replaceChildren(document.createTextNode(this.stage), document.createTextNode('…'));
+    // 155차: 숨었던 덮개를 보이는 차례에는 단계 칸(role=status)을 줄 바꿈 없는 빈칸으로 두고(줄 높이·카드 크기 그대로) 한 번 그린 뒤 글을 넣는다 — 숨은 칸은 접근성 트리에 없어
+    // 숨김을 푸는 같은 차례에 넣은 첫 글을 화면 읽기 프로그램이 읽지 않을 수 있다(STEP 157차). rAF는 그 프레임을 그리기 전이라 그 뒤 타이머.
+    // 그사이 닫거나 다시 열었으면 넣지 않고, 다음 단계가 왔으면 그 글을 넣는다
+    if (shown) {
+      const hold = (this.busyHold = {});
+      this.busyStage.textContent = ' ';
+      requestAnimationFrame(() =>
+        setTimeout(() => {
+          if (this.busyHold !== hold) return;
+          this.busyHold = null;
+          put();
+        }),
+      );
+    } else if (!this.busyHold) put();
     this.busyBar.style.width = `${Math.round(Math.max(0.02, Math.min(1, fraction)) * 100)}%`;
     this.busyName.textContent = name;
   }

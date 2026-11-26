@@ -828,7 +828,8 @@ describe('최근 문서(시작 화면)', () => {
     open();
     expect(app.state().busy).toBe(true);
     expect(app.state().stage).toBe('최근 문서 읽는 중');
-    expect(root.querySelector('.busy-stage')!.textContent).toBe('최근 문서 읽는 중…');
+    // 155차: 숨었던 덮개의 첫 단계 글은 한 번 그린 뒤에 들어간다
+    await vi.waitFor(() => expect(root.querySelector('.busy-stage')!.textContent).toBe('최근 문서 읽는 중…'));
     expect(root.querySelector('.busy-name')!.textContent).toBe('old.nc');
     // 그 사이 다른 파일을 열었다
     const before = fake.parses;
@@ -869,6 +870,8 @@ describe('최근 문서(시작 화면)', () => {
     // role=status는 영역 전체를 읽어(aria-atomic) 덮개가 알림이면 단계가 바뀔 때마다 「취소」 버튼 이름까지 읽는다
     expect([busy.getAttribute('role'), busy.getAttribute('aria-live')]).toEqual([null, null]);
     const live = '[role=status], [role=alert], [aria-live]';
+    // 155차: 첫 단계 글은 한 번 그린 뒤
+    await vi.waitFor(() => expect(busy.querySelector('.busy-stage')!.textContent).toBe('최근 문서 읽는 중…'));
     const regions = [...busy.querySelectorAll<HTMLElement>(live)];
     expect(regions.map((r) => [r.className, r.getAttribute('role'), r.getAttribute('aria-live'), r.textContent])).toEqual([['busy-stage', 'status', 'polite', '최근 문서 읽는 중…']]);
     // 알림 영역 안에는 버튼·링크·다른 알림 영역이 없고, 「취소」 버튼과 파일 이름은 어느 알림 영역에도 들지 않는다
@@ -877,6 +880,65 @@ describe('최근 문서(시작 화면)', () => {
     expect(busy.querySelector('.busy-name')!.closest(live)).toBeNull();
     release();
     await vi.waitFor(() => expect(app.state().docName).toBe('old.nc'));
+  });
+
+  it('155차: 숨었던 덮개를 보이는 차례에는 단계 칸을 줄 바꿈 없는 빈칸으로 두고 한 번 그린 뒤 첫 단계 글을 넣는다 — 그사이 다음 단계면 그 글, 닫거나 다시 열었으면 늦은 글은 넣지 않음(STEP 157차)', async () => {
+    // 그림 차례는 시험이 쥔다: 한 장 = 그 프레임의 rAF를 돌리고 그 뒤 타이머까지
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    const paint = async (n = frames.length): Promise<void> => {
+      for (const cb of frames.splice(0, n)) cb(0);
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    const { app, root } = makeApp();
+    const busy = app as unknown as { setBusy(stage: string | null, fraction?: number, name?: string): void };
+    const card = root.querySelector<HTMLElement>('.busy')!;
+    const stage = root.querySelector<HTMLElement>('.busy-stage')!;
+    // 단계 칸의 글 마디(단계 글과 「…」은 따로 — 번역층이 단계 글만 찾게)
+    const nodes = (): string[] => [...stage.childNodes].map((n) => n.textContent ?? '');
+    const NBSP = ' ';
+    await paint();
+    expect(card.hidden).toBe(true);
+
+    // 숨은 덮개를 보이는 차례: 칸은 빈칸 하나(줄 높이 그대로), 파일 이름은 곧바로 → 그린 뒤 첫 단계 글
+    busy.setBusy('여는 중', 0.02, 'a.nc');
+    expect(card.hidden).toBe(false);
+    expect(nodes()).toEqual([NBSP]);
+    expect(root.querySelector('.busy-name')!.textContent).toBe('a.nc');
+    await paint();
+    expect(nodes()).toEqual(['여는 중', '…']);
+    // 보이는 동안 바뀐 단계는 곧바로
+    busy.setBusy('해석 중', 0.5, 'a.nc');
+    expect(nodes()).toEqual(['해석 중', '…']);
+
+    // 닫고 다시 열면 앞 열기의 끝 단계 글 대신 빈칸 — 그림 전에 온 다음 단계도 빈칸 그대로였다가 그린 뒤 그 글
+    busy.setBusy(null);
+    expect(card.hidden).toBe(true);
+    busy.setBusy('다시 읽는 중', 0.05, 'a.nc');
+    expect(nodes()).toEqual([NBSP]);
+    busy.setBusy('해석 중', 0.3, 'a.nc');
+    expect(nodes()).toEqual([NBSP]);
+    await paint();
+    expect(nodes()).toEqual(['해석 중', '…']);
+
+    // 그림 전에 닫았다 다시 열면 앞 차례의 늦은 글은 넣지 않고(새 차례의 그림 뒤에), 그림 전에 닫힌 채면 넣지 않는다
+    busy.setBusy(null);
+    busy.setBusy('파일 받는 중', 0.01, 'b.nc');
+    busy.setBusy(null);
+    busy.setBusy('여는 중', 0.02, 'b.nc');
+    await paint(1);
+    expect(nodes()).toEqual([NBSP]);
+    await paint();
+    expect(nodes()).toEqual(['여는 중', '…']);
+    busy.setBusy(null);
+    busy.setBusy('최근 문서 읽는 중', 0.02, 'c.nc');
+    busy.setBusy(null);
+    await paint();
+    expect(card.hidden).toBe(true);
+    expect(nodes()).toEqual([NBSP]);
   });
 
   it('지우기에 실패하면 성공이라고 하지 않고 실패를 알린다(항목은 그대로)', async () => {
