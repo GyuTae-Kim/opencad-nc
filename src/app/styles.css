@@ -687,6 +687,12 @@ button.linkish {
   text-decoration: underline dotted;
   cursor: pointer;
 }
+/* 공구 표 "Z 최저"(짧은 수는 약 12×17px — 둘레 줄은 누르면 다른 일): 누르는 칸 24×24 이상(WCAG 2.5.8, 160차). 줄 높이(눈 버튼)·열 폭(머리)은 그대로, 수는 칸 오른쪽에 */
+table.grid button.linkish {
+  min-width: 24px;
+  min-height: 24px;
+  text-align: inherit;
+}
 
 /* 재생 띠(패널이 닫혔을 때 — 휴대폰 시트를 열지 않고 재생·걷기·시간 막대) */
 .play-strip {
