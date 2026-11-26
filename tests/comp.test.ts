@@ -3,6 +3,8 @@ import { compPathSegments, ncCompPath, type NcCompPath } from '../src/comp';
 import { parseGcode } from '../src/gcode';
 import { parseHeidenhain } from '../src/heidenhain';
 import { ncToScene } from '../src/scene';
+// 133차: 장면 meta.compRuns 한 구간 형식을 공개 입구에서 가져온다(README 라이브러리 절이 meta.compRuns를 약속 — 입구에 없으면 tsc가 막음)
+import type { NcCompRunMeta } from '../src/index';
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000;
 /** 조각 시작·끝(xy, 소수 3자리) */
@@ -188,7 +190,7 @@ G40 X-10 Y30`));
     expect(ids[0]).toBe(2);
     expect(ids[ids.length - 1]).toBe(7);
     expect(s.bounds!.max[1]).toBeCloseTo(55, 3);
-    const meta = s.meta as { compRuns: { radius: number; computed: boolean }[] };
+    const meta = s.meta as { compRuns: NcCompRunMeta[] };
     expect(meta.compRuns).toEqual([expect.objectContaining({ radius: 5, computed: true })]);
     const seg = compPathSegments(ncCompPath(p), Math.PI / 4);
     // 직선 6 + 90도 호 3개 × 2조각
