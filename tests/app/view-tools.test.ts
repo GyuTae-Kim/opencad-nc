@@ -151,6 +151,38 @@ describe('공구별 절삭 범위(공구 탭·정보 탭)', () => {
   });
 });
 
+describe('패널 탭 버튼 초점(136차)', () => {
+  it('136차: 키보드로 누른 패널 탭 버튼 때문에 탭 버튼 줄을 새로 만들어도 초점은 새 줄의 같은 탭 버튼에(다른 길의 다시 그리기도, 탭 줄 밖 초점은 그대로)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const tab = (k: string): HTMLButtonElement => root.querySelector<HTMLButtonElement>(`.panel-tabs [data-tab=${k}]`)!;
+    expect([...root.querySelectorAll<HTMLElement>('.panel-tabs [role=tab]')].map((b) => b.dataset.tab)).toEqual(['code', 'tools', 'info', 'sim']);
+    expect(api.state.panelTab).toBe('code');
+    // 키보드(Enter·Space)로 누름 = 초점이 있는 버튼의 click
+    const tools = tab('tools');
+    tools.focus();
+    tools.click();
+    expect(api.state.panelTab).toBe('tools');
+    expect(tools.isConnected).toBe(false);
+    expect(tab('tools').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('tools'));
+    // 초점이 (지금 탭이 아닌) 탭 버튼에 있는 채 다른 길이 다시 그려도 그 탭 버튼에
+    const info = tab('info');
+    info.focus();
+    api.setPanelTab('code');
+    expect(info.isConnected).toBe(false);
+    expect(tab('code').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('info'));
+    // 초점이 탭 줄 밖이면 그대로
+    const out = document.body.appendChild(document.createElement('button'));
+    out.focus();
+    tab('tools').click();
+    expect(api.state.panelTab).toBe('tools');
+    expect(document.activeElement).toBe(out);
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
