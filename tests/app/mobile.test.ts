@@ -319,6 +319,12 @@ describe('측정 띠(휴대폰·터치)', () => {
     await app.openSample();
     menuButton(root, '측정').click();
     const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    // 117차: 띠 위 알림 영역(role=status)은 측정 띠가 보일 때부터 숨김 없이 비어 있다(글이 바뀌면 화면 읽기 프로그램이 읽게 — 전에는 글과 함께 숨김을 풀었다)
+    const flash = bar.querySelector<HTMLElement>('.measure-flash')!;
+    expect(bar.hidden).toBe(false);
+    expect(flash.getAttribute('role')).toBe('status');
+    expect(flash.hidden).toBe(false);
+    expect(flash.textContent).toBe('');
     const acts = [...bar.querySelectorAll<HTMLButtonElement>('.mb-acts > .mb-btn')];
     // 잠금 · 끌어온 점 · 다시 재기 · 끝내기
     expect(acts.map((b) => (b.classList.contains('mb-lock') ? 'lock' : b.classList.contains('mb-track') ? 'track' : (label(b) || b.textContent)))).toEqual(['lock', 'track', '다시 재기', '측정 끝내기']);
