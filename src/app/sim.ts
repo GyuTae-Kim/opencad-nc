@@ -1146,7 +1146,7 @@ export class SimView {
     body.append(sec);
   }
 
-  /** 공구 하나를 바꾼다(기억 — 판재 공구는 'panel:' 열쇠로) */
+  /** 공구 하나를 바꾼다(기억 — 판재 공구는 'panel:', 이름으로 부른 공구는 'name:' 열쇠로 — 124차 simToolRows) */
   private setTool(r: SimToolRow, patch: Partial<SimTool>): void {
     const k = r.key ?? String(r.number);
     this.userTools = { ...this.userTools, [k]: { ...(this.userTools[k] ?? {}), ...patch } };

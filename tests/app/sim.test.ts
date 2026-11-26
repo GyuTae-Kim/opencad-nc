@@ -555,6 +555,58 @@ describe('깎기 탭', () => {
     expect(t.labels.slice(6).join('\n')).not.toMatch(/[가-힣]/);
   });
 
+  it('124차: 이름으로 부른 공구의 공구 표 값은 이름으로 기억 — 다른 파일의 같은 차례 다른 이름 공구는 이어받지 않고 같은 이름 공구는 이어받는다(옛 차례 번호 열쇠 값은 이름 공구에 쓰지 않음)', async () => {
+    // 고치기 전에 기억한 꼴: 이름 공구도 그 파일에서 처음 나온 차례 번호 글(100000…)이 열쇠였다
+    localStorage.setItem('opencad-nc.sim.tools', JSON.stringify({ 100000: { diameter: 3 }, 100002: { diameter: 4 } }));
+    const OTHER_H = [
+      '0 BEGIN PGM OTHER MM',
+      '1 BLK FORM 0.1 Z X+0 Y+0 Z-10',
+      '2 BLK FORM 0.2 X+100 Y+100 Z+0',
+      '3 TOOL CALL "FLAT_D4" Z S3000',
+      '4 L X+10 Y+10 Z+5 R0 FMAX',
+      '5 L Z-1 F200',
+      '6 L X+40',
+      '7 L Z+5 R0 FMAX',
+      '8 TOOL CALL "BULL_D10" Z S3000',
+      '9 L X+50 Y+50 R0 FMAX',
+      '10 L Z-1 F200',
+      '11 L Z+5 R0 FMAX',
+      '12 END PGM OTHER MM',
+    ].join('\n');
+    const { app, root } = makeApp();
+    await open(app, 'named.h', NAMED_H);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body table.sim-tools'));
+    /** 공구 표 줄마다 [이름, 지름 칸 값, 출처] */
+    const rows = (): (string | null)[][] =>
+      [...root.querySelectorAll<HTMLTableRowElement>('.panel-body table.sim-tools tbody tr')].map((tr) => [
+        tr.cells[0]!.textContent,
+        tr.querySelector<HTMLInputElement>('input[aria-label$="지름"]')!.value,
+        tr.cells[4]!.textContent,
+      ]);
+    // 옛 차례 번호 열쇠 값은 이름 공구(BULL_D10 = 100000)에 쓰지 않는다(어느 파일의 어느 이름 공구 값인지 모름). 빈 이름 공구(100002)는 번호 글 열쇠 그대로
+    expect(rows()).toEqual([
+      ['BULL_D10', '6', '파일 값'],
+      ['드릴 · 무늬', '6', '파일 값'],
+      ['—', '4', '사용자 값'],
+    ]);
+    const dia = [...root.querySelectorAll<HTMLInputElement>('.panel-body table.sim-tools input')].find((el) => el.getAttribute('aria-label') === 'BULL_D10 지름')!;
+    dia.value = '12';
+    dia.dispatchEvent(new Event('change'));
+    expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 100000: { diameter: 3 }, 100002: { diameter: 4 }, 'name:BULL_D10': { diameter: 12 } });
+    expect(rows()[0]).toEqual(['BULL_D10', '12', '사용자 값']);
+    // 다른 파일: 처음 이름 공구(FLAT_D4)가 같은 차례 100000이어도 BULL_D10 값을 이어받지 않고, 둘째 차례(100001)의 BULL_D10은 이름으로 이어받는다
+    await open(app, 'other.h', OTHER_H);
+    api.setPanelTab('sim');
+    await until(() => rows()[0]?.[0] === 'FLAT_D4');
+    expect(rows()).toEqual([
+      ['FLAT_D4', '6', '기본값'],
+      ['BULL_D10', '12', '사용자 값'],
+    ]);
+  });
+
   it('급속이 소재를 지난 줄을 보이고(누르면 그 줄로), 해석 경고에 이미 있는 줄은 뺀다', async () => {
     const { app, root } = makeApp();
     const text = ['G21 G90 G17', 'T1 M6 (T1 D=4. FLAT END MILL)', 'G0 X-30 Y0 Z5', 'G1 Z-5 F100', 'G1 X30', 'G0 Z5', 'G0 X-30 Y10', 'G0 Z-1', 'G0 X30', 'G0 Z-8', 'G0 Z5', 'M30'].join('\n');
