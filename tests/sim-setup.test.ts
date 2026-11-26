@@ -183,6 +183,22 @@ describe('공구 표', () => {
     expect(hr[0]!.tool).toMatchObject({ kind: 'flat', diameter: 8 });
   });
 
+  it('124차: 이름으로 부른 공구의 사용자 표 열쇠는 이름(name:이름) — 파일 안 차례 번호(100000…) 열쇠 값은 쓰지 않고, 빈 이름·번호 공구는 번호 글 그대로', () => {
+    // 해석기는 이름 공구에 그 파일에서 처음 나온 차례(100000, 100001, …)를 붙인다 — 다른 파일의 다른 이름 공구도 같은 차례가 된다
+    const h: NcProgram = parseHeidenhain(
+      ['0 BEGIN PGM KEY MM', '1 TOOL CALL "BULL_D10" Z S3000', '2 L X+0 Y+0 Z+5 R0 FMAX', '3 TOOL CALL "" Z S1000', '4 L X+10 R0 FMAX', '5 TOOL CALL 3 Z S2000', '6 L X+20 R0 FMAX', '7 END PGM KEY MM', ''].join('\n'),
+    );
+    const rows = simToolRows(
+      { tools: h.tools, units: 'mm', used: [100000, 100001, 3], lineAt: (i) => sourceLine(h.source, i), lineCount: h.source.lineCount },
+      { 100000: { diameter: 3 }, 100001: { diameter: 4 }, 3: { diameter: 5 }, 'name:BULL_D10': { diameter: 12 } },
+    );
+    expect(rows.map((r) => [r.number, r.key, r.tool.diameter, r.diameterFrom])).toEqual([
+      [100000, 'name:BULL_D10', 12, 'user'],
+      [100001, undefined, 4, 'user'],
+      [3, undefined, 5, 'user'],
+    ]);
+  });
+
   it('모르면 기본값(평 엔드밀 6 mm · 0.25 inch), 사용자 값은 파일 값보다 먼저, 불 노즈 모서리는 반지름 안으로', () => {
     expect(resolveTool(9, {}, undefined, 'mm')).toMatchObject({ tool: { kind: 'flat', diameter: 6 }, diameterFrom: 'default', kindFrom: 'default' });
     expect(resolveTool(9, {}, undefined, 'inch').tool.diameter).toBe(0.25);

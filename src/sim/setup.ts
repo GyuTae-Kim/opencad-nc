@@ -232,7 +232,10 @@ export function usedTools(tool: Int32Array, count: number): number[] {
 }
 
 /**
- * 공구 표: 이동이 쓰는 공구마다 파일 값(지름·이름·주석 CR=)과 사용자 표를 합친 값
+ * 공구 표: 이동이 쓰는 공구마다 파일 값(지름·이름·주석 CR=)과 사용자 표를 합친 값.
+ * 124차: 이름으로 부른 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 해석기가 그 파일에서 처음 나온 차례(100000, 100001, …)를 번호로 붙여
+ * 번호 글 열쇠면 다른 파일의 다른 이름 공구가 같은 값을 이어받았다 — 사용자 표 열쇠를 이름('name:' 앞붙임 — 번호 글·판재 'panel:'과 섞이지 않게)으로.
+ * 옛 차례 번호 열쇠 값은 어느 파일의 어느 이름 공구 것인지 몰라 이름 공구에는 쓰지 않는다. 이름이 빈 공구와 번호 공구는 번호 글 그대로
  */
 export function simToolRows(
   input: { tools: readonly NcTool[]; units: 'mm' | 'inch'; used: readonly number[]; lineAt: (i: number) => string; lineCount: number },
@@ -242,7 +245,9 @@ export function simToolRows(
   return input.used.map((n) => {
     const t = input.tools.find((x) => x.number === n);
     const file = t ? fileTool(t, hints.get(n)) : {};
-    return resolveTool(n, file, user[String(n)], input.units);
+    const key = n >= 100000 && t?.name ? `name:${t.name}` : undefined;
+    const row = resolveTool(n, file, user[key ?? String(n)], input.units);
+    return key ? { ...row, key } : row;
   });
 }
 
