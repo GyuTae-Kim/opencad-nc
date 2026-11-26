@@ -582,6 +582,53 @@ describe('깎기 탭', () => {
   });
 
   /**
+   * 146차: 깎기 워커를 만들지 못하면(`new Worker`가 던짐 — 해석 워커는 이미 있는데 깎기 워커 만들기만 던질 때) start가 브라우저 글만 오류로 넣고 돌아가
+   * 앞머리 「시뮬레이션을 계산하지 못했습니다: 」가 없고, 탭이 보이지 않으면(패널 닫힘·다른 탭) 알림 상자도 없어 켜도 아무 일 없는 것처럼 보였다(격자는 반쯤 정한 채).
+   * 다른 계산 오류처럼 fail로 — 앞머리 붙은 글, 계산 상태 비움, 탭이 보이지 않으면 알림 상자(144차 showError)
+   */
+  it('146차: 깎기 워커를 만들지 못하면 다른 계산 오류처럼 앞머리 붙은 글로 탭에 그리고, 탭이 보이지 않으면 알림 상자(오류)로도 — 계산 상태는 비움', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    // 브라우저가 던지는 글(흉내 — 사전 밖이라 다른 언어 화면에서도 원문 그대로)
+    const WHY = 'Module scripts are not supported on DedicatedWorker yet.';
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor() {
+          throw new TypeError(WHY);
+        }
+      },
+    );
+    const ERR = `시뮬레이션을 계산하지 못했습니다: ${WHY}`;
+    // 그 오류 글로 부른 알림 상자 [글, 종류]
+    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => m === ERR).map(([m, k]) => [m, k]);
+    // 깎기 탭 상태 글 칸 [글, role, 숨은 조상(닫힌 패널) 안인지] — 칸이 없으면 null
+    const status = (): unknown[] | null => {
+      const el = root.querySelector('.panel-body .sim-status');
+      return el ? [el.textContent, el.getAttribute('role'), !!el.closest('[hidden]')] : null;
+    };
+    vi.mocked(toast).mockClear();
+    // ① 깎기 탭을 지금 탭으로 두고 패널을 닫은 채 켬(휴대폰 메뉴 「소재 깎기」 꼴): 칸은 닫힌 패널 안 — 알림 상자로
+    api.setPanelTab('sim');
+    api.togglePanel(false);
+    await api.setSim(true);
+    expect(status()).toEqual([ERR, 'alert', true]);
+    expect(said()).toEqual([[ERR, 'error']]);
+    // 계산하지 않음: 진행 칩·격자 없음, 소재 장면 아님
+    expect(root.querySelector('.sim-chip')).toBeNull();
+    expect(api.state.sim).toMatchObject({ on: true, computing: false, grid: null, shown: false });
+    // ② 패널을 열어 깎기 탭이 보이면 탭 글(alert)만 — 알림 상자는 더 부르지 않는다
+    api.togglePanel(true);
+    await api.setSim(false);
+    await api.setSim(true);
+    expect(status()).toEqual([ERR, 'alert', false]);
+    expect(said()).toHaveLength(1);
+    // 다른 언어 화면: 앞머리 틀만 옮기고 브라우저 글은 원문
+    expect(translate(ERR, 'en', true)).toBe(`Could not compute the simulation: ${WHY}`);
+  });
+
+  /**
    * 142차: 상자 풀이(title)가 감싼 label에만 있으면 상자에 초점을 둔 화면 읽기 프로그램이 풀이를 상자의 설명으로 듣지 못한다(HTML-AAM 설명 차례는
    * aria-describedby → 상자 자신의 title — 감싼 label의 title은 쓰지 않는다). 상자 자신에도 같은 title(이름은 감싼 label 글이라 title은 설명), 풀이 없는 상자는 없음
    */

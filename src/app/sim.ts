@@ -551,7 +551,9 @@ export class SimView {
       try {
         w = new Worker(new URL('../worker/sim.worker.ts', import.meta.url), { type: 'module', name: 'opencad-nc-sim' });
       } catch (e) {
-        this.error = e instanceof Error ? e.message : String(e);
+        // 146차: 다른 계산 오류처럼 fail로 — 앞머리 붙은 글, 반쯤 정한 격자 비움, 탭 다시 그리기·탭이 보이지 않으면 알림 상자(144차 showError).
+        // 예전에는 브라우저 글만 넣고 돌아가 알림이 없었다. 워커가 아직 없어 stop은 끝낼 것이 없고, 이번 gen으로 보낸 요청도 없다
+        this.fail(e instanceof Error ? e.message : String(e));
         return;
       }
       w.onmessage = (ev: MessageEvent<SimResponse>) => this.onMessage(ev.data);
