@@ -1684,7 +1684,11 @@ export class NcViewerApp implements PanelHost {
   toggleAxes(on?: boolean): void {
     const v = this.viewer;
     if (!v) return;
-    v.setAxesVisible(on ?? !v.axesVisible);
+    // 139차: 왼쪽 아래 축 표시와 함께 격자의 장면 안 X·Y축선도(코어 0.113.0 축선 모양 hidden — 전에는 격자를 켠 채 끄면 축선이 남았다).
+    // 켜면 모양 없음(처음 뷰어와 같은 그림). 격자 버튼·새 문서에도 남는다(뷰어가 든다)
+    const show = on ?? !v.axesVisible;
+    v.setAxesVisible(show);
+    v.setAxesStyle({ hidden: !show });
     this.renderToolbar();
   }
 
