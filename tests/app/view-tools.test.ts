@@ -2,6 +2,8 @@
 /**
  * 확인 도구(app.ts·panel.ts): 해석 판단 띠. 뷰어 코어(WebGL)는 가짜로, 해석은 워커와 같은 길(parseForView)로 바로 부른다.
  */
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
@@ -60,6 +62,8 @@ vi.mock('../../src/app/client', async () => {
 
 import { translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
+
+const ROOT = resolve(__dirname, '../..');
 
 function makeApp(): { app: NcViewerApp; root: HTMLElement } {
   vi.stubGlobal('matchMedia', (q: string) => ({ media: q, matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
@@ -148,6 +152,29 @@ describe('공구별 절삭 범위(공구 탭·정보 탭)', () => {
     const info = root.querySelector('.panel')!.textContent!;
     expect(info).toContain('절삭 범위(이송·호·드릴)');
     expect(info).toContain('가장 깊은 Z');
+  });
+
+  it('160차: "Z 최저" 버튼은 마우스 화면에서도 누르는 칸이 24×24 이상(WCAG 2.5.8 — 둘레의 공구 줄은 누르면 다른 일), 수는 칸 오른쪽 그대로, 문장 안 버튼은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.opencadApp!.setPanelTab('tools');
+    const cells = [...root.querySelectorAll<HTMLButtonElement>('table.tools button.linkish')];
+    expect(cells.map((b) => b.textContent)).toEqual(['-2', '-7']);
+    // 둘레는 누르면 다른 일(공구 강조·첫 이동 줄)을 하는 공구 줄, 칸은 오른쪽 맞춤 수 칸
+    expect(cells.every((b) => b.closest('tr')!.classList.contains('clickable') && b.parentElement!.matches('table.grid td.num'))).toBe(true);
+    // jsdom은 CSS 크기를 그리지 않아 styles.css 글로 본다(148차 꼴): 주석과 @media 덩어리를 뺀 맨 바깥 규칙(마우스·손가락 모두에 걸림)
+    const css = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()).filter((s) => s.includes('linkish')), body: m[2]! }));
+    const sized = rules.filter((r) => r.sels.some((s) => cells.every((b) => b.matches(s))) && /min-height:\s*24px/.test(r.body));
+    expect(sized).toHaveLength(1);
+    expect(sized[0]!.body).toMatch(/min-width:\s*24px/);
+    expect(sized[0]!.body).toMatch(/text-align:\s*inherit/);
+    // 문장 안 버튼(깎기 탭 「시뮬레이션하지 않음 … 번 줄」 — 글줄 안 예외)에는 맞지 않아 그 글줄 높이는 그대로
+    const inSentence = document.createElement('p').appendChild(document.createElement('button'));
+    inSentence.className = 'linkish';
+    expect(sized[0]!.sels.some((s) => inSentence.matches(s))).toBe(false);
   });
 });
 
