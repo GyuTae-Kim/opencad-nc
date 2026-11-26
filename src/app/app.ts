@@ -37,7 +37,7 @@ import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
-import { isEditableTarget, isPressTarget, keyAction, viewKeyOf } from './keys';
+import { isEditableTarget, isPressTarget, keyAction, tabMove, viewKeyOf } from './keys';
 import { MEASURE_LOADING, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import type { TrackPick } from './measure-track';
@@ -2289,6 +2289,8 @@ export class NcViewerApp implements PanelHost {
     const t = ev.target as HTMLElement | null;
     // The language menu owns its keyboard focus, including Escape during loading.
     if (t?.closest?.('.language-control, .language-list')) return;
+    // 150차: 패널 탭 버튼의 ←→·Home·End(수정 키 없음)는 탭 줄 몫(panel.ts — APG Tabs). 한 이동 걷기로 가져가 전파를 막지 않게 먼저 돌아선다
+    if (t?.getAttribute?.('role') === 'tab' && tabMove(ev, 0, 1) >= 0) return;
     // 원호 접선 Shift 잠금은 코어보다 먼저(아래 viewer 갈래·캔버스 키가 코어에 넘기면 코어는 잠금이 있으면 그대로 둔다)
     if (ev.key === 'Shift' && !ev.repeat && !isEditableTarget(t as (HTMLElement & { type?: string }) | null)) this.mlock?.shiftDown();
     if (this.busy && ev.key === 'Escape') {

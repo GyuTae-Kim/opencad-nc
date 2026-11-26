@@ -8,6 +8,7 @@
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  * - 측정 첫 점을 찍은 뒤(둘째 점 방향을 잡는 동안) 화살표는 방향 잠금(SketchUp 추론 잠금): → X · ← Y · ↑ Z축, ↓ 지금 방향.
  *   코드 목록·메뉴·탭처럼 화살표를 스스로 쓰는 곳에 초점이 있으면 그쪽 것이다. Shift 잠금은 코어가 한다.
+ * - 150차: 패널 탭 버튼의 ←→·Home·End(수정 키 없음)는 탭 줄 몫이다(tabMove — 위 앱 화살표의 한 이동 걷기보다 먼저).
  * - 56차(코어 0.46.0 키보드 붙잡기 — keysnap.ts): 캔버스의 가상 커서가 켜진 동안 화살표·Esc는 코어 것이다(커서 옮기기·끄기 — 위 앱 화살표보다 먼저).
  *   커서는 Enter로만 켠다(커서가 꺼져 있을 때 캔버스 화살표는 keysnap.ts가 기본 동작을 막아 코어가 커서를 켜지 않는다 — 문서 종류마다 화살표 뜻이 갈리지 않게).
  */
@@ -117,4 +118,16 @@ export function isPressTarget(t: { tagName?: string; type?: string; getAttribute
   const tag = t?.tagName?.toUpperCase();
   if (tag === 'BUTTON' || tag === 'A' || t?.getAttribute?.('role') === 'button') return true;
   return tag === 'INPUT' && t!.type?.toLowerCase() !== 'range' && !isEditableTarget(t);
+}
+
+/**
+ * 150차: 패널 탭 줄 키(APG Tabs) — 탭 n개 가운데 i번째에서 ←→(끝에서 둘레를 돎)·Home·End로 옮겨 갈 차례. 탭 줄 키가 아니거나 수정 키(Shift·Ctrl·⌘·Alt)가 있으면 -1.
+ * panel.ts 탭 줄이 그 탭으로 초점을 옮기고(고르기는 Enter·Space — 수동 활성), 창 키(app.ts onKey — 캡처)는 탭 버튼의 이 키에서 돌아선다
+ * (먼저 받으면 재생할 수 있는 문서에서 ←→가 한 이동 걷기로 쓰이고 전파가 막혀 탭 줄에 닿지 않았다)
+ */
+export function tabMove(e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }, i: number, n: number): number {
+  if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || i < 0 || i >= n) return -1;
+  if (e.key === 'ArrowRight') return (i + 1) % n;
+  if (e.key === 'ArrowLeft') return (i + n - 1) % n;
+  return e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
 }

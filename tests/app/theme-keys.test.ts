@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_KEY, otherTheme, readThemePref, resolveTheme, writeThemePref, type ThemeStorage } from '../../src/app/theme';
 import { VIEW_KEYS } from 'opencad-viewer3d';
-import { isEditableTarget, isPressTarget, keyAction, viewKeyOf, type KeyContext } from '../../src/app/keys';
+import { isEditableTarget, isPressTarget, keyAction, tabMove, viewKeyOf, type KeyContext } from '../../src/app/keys';
 
 function memory(): ThemeStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -178,5 +178,21 @@ describe('키 고르기', () => {
     expect(isPressTarget(null)).toBe(false);
     expect(k(' ', { onButton: isPressTarget({ tagName: 'INPUT', type: 'checkbox' }) })).toBeNull();
     expect(k(' ', { onButton: isPressTarget({ tagName: 'INPUT', type: 'range' }) })).toEqual({ type: 'play' });
+  });
+
+  it('150차: 패널 탭 줄 키(APG Tabs) — ←→는 끝에서 둘레를 돌고 Home·End는 처음·끝 탭, 수정 키·다른 키·차례 밖이면 -1', () => {
+    const e = (key: string, mod?: 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey') => ({ key, shiftKey: mod === 'shiftKey', ctrlKey: mod === 'ctrlKey', metaKey: mod === 'metaKey', altKey: mod === 'altKey' });
+    expect(tabMove(e('ArrowRight'), 0, 4)).toBe(1);
+    expect(tabMove(e('ArrowRight'), 3, 4)).toBe(0);
+    expect(tabMove(e('ArrowLeft'), 2, 4)).toBe(1);
+    expect(tabMove(e('ArrowLeft'), 0, 4)).toBe(3);
+    expect(tabMove(e('Home'), 2, 4)).toBe(0);
+    expect(tabMove(e('End'), 1, 5)).toBe(4);
+    for (const key of ['ArrowUp', 'ArrowDown', ' ', 'Enter', 'Tab', 'PageDown', 'Escape']) expect(tabMove(e(key), 1, 4)).toBe(-1);
+    for (const m of ['shiftKey', 'ctrlKey', 'metaKey', 'altKey'] as const) expect(tabMove(e('ArrowRight', m), 1, 4)).toBe(-1);
+    expect(tabMove(e('ArrowRight'), -1, 4)).toBe(-1);
+    expect(tabMove(e('Home'), 0, 0)).toBe(-1);
+    // 창 키(app.ts onKey)는 탭 하나로 물어 탭 줄 키인지만 본다
+    for (const key of ['ArrowRight', 'ArrowLeft', 'Home', 'End']) expect(tabMove(e(key), 0, 1)).toBe(0);
   });
 });
