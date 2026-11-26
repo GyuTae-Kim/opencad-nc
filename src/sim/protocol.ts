@@ -50,8 +50,10 @@ export interface SimUpdate {
   tiles: TileArrays[];
   walls?: PlainArrays;
   bottom?: PlainArrays;
-  /** 지금 자리까지 급속이 소재를 깎은 이동 */
+  /** 지금 자리까지 급속이 소재를 깎은 이동(처음 2,000개 — 그 뒤는 moreEvents) */
   events: SimEvent[];
+  /** 131차: 2,000개 뒤 사건(같은 차례의 이동 번호·깊이 — 넘을 때만, 옮겨 넘김). 깎기 탭 제목·「그 밖 N곳」이 모든 사건의 줄 수를 센다 */
+  moreEvents?: { move: Int32Array; depth: Float64Array };
   stats: SimStats;
 }
 

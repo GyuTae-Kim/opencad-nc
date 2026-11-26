@@ -125,6 +125,8 @@ describe('소재 기본값', () => {
     expect(rapidEventRows(ev, line, [{ text: '공작물 윗면(Z0)보다 낮은 높이에서 급속 수평 이동', line: 2, lines: [] }]).skipped).toBe(1);
     // 130차: 목록은 max 줄에서 자르고, total은 자르기 전 줄 수(뺀 줄은 세지 않음 — 깎기 탭 묶음 제목과 「그 밖 N곳」)
     expect(rapidEventRows(ev, line, [], 1)).toEqual({ rows: [{ move: 1, line: 1, depth: 0.5 }], total: 3, skipped: 0 });
+    // 131차: 워커가 2,000개 뒤 사건을 이동 번호·깊이 배열(moreEvents)로 보내면 같은 차례로 이어 센다 — 모든 사건을 객체로 준 것과 같다
+    expect(rapidEventRows(ev.slice(0, 1), line, warn, 200, { move: Int32Array.of(2, 3, 4), depth: Float64Array.of(1, 2, 3) })).toEqual(rapidEventRows(ev, line, warn));
   });
 
   it('절삭 이동·쓰인 공구', () => {

@@ -438,3 +438,37 @@ describe('관통한 곳은 구멍으로(13차)', () => {
     expect(SIM_MOVE_REGION).toBe(4);
   });
 });
+
+describe('131차: 실행기는 2,000개가 넘는 급속 사건도 다 보낸다', () => {
+  it('처음 2,000개는 객체로, 그 뒤는 이동 번호·깊이 배열(moreEvents)로 — 2,000개 안쪽이면 그 칸이 없다(되감아도)', () => {
+    // 2,005자리에 급속으로 꽂기(Z−1). 구멍 i의 꽂기는 줄 3 + 3i(0부터 — 줄 0은 G()의 머리, 줄 1은 T1 M6) — 올리기는 같은 구멍, XY 이동은 Z5라 소재를 지나지 않는다
+    const body = ['T1 M6'];
+    for (let i = 0; i < 2005; i++) body.push(`G0 X${2 * (i % 50)} Y${2 * Math.floor(i / 50)} Z5`, 'G0 Z-1', 'G0 Z5');
+    const p = G(body.join('\n'));
+    const spec = gridFor(box(-1, -1, -5, 99, 81, 0), 200);
+    const sent: SimUpdate[] = [];
+    const runs: (() => void)[] = [];
+    const r = new SimRunner((m) => sent.push(m as SimUpdate), (run) => runs.push(run), 1e9);
+    const drain = (): void => {
+      while (runs.length) runs.shift()!();
+    };
+    const lineOf = (m: number): number => p.moves.line[m]!;
+    const half = { move: p.moves.line.indexOf(3 + 3 * 1000), frac: 0 };
+    r.handle({ type: 'init', gen: 1, moves: simMoves(p), grid: spec, tools: [{ number: 1, tool: flat(1) }], defaultTool: flat(1), mode: 'depth', rapidTol: 0.01, checkpointBytes: 1 << 26, target: half });
+    drain();
+    expect(sent.at(-1)!.events.length).toBe(1000);
+    expect(sent.at(-1)!.moreEvents).toBeUndefined();
+    r.handle({ type: 'target', gen: 1, target: { move: p.moves.count, frac: 0 } });
+    drain();
+    const all = sent.at(-1)!;
+    expect(all.events.length).toBe(2000);
+    expect(lineOf(all.events[1999]!.move)).toBe(6000);
+    expect(Array.from(all.moreEvents?.move ?? [], lineOf)).toEqual([6003, 6006, 6009, 6012, 6015]);
+    expect(Array.from(all.moreEvents?.depth ?? []).every((d) => Math.abs(d - 1) < 1e-6)).toBe(true);
+    // 되감기: 앞 자리 — 사건 1,000개, 배열 칸 없음
+    r.handle({ type: 'target', gen: 1, target: half });
+    drain();
+    expect(sent.at(-1)!.events.length).toBe(1000);
+    expect(sent.at(-1)!.moreEvents).toBeUndefined();
+  });
+});

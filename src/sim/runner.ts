@@ -9,6 +9,9 @@ import { WALL_SLOPE, buildBottom, buildWalls, gridOrigin, takeDirtyTiles, type S
 import type { SimRequest, SimResponse, SimUpdate } from './protocol';
 import { prepareTool, type PreparedTool } from './tool';
 
+/** 급속 사건을 객체로 보내는 수(그 뒤는 SimUpdate.moreEvents) */
+const EVENT_OBJECTS = 2000;
+
 interface State {
   gen: number;
   grid: HeightGrid;
@@ -115,6 +118,17 @@ export class SimRunner {
     s.sentBottom = true;
     s.meshMs += performance.now() - t0;
     const cp = s.engine.checkpointInfo;
+    // 사건은 처음 2,000개만 객체로(복제 부담), 그 뒤는 형식 배열 둘로 옮겨 넘긴다(131차 — 예전에는 버려 깎기 탭 제목 수가 적게 보였다)
+    const ev = s.engine.events;
+    let more: SimUpdate['moreEvents'];
+    if (ev.length > EVENT_OBJECTS) {
+      const n = ev.length - EVENT_OBJECTS;
+      more = { move: new Int32Array(n), depth: new Float64Array(n) };
+      for (let i = 0; i < n; i++) {
+        more.move[i] = ev[EVENT_OBJECTS + i]!.move;
+        more.depth[i] = ev[EVENT_OBJECTS + i]!.depth;
+      }
+    }
     const msg: SimUpdate = {
       type: 'update',
       gen: s.gen,
@@ -124,7 +138,8 @@ export class SimRunner {
       tiles,
       ...(walls ? { walls } : {}),
       ...(bottom ? { bottom } : {}),
-      events: s.engine.events.slice(0, 2000),
+      events: ev.slice(0, EVENT_OBJECTS),
+      ...(more ? { moreEvents: more } : {}),
       stats: { computeMs: s.computeMs, meshMs: s.meshMs, work: s.engine.work, checkpoints: cp.count, checkpointBytes: cp.bytes, rewinds: s.engine.rewinds },
     };
     s.sentEvents = s.engine.events.length;
@@ -133,6 +148,7 @@ export class SimRunner {
     const transfer: Transferable[] = [];
     for (const t of tiles) transfer.push(t.positions.buffer, t.colors.buffer, ...(t.normals ? [t.normals.buffer] : []), ...(t.indices ? [t.indices.buffer] : []));
     for (const p of [walls, bottom]) if (p) transfer.push(p.positions.buffer, p.colors.buffer, p.indices.buffer);
+    if (more) transfer.push(more.move.buffer, more.depth.buffer);
     this.post(msg, transfer);
   }
 }

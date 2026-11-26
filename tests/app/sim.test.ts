@@ -682,6 +682,29 @@ describe('깎기 탭', () => {
     expect(body).not.toContain('해석 경고에 이미 있는 줄');
   });
 
+  it('131차: 급속이 소재를 지난 이동이 2,000개를 넘어도 묶음 제목·그 밖 N곳은 온 수(워커가 2,000개 뒤 사건도 보냄)', async () => {
+    const { app, root } = makeApp();
+    const lines = ['G21 G90 G17', 'T1 M6 (T1 D=1. FLAT END MILL)', 'G0 X-30 Y19 Z5', 'G1 Z-5 F100', 'G1 X30', 'G0 Z5'];
+    // 2,005자리에 급속으로 꽂기(Z−1 — 가장 깊은 절삭 Z−5 위라 해석 경고 없음). 1 mm 간격, Y −19~6(홈 Y19와 떨어짐). 자리마다 XY 이동·꽂기·올리기 세 줄이고 꽂기 줄만 소재를 지난다
+    for (let i = 0; i < 2005; i++) lines.push(`G0 X${-39 + (i % 79)} Y${-19 + Math.floor(i / 79)}`, 'G0 Z-1', 'G0 Z5');
+    lines.push('M30');
+    await open(app, 'more.nc', lines.join('\n'));
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true, { stock: { min: [-40, -20, -20], max: [40, 20, 0] } });
+    await until(() => settled() && !!root.querySelector('.panel-body .warn-item'), 30000);
+    expect(api.state.sim!.rapidEvents).toBe(2005);
+    const items = [...root.querySelectorAll<HTMLButtonElement>('.panel-body .warn-item')];
+    expect(items.length).toBe(200);
+    // 꽂기 줄 = 8 + 3i번 줄
+    expect(items[0]!.querySelector('.ln')!.textContent).toBe('8번 줄');
+    expect(items[199]!.querySelector('.ln')!.textContent).toBe('605번 줄');
+    const heads = [...root.querySelectorAll('.panel-body h3')].map((el) => el.textContent);
+    expect(heads).toContain('급속 이동이 소재를 지남 2,005곳');
+    expect(root.querySelector('.panel-body')!.textContent).toContain('그 밖 1,805곳은 목록에 넣지 않았습니다.');
+  });
+
   it('판재 파일: 깎기 메뉴·탭이 있고 판 윗면 가공만 깎으며, 시뮬레이션하지 않은 가공은 까닭별로(누르면 그 가공)', async () => {
     const { app, root } = makeApp();
     await open(app, 'p.mpr', PANEL_MPR);
