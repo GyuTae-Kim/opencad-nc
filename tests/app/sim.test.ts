@@ -480,6 +480,48 @@ describe('깎기 탭', () => {
     await until(settled);
   });
 
+  it('135차: 계산하지 못한 오류(소재 상자가 올바르지 않음)는 다시 그린 깎기 탭 상태 글이 role=alert(새로 붙어도 화면 읽기가 읽음), 꺼짐·진행·끝 글은 aria-live=polite 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    // 상태 글 칸 [글, role, aria-live](탭을 다시 그리면 새 칸이라 그때마다 다시 찾는다)
+    const status = (): (string | null)[] => {
+      const el = root.querySelector('.panel-body .sim-status')!;
+      return [el.textContent, el.getAttribute('role'), el.getAttribute('aria-live')];
+    };
+    const ctl = <T extends HTMLElement>(label: string): T => [...root.querySelectorAll<T>('.panel-body input, .panel-body select')].find((el) => el.getAttribute('aria-label') === label)!;
+    const off = '꺼져 있습니다 — 켜면 재생 막대를 따라 소재를 깎아 보입니다.';
+    const bad = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
+    expect(status()).toEqual([off, null, 'polite']);
+    await api.setSim(true);
+    await until(settled);
+    expect(status()).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite']);
+    // 소재 X 최대를 최소보다 작게: 계산하지 않고 오류 — 탭을 다시 그린 새 칸의 처음 글이라 polite면 읽지 않는다
+    const xmax = ctl<HTMLInputElement>('X 범위 — 최대');
+    xmax.value = '-1000';
+    xmax.dispatchEvent(new Event('change'));
+    expect(status()).toEqual([bad, 'alert', null]);
+    // 오류인 채 다른 칸을 바꿔 다시 그려도(다시 계산 없음) 오류 글은 alert
+    const color = ctl<HTMLSelectElement>('색');
+    color.value = 'stock';
+    color.dispatchEvent(new Event('change'));
+    expect(status()).toEqual([bad, 'alert', null]);
+    // 끄면 꺼짐 글(polite), 다시 켜면 소재 상자가 그대로라 또 오류(alert)
+    const on = (): HTMLInputElement => root.querySelector<HTMLInputElement>('.panel-body input[type=checkbox]')!;
+    on().click();
+    expect(status()).toEqual([off, null, 'polite']);
+    on().click();
+    expect(status()).toEqual([bad, 'alert', null]);
+    // 자동으로: 다시 계산 — 진행 글과 끝 글은 polite
+    [...root.querySelectorAll<HTMLButtonElement>('.panel-body button')].find((b) => b.textContent === '자동으로')!.click();
+    expect(status().slice(1)).toEqual([null, 'polite']);
+    await until(settled);
+    expect(status()).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite']);
+  });
+
   /** 123차: 이름으로 부른 공구(Heidenhain TOOL CALL "이름" — 해석기가 번호 100000부터 붙인다) 셋 — 불 노즈(모서리 R 칸), 이름에 사전 낱말·나눔 글이 든 드릴(끝 각 칸), 빈 이름 */
   const NAMED_H = [
     '0 BEGIN PGM NAMED MM',
