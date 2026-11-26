@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_KEY, otherTheme, readThemePref, resolveTheme, writeThemePref, type ThemeStorage } from '../../src/app/theme';
 import { VIEW_KEYS } from 'opencad-viewer3d';
-import { isEditableTarget, keyAction, viewKeyOf, type KeyContext } from '../../src/app/keys';
+import { isEditableTarget, isPressTarget, keyAction, viewKeyOf, type KeyContext } from '../../src/app/keys';
 
 function memory(): ThemeStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -160,5 +160,23 @@ describe('키 고르기', () => {
     expect(isEditableTarget({ tagName: 'DIV', isContentEditable: true })).toBe(true);
     expect(isEditableTarget({ tagName: 'BUTTON' })).toBe(false);
     expect(isEditableTarget({ tagName: 'CANVAS' })).toBe(false);
+  });
+
+  it('149차: Space를 스스로 쓰는 누름 칸(버튼·링크·체크 상자 등 — 범위 막대는 아님)에서는 Space 재생을 하지 않는다', () => {
+    const role = (r: string | null) => (n: string) => (n === 'role' ? r : null);
+    expect(isPressTarget({ tagName: 'BUTTON' })).toBe(true);
+    expect(isPressTarget({ tagName: 'A' })).toBe(true);
+    expect(isPressTarget({ tagName: 'DIV', getAttribute: role('button') })).toBe(true);
+    expect(isPressTarget({ tagName: 'INPUT', type: 'checkbox' })).toBe(true);
+    expect(isPressTarget({ tagName: 'input', type: 'CHECKBOX' })).toBe(true);
+    expect(isPressTarget({ tagName: 'INPUT', type: 'radio' })).toBe(true);
+    expect(isPressTarget({ tagName: 'INPUT', type: 'range' })).toBe(false);
+    expect(isPressTarget({ tagName: 'INPUT', type: 'text' })).toBe(false);
+    expect(isPressTarget({ tagName: 'INPUT' })).toBe(false);
+    expect(isPressTarget({ tagName: 'CANVAS' })).toBe(false);
+    expect(isPressTarget({ tagName: 'DIV', getAttribute: role(null) })).toBe(false);
+    expect(isPressTarget(null)).toBe(false);
+    expect(k(' ', { onButton: isPressTarget({ tagName: 'INPUT', type: 'checkbox' }) })).toBeNull();
+    expect(k(' ', { onButton: isPressTarget({ tagName: 'INPUT', type: 'range' }) })).toEqual({ type: 'play' });
   });
 });

@@ -37,7 +37,7 @@ import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
-import { isEditableTarget, keyAction, viewKeyOf } from './keys';
+import { isEditableTarget, isPressTarget, keyAction, viewKeyOf } from './keys';
 import { MEASURE_LOADING, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import type { TrackPick } from './measure-track';
@@ -2316,7 +2316,8 @@ export class NcViewerApp implements PanelHost {
       meta: ev.metaKey,
       alt: ev.altKey,
       editable: isEditableTarget(t as (HTMLElement & { type?: string }) | null) || (onSlider && ev.key.startsWith('Arrow')),
-      onButton: !!t && (t.tagName === 'BUTTON' || t.getAttribute?.('role') === 'button' || t.tagName === 'A'),
+      // 149차: 체크 상자·라디오도(Space로 켜고 끔 — 범위 막대는 아님) 그 칸의 Space로 둔다(버튼과 같게)
+      onButton: isPressTarget(t),
       onCanvas: !!v && t === v.canvas,
       hasDoc: !!this.doc && !!v && !this.busy,
       canPlay: this.canPlay(),

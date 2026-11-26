@@ -4,7 +4,7 @@
  * - 뷰어 키(F 전체 보기, 1~7 표준 뷰, Esc 측정 지우기)의 규칙은 뷰어 코어가 가진다(Viewer3d.handleKey).
  *   캔버스에 초점이 있으면 뷰어가 직접 받고, 초점이 다른 곳(단추·패널 등)이면 앱이 창 키를 handleKey로 넘긴다.
  * - 입력 칸(글·선택 상자)에서는 아무것도 가로채지 않는다.
- * - 앱 키: F7 = 격자, Space = 재생/멈춤(단추에 초점이 있으면 그 단추를 누르게 둔다), Ctrl/⌘+O = 열기,
+ * - 앱 키: F7 = 격자, Space = 재생/멈춤(버튼·체크 상자처럼 Space를 스스로 쓰는 칸에 초점이 있으면 그 칸에 둔다 — isPressTarget), Ctrl/⌘+O = 열기,
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
  * - 측정 첫 점을 찍은 뒤(둘째 점 방향을 잡는 동안) 화살표는 방향 잠금(SketchUp 추론 잠금): → X · ← Y · ↑ Z축, ↓ 지금 방향.
  *   코드 목록·메뉴·탭처럼 화살표를 스스로 쓰는 곳에 초점이 있으면 그쪽 것이다. Shift 잠금은 코어가 한다.
@@ -44,7 +44,7 @@ export interface KeyContext {
   alt: boolean;
   /** 글을 넣는 곳(input·textarea·select·contenteditable)에 초점 */
   editable: boolean;
-  /** 초점이 단추 */
+  /** 초점이 Space를 스스로 쓰는 누름 칸(버튼·링크·체크 상자 등 — isPressTarget) */
   onButton: boolean;
   /** 초점이 뷰어 캔버스 */
   onCanvas: boolean;
@@ -107,4 +107,14 @@ export function isEditableTarget(t: { tagName?: string; type?: string; isContent
     return !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color'].includes(type);
   }
   return !!t.isContentEditable;
+}
+
+/**
+ * 149차: 초점 요소가 Space를 스스로 쓰는 누름 칸인지 — 버튼·링크·role=button과 글 칸이 아닌 input(체크 상자·라디오·버튼형 —범위 막대는 Space를 쓰지 않아 뺀다).
+ * 창 키(app.ts onKey — 캡처)는 여기서 Space 재생/멈춤을 하지 않는다: 먼저 막으면 정보 탭·깎기 탭 체크 상자가 Space로 켜지고 꺼지지 않고 재생이 대신 켜졌다 멈췄다 했다
+ */
+export function isPressTarget(t: { tagName?: string; type?: string; getAttribute?(name: string): string | null } | null): boolean {
+  const tag = t?.tagName?.toUpperCase();
+  if (tag === 'BUTTON' || tag === 'A' || t?.getAttribute?.('role') === 'button') return true;
+  return tag === 'INPUT' && t!.type?.toLowerCase() !== 'range' && !isEditableTarget(t);
 }
