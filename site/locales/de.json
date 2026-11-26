@@ -1034,6 +1034,7 @@
   "전체 프로그램을 깎았습니다 · {0}초": "Ganzes Programm abgetragen · {0} s",
   "이동 {0} / {1}까지 깎았습니다 · {2}초": "Bis Bewegung {0} von {1} abgetragen · {2} s",
   "급속 이동이 소재를 지남 {0}곳": "Eilgänge durch das Rohteil: {0}",
+  "그 밖 {0}곳은 목록에 넣지 않았습니다.": "Die übrigen {0} wurden nicht in die Liste aufgenommen.",
   "해석 경고에 이미 있는 줄 {0}곳은 뺐습니다.": "{0} Zeilen, die schon in den Analysewarnungen stehen, wurden ausgelassen.",
   "{0} × {1}칸 · 칸 {2}": "{0} × {1} Zellen · Zelle {2}",
   "지름({0})": "Durchmesser ({0})",

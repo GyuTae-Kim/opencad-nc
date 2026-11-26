@@ -836,7 +836,8 @@ export class SimView {
     // 급속이 소재를 지난 줄
     const ev: SimEvent[] = this.last?.events ?? [];
     if (this.on && ev.length && d.nc) {
-      const { rows, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
+      // 130차: 목록은 200줄에서 자르고(rapidEventRows), 묶음 제목은 자르기 전 줄 수 — 자르면 목록 밑에 남은 수(시뮬레이션하지 않은 가공 「그 밖 N개」와 같은 꼴)
+      const { rows, total, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
       const list = h('ul', { class: 'warn-list' });
       for (const r of rows) {
         const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 줄로' }, mixSpan(lineAtLabel(d, r.line), 'ln'), h('span', { class: 'msg' }, `깊이 ${fmtNum(r.depth)} ${u}`));
@@ -845,8 +846,9 @@ export class SimView {
       }
       body.append(
         group(
-          `급속 이동이 소재를 지남 ${rows.length.toLocaleString('ko-KR')}곳`,
+          `급속 이동이 소재를 지남 ${total.toLocaleString('ko-KR')}곳`,
           rows.length ? list : null,
+          total > rows.length ? h('p', { class: 'hint' }, `그 밖 ${(total - rows.length).toLocaleString('ko-KR')}곳은 목록에 넣지 않았습니다.`) : null,
           skipped ? h('p', { class: 'hint' }, `해석 경고에 이미 있는 줄 ${skipped.toLocaleString('ko-KR')}곳은 뺐습니다.`) : null,
           h('p', { class: 'hint' }, '급속이 깎은 자리는 빨갛게 그립니다(지금 재생 자리까지).'),
         ),

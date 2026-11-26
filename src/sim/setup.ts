@@ -192,14 +192,15 @@ export function hasCutMoves(m: SimMoveData): boolean {
 const RAPID_WARNING = /^(?:급속 이동이 가장 깊은 절삭|공작물 윗면\()/;
 
 /**
- * 급속 사건 → 줄마다 한 줄(가장 깊은 깊이, 처음 이동). 해석 경고에 이미 급속 경고가 있는 줄은 빼고 그 수를 센다(같은 줄을 두 번 알리지 않게)
+ * 급속 사건 → 줄마다 한 줄(가장 깊은 깊이, 처음 이동). 해석 경고에 이미 급속 경고가 있는 줄은 빼고 그 수를 센다(같은 줄을 두 번 알리지 않게).
+ * 줄은 max개에서 자르고, total은 자르기 전 줄 수(130차 — 깎기 탭 묶음 제목과 「그 밖 N곳」)
  */
 export function rapidEventRows(
   events: readonly { move: number; depth: number }[],
   lineOfMove: ArrayLike<number>,
   warnItems: readonly { text: string; line: number; lines: readonly number[] }[],
   max = 200,
-): { rows: { move: number; line: number; depth: number }[]; skipped: number } {
+): { rows: { move: number; line: number; depth: number }[]; total: number; skipped: number } {
   const warned = new Set<number>();
   for (const w of warnItems) if (RAPID_WARNING.test(w.text)) for (const l of w.lines.length ? w.lines : [w.line]) warned.add(l);
   const byLine = new Map<number, { move: number; line: number; depth: number }>();
@@ -214,7 +215,7 @@ export function rapidEventRows(
     if (cur) cur.depth = Math.max(cur.depth, e.depth);
     else byLine.set(line, { move: e.move, line, depth: e.depth });
   }
-  return { rows: [...byLine.values()].slice(0, max), skipped: skipped.size };
+  return { rows: [...byLine.values()].slice(0, max), total: byLine.size, skipped: skipped.size };
 }
 
 /** 이동이 쓰는 공구 번호(처음 나온 차례, -1 = 공구 없음) */
