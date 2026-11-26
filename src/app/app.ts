@@ -457,7 +457,8 @@ export class NcViewerApp implements PanelHost {
     this.recentList = h('ul', { class: 'recent-list' });
     this.recentCard = this.buildRecent();
     this.startEl = this.buildStart();
-    this.busyStage = h('div', { class: 'busy-stage' }, '여는 중…');
+    // 143차: 알림은 바뀌는 단계 글 칸만(덮개는 알림 영역이 아님 — role=status는 영역 전체를 읽어 「취소」 버튼 이름까지 읽혔다)
+    this.busyStage = h('div', { class: 'busy-stage', role: 'status', 'aria-live': 'polite' }, '여는 중…');
     this.busyBar = h('div', { class: 'bar' });
     // 여는 파일 이름(파일 글 — 번역하지 않는다)
     this.busyName = h('div', { class: 'busy-name', translate: 'no' });
@@ -465,7 +466,7 @@ export class NcViewerApp implements PanelHost {
     this.busyCancel.addEventListener('click', () => this.cancelLoad());
     this.busyEl = h(
       'div',
-      { class: 'busy', hidden: true, role: 'status', 'aria-live': 'polite' },
+      { class: 'busy', hidden: true },
       h('div', { class: 'busy-card' }, this.busyStage, h('div', { class: 'progress', 'aria-hidden': 'true' }, this.busyBar), h('div', { class: 'busy-foot' }, this.busyName, this.busyCancel)),
     );
     // ── 측정 띠(좁은 화면·터치에서 측정 중): 안내·결과를 크게 보이고, Esc 대신 다시 재기·끝내기 단추 ──

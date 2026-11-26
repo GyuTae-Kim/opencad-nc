@@ -674,6 +674,34 @@ describe('최근 문서(시작 화면)', () => {
     expect(second.app.state().error).toBeNull();
   });
 
+  it('143차: 덮개는 알림 영역이 아니고 단계 글 칸만 role=status — 「취소」 버튼·파일 이름은 알림 밖(STEP 145차 꼴)', async () => {
+    const backend = memoryBackend();
+    await new RecentStore(backend).add('old.nc', enc(PROGRAM), 1);
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['old.nc']));
+    const read = backend.read;
+    let release = (): void => {};
+    backend.read = async (id) => {
+      await new Promise<void>((r) => (release = r));
+      return read(id);
+    };
+    rows(root)[0]!.querySelector<HTMLButtonElement>('.recent-open')!.click();
+    expect(app.state().busy).toBe(true);
+    const busy = root.querySelector<HTMLElement>('.busy')!;
+    expect(busy.hidden).toBe(false);
+    // role=status는 영역 전체를 읽어(aria-atomic) 덮개가 알림이면 단계가 바뀔 때마다 「취소」 버튼 이름까지 읽는다
+    expect([busy.getAttribute('role'), busy.getAttribute('aria-live')]).toEqual([null, null]);
+    const live = '[role=status], [role=alert], [aria-live]';
+    const regions = [...busy.querySelectorAll<HTMLElement>(live)];
+    expect(regions.map((r) => [r.className, r.getAttribute('role'), r.getAttribute('aria-live'), r.textContent])).toEqual([['busy-stage', 'status', 'polite', '최근 문서 읽는 중…']]);
+    // 알림 영역 안에는 버튼·링크·다른 알림 영역이 없고, 「취소」 버튼과 파일 이름은 어느 알림 영역에도 들지 않는다
+    expect(regions[0]!.querySelector(`button, a, ${live}`)).toBeNull();
+    expect(busy.querySelector('.busy-cancel')!.closest(live)).toBeNull();
+    expect(busy.querySelector('.busy-name')!.closest(live)).toBeNull();
+    release();
+    await vi.waitFor(() => expect(app.state().docName).toBe('old.nc'));
+  });
+
   it('지우기에 실패하면 성공이라고 하지 않고 실패를 알린다(항목은 그대로)', async () => {
     const backend = memoryBackend();
     await new RecentStore(backend).add('a.nc', enc(PROGRAM), 1);
