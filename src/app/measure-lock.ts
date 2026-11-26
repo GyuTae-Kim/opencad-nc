@@ -298,6 +298,8 @@ export class MeasureLock {
   private want = 0;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private flashKind: string | null = null;
+  /** 134차: 띠 위 알림에 마지막으로 넣은 원문(같은 글을 잇달아 띄우면 NBSP를 번갈아 붙인다 — showFlash) */
+  private flashSaid = '';
   private lastKey = '';
   /** 앱이 원호 접선으로 잠근 방향(코어 잠금이 이것과 같은 방향의 'api' 잠금이면 접선 잠금) */
   private tangent: V3 | null = null;
@@ -800,9 +802,14 @@ export class MeasureLock {
     else toast(text, 'info', 3200);
   }
 
-  /** 측정 띠 위 알림(kind를 붙이면 그 종류로 거둘 수 있다). 117차: 늘 있는 같은 요소에 글을 넣고 인라인 모습을 지워 클래스 모습(알림 상자)으로 보인다 */
+  /**
+   * 측정 띠 위 알림(kind를 붙이면 그 종류로 거둘 수 있다). 117차: 늘 있는 같은 요소에 글을 넣고 인라인 모습을 지워 클래스 모습(알림 상자)으로 보인다.
+   * 134차: 보이는 알림과 같은 원문을 다시 띄우면(잠글 방향 없이 잠금 단추를 두 번 등) 끝에 NBSP를 붙였다 떼어 글을 바꾼다 — 같은 글이면 화면 읽기 프로그램이
+   * 다시 읽지 않을 수 있다(sayCycle과 같은 꼴). 화면 번역층이 옮긴 글은 원문과 달라 마지막에 넣은 원문(flashSaid)과 견주고, 번역층은 앞뒤 빈칸을 남기고 옮긴다
+   */
   showFlash(text: string, ms = 1600, kind: string | null = null): void {
-    this.flash.textContent = text;
+    this.flashSaid = this.flash.textContent && this.flashSaid === text ? text + NBSP : text;
+    this.flash.textContent = this.flashSaid;
     this.flash.removeAttribute('style');
     this.flashKind = kind;
     if (this.flashTimer) clearTimeout(this.flashTimer);

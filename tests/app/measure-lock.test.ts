@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KEY_SNAP_MESSAGES, formatKeySnapMessage, keySnapText, type MeasureHoverSnap, type MeasureLabelRect } from 'opencad-viewer3d';
 import { catalogs, translate } from '../../site/i18n.mjs';
+import { installLocalization } from '../../src/app/i18n';
 import { dictLookup, keySnapMessageFn } from '../../src/app/keysnap';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
 import { MeasureLock, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
@@ -589,6 +590,68 @@ describe('117차: 측정 띠 위 알림은 글을 바꾸기 전부터 있는 알
       empty();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('134차: 보이는 띠 위 알림과 같은 글을 다시 띄우면 끝에 줄 바꿈 없는 빈칸을 붙였다 떼어 알림 영역 글이 바뀐다(화면 읽기가 다시 읽게)', () => {
+  const NBSP = String.fromCharCode(0xa0);
+
+  it('잠글 방향 없이 잠금 단추를 거듭 누르면 같은 글에 NBSP를 번갈아 붙이고, 다른 글·거둔 뒤의 글은 원문 그대로', () => {
+    const { v, lock } = setup(true);
+    const el = lock.flash;
+    v.hover = END;
+    expect(lock.toggle()).toBe(false);
+    expect(el.textContent).toBe(NO_LOCK_TOUCH);
+    // 알림이 보이는 동안 같은 글(3.2초 안에 다시 누름): 글이 그대로면 알림 영역이 바뀌지 않아 다시 읽지 않을 수 있다
+    expect(lock.toggle()).toBe(false);
+    expect(el.textContent).toBe(NO_LOCK_TOUCH + NBSP);
+    expect(lock.toggle()).toBe(false);
+    expect(el.textContent).toBe(NO_LOCK_TOUCH);
+    // 다른 글은 원문 그대로, 그 글을 잇달아 띄우면 NBSP(끌어온 점 단추 알림도 같은 showFlash)
+    lock.showFlash('복사했습니다');
+    expect(el.textContent).toBe('복사했습니다');
+    lock.showFlash('복사했습니다');
+    expect(el.textContent).toBe(`복사했습니다${NBSP}`);
+    expect(lock.toggle()).toBe(false);
+    expect(el.textContent).toBe(NO_LOCK_TOUCH);
+    // 잠금이 걸리면 거두고(빈 글), 그 뒤 같은 글은 원문 그대로(빈 영역에 들어온 글이라 바뀜)
+    v.hover = { point: [0, 0, 9], snap: 'axis', axis: 'z', direction: [0, 0, 1] };
+    v.hoverLock = Z;
+    expect(lock.toggle()).toBe(true);
+    expect(el.textContent).toBe('');
+    expect(lock.toggle()).toBe(true);
+    expect(lock.lock).toBeNull();
+    v.hover = END;
+    v.hoverLock = null;
+    expect(lock.toggle()).toBe(false);
+    expect(el.textContent).toBe(NO_LOCK_TOUCH);
+    expect(lock.snapshot().flash).toBe(NO_LOCK_TOUCH);
+  });
+
+  it('다른 언어 화면: 화면 번역층이 옮긴 글에도 NBSP가 남는다(번역층은 원문 앞뒤 빈칸을 그대로 두고 옮긴다)', async () => {
+    const { v, lock } = setup(true);
+    history.replaceState(null, '', '/opencad-nc/en/');
+    const dispose = await installLocalization(document.body);
+    const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+    try {
+      const en = translate(NO_LOCK_TOUCH, 'en');
+      expect(en).not.toBe(NO_LOCK_TOUCH);
+      v.hover = END;
+      lock.toggle();
+      await tick();
+      expect(lock.flash.textContent).toBe(en);
+      // 화면 글(영어)은 원문과 달라도 같은 원문을 다시 띄운 것으로 본다
+      lock.toggle();
+      await tick();
+      expect(lock.flash.textContent).toBe(en + NBSP);
+      lock.toggle();
+      await tick();
+      expect(lock.flash.textContent).toBe(en);
+    } finally {
+      dispose();
+      history.replaceState(null, '', '/');
+      document.documentElement.lang = '';
     }
   });
 });
