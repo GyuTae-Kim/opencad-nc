@@ -193,28 +193,32 @@ const RAPID_WARNING = /^(?:급속 이동이 가장 깊은 절삭|공작물 윗�
 
 /**
  * 급속 사건 → 줄마다 한 줄(가장 깊은 깊이, 처음 이동). 해석 경고에 이미 급속 경고가 있는 줄은 빼고 그 수를 센다(같은 줄을 두 번 알리지 않게).
- * 줄은 max개에서 자르고, total은 자르기 전 줄 수(130차 — 깎기 탭 묶음 제목과 「그 밖 N곳」)
+ * 줄은 max개에서 자르고, total은 자르기 전 줄 수(130차 — 깎기 탭 묶음 제목과 「그 밖 N곳」).
+ * more는 워커가 객체 2,000개 뒤에 이어 보낸 사건(SimUpdate.moreEvents — 131차)이고 events 뒤 같은 차례로 센다
  */
 export function rapidEventRows(
   events: readonly { move: number; depth: number }[],
   lineOfMove: ArrayLike<number>,
   warnItems: readonly { text: string; line: number; lines: readonly number[] }[],
   max = 200,
+  more?: { readonly move: ArrayLike<number>; readonly depth: ArrayLike<number> },
 ): { rows: { move: number; line: number; depth: number }[]; total: number; skipped: number } {
   const warned = new Set<number>();
   for (const w of warnItems) if (RAPID_WARNING.test(w.text)) for (const l of w.lines.length ? w.lines : [w.line]) warned.add(l);
   const byLine = new Map<number, { move: number; line: number; depth: number }>();
   const skipped = new Set<number>();
-  for (const e of events) {
-    const line = lineOfMove[e.move] ?? -1;
+  const add = (move: number, depth: number): void => {
+    const line = lineOfMove[move] ?? -1;
     if (warned.has(line)) {
       skipped.add(line);
-      continue;
+      return;
     }
     const cur = byLine.get(line);
-    if (cur) cur.depth = Math.max(cur.depth, e.depth);
-    else byLine.set(line, { move: e.move, line, depth: e.depth });
-  }
+    if (cur) cur.depth = Math.max(cur.depth, depth);
+    else byLine.set(line, { move, line, depth });
+  };
+  for (const e of events) add(e.move, e.depth);
+  if (more) for (let i = 0; i < more.move.length; i++) add(more.move[i]!, more.depth[i]!);
   return { rows: [...byLine.values()].slice(0, max), total: byLine.size, skipped: skipped.size };
 }
 

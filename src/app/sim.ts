@@ -380,7 +380,7 @@ export class SimView {
       target: this.sent ? { ...this.sent } : null,
       grid: this.spec ? [this.spec.nx, this.spec.ny] : null,
       shown: this.shown,
-      rapidEvents: u?.events.length ?? 0,
+      rapidEvents: u ? u.events.length + (u.moreEvents?.move.length ?? 0) : 0,
       stats: u ? { ...u.stats } : null,
       panel: this.panel ? { items: this.panel.items.length, skipped: skipCounts(this.panel.skipped), disabled: this.panel.disabled } : null,
       uploads: { ...this.uploads },
@@ -668,7 +668,9 @@ export class SimView {
       if (!this.patch(changed) && this.ready()) this.scheduleRefresh();
     }
     this.updateStatus();
-    const ek = `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
+    // 131차: 2,000개 뒤 사건(moreEvents)까지 — 예전에는 2,000개에서 수·마지막 이동이 멈춰 더 온 사건에 탭을 다시 그리지 않았다
+    const more = msg.moreEvents?.move;
+    const ek = more?.length ? `${msg.events.length + more.length}:${more[more.length - 1]}` : `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
     if (ek !== this.eventsKey) {
       this.eventsKey = ek;
       redrawTab(this.host, this);
@@ -837,7 +839,8 @@ export class SimView {
     const ev: SimEvent[] = this.last?.events ?? [];
     if (this.on && ev.length && d.nc) {
       // 130차: 목록은 200줄에서 자르고(rapidEventRows), 묶음 제목은 자르기 전 줄 수 — 자르면 목록 밑에 남은 수(시뮬레이션하지 않은 가공 「그 밖 N개」와 같은 꼴)
-      const { rows, total, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems);
+      // 131차: 워커가 2,000개 뒤에 이어 보낸 사건(moreEvents)도 센다
+      const { rows, total, skipped } = rapidEventRows(ev, d.nc.moves.line, d.nc.warnItems, undefined, this.last?.moreEvents);
       const list = h('ul', { class: 'warn-list' });
       for (const r of rows) {
         const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 줄로' }, mixSpan(lineAtLabel(d, r.line), 'ln'), h('span', { class: 'msg' }, `깊이 ${fmtNum(r.depth)} ${u}`));
