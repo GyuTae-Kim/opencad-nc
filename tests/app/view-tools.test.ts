@@ -234,6 +234,42 @@ describe('패널 몸통 다시 그리기 초점(137차)', () => {
   });
 });
 
+describe('패널 몸통 이름(141차)', () => {
+  it('141차: 패널 몸통(tabpanel)의 이름은 지금 탭 버튼(aria-labelledby), 탭 버튼마다 aria-controls는 몸통 — 탭을 바꾸거나 몸통을 새로 그리거나 새 문서를 열어도 지금 탭을 따르고 id는 하나뿐', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const body = root.querySelector<HTMLElement>('.panel-body')!;
+    const check = (label: string): void => {
+      expect(body.getAttribute('role')).toBe('tabpanel');
+      const by = document.getElementById(body.getAttribute('aria-labelledby') ?? '');
+      expect(by?.textContent).toBe(label);
+      expect(by?.getAttribute('role')).toBe('tab');
+      expect(by?.getAttribute('aria-selected')).toBe('true');
+      const tabs = [...root.querySelectorAll<HTMLElement>('.panel-tabs [role=tab]')];
+      expect(tabs).toHaveLength(4);
+      for (const b of tabs) expect(document.getElementById(b.getAttribute('aria-controls') ?? '')).toBe(body);
+      const ids = [...document.querySelectorAll('[id]')].map((el) => el.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    };
+    check('코드');
+    root.querySelector<HTMLButtonElement>('.panel-tabs [data-tab=tools]')!.click();
+    check('공구');
+    // 몸통을 통째로 다시 그려도(공구 탭 눈 버튼 — 137차)
+    const eye = root.querySelector<HTMLButtonElement>('table.tools button.toggle')!;
+    eye.click();
+    expect(eye.isConnected).toBe(false);
+    check('공구');
+    // 다른 길로 탭을 바꿔도(show — 해석 경고·찾기·작업 띠 버튼과 같은 길)
+    api.setPanelTab('info');
+    check('정보');
+    // 새 문서(처음 탭 = 코드)
+    await open(app, 'n.nc', MILL);
+    expect(api.state.panelTab).toBe('code');
+    check('코드');
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
