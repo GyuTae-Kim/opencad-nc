@@ -355,6 +355,18 @@ describe('깎기 탭', () => {
     await until(settled);
     body = root.querySelector('.panel-body')!;
     expect(body.querySelector('.sim-status')!.textContent).toContain('전체 프로그램을 깎았습니다');
+    // 119차: 소재 범위 칸은 음수(원점 아래·왼쪽)를 쳐 넣으므로 소수 자판(inputmode="decimal" — 음수 기호를 약속하지 않음)을 두지 않는다.
+    // 0보다 큰 값만 쓰는 공구 표 칸(지름·끝 각)은 소수 자판 그대로
+    const stock = ['X 범위', 'Y 범위', 'Z 범위(바닥 ~ 윗면)'].flatMap((k) => [`${k} — 최소`, `${k} — 최대`]);
+    // (이름의 「~」는 jsdom 선택자가 따옴표 안에서도 잇는 기호로 읽어 속성 선택자 대신 이름으로 찾는다)
+    const byLabel = (l: string): HTMLInputElement | undefined => [...body.querySelectorAll<HTMLInputElement>('input')].find((i) => i.getAttribute('aria-label') === l);
+    expect(stock.map((l) => byLabel(l)).map((i) => [i?.type, i?.getAttribute('inputmode')])).toEqual(stock.map(() => ['number', null]));
+    expect([...body.querySelectorAll<HTMLInputElement>('table.sim-tools input')].map((i) => [i.getAttribute('aria-label'), i.getAttribute('inputmode')])).toEqual([
+      ['T1 지름', 'decimal'],
+      ['T2 지름', 'decimal'],
+      ['T3 지름', 'decimal'],
+      ['T3 끝 각(도)', 'decimal'],
+    ]);
     // 소재 X 최대 바꾸기 → 다시 계산, "직접 정함"
     const xmax = body.querySelector<HTMLInputElement>('input[aria-label="X 범위 — 최대"]')!;
     xmax.value = '90';

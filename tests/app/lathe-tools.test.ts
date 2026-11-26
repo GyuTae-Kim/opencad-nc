@@ -121,3 +121,36 @@ describe('정보 탭: 선반 공구 표', () => {
     expect(dirRow()).toBe('모름 — 노즈 중심');
   });
 });
+
+/**
+ * 119차: 기계·읽기 설정의 기계 좌표(G54 원점·G28 기준점)와 허용 범위 칸은 음수를 쳐 넣는다(기계 좌표는 흔히 음수, 범위 최소도).
+ * `inputmode="decimal"` 소수 자판은 음수 기호를 약속하지 않아(HTML inputmode — "may or may not show a minus key") 휴대폰·태블릿에서 쳐 넣지 못할 수 있었다.
+ * 그래서 이 칸은 inputmode를 두지 않고 type="number"에 맞춰 브라우저가 고르는 자판에 맡긴다. 0보다 큰 값만 쓰는 칸은 소수 자판 그대로.
+ */
+describe('정보 탭: 음수를 쳐 넣는 숫자 칸(119차)', () => {
+  it('기계 좌표·허용 범위 칸은 inputmode가 없고(소수 자판 아님), 쳐 넣은 음수 기계 좌표로 다시 읽는다', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const input = (label: string): HTMLInputElement => root.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    const signed = ['G54 원점의 기계 좌표(mm)', 'G28 기준점 기계 좌표(mm)', '허용 범위 최소(mm)', '허용 범위 최대(mm)'].flatMap((k) => ['X', 'Y', 'Z'].map((a) => `${k} — ${a}`));
+    expect(signed.map((l) => [l, input(l)?.type, input(l)?.getAttribute('inputmode')])).toEqual(signed.map((l) => [l, 'number', null]));
+    // 0보다 큰 값만 쓰는 칸은 소수 자판 그대로
+    expect(['급속 속도(mm/분)', '공구 교환 시간(초)', 'T1 노즈 반지름(mm)'].map((l) => input(l).getAttribute('inputmode'))).toEqual(['decimal', 'decimal', 'decimal']);
+    // 쳐 넣은 음수 기계 좌표: 세 축이 다 차면 다시 읽고 해석 옵션에 그 값
+    for (const [a, v] of [['X', '-500'], ['Y', '-300.5'], ['Z', '-400']] as const) {
+      const el = input(`G54 원점의 기계 좌표(mm) — ${a}`);
+      el.value = v;
+      el.dispatchEvent(new Event('change'));
+    }
+    await until(() => fake.opens.length === 2 && api.state.parsed);
+    await tick();
+    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY)!).offsetMm).toEqual([-500, -300.5, -400]);
+    expect(fake.opens[1]!.opts).toMatchObject({ machine: { offsetMm: [-500, -300.5, -400], referenceMm: [0, 0, 0] } });
+    expect(input('G54 원점의 기계 좌표(mm) — Z').value).toBe('-400');
+  });
+});
