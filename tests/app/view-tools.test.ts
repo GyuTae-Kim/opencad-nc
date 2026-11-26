@@ -391,6 +391,34 @@ describe('앱 펼침 메뉴 키(151차)', () => {
   });
 });
 
+describe('앱 펼침 메뉴 초점 테두리(161차)', () => {
+  it('161차: 키보드로 옮긴 메뉴 항목의 초점은 단면 축 버튼(.seg)과 같은 안쪽 2px 강조 테두리(바탕만 바꾸면 메뉴 바탕과 1.44:1·1.25:1 — WCAG 1.4.11), 마우스 올림 모양(바탕)은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    // 표준 뷰·그리기·보기 설정·테마 메뉴의 항목(role 셋 — ↑↓·Home·End로 초점이 옮겨 다니는 칸)
+    const items = [...root.querySelectorAll<HTMLButtonElement>('.menu button')];
+    expect(items.length).toBeGreaterThan(10);
+    expect(new Set(items.map((b) => b.getAttribute('role')))).toEqual(new Set(['menuitem', 'menuitemradio', 'menuitemcheckbox']));
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160차 꼴): 주석과 @media 덩어리를 뺀 맨 바깥 규칙
+    const css = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    // 메뉴 항목 모두에 맞는 .menu 선택자의 상태 규칙(맨 바깥 :focus-visible 기본 테두리보다 구체성이 높아 이긴다)
+    const on = (state: string) => rules.filter((r) => r.sels.some((s) => s.includes('.menu') && s.endsWith(state) && items.every((b) => b.matches(s.slice(0, -state.length)))));
+    // 같은 구체성이면 뒤 규칙이 이긴다 — :focus-visible 쪽에서 outline을 정하는 마지막 규칙
+    const ring = on(':focus-visible').filter((r) => 'outline' in r.body).pop()!;
+    const seg = rules.find((r) => r.sels.includes('.seg:focus-visible'))!.body;
+    expect(seg).toEqual({ outline: '2px solid var(--accent)', 'outline-offset': '-2px' });
+    expect(ring.body).toEqual(seg);
+    // 마우스 올림은 그대로 바탕만(--bg-hover), 초점 테두리 규칙은 올림에 걸리지 않음
+    expect(on(':hover').map((r) => r.body.background)).toEqual(['var(--bg-hover)']);
+    expect(ring.sels.some((s) => s.includes(':hover'))).toBe(false);
+  });
+});
+
 describe('단면 펼침 상자 초점(152차)', () => {
   it('152차: 단면 상자(role=dialog, 모달 아님)는 열면 눌린 축 버튼에 초점·Esc는 닫고 단면 버튼으로, 초점이 상자·단면 버튼 밖으로 나가면(Tab으로 나감) 닫혀 그 칸의 Esc를 가져가지 않고, 펼친 메뉴도 같은 규칙', async () => {
     const { app, root } = makeApp();
