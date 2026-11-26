@@ -15,6 +15,7 @@
  *   101차: 코어 0.107.0부터 끌어온 점 목록이 바뀐 그림 뒤에도 그 미리 보기 알림이 와, 99차가 남긴 포인터 길(pointermove·pointerleave·pointerup → 두 프레임 뒤 update)을 걷었다(attach).
  *   112차: 코어 0.118.0부터 마우스 미리 보기 자리 후보를 Tab·Shift+Tab으로 돌린 동안만 미리 보기 값에 차례·수(cycle)가 실려 이름 뒤에 「2/4」를 붙이고(cycleOrder),
  *   같은 글을 가상 커서 알림 영역에 넣는다(sayCycle — 화면 읽기).
+ *   158차: 찍은 점·끌어온 점이 없을 때 3D 보기가 받은 Esc는 툴팁을 거둔다(escTip — 같은 점·같은 글인 동안 다시 띄우지 않음, WCAG 1.4.13 닫을 수 있음).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -330,6 +331,10 @@ export class MeasureLock {
   private tipPoint: readonly number[] | null = null;
   /** 112차: 마지막으로 맞춘 돌리기 글(이름 + 차례·수 — 칸이 없으면 빈 글. 같은 값으로 다시 맞출 때 또 알리지 않는다) */
   private cycleSaid = '';
+  /** 158차: update가 맞춘 툴팁의 글·점(이름 + 차례·수, 잠금, 점 좌표 — 툴팁 글이 없으면 빈 글) */
+  private tipSaid = '';
+  /** 158차: Esc로 거둔 툴팁의 tipSaid(escTip — 거두지 않았으면 빈 글). 같은 값인 동안 다시 띄우지 않는다 */
+  private tipOff = '';
   /**
    * 116차: 이 Shift 누름이 건 원호 접선 잠금과 걸기 전 상태 — 같은 누름의 첫 Shift+Tab이 되돌린다(undoKey — 코어 0.120.0이 제 Shift 잠금에 하는 것과 같은 꼴).
    * t = 건 접선, x·y = 누를 때 포인터(화면 좌표), tangent·result = 걸기 전 접선 기록. 다른 키(누름·뗌)·누르기·3D 보기 떠남·4화소 넘는 이동·Shift 뗌이면 버린다(잠근 채)
@@ -390,7 +395,7 @@ export class MeasureLock {
       if (this.tipPoint && v.measureMode) this.follow(v, this.tipPoint);
     });
     // 116차: 같은 누름의 Shift+Tab 되돌리기(undo)를 버리는 포인터·키. 창 키는 app.ts onKey(→ shiftDown)보다 뒤에 등록해 같은 창 capture에서
-    // 그 다음·캔버스의 코어 키 듣기 앞에 온다(undoKey가 Tab을 코어보다 먼저 본다)
+    // 그 다음·캔버스의 코어 키 듣기 앞에 온다(undoKey가 Tab을 코어보다 먼저 본다). 158차: 같은 자리에서 3D 보기 Esc로 툴팁을 거둔다(escTip)
     const c = v.canvas;
     c.addEventListener('pointermove', (e) => {
       this.ptr = e.pointerType === 'touch' ? null : { x: e.clientX, y: e.clientY };
@@ -399,7 +404,14 @@ export class MeasureLock {
     });
     c.addEventListener('pointerdown', () => (this.undo = null));
     c.addEventListener('pointerleave', () => (this.ptr = this.undo = null));
-    window.addEventListener('keydown', (e) => this.undoKey(e), true);
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        this.escTip(e);
+        this.undoKey(e);
+      },
+      true,
+    );
     window.addEventListener(
       'keyup',
       (e) => {
@@ -493,7 +505,10 @@ export class MeasureLock {
     // 112차: Tab으로 돌린 동안만 이름 뒤 차례·수(칸이 없으면 빈 글 — 툴팁 마디는 전과 같다)
     const order = tip ? cycleOrder(hv?.cycle) : '';
     this.sayCycle(order ? tip!.name : null, order);
-    if (!tip || !sp || !sp.onScreen) {
+    // 158차: Esc로 거둔 툴팁(escTip)은 같은 글·같은 점인 동안 다시 띄우지 않는다 — 점·이름·차례·잠금이 바뀌거나 미리 보기가 없어지면 풀린다
+    this.tipSaid = tip ? `${tip.name}${order}|${tip.locked}|${hv!.point.join(',')}` : '';
+    if (this.tipOff !== this.tipSaid) this.tipOff = '';
+    if (!tip || !sp || !sp.onScreen || this.tipOff) {
       this.tip.hidden = true;
       this.tipAvoid = null;
       this.tipPoint = null;
@@ -656,6 +671,22 @@ export class MeasureLock {
     this.after();
   }
 
+  /**
+   * 158차 창 keydown(capture — attach, 코어 키 듣기 앞): 3D 보기(캔버스)가 받은 Esc(Ctrl·⌘·Alt 없음, 앱이 막지 않음)에 툴팁이 보이고 찍은 점·끌어온 점이 없으면
+   * 툴팁을 거둔다 — 포인터를 옮기지 않고 닫는 길(WCAG 1.4.13). 그 자리의 Esc는 코어가 지울 것이 없어 아무 일도 없었다(점이 있으면 코어 측정 지우기가 거둔다).
+   * 막지 않아 코어 Esc(Tab 돌리기 풀기·가상 커서 끄기)는 그대로이고, 그것이 미리 보기를 바꾸면 update가 새 값으로 다시 띄운다(돌리기를 풀면 첫 후보)
+   */
+  private escTip(e: KeyboardEvent): void {
+    const v = this.host.viewer();
+    if (e.key !== 'Escape' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || !v || e.target !== v.canvas || this.tip.hidden) return;
+    if (v.measurePointCount || v.measureTrackPoints.length) return;
+    this.tipOff = this.tipSaid;
+    this.tip.hidden = true;
+    this.tipAvoid = null;
+    this.tipPoint = null;
+    this.pushAvoid();
+  }
+
   /** Shift 뗌·창 흐려짐: Shift로 건 접선 잠금이면 푼다(둘째 점을 찍어 코어가 이미 풀었으면 그대로). 116차: 그 누름의 되돌리기·「되돌리기에 씀」도 끝난다 */
   shiftUp(): void {
     this.undo = null;
@@ -724,6 +755,7 @@ export class MeasureLock {
   /** 측정을 끄거나 문서를 바꿨다: 툴팁·알림·접선 기록·코어 글상자가 비킬 자리를 거둔다 */
   reset(): void {
     this.tip.hidden = true;
+    this.tipOff = '';
     this.tipAvoid = null;
     this.tipPoint = null;
     this.aimAvoid = null;

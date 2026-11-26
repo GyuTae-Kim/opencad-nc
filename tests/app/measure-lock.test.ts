@@ -655,3 +655,43 @@ describe('134차: 보이는 띠 위 알림과 같은 글을 다시 띄우면 끝
     }
   });
 });
+
+describe('158차: 3D 보기가 받은 Esc로 붙잡기 툴팁 거두기(지울 것이 없을 때 — WCAG 1.4.13)', () => {
+  it('찍은 점·끌어온 점이 없으면 3D 보기 Esc가 툴팁을 거두고(막지 않음) 같은 점인 동안 다시 띄우지 않으며, 다른 점이면 다시 뜬다. 3D 보기 밖·Ctrl+Esc·찍은 점이 있으면 그대로', () => {
+    const { v, lock, layer } = setup();
+    // 키 사건이 창(capture)까지 오게 3D 보기 층에 붙인다
+    layer.append(v.canvas);
+    lock.attach(v as unknown as LockViewer);
+    v.measurePointCount = 0;
+    v.hover = END;
+    lock.update();
+    const tip = { x: 112, y: 62, width: 80, height: 20 };
+    expect(lock.snapshot().tip).toBe('끝점');
+    expect(lock.labelAvoid).toEqual({ rects: [tip], points: true, snapshotPoints: true });
+    const esc = (target: EventTarget, init: KeyboardEventInit = {}): KeyboardEvent => {
+      const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init });
+      target.dispatchEvent(e);
+      return e;
+    };
+    // 3D 보기가 받은 Esc: 툴팁을 거두고 코어 글상자가 비킬 자리에서도 뺀다. 기본 동작은 막지 않는다(코어 Esc — 돌리기 풀기·가상 커서 끄기는 그대로)
+    expect(esc(v.canvas).defaultPrevented).toBe(false);
+    expect(lock.snapshot().tip).toBeNull();
+    expect(lock.labelAvoid).toEqual({ rects: [], points: true, snapshotPoints: true });
+    // 같은 점·같은 글이면 다시 맞춰도 거둔 그대로
+    lock.update();
+    expect(lock.snapshot().tip).toBeNull();
+    // 다른 점이면 다시 뜬다
+    v.hover = { point: [60, 0, 0], snap: 'endpoint' };
+    lock.update();
+    expect(lock.snapshot().tip).toBe('끝점');
+    // 3D 보기 밖 Esc(앱이 측정 지우기·끄기로 받는 키)·Ctrl+Esc는 거두지 않는다
+    esc(document.body);
+    esc(v.canvas, { ctrlKey: true });
+    expect(lock.snapshot().tip).toBe('끝점');
+    // 찍은 점이 있으면 3D 보기 Esc는 코어 측정 지우기 몫 — 툴팁은 이 모듈이 거두지 않는다
+    v.measurePointCount = 1;
+    lock.update();
+    esc(v.canvas);
+    expect(lock.snapshot().tip).toBe('끝점');
+  });
+});
