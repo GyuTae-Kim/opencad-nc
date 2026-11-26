@@ -26,7 +26,7 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
     상한에 닿지 않는 프로그램의 해석 결과는 예전과 같습니다
   - 판별은 괄호 주석을 떼고 봅니다. 낱말에 붙은 주석(N1(…)·T1M6(…)·G0X0(…))과 겹친 주석 "(… (SPOT))"도 주석이고,
     Siemens 함수 인수(CYCLE81(…)·=AC(…)·SIN(…))와 식 괄호(= 뒤)는 남깁니다. Siemens 표지가 하나뿐이면 Fanuc·LinuxCNC의 뚜렷한 표지
-    (O 번호 줄·# 변수·M98/G65 P·o-코드 부프로그램)가 없을 때만 Siemens로 읽습니다(표지가 둘 넘거나 %_N_ 머리면 Siemens)
+    (O 번호 줄·# 변수·M98/G65 P·o-코드 부프로그램)가 없을 때만 Siemens로 읽습니다(표지가 둘 이상이거나 %_N_ 머리면 Siemens)
   - Siemens Sinumerik(840D sl·828D 꼴, `src/siemens.ts` — %_N_…_MPF 머리·MCALL·CYCLE·T="…"·CR=·AC/IC·GOTOF·DEF·SUPA 등으로 판별):
     `;` 주석, 주소 = 식(X=R1*2), 축별 AC(…)/IC(…), CR=·I=AC(…)·AR=·CIP(I1/J1/K1)·TURN=, 극좌표 G110~G112 + AP·RP,
     공구 T="이름"·D·M6, R 매개변수·DEF 변수·PROC 매개변수와 식(SIN…ATAN2·POT·TRUNC·ROUND·MIN·MAX·DIV·MOD·비교·AND/OR/NOT),
@@ -230,7 +230,8 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
     A 체계 사이클 꼴(G90·G92·G94 + 좌표 + F)과 섞였거나 G91·낱말 없는 G70·G71처럼 표지만 있으면 A로 읽고 경고와 띠로 알립니다
   - 소수점 없는 값 = 최소 입력 단위(옵션 `integerUnits`, 정보 탭 "해석 설정"): Fanuc 매개변수 DPI = 0 꼴로 X·Y·Z·U·V·W·I·J·K·R·Q는
     mm 0.001·inch 0.0001, A·B·C는 0.001도. 반복 횟수(고정 사이클·M98의 K, L)는 그대로이고, 식·변수가 있는 줄도 소수점 없는 수만 바꾸며
-    변수·식 값은 그대로 씁니다. 선반 G71~G73 윤곽 블록에도 씁니다. 끈 채 소수점 없는 100 이상 좌표가 절반을 넘으면 경고와 띠("최소 단위로 읽기")
+    변수·식 값은 그대로 씁니다. 선반 G71~G73 윤곽 블록에도 씁니다. 끈 채 Fanuc·ISO·Haas 형식에서 0이 아닌 X·Y·Z 값 가운데 소수점 없이 100 이상인 것이
+    셋 이상이고 절반 이상이면 경고와 띠("최소 단위로 읽기" — Siemens·LinuxCNC·GRBL·Mach3 형식은 띠 없음)
   - 회전축 A·B·C(선택): 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로(각이 바뀌는 이동은 2도씩 나눔, 시간은 직선·각 합성 길이).
     G43.4/G43.5 공구 끝점 제어 동안은 프로그램 좌표를 그대로 공구 끝 경로로 그림
 - Heidenhain 대화식(.h): L·C·CR·CT·LP·CP, FK 자유 윤곽(FPOL·FL·FLT·FC·FCT — 한 블록 자료로 정해지는 것), RL/RR 반경 보정(TOOL DEF R + DR),
@@ -715,7 +716,7 @@ const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·
 // 회전축 감기, 반경 보정용 공구 표(키 = D 번호, LinuxCNC는 공구 번호)
 const p = parseGcode(text, { lathe: true, rotary: { A: 'x', stepDeg: 2 }, toolTable: { 1: { diameter: 10 } } });
 p.compRuns; // 보정 구간 [{ first, end, side, plane, radius, source, line }]
-const scene = ncToScene(p, { compPath: true }); // 선분 묶음 'nc-comp'(묶음 '보정 경로'), meta.compRuns
+const scene = ncToScene(p, { compPath: true }); // 선분 묶음 'nc-comp'(묶음 '보정 경로'), meta.compRuns: NcCompRunMeta[](형식도 입구에서 내보냄 — 133차)
 const cp = ncCompPath(p, { radius: 5 }); // 조각(직선·호) 구조 배열 — compPathSegments(cp)로 선분
 // 선반 공구 끝 R 보정: 노즈 반지름과 LinuxCNC 공구 방향(1~8이면 가상 공구 끝 경로, 9는 노즈 중심)
 const t = parseGcode(text, { lathe: true, toolTable: { 1: { radius: 0.4, orientation: 3 } } }); // 또는 machine.latheToolsMm(mm, 파일에 없을 때만)
@@ -741,11 +742,13 @@ t.compRuns; // [{ …, radius: 0.4, tool: 1, orientation: 3, orientationSource: 
 | `src/gcode.ts`, `src/expr.ts` | G-code 해석(좌표 변환·선반·회전축 포함)과 변수·식 |
 | `src/siemens.ts` | Siemens Sinumerik 블록·식·흐름·사이클·프레임(이동은 gcode.ts의 Runner를 그대로 씀, `parseGcode`에 방언으로 등록) |
 | `src/comp.ts` | 반경 보정 공구 중심 경로(옮긴 요소, 모서리 교점·호 잇기, 들어가기·나오기)와 선반 가상 공구 끝으로 옮기기(`LATHE_TIP` — LinuxCNC 공구 방향) |
-| `src/heidenhain.ts` | Heidenhain 평문 |
+| `src/heidenhain.ts` | Heidenhain 대화식(Klartext, .h)과 DIN/ISO(.i — 대화식 블록으로 옮겨 같은 길로 읽음) |
+| `src/sl.ts` | Heidenhain SL 사이클(14·20~24)의 평면 기하 — 작업 평면 두 축의 순수 함수(윤곽 겹치기·포켓 − 섬 면 경계·떨어진 곡선) |
 | `src/mpr.ts` | woodWOP MPR(판재 가공 모델 `MprPart` — PGI·XML도 이 꼴로 읽는다) |
 | `src/wangs.ts`, `src/xml.ts` | WangShi PGI·KDT XML, 줄 번호를 남기는 작은 XML 읽기 |
 | `src/model.ts`, `src/emitter.ts`, `src/text.ts` | 공통 이동 모델·시간표, 이동 만들기, 원문 줄 |
 | `src/corner.ts` | 모서리 다듬기 기하(직선·원호 모서리의 둥글리기·모따기 — G-code RND·CHF·CHR과 MPR KR·KF가 함께 씀) |
+| `src/affine.ts` | 3×4 아핀 변환 도움 — G-code 좌표 변환(G68·G51·G51.1·G68.2), Siemens 프레임, Heidenhain 좌표 변환 사이클(7·8·10·11·26)이 함께 씀 |
 | `src/lathe-g7x.ts` | LinuxCNC 선반 G70~G72 윤곽 기하(모서리 A·C, 한 방향 검사, 떨어진 곡선, 거친 깎기 층·포켓), Fanuc G71·G72 II형·Siemens CYCLE95 거친 깎기 |
 | `src/scene.ts`, `src/mesh.ts` | 공구 경로·공작물 → `Scene3d` |
 | `src/view/` | 화면 도우미: 재생 계산(`playback.ts`), 합성 예제 프로그램(`sample.ts` — 예제 열기를 누를 때 받는 조각), 가상 목록(`vlist.ts`, `vlist.css`) |
@@ -1695,6 +1698,17 @@ G-code로 읽고(`src/index.ts` `?? 'gcode'`), `combineNcFiles`도 그런 파일
 라이브러리가 던지게 바꾸는 길은 라이브러리 기본 동작이 바뀌고(앱은 이미 걸러 닿지 않음) `parseNcFile`을 부르는 퍼징 시험(`tests/fuzz.test.ts`)에 닿을 수 있어 넣지 않았습니다.
 문서만이라 시험은 돌리지 않았고(근거는 위 코드 자리 grep), 수정일 갱신의 vite 빌드는 내용이 같아 `site/content-history.json`이 바뀌지 않았습니다(수정일 커밋 없음).
 크기는 그 빌드로 첫 화면 조각 147,642바이트(vite gzip 52.72 kB)·해석 워커 397,288바이트·깎기 조각 48,407바이트 그대로입니다.
+133차는 132차가 보고 둔 것을 마쳤습니다(아래 남은 일 「README 약속 대조(132차)」 — 코어 판은 0.121.0 그대로). 라이브러리 절은 `ncToScene(p, { compPath: true })`가 `meta.compRuns`를 만든다고 약속하는데,
+그 한 구간 형식 `NcCompRunMeta`(`src/scene.ts`)를 공개 입구 `src/index.ts`가 다시 내보내지 않아 라이브러리 쓰는 사람이 입구에서 가져올 수 없었습니다.
+고친 길은 `src/index.ts`의 장면 내보내기 줄에 `type NcCompRunMeta`를 더한 것 하나입니다(타입만 — 실행 코드·기본 동작 바뀜 없음).
+시험은 `tests/comp.test.ts`의 장면 meta 시험이 그 형식을 `'../src/index'`에서 `import type`으로 가져와 쓰게 했습니다. 고치기 전 `tsc --noEmit`이 그 줄에서 실패했고(입구에 `NcCompRunMeta` 없음),
+고친 뒤 `tsc --noEmit`이 통과하고 그 파일 9개가 모두 통과했습니다. `tools/`·`tests/`·`scripts/`에서 공개 입구 내보내기 목록을 통째로 보는 시험은 없었습니다.
+README 낱말도 코드에 맞췄습니다(문서만): 「구조」 표에 `src/sl.ts`(Heidenhain SL 사이클 평면 기하)·`src/affine.ts`(좌표 변환 공용 아핀) 줄을 더하고 `src/heidenhain.ts` 칸을
+11-20 용어(대화식)와 DIN/ISO로, 소수점 없는 값 띠 줄을 `src/gcode.ts` `finish` 조건(Fanuc·ISO·Haas 형식, 0이 아닌 X·Y·Z 값 가운데 소수점 없이 100 이상이 셋 이상이고 절반 이상)대로,
+Siemens 판별의 「표지가 둘 넘거나」를 `detectGcodeDialect`의 `sm >= 2`대로 「둘 이상이거나」로 고쳤습니다.
+이 앱의 헤드리스 그림·전체 시험·빌드 검사(`check:seo`·`check:i18n`·`test:seo`)·휴대폰 검사는 로컬에서 돌리지 않고 PR CI에 맡겼습니다(로컬은 위 시험 파일 하나, `tsc --noEmit` 두 번, 수정일 갱신의 vite 빌드만).
+타입만 더해 빌드 결과가 같아 수정일 갱신의 vite 빌드에서 `site/content-history.json`이 바뀌지 않았습니다(수정일 커밋 없음). 크기는 그 빌드로 첫 화면 조각 147,642바이트(vite gzip 52.72 kB)·
+해석 워커 397,288바이트·깎기 조각 48,407바이트·깎기 워커 19,838바이트·코어 조각 473,079바이트·정보 탭 조각 11.23 kB·측정 도구 조각 54.36 kB·CSS 31.32 kB 그대로입니다.
 키보드 알림의 `formatNumber`는 측정 모드 알림의 좌표·거리를 위치 표시처럼 고정 소수 셋째 자리(인치 넷째)로 씁니다(`keysnap.ts`의 `keySnapNumber` — 고르기 모드는 앱 글 그대로).
 0.48.0·0.49.0의 밝은 테마 Y축·고른 것 강조색 대비는 코어만 올려 바뀝니다. 0.41.0 앱 점 우선, 0.42.0 인스턴싱(공구 경로는 선분 묶음이라 모으지 않음), 0.43.0 PBR,
 0.45.0 구간 단면, 0.49.0 주변 가림·`flyTo` 끝 알림, 0.51.0 나눠 올리기 걸음 몫은 쓰지 않습니다.
@@ -2146,12 +2160,13 @@ CPU를 4배 늦추면(휴대폰 흉내, 30만 이동) 두 쪽 모두 메인 스�
 - README 약속 대조(132차): 위 「할 수 있는 것」·「라이브러리로 쓰는 법」·「구조」의 해석기 약속을 해석기 코드에 대조했습니다. 라이브러리가 형식을 정하지 못한 파일
   (판재가 아닌 XML·MPRX)을 G-code로 읽는다는 것을 적지 않았던 것은 풀림(132차)입니다(위 개발 132차 문단). 132차에 보고 둔 것:
   「구조」 표에 `src/sl.ts`(Heidenhain SL 사이클의 평면 기하)·`src/affine.ts`(G68·G51·G68.2·Siemens 프레임·Heidenhain 좌표 변환 사이클이 함께 쓰는 아핀 변환)가 없고,
-  `src/heidenhain.ts` 칸이 11-20 용어 바꿈 전의 「Heidenhain 평문」이며 DIN/ISO가 빠졌습니다(문서만).
+  `src/heidenhain.ts` 칸이 11-20 용어 바꿈 전의 「Heidenhain 평문」이며 DIN/ISO가 빠졌습니다(문서만) — 풀림(133차): 두 파일 줄을 더하고 그 칸을 대화식·DIN/ISO로.
   소수점 없는 값 띠 — 위 줄은 「끈 채 소수점 없는 100 이상 좌표가 절반을 넘으면」이지만 `src/gcode.ts` `finish`는 Fanuc·ISO·Haas 방언에서만, 그런 좌표가 셋 이상이고
-  0이 아닌 X·Y·Z 값의 절반 이상일 때 띠를 답니다(Siemens·LinuxCNC·GRBL·Mach3는 띠 없음 — 최소 입력 단위가 Fanuc 계열 설정이라 코드가 맞고 README 낱말만).
-  Siemens 판별 — 위 줄 「표지가 둘 넘거나」는 `detectGcodeDialect`가 표지 둘 이상(`>= 2`)이면 Siemens입니다(낱말만).
+  0이 아닌 X·Y·Z 값의 절반 이상일 때 띠를 답니다(Siemens·LinuxCNC·GRBL·Mach3는 띠 없음 — 최소 입력 단위가 Fanuc 계열 설정이라 코드가 맞고 README 낱말만) — 풀림(133차): 그 줄을 코드 조건대로.
+  Siemens 판별 — 위 줄 「표지가 둘 넘거나」는 `detectGcodeDialect`가 표지 둘 이상(`>= 2`)이면 Siemens입니다(낱말만) — 풀림(133차): 「둘 이상이거나」로.
   O9000번대 G65 — 경고 글은 「기계에 든 매크로로 보임」이지만 이름은 다른 빠진 프로그램처럼 `missing-program` 목록(띠)에 들어갑니다. 파일이 실제로 있을 수도 있어 띠에서 뺄 근거가 없어 그대로입니다.
-  장면 `meta.compRuns` 한 구간 형식(`NcCompRunMeta`, `src/scene.ts`)은 공개 입구에서 다시 내보내지 않습니다(`opencad-nc/scene` 하위 경로로는 가져올 수 있음 — 동작 차이 없음).
+  장면 `meta.compRuns` 한 구간 형식(`NcCompRunMeta`, `src/scene.ts`)은 공개 입구에서 다시 내보내지 않습니다(`opencad-nc/scene` 하위 경로로는 가져올 수 있음 — 동작 차이 없음)
+  — 풀림(133차): `src/index.ts`가 타입으로 다시 내보냅니다(위 개발 133차 문단).
   Siemens G18·G19 밀링의 깎기 3축 판정은 129차에 보고 둔 그대로입니다(실제 파일 표본으로 판단할 일).
   맞춰 본 약속(어긋남 없음): `loadNcFile` 돌려주는 값·`parsed.kind` 다섯, 형식별 함수·확장자 목록 내보내기, `parseGcode` 선택(`lathe`·`latheSystem`·`rotary`·`toolTable`·`machine.latheToolsMm`)과
   `compRuns` 칸(선반 `tool`·`orientation`·`orientationSource`), `ncToScene` `compPath`('nc-comp'·묶음 '보정 경로'·`meta.compRuns`)·`ncCompPath`·`compPathSegments`, `mprToScene` `meta.lids`,
