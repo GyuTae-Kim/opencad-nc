@@ -243,7 +243,7 @@ describe('language URLs and UI presentation', () => {
     expect(uiText(shown[0]!)).toBe('Messwerkzeuge können nicht geöffnet werden: Datei konnte nicht empfangen werden (Netzwerkfehler).');
     // 깎기 탭 상태 줄(sim.ts): 계산 워커가 멈추면 원문은 그대로 두고 그릴 때 까닭까지 독일어로
     const sim = SimView.prototype as unknown as { fail(message: string): void; statusText(): string };
-    const state = { on: true, error: null as string | null, stop: () => undefined, host: { refreshPanel: () => undefined } };
+    const state = { on: true, error: null as string | null, stop: () => undefined, showError: () => undefined, host: { refreshPanel: () => undefined } };
     sim.fail.call(state, worker);
     expect(state.error).toBe(shown[2]);
     expect(sim.statusText.call(state)).toBe('Simulation konnte nicht berechnet werden: Worker beendet (möglicherweise nicht genügend Arbeitsspeicher)');
