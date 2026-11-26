@@ -533,9 +533,12 @@ export class NcViewerApp implements PanelHost {
       this.mlock?.shiftUp();
       this.mlock?.schedule();
     });
-    document.addEventListener('pointerdown', (ev) => {
-      if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
-    });
+    // 펼친 메뉴·단면 상자는 바깥을 누르거나 152차: 초점이 바깥으로 가면(Tab으로 나감 등 — 메뉴·상자와 그 버튼 밖) 닫는다.
+    // 열린 채 남으면 다른 칸의 Esc를 창 키가 닫기로 먼저 가져가 초점을 그 버튼으로 옮기고, 측정 방향 잠금 화살표도 걸리지 않았다
+    for (const type of ['pointerdown', 'focusin'] as const)
+      document.addEventListener(type, (ev) => {
+        if (this.openMenu && !this.openMenu.wrap.contains(ev.target as Node)) this.closeMenu();
+      });
     try {
       window.matchMedia(PHONE_QUERY).addEventListener('change', () => {
         // 넓은 화면 ↔ 휴대폰: 막대 단추가 바뀌므로 펼친 메뉴를 닫는다

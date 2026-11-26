@@ -364,6 +364,50 @@ describe('앱 펼침 메뉴 키(151차)', () => {
   });
 });
 
+describe('단면 펼침 상자 초점(152차)', () => {
+  it('152차: 단면 상자(role=dialog, 모달 아님)는 열면 눌린 축 버튼에 초점·Esc는 닫고 단면 버튼으로, 초점이 상자·단면 버튼 밖으로 나가면(Tab으로 나감) 닫혀 그 칸의 Esc를 가져가지 않고, 펼친 메뉴도 같은 규칙', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    // 초점이 있는 칸에 키를 보낸다(창 키 onKey는 창에서 캡처로 먼저 받는다) — 기본 동작을 막았으면 true
+    const press = (key: string, shiftKey = false): boolean => !document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
+    const tool = (name: string): HTMLButtonElement => root.querySelector<HTMLButtonElement>(`.toolbar .tbtn[aria-label="${name}"]`)!;
+    const btn = tool('단면');
+    const pop = root.querySelector<HTMLElement>('.sec-pop')!;
+    const axes = [...pop.querySelectorAll<HTMLButtonElement>('.seg')];
+    // 열면 눌린 축 버튼(단면이 꺼져 있어 「끔」)에 초점
+    btn.click();
+    expect(pop.hidden).toBe(false);
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(axes[0]);
+    // 상자 안 칸·단면 버튼(Shift+Tab으로 돌아옴)으로 초점이 옮겨도 열린 채
+    axes[3]!.focus();
+    btn.focus();
+    axes[1]!.focus();
+    expect(pop.hidden).toBe(false);
+    // 상자 밖 다음 칸(측정 버튼 — Tab으로 나간 꼴, jsdom은 Tab으로 초점을 옮기지 않아 focus()로)으로 초점이 가면 닫힌다
+    tool('측정').focus();
+    expect(pop.hidden).toBe(true);
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    // 그 칸의 Esc를 상자 닫기로 가져가지 않아 초점이 그대로(열린 채 남으면 창 키가 상자를 닫고 단면 버튼으로 초점을 옮겼다)
+    press('Escape');
+    expect(document.activeElement).toBe(tool('측정'));
+    // Esc는 지금처럼 닫고 단면 버튼으로 초점
+    btn.click();
+    expect(document.activeElement).toBe(axes[0]);
+    press('Escape');
+    expect(pop.hidden).toBe(true);
+    expect(document.activeElement).toBe(btn);
+    // 펼친 메뉴도 같은 규칙: 초점이 메뉴 밖(여기서는 단면 버튼)으로 가면 닫힌다
+    const views = tool('표준 뷰');
+    const list = views.closest('.menu-wrap')!.querySelector<HTMLElement>('.menu')!;
+    views.click();
+    expect(list.hidden).toBe(false);
+    btn.focus();
+    expect(list.hidden).toBe(true);
+    expect(views.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
