@@ -317,6 +317,26 @@ describe('재생 띠(패널을 닫았을 때)', () => {
     expect(api.state.playSec).toBeNull();
     expect(strip.hidden).toBe(true);
   });
+
+  it('140차: 재생 위치 막대도 옆 시간 글을 aria-valuetext로 — 화면 읽기가 0~1000 수 대신 시간(패널 재생 막대와 같은 글)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    const range = strip.querySelector<HTMLInputElement>('input[aria-label="재생 위치"]')!;
+    const time = (): string => strip.querySelector('.ps-time')!.textContent!;
+    const panelRange = root.querySelector<HTMLInputElement>('.panel input[aria-label="재생 위치"]')!;
+    api.seek(1);
+    api.togglePanel(false);
+    expect(strip.hidden).toBe(false);
+    expect(time()).toMatch(/^0:01\.0 \/ /);
+    expect(range.getAttribute('aria-valuetext')).toBe(time());
+    expect(panelRange.getAttribute('aria-valuetext')).toBe(time());
+    // 한 이동 앞으로: 시간 글과 함께 바뀐다
+    strip.querySelector<HTMLButtonElement>('button[aria-label="다음 이동"]')!.click();
+    expect(range.getAttribute('aria-valuetext')).toBe(time());
+    expect(panelRange.getAttribute('aria-valuetext')).toBe(time());
+  });
 });
 
 describe('경고 → 줄', () => {

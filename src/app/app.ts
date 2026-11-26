@@ -824,7 +824,12 @@ export class NcViewerApp implements PanelHost {
     e.flip.disabled = !s;
     e.flip.setAttribute('aria-pressed', String(!!s?.flip));
     const u = this.doc?.scene.units === 'inch' ? 'in' : this.doc?.scene.units === 'mm' ? 'mm' : '';
-    e.val.textContent = s ? `${s.axis ? s.axis.toUpperCase() : '평면'} = ${fmtNum(s.position)}${u ? ` ${u}` : ''}${s.flip ? ' (뒤집음)' : ''}` : '꺼짐';
+    const pos = s ? `${fmtNum(s.position)}${u ? ` ${u}` : ''}` : '';
+    e.val.textContent = s ? `${s.axis ? s.axis.toUpperCase() : '평면'} = ${pos}${s.flip ? ' (뒤집음)' : ''}` : '꺼짐';
+    // 140차: 0~1000 막대가 수 대신 그 자리를 읽게 값 글의 축·위치를(패널 재생 막대 꼴). 번역층이 옮기지 않는 속성이라 낱말(평면·뒤집음)은 빼고
+    // 꺼지면(막대 막힘) 뺀다 — 뒤집음은 뒤집기 버튼 눌림이 알린다
+    if (s) e.range.setAttribute('aria-valuetext', s.axis ? `${s.axis.toUpperCase()} = ${pos}` : pos);
+    else e.range.removeAttribute('aria-valuetext');
     e.btn.setAttribute('aria-pressed', String(!!s));
     this.placeSecHandle();
   }
@@ -2174,7 +2179,8 @@ export class NcViewerApp implements PanelHost {
     const on = !!d && !!info && !this.panelOpen && !this.busy && !this.measuring && (this.playing || d.playSec !== null);
     s.el.hidden = !on;
     if (!on || !d || !info) return;
-    s.time.textContent = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
+    const at = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
+    s.time.textContent = at;
     // 줄(작업 파일 이름)·상태(이름 붙은 공구)에 파일 글이 섞인다 — 지금 언어로 옮겨 담는다(data-i18n-skip)
     s.line.replaceChildren(...mixNodes(info.line >= 0 && this.doc ? lineLabel(this.doc, info.line) : []));
     const st = d.nc && info.move >= 0 ? moveState(d.nc, info.move, unitLabel(d.scene.units)) : null;
@@ -2183,6 +2189,8 @@ export class NcViewerApp implements PanelHost {
     s.play.setAttribute('aria-label', this.playing ? '재생 멈춤' : '재생');
     s.play.title = this.playing ? '재생 멈춤' : '재생';
     s.range.value = String(info.total > 0 ? Math.round((info.sec / info.total) * 1000) : 1000);
+    // 140차: 막대도 0~1000 수 대신 시간을 읽게(패널 재생 막대 onPlayback과 같은 글)
+    s.range.setAttribute('aria-valuetext', at);
     s.speed.value = String(this.speed);
   }
 

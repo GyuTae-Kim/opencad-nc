@@ -5,6 +5,7 @@
  * (코어 README 0.113.0 남은 한계·앱이 할 일 — 좌표축 버튼에서 둘을 함께 부름, STEP 141차와 같은 길).
  * 앱을 진짜 코어(가짜 WebGL)로 띄우고 해석 워커만 같은 스레드의 parseForView로 바꾼다(context-core.test.ts 꼴).
  * 그리기 수는 코어 stats.drawCalls(renderNow 한 번 — 격자 축선은 선 하나에 그리기 하나, 왼쪽 아래 축 표시는 2D 덧그림이라 들지 않는다).
+ * 140차: 단면 펼침 상자의 0~1000 「단면 위치」 막대가 옆 값 글을 aria-valuetext로 — 가짜 뷰어는 단면 알림이 없어 같은 실제 코어로 본다.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -82,5 +83,38 @@ describe('좌표축 버튼(139차 — 왼쪽 아래 축 표시와 격자의 장�
     expect(body).toContain('v.setAxesVisible(show);');
     expect(body).toContain('v.setAxesStyle({ hidden: !show });');
     expect(src.match(/\.setAxesVisible\(|\.setAxesStyle\(/g)).toHaveLength(2);
+  });
+});
+
+describe('단면 위치 막대(140차 — 옆 값 글을 aria-valuetext로, 패널 재생 막대 꼴)', () => {
+  it('실제 코어: X 단면이면 「X = 10 mm」, 막대를 옮기면 새 자리, 뒤집어도 축·위치만(번역층이 옮기지 않는 속성이라 낱말 없이), 끄면 뺌', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    const app = new NcViewerApp(root);
+    expect(await open(app, 'a.nc')).toBe(true);
+    const range = root.querySelector<HTMLInputElement>('input[aria-label="단면 위치"]')!;
+    const val = root.querySelector<HTMLElement>('.sec-val')!;
+    const flip = root.querySelector<HTMLButtonElement>('button[title="잘라 내는 쪽 뒤집기"]')!;
+    expect(val.textContent).toBe('꺼짐');
+    expect(range.hasAttribute('aria-valuetext')).toBe(false);
+    // 경로 x 0~20 — 가운데(t 0.5)
+    app.setSectionAxis('x');
+    expect(val.textContent).toBe('X = 10 mm');
+    expect(range.getAttribute('aria-valuetext')).toBe('X = 10 mm');
+    // 막대를 1/4로(화살표·끌기와 같은 input)
+    range.value = '250';
+    range.dispatchEvent(new Event('input'));
+    expect(val.textContent).toBe('X = 5 mm');
+    expect(range.getAttribute('aria-valuetext')).toBe('X = 5 mm');
+    // 뒤집으면 보이는 글에만 「(뒤집음)」 — 뒤집음은 뒤집기 버튼의 눌림 상태가 알린다
+    flip.click();
+    expect(val.textContent).toBe('X = 5 mm (뒤집음)');
+    expect(flip.getAttribute('aria-pressed')).toBe('true');
+    expect(range.getAttribute('aria-valuetext')).toBe('X = 5 mm');
+    // 끄면 막대가 막히고 값 글을 뺀다
+    app.setSectionAxis(null);
+    expect(val.textContent).toBe('꺼짐');
+    expect(range.disabled).toBe(true);
+    expect(range.hasAttribute('aria-valuetext')).toBe(false);
   });
 });
