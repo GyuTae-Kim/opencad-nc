@@ -18,7 +18,7 @@ import { MPR_KIND, lineAtLabel, mprOps, opLabel, playPosition, sceneFeatures, un
 import { fileSpan, h, mixSpan, toast } from './dom';
 import type { FileText } from './filetext';
 import { fmtNum } from './format';
-import { uiText } from './i18n';
+import { mixText, uiText } from './i18n';
 import { icon, type IconName } from './icons';
 import { sourceLine, sourceText } from '../text';
 import { gridFor, type GridSpec } from '../sim/grid';
@@ -214,7 +214,7 @@ const TAB_CONTROLS = 'button, input, select';
 
 /**
  * 121차: 다 그린 깎기 탭의 칸마다 열쇠(태그 · 이름 — aria-label, 없으면 감싼 label이나 버튼의 글). 그린 바로 뒤라 화면 번역층(MutationObserver)이 옮기기 전
- * 한국어 원문이어서 언어와 상관없이 다시 그린 탭의 같은 칸과 맞는다. 같은 열쇠가 둘이면 앞의 것
+ * 한국어 원문이어서 언어와 상관없이 다시 그린 탭의 같은 칸과 맞는다(이름 공구 칸은 앱이 지금 언어로 옮겨 넣은 이름 — 123차, 같은 언어로 다시 그리면 같은 글). 같은 열쇠가 둘이면 앞의 것
  */
 function tabControls(body: ParentNode): Map<string, TabControl> {
   const m = new Map<string, TabControl>();
@@ -923,12 +923,20 @@ export class SimView {
     // 공구 표
     const tbody = h('tbody');
     for (const r of this.rows) {
-      const name = panel ? panelToolLabel(panel.tools[r.number]) : r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음';
-      const kind = h('select', { class: 'select small', 'aria-label': `${name} 종류` });
+      // 123차: 이름으로 부른 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름" — 해석기가 번호 100000부터 붙임)는 정보 탭·재생 띠·3D 묶음처럼 그 이름(파일 글).
+      // 이름이 비었거나 없으면 「—」 그대로
+      const named = !panel && r.number >= 100000 ? d.nc?.tools.find((x) => x.number === r.number)?.name || undefined : undefined;
+      const name = panel ? panelToolLabel(panel.tools[r.number]) : (named ?? (r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음'));
+      // 칸 이름: 이름이 든 것은 지금 언어 틀에 이름을 그대로 끼워 넣고 번역층은 건너뛴다(54차 mixText — 날 글로 이으면 이름의 「 · 」·사전 낱말까지 옮겨졌다).
+      // 121차 초점 열쇠도 공구마다 갈린다(전에는 이름 공구 칸이 모두 「— 지름」 꼴). 섞은 글은 mix`${fileText(이름)} 지름`과 같은 꼴을 글자 그대로 쓴다 —
+      // fileText를 가져오면 첫 화면 조각이 그 함수를 새로 내보내 커졌다(+13바이트)
+      const label = (what: string): Record<string, string> =>
+        named !== undefined ? { 'aria-label': mixText([{ file: named }, ` ${what}`]), 'data-i18n-keep': 'aria-label' } : { 'aria-label': `${name} ${what}` };
+      const kind = h('select', { class: 'select small', ...label('종류') });
       for (const k of SIM_TOOL_KINDS) kind.append(h('option', { value: k }, KIND_LABEL[k]));
       kind.value = r.tool.kind;
       kind.addEventListener('change', () => this.setTool(r, { kind: kind.value as SimToolKind }));
-      const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': `${name} 지름` });
+      const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label('지름') });
       dia.value = String(r.tool.diameter);
       dia.addEventListener('change', () => {
         const n = Number(dia.value);
@@ -937,7 +945,7 @@ export class SimView {
       let extra: HTMLElement | string = '';
       if (r.tool.kind === 'bull' || r.tool.kind === 'drill') {
         const isBull = r.tool.kind === 'bull';
-        const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', 'aria-label': isBull ? `${name} 모서리 R` : `${name} 끝 각(도)` });
+        const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label(isBull ? '모서리 R' : '끝 각(도)') });
         el.value = String(isBull ? r.tool.corner : r.tool.angle);
         el.addEventListener('change', () => {
           const n = Number(el.value);
@@ -951,7 +959,7 @@ export class SimView {
         h(
           'tr',
           {},
-          h('td', {}, name),
+          h('td', { translate: named !== undefined ? 'no' : null }, name),
           h('td', {}, kind),
           h('td', { class: 'sim-num' }, dia),
           h('td', { class: 'sim-num' }, extra),

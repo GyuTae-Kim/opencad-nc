@@ -103,6 +103,7 @@ vi.mock('../../src/app/client', async () => {
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 import { mprOps } from '../../src/app/doc';
+import { installLocalization } from '../../src/app/i18n';
 import { SIM_GROUP, composeSimScene, fullSceneCheaper, panelToolLabel, sumBytes } from '../../src/app/sim';
 import { PANEL_SKIP_TEXT, panelOpSteps, panelStepTarget } from '../../src/sim/panel';
 import type { SimRequest } from '../../src/sim/protocol';
@@ -451,6 +452,107 @@ describe('깎기 탭', () => {
     expect(ctl<HTMLSelectElement>('색').value).toBe('depth');
     expect(document.activeElement).toBe(out);
     await until(settled);
+  });
+
+  /** 123차: 이름으로 부른 공구(Heidenhain TOOL CALL "이름" — 해석기가 번호 100000부터 붙인다) 셋 — 불 노즈(모서리 R 칸), 이름에 사전 낱말·나눔 글이 든 드릴(끝 각 칸), 빈 이름 */
+  const NAMED_H = [
+    '0 BEGIN PGM NAMED MM',
+    '1 BLK FORM 0.1 Z X+0 Y+0 Z-10',
+    '2 BLK FORM 0.2 X+100 Y+100 Z+0',
+    '3 TOOL CALL "BULL_D10" Z S3000',
+    '4 L X+10 Y+10 Z+5 R0 FMAX',
+    '5 L Z-1 F200',
+    '6 L X+40',
+    '7 L Z+5 R0 FMAX',
+    '8 TOOL CALL "드릴 · 무늬" Z S2000',
+    '9 L X+50 Y+50 R0 FMAX',
+    '10 L Z-3 F100',
+    '11 L Z+5 R0 FMAX',
+    '12 TOOL CALL "" Z S1000',
+    '13 L X+60 Y+20 R0 FMAX',
+    '14 L Z-1 F200',
+    '15 L X+80',
+    '16 L Z+5 R0 FMAX',
+    '17 END PGM NAMED MM',
+  ].join('\n');
+  /** 깎기 탭 공구 표: 줄마다 이름 칸 [글, translate], 칸마다 [aria-label, data-i18n-keep] */
+  const toolTable = (root: HTMLElement): { names: (string | null)[][]; labels: (string | null)[][] } => {
+    const table = root.querySelector('.panel-body table.sim-tools')!;
+    return {
+      names: [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')].map((tr) => [tr.cells[0]!.textContent, tr.cells[0]!.getAttribute('translate')]),
+      labels: [...table.querySelectorAll('select, input')].map((el) => [el.getAttribute('aria-label'), el.getAttribute('data-i18n-keep')]),
+    };
+  };
+
+  it('123차: 이름으로 부른 공구는 공구 표 이름 칸·칸 이름에 「—」 대신 그 이름(파일 글 — 정보 탭·재생 띠와 같게), 빈 이름은 「—」 그대로, 다시 그린 초점도 그 공구 칸에', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'named.h', NAMED_H);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body table.sim-tools'));
+    const t = toolTable(root);
+    expect(t.names).toEqual([
+      ['BULL_D10', 'no'],
+      ['드릴 · 무늬', 'no'],
+      ['—', null],
+    ]);
+    // 화면 읽기 칸 이름: 이름이 든 것은 앱이 옮겨 넣어 번역층이 건너뛴다(data-i18n-keep — 54차 파일 글 꼴), 「—」 줄은 전과 같이 날 글
+    expect(t.labels).toEqual([
+      ['BULL_D10 종류', 'aria-label'],
+      ['BULL_D10 지름', 'aria-label'],
+      ['BULL_D10 모서리 R', 'aria-label'],
+      ['드릴 · 무늬 종류', 'aria-label'],
+      ['드릴 · 무늬 지름', 'aria-label'],
+      ['드릴 · 무늬 끝 각(도)', 'aria-label'],
+      ['— 종류', null],
+      ['— 지름', null],
+    ]);
+    // 둘째 이름 공구의 지름 칸을 키보드로 바꿔 탭을 다시 그려도 초점은 그 공구의 새 칸에(121차 열쇠 — 전에는 이름 공구 칸이 모두 「— 지름」이라 첫 줄 칸으로 갔다)
+    const ctl = (label: string): HTMLInputElement => [...root.querySelectorAll<HTMLInputElement>('.panel-body table.sim-tools input')].find((el) => el.getAttribute('aria-label') === label)!;
+    const dia = ctl('드릴 · 무늬 지름');
+    dia.focus();
+    dia.value = '8';
+    dia.dispatchEvent(new Event('change'));
+    expect(ctl('드릴 · 무늬 지름')).not.toBe(dia);
+    expect(document.activeElement).toBe(ctl('드릴 · 무늬 지름'));
+    expect(ctl('드릴 · 무늬 지름').value).toBe('8');
+    expect(ctl('BULL_D10 지름').value).toBe('6');
+  });
+
+  it('123차: 다른 언어 화면에서도 공구 표의 이름은 그대로(사전 낱말·나눔 글이어도), 칸 이름은 그 언어 틀에 이름을 끼운다', async () => {
+    history.replaceState(null, '', '/opencad-nc/en/');
+    const { app, root } = makeApp();
+    const dispose = await installLocalization(root);
+    onTestFinished(() => {
+      dispose();
+      history.replaceState(null, '', '/');
+    });
+    await open(app, 'named.h', NAMED_H);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body table.sim-tools'));
+    // 번역층(MutationObserver)이 새 탭을 다 본 뒤
+    await new Promise((r) => setTimeout(r, 0));
+    const en = (key: string, name: string): string => catalogs['en']![key]!.replace('{0}', name);
+    const t = toolTable(root);
+    expect(t.names).toEqual([
+      ['BULL_D10', 'no'],
+      ['드릴 · 무늬', 'no'],
+      ['—', null],
+    ]);
+    expect(t.labels).toEqual([
+      [en('{0} 종류', 'BULL_D10'), 'aria-label'],
+      [en('{0} 지름', 'BULL_D10'), 'aria-label'],
+      [en('{0} 모서리 R', 'BULL_D10'), 'aria-label'],
+      [en('{0} 종류', '드릴 · 무늬'), 'aria-label'],
+      [en('{0} 지름', '드릴 · 무늬'), 'aria-label'],
+      [en('{0} 끝 각(도)', '드릴 · 무늬'), 'aria-label'],
+      [translate('— 종류', 'en'), null],
+      [translate('— 지름', 'en'), null],
+    ]);
+    expect(t.labels.slice(6).join('\n')).not.toMatch(/[가-힣]/);
   });
 
   it('급속이 소재를 지난 줄을 보이고(누르면 그 줄로), 해석 경고에 이미 있는 줄은 뺀다', async () => {
