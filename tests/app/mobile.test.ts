@@ -506,6 +506,96 @@ describe('화면 폭 바뀜 초점(153차)', () => {
   });
 });
 
+describe('칸 안에서 누른 닫기 초점(154차)', () => {
+  it('154차: 패널 「패널 닫기」를 키보드로 눌러 패널이 숨으면 초점을 연 버튼(막대 「패널」)으로 — 초점이 패널 밖이면 그대로', async () => {
+    const { app, root } = makeApp(true);
+    expect(await app.openSample()).toBe(true);
+    const v = fake.FakeViewer.last!;
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    v.canvas.tabIndex = 0;
+    const open = menuButton(root, '패널');
+    const panel = root.querySelector<HTMLElement>('.panel')!;
+    const close = panel.querySelector<HTMLButtonElement>('[aria-label="패널 닫기"]')!;
+    // 휴대폰은 패널을 닫아 두고 시작한다 — 막대 「패널」로 연다
+    expect(panel.hidden).toBe(true);
+    open.click();
+    expect(panel.hidden).toBe(false);
+    // 키보드로 누름(jsdom click은 초점을 옮기지 않고 focus fixup이 없어 숨은 버튼에 초점이 남는다 — 브라우저는 문서로 보낸다)
+    close.focus();
+    close.click();
+    expect(panel.hidden).toBe(true);
+    expect(open.getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(open);
+    // 초점이 패널 밖(3D 보기)이면 닫아도 그대로
+    open.click();
+    expect(panel.hidden).toBe(false);
+    v.canvas.focus();
+    close.click();
+    expect(panel.hidden).toBe(true);
+    expect(document.activeElement).toBe(v.canvas);
+  });
+
+  it('154차: 측정 띠 「측정 끝내기」·띠 안 Esc로 측정을 끝내 띠가 숨으면 초점을 연 버튼(막대 「측정」)으로 — 초점이 띠 밖이면 그대로', async () => {
+    const { app, root } = makeApp(true);
+    expect(await app.openSample()).toBe(true);
+    const v = fake.FakeViewer.last!;
+    v.canvas.tabIndex = 0;
+    const measure = menuButton(root, '측정');
+    const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    const close = bar.querySelector<HTMLButtonElement>('[aria-label="측정 끝내기"]')!;
+    // 키보드로 누른 「측정 끝내기」
+    measure.click();
+    expect(app.state().measuring).toBe(true);
+    close.focus();
+    close.click();
+    expect(app.state().measuring).toBe(false);
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(measure);
+    // 띠 안 Esc: 찍은 점이 없으면 창 키가 측정을 끝낸다(가짜 뷰어는 Esc를 받지 않는다 — 코어도 지울 점이 없으면 받지 않음)
+    measure.click();
+    expect(app.state().measuring).toBe(true);
+    close.focus();
+    close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(app.state().measuring).toBe(false);
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(measure);
+    // 초점이 띠 밖(3D 보기)이면 그대로
+    measure.click();
+    v.canvas.focus();
+    close.click();
+    expect(app.state().measuring).toBe(false);
+    expect(document.activeElement).toBe(v.canvas);
+  });
+
+  it('154차: 측정 띠 안 Esc로 찍은 점을 지워 잠금 버튼만 숨으면(띠·측정은 남음) 초점을 3D 보기로(138차 「다시 재기」와 같은 곳)', async () => {
+    const { app, root } = makeApp(true);
+    expect(await app.openSample()).toBe(true);
+    const v = fake.FakeViewer.last!;
+    v.canvas.tabIndex = 0;
+    // 코어 Esc 흉내(handleKey): 찍은 점이 있으면 지우고 받는다(코어 clearMeasure는 점이 있었으면 곧바로 측정 결과 null을 알린다) — 이 시험만
+    (v as unknown as { handleKey: (e: KeyboardEvent) => boolean }).handleKey = (e) => {
+      if (e.key !== 'Escape' || !v.measurePts) return false;
+      v.clearMeasure();
+      return true;
+    };
+    menuButton(root, '측정').click();
+    expect(app.state().measuring).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    const lock = bar.querySelector<HTMLButtonElement>('.mb-lock')!;
+    // 첫 점: 둘째 점 방향을 잡는 동안 잠금 버튼이 보인다
+    v.measurePts = 1;
+    v.canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    expect(lock.hidden).toBe(false);
+    lock.focus();
+    lock.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(v.measurePts).toBe(0);
+    expect(lock.hidden).toBe(true);
+    expect(app.state().measuring).toBe(true);
+    expect(bar.hidden).toBe(false);
+    expect(document.activeElement).toBe(v.canvas);
+  });
+});
+
 describe('손가락 기기의 파일 고르기와 시작 화면', () => {
   it('마우스 기기는 확장자로 거르고, 손가락 기기는 거르지 않는다(iOS가 .nc·.mpr를 흐리게 막지 않게)', () => {
     let input = makeApp(false, false).root.querySelector<HTMLInputElement>('input[type=file]')!;

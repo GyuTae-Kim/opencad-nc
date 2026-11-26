@@ -1752,6 +1752,7 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     if (on !== v.measureMode) this.aim?.cancel();
+    const had = document.activeElement;
     v.setMeasureMode(on);
     this.syncMeasureSnap();
     lock.reset();
@@ -1760,6 +1761,7 @@ export class NcViewerApp implements PanelHost {
     this.renderToolbar();
     this.renderStatus();
     this.refreshPlayStrip();
+    this.toOpener(had, this.measureBar, 'measure');
   }
 
   /** 측정을 켤 때 받던 측정 도구 조각이 왔다(또는 받지 못했다): 그때까지 바랐으면 켜고, 받지 못했으면 바랐을 때만 알린다 */
@@ -1776,12 +1778,23 @@ export class NcViewerApp implements PanelHost {
   }
 
   togglePanel(on = !this.panelOpen): void {
+    const had = document.activeElement;
     this.panelOpen = on;
     this.panel.setOpen(on);
     this.renderToolbar();
+    this.toOpener(had, this.panel.el, 'panel');
     this.refreshPlayStrip();
     // 좁은 화면에서는 시트가 3D 보기 높이를 바꾸므로 크기가 정해진 뒤 다시 맞춘다
     if (window.innerWidth < NARROW_WIDTH && this.viewer) requestAnimationFrame(() => requestAnimationFrame(() => this.viewer?.fit(false)));
+  }
+
+  /**
+   * 154차: 칸 안에서 누른 닫기(패널 「패널 닫기」, 측정 띠 「측정 끝내기」·띠 안 Esc)로 그 칸이 숨으면 HTML focus fixup이 남은 초점을 문서로 보낸다 —
+   * 초점이 그 칸 안이었을 때만 연 버튼(막대 「패널」·「측정」 — 두 폭에 다 있고 다시 누르면 다시 엶)으로(153차 차례: 연 버튼 → 남는 칸 → 3D 보기).
+   * 초점이 그 밖이거나 칸이 남으면 그대로
+   */
+  private toOpener(had: Element | null, box: HTMLElement, key: string): void {
+    if (box.hidden && box.contains(had)) this.tools[key]?.el.focus();
   }
 
   setGroupVisible(g: string, on: boolean): void {
@@ -2288,13 +2301,14 @@ export class NcViewerApp implements PanelHost {
       if (lock) t.append(h('span', { class: 'mb-sub mb-lock-hint' }, lock));
     }
     // 다시 재기는 끌어온 점만 있어도(첫 점 전) 지운다 — 코어 clearMeasure가 끌어온 점도 지운다
-    const had = document.activeElement;
+    const had = document.activeElement as HTMLButtonElement | null;
     this.measureClear.disabled = !d.measure && !v.measurePointCount && !v.measureTrackPoints.length;
-    // 138차: 키보드로 누른 다시 재기가 지워 막히면 HTML focus fixup이 초점을 문서로 보낸다 — 3D 보기로(Enter로 가상 커서를 켜 다시 재는 곳).
-    // 초점이 그 버튼에 없거나 막히지 않았으면 그대로(자주 불리는 갱신이 초점을 끌어오지 않게)
-    if (had === this.measureClear && this.measureClear.disabled) v.canvas.focus({ preventScroll: true });
     this.mtrack?.update();
     this.mlock?.update();
+    // 138차: 키보드로 누른 다시 재기가 지워 막히면 HTML focus fixup이 초점을 문서로 보낸다 — 3D 보기로(Enter로 가상 커서를 켜 다시 재는 곳).
+    // 초점이 그 버튼에 없거나 막히지 않았으면 그대로(자주 불리는 갱신이 초점을 끌어오지 않게)
+    // 154차: 띠 안 Esc로 점을 지워 숨는 잠금·끌어온 점 버튼도 같은 곳으로(띠는 남는다 — 지운 뒤 다시 재는 곳)
+    if (had && this.measureActs.contains(had) && (had.disabled || had.hidden)) v.canvas.focus({ preventScroll: true });
   }
 
   // ───────────────────────── 키 ─────────────────────────
