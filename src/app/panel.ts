@@ -794,13 +794,11 @@ export class NcPanel {
             row('꺼진 가공', String(st.disabled ?? 0)),
           ),
         );
-      if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled)
-        this.body.append(
-          group(
-            '보기 선택',
-            this.optToggle(d, 'mprDisabled', '꺼진 가공도 그리기', d.kind === 'mpr' ? '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.' : 'enable(Enable)이 0인 가공을 묶음 "꺼진 가공"으로 그립니다.'),
-          ),
-        );
+      if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled) {
+        // 145차: 풀이는 손가락 기기 안내 줄로도 상자 바로 밑에(127차 panel-info.ts withTips와 같은 줄 — 그 조각은 첫 화면에서 가져오지 않는다)
+        const tip = d.kind === 'mpr' ? '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.' : 'enable(Enable)이 0인 가공을 묶음 "꺼진 가공"으로 그립니다.';
+        this.body.append(group('보기 선택', this.optToggle(d, 'mprDisabled', '꺼진 가공도 그리기', tip), h('p', { class: 'hint coarse-only' }, tip)));
+      }
     }
     this.body.append(this.groupList(d));
     const warns = s.warnings ?? [];
@@ -871,6 +869,8 @@ export class NcPanel {
     return group(
       `작업 파일 ${job.files.length}개`,
       h('label', { class: 'prop-row edit', title: tip }, h('span', { class: 'k' }, '주 프로그램'), main),
+      // 145차: 손가락 기기 안내 줄(풍선 글은 휴대폰·태블릿에서 볼 수 없다 — 127차 withTips와 같은 줄)
+      h('p', { class: 'hint coarse-only' }, tip),
       list,
       // 파일·프로그램 이름은 파일 글
       job.skipped.length ? h('p', { class: 'hint' }, mixSpan(mix`잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${fileText(job.skipped.join(', '))}`)) : null,
