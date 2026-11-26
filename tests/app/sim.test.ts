@@ -382,6 +382,77 @@ describe('깎기 탭', () => {
     expect(root.querySelector('table.sim-tools tbody tr:nth-child(2)')!.textContent).toContain('사용자 값');
   });
 
+  it('121차: 키보드로 바꾼 상자·숫자 칸·고르기·버튼 때문에 깎기 탭을 다시 그려도 초점은 새로 그린 같은 칸에(막혔으면 같은 묶음의 앞 칸, 탭 밖 초점은 그대로)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    const body = (): Element => root.querySelector('.panel-body')!;
+    // (이름의 「~」는 jsdom 선택자가 따옴표 안에서도 잇는 기호로 읽어 속성 선택자 대신 이름으로 찾는다)
+    const ctl = <T extends HTMLElement>(label: string): T => [...body().querySelectorAll<T>('input, select')].find((el) => el.getAttribute('aria-label') === label)!;
+    const button = (text: string): HTMLButtonElement => [...body().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === text)!;
+    // 상자(Space — click·change): 켜면 그 자리에서 탭을 다시 그린다 — 떼어진 상자에 있던 초점은 새 상자로(남기면 HTML focus fixup이 문서로 옮긴다)
+    const on = body().querySelector<HTMLInputElement>('input[type=checkbox]')!;
+    on.focus();
+    on.click();
+    const on2 = body().querySelector<HTMLInputElement>('input[type=checkbox]')!;
+    expect(on2).not.toBe(on);
+    expect(on2.checked).toBe(true);
+    expect(document.activeElement).toBe(on2);
+    await until(settled);
+    // 숫자 칸(화살표·Enter — change)
+    const xmax = ctl<HTMLInputElement>('X 범위 — 최대');
+    xmax.focus();
+    xmax.value = '90';
+    xmax.dispatchEvent(new Event('change'));
+    expect(ctl('X 범위 — 최대')).not.toBe(xmax);
+    expect(document.activeElement).toBe(ctl('X 범위 — 최대'));
+    expect(ctl<HTMLInputElement>('X 범위 — 최대').value).toBe('90');
+    expect(button('자동으로').disabled).toBe(false);
+    await until(settled);
+    // 자동으로: 다시 그린 버튼이 막힌다 → 같은 묶음(소재)의 앞 칸
+    const reset = button('자동으로');
+    reset.focus();
+    reset.click();
+    expect(button('자동으로').disabled).toBe(true);
+    expect(document.activeElement).toBe(ctl('Z 범위(바닥 ~ 윗면) — 최대'));
+    await until(settled);
+    // 고르기(화살표 — change)
+    const color = ctl<HTMLSelectElement>('색');
+    color.focus();
+    color.value = 'stock';
+    color.dispatchEvent(new Event('change'));
+    expect(ctl('색')).not.toBe(color);
+    expect(ctl<HTMLSelectElement>('색').value).toBe('stock');
+    expect(document.activeElement).toBe(ctl('색'));
+    // 공구 표 고르기 → 기억(다시 계산) — 기억 지우기가 열린다
+    const t2 = ctl<HTMLSelectElement>('T2 종류');
+    t2.focus();
+    t2.value = 'ball';
+    t2.dispatchEvent(new Event('change'));
+    expect(document.activeElement).toBe(ctl('T2 종류'));
+    expect(ctl<HTMLSelectElement>('T2 종류').value).toBe('ball');
+    expect(button('기억 지우기').disabled).toBe(false);
+    await until(settled);
+    // 기억 지우기: 다시 그린 버튼이 막힌다 → 같은 묶음(공구)의 앞 칸 — 표의 마지막 칸(T3 드릴 끝 각)
+    const forget = button('기억 지우기');
+    forget.focus();
+    forget.click();
+    expect(button('기억 지우기').disabled).toBe(true);
+    expect(ctl<HTMLSelectElement>('T2 종류').value).toBe('flat');
+    expect(document.activeElement).toBe(ctl('T3 끝 각(도)'));
+    await until(settled);
+    // 초점이 탭 밖이면 다시 그려도 그대로
+    const out = document.body.appendChild(document.createElement('button'));
+    out.focus();
+    await api.setSim(true, { color: 'depth' });
+    expect(ctl<HTMLSelectElement>('색').value).toBe('depth');
+    expect(document.activeElement).toBe(out);
+    await until(settled);
+  });
+
   it('급속이 소재를 지난 줄을 보이고(누르면 그 줄로), 해석 경고에 이미 있는 줄은 뺀다', async () => {
     const { app, root } = makeApp();
     const text = ['G21 G90 G17', 'T1 M6 (T1 D=4. FLAT END MILL)', 'G0 X-30 Y0 Z5', 'G1 Z-5 F100', 'G1 X30', 'G0 Z5', 'G0 X-30 Y10', 'G0 Z-1', 'G0 X30', 'G0 Z-8', 'G0 Z5', 'M30'].join('\n');
