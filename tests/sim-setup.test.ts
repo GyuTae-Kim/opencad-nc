@@ -119,9 +119,12 @@ describe('소재 기본값', () => {
         { move: 1, line: 1, depth: 0.5 },
         { move: 2, line: 2, depth: 2 },
       ],
+      total: 2,
       skipped: 1,
     });
     expect(rapidEventRows(ev, line, [{ text: '공작물 윗면(Z0)보다 낮은 높이에서 급속 수평 이동', line: 2, lines: [] }]).skipped).toBe(1);
+    // 130차: 목록은 max 줄에서 자르고, total은 자르기 전 줄 수(뺀 줄은 세지 않음 — 깎기 탭 묶음 제목과 「그 밖 N곳」)
+    expect(rapidEventRows(ev, line, [], 1)).toEqual({ rows: [{ move: 1, line: 1, depth: 0.5 }], total: 3, skipped: 0 });
   });
 
   it('절삭 이동·쓰인 공구', () => {

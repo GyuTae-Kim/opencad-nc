@@ -652,8 +652,34 @@ describe('깎기 탭', () => {
     // 8번 줄(G0 Z−1)·9번 줄(G0 X30, Z−1 높이) — 10번 줄(G0 Z−8)은 해석 경고("가장 깊은 절삭보다 아래")에 있어 뺀다
     expect(items.map((b) => b.querySelector('.ln')!.textContent)).toEqual(['8번 줄', '9번 줄']);
     expect(root.querySelector('.panel-body')!.textContent).toContain('해석 경고에 이미 있는 줄 1곳은 뺐습니다.');
+    // 130차: 200줄 안쪽이면 자른 안내가 없다
+    expect(root.querySelector('.panel-body')!.textContent).not.toContain('목록에 넣지 않았습니다');
     items[1]!.click();
     expect(api.state.selLine).toBe(8);
+  });
+
+  it('130차: 급속 줄이 200개를 넘으면 목록은 200개에서 자르되 묶음 제목은 온 수, 목록 밑에 그 밖 N곳', async () => {
+    const { app, root } = makeApp();
+    const lines = ['G21 G90 G17', 'T1 M6 (T1 D=1. FLAT END MILL)', 'G0 X-30 Y0 Z5', 'G1 Z-5 F100', 'G1 X30', 'G0 Z5'];
+    // 205자리에 급속으로 꽂기(Z−1 — 가장 깊은 절삭 Z−5 위라 해석 경고 없음). 자리마다 XY 이동·꽂기·올리기 세 줄이고 꽂기 줄만 소재를 지난다
+    for (let i = 0; i < 205; i++) lines.push(`G0 X${-38 + 2 * (i % 39)} Y${-18 + 2 * Math.floor(i / 39)}`, 'G0 Z-1', 'G0 Z5');
+    lines.push('M30');
+    await open(app, 'many.nc', lines.join('\n'));
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true, { stock: { min: [-40, -20, -20], max: [40, 20, 0] } });
+    await until(() => settled() && api.state.sim!.rapidEvents >= 205 && !!root.querySelector('.panel-body .warn-item'));
+    const items = [...root.querySelectorAll<HTMLButtonElement>('.panel-body .warn-item')];
+    expect(items.length).toBe(200);
+    // 꽂기 줄 = 8 + 3i번 줄
+    expect(items[0]!.querySelector('.ln')!.textContent).toBe('8번 줄');
+    expect(items[199]!.querySelector('.ln')!.textContent).toBe('605번 줄');
+    const heads = [...root.querySelectorAll('.panel-body h3')].map((el) => el.textContent);
+    expect(heads).toContain('급속 이동이 소재를 지남 205곳');
+    const body = root.querySelector('.panel-body')!.textContent!;
+    expect(body).toContain('그 밖 5곳은 목록에 넣지 않았습니다.');
+    expect(body).not.toContain('해석 경고에 이미 있는 줄');
   });
 
   it('판재 파일: 깎기 메뉴·탭이 있고 판 윗면 가공만 깎으며, 시뮬레이션하지 않은 가공은 까닭별로(누르면 그 가공)', async () => {
@@ -1096,6 +1122,7 @@ describe('장면 합치기·번역', () => {
       '전체 프로그램을 깎았습니다 · 0.07초',
       '이동 5 / 77까지 깎았습니다 · 0.08초',
       '급속 이동이 소재를 지남 3곳',
+      '그 밖 5곳은 목록에 넣지 않았습니다.',
       '해석 경고에 이미 있는 줄 2곳은 뺐습니다.',
       '깊이 1.2 mm',
       '1,024 × 752칸 · 칸 0.147 mm',
