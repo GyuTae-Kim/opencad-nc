@@ -208,6 +208,43 @@ export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, bo
   return { ...base, meshes, lines: paths ? base.lines : [], points: paths ? (base.points ?? []) : [], ...(bounds ? { bounds } : {}) };
 }
 
+/** 121차: 깎기 탭에서 초점을 받는 칸 */
+type TabControl = HTMLButtonElement | HTMLInputElement | HTMLSelectElement;
+const TAB_CONTROLS = 'button, input, select';
+
+/**
+ * 121차: 다 그린 깎기 탭의 칸마다 열쇠(태그 · 이름 — aria-label, 없으면 감싼 label이나 버튼의 글). 그린 바로 뒤라 화면 번역층(MutationObserver)이 옮기기 전
+ * 한국어 원문이어서 언어와 상관없이 다시 그린 탭의 같은 칸과 맞는다. 같은 열쇠가 둘이면 앞의 것
+ */
+function tabControls(body: ParentNode): Map<string, TabControl> {
+  const m = new Map<string, TabControl>();
+  for (const el of body.querySelectorAll<TabControl>(TAB_CONTROLS)) {
+    const k = `${el.tagName}|${el.getAttribute('aria-label') ?? el.closest('label')?.textContent ?? el.textContent}`;
+    if (!m.has(k)) m.set(k, el);
+  }
+  return m;
+}
+
+/**
+ * 121차: 패널 깎기 탭을 다시 그린다(host.refreshPanel — panel.ts render가 탭 내용을 통째로 새로 만든다). 초점이 있던 칸이 떼어지면 HTML focus fixup이
+ * 초점을 문서로 옮겨 제자리를 잃었다(키보드로 바꾼 상자·고르기·숫자 칸·버튼마다, 계산이 끝나 급속 목록이 바뀌거나 계산 오류일 때도) —
+ * 다시 그린 탭의 같은 열쇠 칸으로 옮기고, 그 칸이 막혔으면(누른 자동으로·기억 지우기) 같은 묶음에서 그 앞의 막히지 않은 칸으로.
+ * 초점이 탭 밖이거나 칸이 그대로 있으면(다른 탭을 보는 중) 아무것도 하지 않는다. 시험의 가짜 this(tabEls 없음)는 다시 그리기만
+ */
+function redrawTab(host: Pick<SimHost, 'refreshPanel'>, sim: { tabEls?: Map<string, TabControl> }): void {
+  const had = document.activeElement;
+  let key: string | undefined;
+  if (sim.tabEls) for (const [k, el] of sim.tabEls) if (el === had) key = k;
+  host.refreshPanel();
+  if (key === undefined || had?.isConnected) return;
+  let to = sim.tabEls?.get(key);
+  if (to?.disabled) {
+    const all = [...(to.closest('section')?.querySelectorAll<TabControl>(TAB_CONTROLS) ?? [])];
+    to = all.slice(0, all.indexOf(to)).reverse().find((el) => !el.disabled);
+  }
+  to?.focus({ preventScroll: true });
+}
+
 export class SimView {
   on = false;
   private prefs: Prefs = readJson<Prefs>(PREF_KEY, { res: 'auto', color: 'depth', paths: true });
@@ -229,6 +266,8 @@ export class SimView {
   private steps: { of: PanelSimMoves; list: PanelOpStep[] } | null = null;
   private stepTab: StepEls | null = null;
   private stepStrip: StepEls | null = null;
+  /** 121차: 지금 깎기 탭의 칸(열쇠 → 칸 — renderTab이 다 그린 뒤 정하고 redrawTab이 다시 그린 뒤 초점을 옮길 때 쓴다) */
+  tabEls = new Map<string, TabControl>();
   // ── 계산 ──
   private worker: Worker | null = null;
   private gen = 0;
@@ -280,7 +319,7 @@ export class SimView {
       this.stop();
     }
     this.host.renderToolbar();
-    this.host.refreshPanel();
+    redrawTab(this.host, this);
     this.refreshStrip();
   }
 
@@ -375,7 +414,7 @@ export class SimView {
     }
     writeJson(PREF_KEY, this.prefs);
     if (restart && this.on) this.start();
-    this.host.refreshPanel();
+    redrawTab(this.host, this);
   }
 
   // ───────────────────────── 준비·계산 ─────────────────────────
@@ -481,7 +520,7 @@ export class SimView {
     const box = this.stockBox();
     if (!box || !(box.max[0] > box.min[0] && box.max[1] > box.min[1] && box.max[2] > box.min[2])) {
       this.error = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
-      this.host.refreshPanel();
+      redrawTab(this.host, this);
       return;
     }
     const spec = gridFor(box, this.longCells(d, box));
@@ -551,7 +590,7 @@ export class SimView {
   private fail(message: string): void {
     this.error = `시뮬레이션을 계산하지 못했습니다: ${message}`;
     this.stop();
-    this.host.refreshPanel();
+    redrawTab(this.host, this);
   }
 
   private post(msg: SimRequest): void {
@@ -632,7 +671,7 @@ export class SimView {
     const ek = `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
     if (ek !== this.eventsKey) {
       this.eventsKey = ek;
-      this.host.refreshPanel();
+      redrawTab(this.host, this);
     }
   }
 
@@ -731,6 +770,11 @@ export class SimView {
   // ───────────────────────── 패널 "깎기" 탭 ─────────────────────────
 
   renderTab(body: HTMLElement, d: NcDoc): void {
+    this.fillTab(body, d);
+    this.tabEls = tabControls(body);
+  }
+
+  private fillTab(body: HTMLElement, d: NcDoc): void {
     const key = d.nc ?? d.mpr;
     if (key && this.key !== key) this.prepare(d);
     const panel = !d.nc ? this.panel : null;
@@ -1108,6 +1152,6 @@ export class SimView {
     const d = this.host.doc;
     if (d) this.prepare(d);
     if (this.on) this.start();
-    this.host.refreshPanel();
+    redrawTab(this.host, this);
   }
 }
