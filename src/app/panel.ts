@@ -265,6 +265,8 @@ export class NcPanel {
   private render(): void {
     const d = this.doc;
     if (!d) return;
+    // 탭 버튼 줄을 새로 만든다 — 초점이 탭 버튼에 있었으면(키보드로 누름 등) 새 줄의 같은 탭 버튼으로(떼어진 버튼에서 문서로 빠지지 않게)
+    const focused = this.tabsEl.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.tab : undefined;
     this.tabsEl.textContent = '';
     for (const [k, label] of panelTabs(d)) {
       const on = k === d.panelTab;
@@ -275,6 +277,7 @@ export class NcPanel {
         this.render();
       });
       this.tabsEl.append(b);
+      if (k === focused) b.focus({ preventScroll: true });
     }
     const scroll = this.body.scrollTop;
     const sameTab = this.body.dataset.tab === d.panelTab;
