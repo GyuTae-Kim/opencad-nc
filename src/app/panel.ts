@@ -117,7 +117,8 @@ export class NcPanel {
     const close = h('button', { class: 'icon-btn', type: 'button', title: '패널 닫기', 'aria-label': '패널 닫기', html: icon('close') });
     close.addEventListener('click', () => this.host.togglePanel(false));
     this.play = h('div', { class: 'play', hidden: true });
-    this.body = h('div', { class: 'panel-body', role: 'tabpanel' });
+    // 141차: 몸통 하나를 모든 탭 버튼이 aria-controls로 가리키고, 몸통 이름은 render가 지금 탭 버튼으로(aria-labelledby — APG Tabs). 패널은 앱에 하나라 id도 하나
+    this.body = h('div', { class: 'panel-body', role: 'tabpanel', id: 'panel-body' });
     this.foot = h('div', { class: 'panel-foot', hidden: true, 'aria-live': 'polite' });
     const grip = h('div', { class: 'panel-grip', title: '끌어서 크기 바꾸기', 'aria-hidden': 'true' });
     this.el = h('aside', { class: 'panel', hidden: true, 'aria-label': '문서 패널' }, grip, h('div', { class: 'panel-head' }, this.tabsEl, close), this.play, this.body, this.foot);
@@ -272,7 +273,7 @@ export class NcPanel {
     this.tabsEl.textContent = '';
     for (const [k, label] of panelTabs(d)) {
       const on = k === d.panelTab;
-      const b = h('button', { class: `panel-tab${on ? ' active' : ''}`, type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false', 'data-tab': k }, label);
+      const b = h('button', { class: `panel-tab${on ? ' active' : ''}`, type: 'button', role: 'tab', id: `panel-tab-${k}`, 'aria-controls': 'panel-body', 'aria-selected': on ? 'true' : 'false', 'data-tab': k }, label);
       b.addEventListener('click', () => {
         if (d.panelTab === k) return;
         d.panelTab = k;
@@ -286,6 +287,8 @@ export class NcPanel {
     const scroll = this.body.scrollTop;
     const sameTab = this.body.dataset.tab === d.panelTab;
     this.body.dataset.tab = d.panelTab;
+    // 141차: 몸통으로 들어가면 지금 탭 이름을 듣게(탭 글을 번역층이 옮기면 이름도 따라 옮겨짐)
+    this.body.setAttribute('aria-labelledby', `panel-tab-${d.panelTab}`);
     this.body.classList.toggle('code', d.panelTab === 'code');
     if (d.panelTab === 'code') this.renderCode(d);
     else {
