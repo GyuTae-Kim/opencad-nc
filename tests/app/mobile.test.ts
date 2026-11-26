@@ -658,6 +658,19 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
       `sub.h: No tool path to draw was found. The program may have no motion commands (G0·G1·L, etc.). (Analysis Warning: Line 3: ${translate('CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', 'en')})`,
     );
   });
+
+  it('156차: 앱을 만들 때 빈 알림 상자(aria-live)를 붙여 두어, 첫 알림(열기 뒤 해석 경고 안내 — role=status)이 상자째 새로 붙지 않고 이미 있던 알림 영역의 바뀜이 된다', async () => {
+    const { app } = makeApp();
+    // 고치기 전: 첫 알림 때 상자를 만들어 붙였다(여기서 상자가 없음 — 새로 붙은 알림 영역의 첫 글은 화면 읽기 프로그램이 읽지 않을 수 있음)
+    const host = document.querySelector<HTMLElement>('body > .toasts');
+    expect(host).not.toBeNull();
+    expect([host!.getAttribute('aria-live'), host!.childElementCount, host!.textContent]).toEqual(['polite', 0, '']);
+    // 단위 코드(G20/G21)가 없는 프로그램: 열면 해석 경고 안내(info)가 이 쪽의 첫 알림
+    expect(await app.openFile(textFile('w.nc', PROGRAM.replace('G21 G90\n', '')))).toBe(true);
+    const first = host!.firstElementChild!;
+    expect([first.className, first.getAttribute('role'), first.firstChild?.textContent]).toEqual(['toast info', 'status', expect.stringMatching(/^해석 경고 \d+개 — /)]);
+    expect([...document.querySelectorAll('.toasts')]).toEqual([host]);
+  });
 });
 
 describe('최근 문서(시작 화면)', () => {
