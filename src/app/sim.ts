@@ -16,7 +16,7 @@
 import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
 import { MPR_KIND, lineAtLabel, mprOps, opLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
 import { fileSpan, h, mixSpan, toast } from './dom';
-import { fileText, mix, type FileText } from './filetext';
+import type { FileText } from './filetext';
 import { fmtNum } from './format';
 import { mixText, uiText } from './i18n';
 import { icon, type IconName } from './icons';
@@ -928,9 +928,10 @@ export class SimView {
       const named = !panel && r.number >= 100000 ? d.nc?.tools.find((x) => x.number === r.number)?.name || undefined : undefined;
       const name = panel ? panelToolLabel(panel.tools[r.number]) : (named ?? (r.number >= 100000 ? '—' : r.number >= 0 ? `T${r.number}` : '공구 없음'));
       // 칸 이름: 이름이 든 것은 지금 언어 틀에 이름을 그대로 끼워 넣고 번역층은 건너뛴다(54차 mixText — 날 글로 이으면 이름의 「 · 」·사전 낱말까지 옮겨졌다).
-      // 121차 초점 열쇠도 공구마다 갈린다(전에는 이름 공구 칸이 모두 「— 지름」 꼴)
+      // 121차 초점 열쇠도 공구마다 갈린다(전에는 이름 공구 칸이 모두 「— 지름」 꼴). 섞은 글은 mix`${fileText(이름)} 지름`과 같은 꼴을 글자 그대로 쓴다 —
+      // fileText를 가져오면 첫 화면 조각이 그 함수를 새로 내보내 커졌다(+13바이트)
       const label = (what: string): Record<string, string> =>
-        named !== undefined ? { 'aria-label': mixText(mix`${fileText(named)} ${what}`), 'data-i18n-keep': 'aria-label' } : { 'aria-label': `${name} ${what}` };
+        named !== undefined ? { 'aria-label': mixText([{ file: named }, ` ${what}`]), 'data-i18n-keep': 'aria-label' } : { 'aria-label': `${name} ${what}` };
       const kind = h('select', { class: 'select small', ...label('종류') });
       for (const k of SIM_TOOL_KINDS) kind.append(h('option', { value: k }, KIND_LABEL[k]));
       kind.value = r.tool.kind;
