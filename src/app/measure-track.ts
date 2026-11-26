@@ -15,7 +15,7 @@
  * - 누르면 지금 미리 보기(measureHoverSnap)가 점 붙잡기(꼭짓점·끝점·가운데 점·중심·앱 점·교차점·수직 발, 잠근 선 위가 아님 —
  *   코어 머무르기가 기억하는 점과 같다)일 때 그 점을 가장 앞에 더해 준다(최근 셋까지, 같은 점은 앞으로 — 코어 MeasureTracker).
  *   십자선을 멈추지 않아도 된다. 점 붙잡기가 없으면(조준하지 않음·축 위·빈 곳) 띠 위에 맞추는 법을 알린다.
- * - 단추에 기억한 점 수(1~3)를 적는다. 지우기는 측정 띠의 "다시 재기"(코어 clearMeasure가 끌어온 점도 지운다).
+ * - 단추에 기억한 점 수(1~3)를 적는다(118차: 화면 읽기 이름에도 — trackLabel). 지우기는 측정 띠의 "다시 재기"(코어 clearMeasure가 끌어온 점도 지운다).
  */
 import type { MeasureHoverSnap, Viewer3d } from 'opencad-viewer3d';
 import { h } from './dom';
@@ -39,6 +39,11 @@ export interface TrackPickHost {
 
 /** 단추 이름(화면 읽기)과 풀이(마우스를 올리면) */
 export const TRACK_LABEL = '끌어온 점 기억';
+/**
+ * 118차: 기억한 점이 있으면 이름에도 그 수(수 표시 mb-badge는 aria-hidden이라 화면 읽기가 듣지 못했다). 사전 틀은 이 글 통째
+ * ('끌어온 점 기억 · 기억한 점 {0}개' — 수 없는 이름 번역이 앞에 그대로). 수가 없으면 TRACK_LABEL 그대로
+ */
+const trackLabel = (n: number): string => (n ? `${TRACK_LABEL} · 기억한 점 ${n}개` : TRACK_LABEL);
 export const TRACK_TITLE = '지금 스냅한 점을 끌어온 점으로 기억(그 점의 X·Y·Z축에도 붙습니다)';
 /** 기억했을 때 띠 위 알림 */
 export const TRACKED = '끌어온 점으로 기억했습니다: 그 점의 X·Y·Z축에도 붙습니다';
@@ -71,6 +76,8 @@ export class TrackPick {
   readonly button: HTMLButtonElement;
   /** 기억한 점 수 */
   private readonly badge: HTMLSpanElement;
+  /** 마지막에 쓴 이름(한국어 원문 — 수가 바뀐 때만 다시 써서 번역층이 옮긴 이름을 덮지 않는다) */
+  private label = TRACK_LABEL;
 
   constructor(private readonly host: TrackPickHost) {
     this.badge = h('span', { class: 'mb-badge', 'aria-hidden': 'true', hidden: true });
@@ -115,6 +122,8 @@ export class TrackPick {
     this.badge.hidden = !n;
     this.badge.textContent = n ? String(n) : '';
     this.button.classList.toggle('on', n > 0);
+    const label = trackLabel(n);
+    if (label !== this.label) this.button.setAttribute('aria-label', (this.label = label));
   }
 
   /** 자동 확인용: 기억한 점 수(단추에 적힌 것) */

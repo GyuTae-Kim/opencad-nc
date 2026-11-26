@@ -1099,6 +1099,7 @@
   "끌어온 점으로 기억했습니다: 그 점의 X·Y·Z축에도 붙습니다": "Remembered as a tracked point: its X, Y and Z axes snap too",
   "기억할 점이 없습니다: 길게 눌러 조준하며 끝점·중심 같은 점에 맞춘 뒤 누르세요": "No point to remember: press and hold to aim, line up with a point such as an endpoint or center, then tap",
   "기억할 점이 없습니다: 커서를 끝점·중심 같은 점 위에 0.5초 멈추면 기억합니다": "No point to remember: rest the cursor on a point such as an endpoint or center for 0.5 s to remember it",
+  "끌어온 점 기억 · 기억한 점 {0}개": "Remember tracked point · Remembered points {0}",
   "G5.3 뒤에 이동 꼴(G0·G1 등) 없이 좌표가 옴 — 이송 직선으로 그림": "Coordinates after G5.3 without a motion mode (G0, G1, etc.) — drawn as a straight feed move",
   "G5.3 앞에 G5.2가 없음": "No G5.2 before G5.3",
   "G5.3 블록의 좌표는 쓰지 않음": "Coordinates in the G5.3 block are not used",
