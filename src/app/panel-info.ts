@@ -84,6 +84,10 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
           : `반경 보정(${nc.kind === 'heidenhain' ? 'RL/RR' : 'G41/G42'}) 구간 ${f.compRunCount}곳의 공구 중심 경로를 묶음 "보정 경로"(분홍 실선)로 그립니다. 프로그램 경로는 그대로입니다.`,
       ),
     );
+    // 148차: 구간마다 그 줄(선반이면 바로 밑 공구 방향 줄과 함께)을 role=listitem 칸에 담아 role=list로 묶는다 — 화면 읽기 프로그램이 몇 구간인지·몇째인지 듣게(135차 감사 표 3).
+    // div에 WAI-ARIA list·listitem을 두어 ul·li의 들여쓰기·글머리표를 지울 스타일시트가 들지 않는다(SKP 156차와 같은 길). 묶음에 상자·안내 줄·선반 공구 표가 섞여 묶음 자신을
+    // 목록으로 할 수 없어 감싼다. 감싼 칸은 블록 div이고 묶음(section)·정보 탭 몸통은 블록, 묶음·줄을 자식·형제 결합자로 꾸미는 규칙이 없고 줄은 바깥 여백이 없어 모양은 그대로다
+    const runs: HTMLElement[] = [];
     if (f.compRuns)
       for (const r of f.compRuns.slice(0, 20)) {
         const v = r.computed ? `반지름 ${fmtNum(r.radius)} ${u}${r.source ? ` (${r.source})` : ''}` : Number.isFinite(r.radius) ? '이동 없음' : '반지름 모름 — 그리지 않음';
@@ -95,10 +99,11 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
           ve.replaceChildren(`반지름 ${fmtNum(r.radius)} ${u}`, ' (', h('span', {}, r.source), ')');
           ve.removeAttribute('title');
         }
-        opts.push(el);
+        const item = h('div', { role: 'listitem' }, el);
+        runs.push(item);
         // 선반: 공구 방향(값과 출처를 따로 — 출처 글이 따로 옮겨지게)
         if (r.tool !== undefined)
-          opts.push(
+          item.append(
             h(
               'div',
               { class: 'prop-row' },
@@ -109,6 +114,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
             ),
           );
       }
+    if (runs.length) opts.push(h('div', { role: 'list' }, ...runs));
     if (f.lathe && f.compRuns) opts.push(...latheToolRows(p.host, f.compRuns));
   }
   if (nc.kind === 'gcode') {
