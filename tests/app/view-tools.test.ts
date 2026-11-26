@@ -316,6 +316,54 @@ describe('패널 탭 줄 키(150차)', () => {
   });
 });
 
+describe('앱 펼침 메뉴 키(151차)', () => {
+  it('151차: 펼친 메뉴에서 Home·End는 처음·끝 항목으로 초점을 옮기고(창 키가 흘려보낸 키를 메뉴가 받음), Tab·Shift+Tab은 메뉴를 닫고 초점 이동은 브라우저 기본 동작으로 둔다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    // 초점이 있는 칸에 키를 보낸다(창 키 onKey는 창에서 캡처로 먼저 받는다) — 기본 동작을 막았으면 true
+    const press = (key: string, shiftKey = false): boolean => !document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
+    const parts = (name: string) => {
+      const w = root.querySelector<HTMLElement>(`.toolbar .tbtn[aria-label="${name}"]`)!.closest<HTMLElement>('.menu-wrap')!;
+      return { btn: w.querySelector<HTMLButtonElement>('.tbtn')!, list: w.querySelector<HTMLElement>('.menu')!, items: [...w.querySelectorAll<HTMLButtonElement>('.menu button')] };
+    };
+    // 표준 뷰(고른 항목이 없어 첫 항목에 초점)
+    const views = parts('표준 뷰');
+    views.btn.click();
+    expect(views.list.hidden).toBe(false);
+    expect(document.activeElement).toBe(views.items[0]);
+    expect(press('End')).toBe(true);
+    expect(document.activeElement).toBe(views.items[9]);
+    expect(views.items[9]!.textContent).toBe('북서 등각');
+    expect(press('Home')).toBe(true);
+    expect(document.activeElement).toBe(views.items[0]);
+    // ↑↓는 지금처럼 끝에서 둘레를 돎
+    press('ArrowUp');
+    expect(document.activeElement).toBe(views.items[9]);
+    press('ArrowDown');
+    expect(document.activeElement).toBe(views.items[0]);
+    expect(api.state.playSec).toBeNull();
+    // Tab은 메뉴를 닫고 기본 동작(다음 칸으로 초점 — jsdom은 옮기지 않음)은 막지 않는다
+    expect(press('Tab')).toBe(false);
+    expect(views.list.hidden).toBe(true);
+    expect(views.btn.getAttribute('aria-expanded')).toBe('false');
+    // 그리기(고른 그리기 모드에 초점): End는 끝 보이는 항목(소재 깎기), Shift+Tab도 닫는다
+    const render = parts('그리기');
+    render.btn.click();
+    expect(document.activeElement).toBe(render.items[1]);
+    expect(press('End')).toBe(true);
+    expect(document.activeElement!.textContent).toBe('소재 깎기');
+    expect(press('Tab', true)).toBe(false);
+    expect(render.list.hidden).toBe(true);
+    expect(render.btn.getAttribute('aria-expanded')).toBe('false');
+    // Esc는 지금처럼 닫고 메뉴 버튼으로 초점
+    views.btn.click();
+    press('Escape');
+    expect(views.list.hidden).toBe(true);
+    expect(document.activeElement).toBe(views.btn);
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
