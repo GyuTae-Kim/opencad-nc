@@ -25,6 +25,17 @@ export interface InfoPanel {
   optToggle(d: NcDoc, key: OptKey, label: string, hint: string): HTMLElement;
 }
 
+/**
+ * 127차: 묶음 g의 바로 아래 칸 가운데 풀이(title)가 있는 칸마다 같은 글의 손가락 기기 안내 줄을 그 칸 바로 밑에 둔다.
+ * 풀이는 마우스를 올려야 뜨는 풍선 글이라 휴대폰·태블릿에서는 볼 수 없었다(HTML 표준 title 절 — 풍선 글에 포인터 기기가 필요해 손가락만 쓰는 사용자가 빠진다).
+ * 안내 줄은 styles.css coarse-only(마우스 기기는 감춘다 — 시작 화면 손가락 안내와 같은 길)라 마우스 기기의 보이는 것은 같고, 풍선 글도 그대로다.
+ * 글은 풍선 글과 같아 같은 사전 항목으로 옮겨진다. 값 칸(.v — 잘린 값의 온 글)은 칸 안이라 닿지 않는다
+ */
+function withTips(g: HTMLElement): HTMLElement {
+  for (const el of g.querySelectorAll<HTMLElement>(':scope > [title]')) el.after(h('p', { class: 'hint coarse-only' }, el.title));
+  return g;
+}
+
 /** 정보 탭의 공구 경로 부분(d.nc가 있을 때) */
 export function ncInfo(p: InfoPanel, d: NcDoc): void {
   const nc = d.nc!;
@@ -43,13 +54,15 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
     dialect.addEventListener('change', apply);
     units.addEventListener('change', apply);
     p.body.append(
-      group(
-        '해석 설정',
-        h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, 'G-code 형식'), dialect),
-        f.lathe && nc.latheSystem ? latheSystemRow(p.host, d, nc.latheSystem) : null,
-        h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
-        p.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
-        h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
+      withTips(
+        group(
+          '해석 설정',
+          h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, 'G-code 형식'), dialect),
+          f.lathe && nc.latheSystem ? latheSystemRow(p.host, d, nc.latheSystem) : null,
+          h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
+          p.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
+          h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
+        ),
       ),
     );
   }
@@ -97,7 +110,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
     opts.push(p.optToggle(d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
     if (f.rotaryAxes || d.ncOptions.rotary) opts.push(p.optToggle(d, 'rotary', '회전축 감기', 'A·B·C 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로를 그립니다(회전 중심 = 원점, G43.4 동안은 감지 않음).'));
   }
-  if (opts.length) p.body.append(group('보기 선택', ...opts));
+  if (opts.length) p.body.append(withTips(group('보기 선택', ...opts)));
   p.body.append(
     group(
       '공구 경로',
@@ -165,20 +178,22 @@ function settingsGroup(host: PanelHost): HTMLElement {
   };
   const reset = h('button', { type: 'button', class: 'btn small' }, '기본값으로');
   reset.addEventListener('click', () => host.setSettings(defaultSettings()));
-  return group(
-    '기계·읽기 설정',
-    one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000'),
-    one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0'),
-    check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
-    check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
-    check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
-    tri('G54 원점의 기계 좌표(mm)', '세 축을 모두 넣으면 G53·M91 값과 G28·G30 기준점을 실제 위치로 그립니다(없으면 공구 축만 안전 높이로 추정).', 'offsetMm'),
-    tri('G28 기준점 기계 좌표(mm)', 'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.', 'referenceMm'),
-    tri('허용 범위 최소(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMin'),
-    tri('허용 범위 최대(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMax'),
-    check('공구를 실제 크기로 표시', '재생 중 공구 표시를 주석·공구 정의에서 읽은 지름 크기로 그립니다(모양은 공구 이름: 볼·드릴·엔드밀).', 'toolSize'),
-    h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
-    reset,
+  return withTips(
+    group(
+      '기계·읽기 설정',
+      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000'),
+      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0'),
+      check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
+      check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
+      check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
+      tri('G54 원점의 기계 좌표(mm)', '세 축을 모두 넣으면 G53·M91 값과 G28·G30 기준점을 실제 위치로 그립니다(없으면 공구 축만 안전 높이로 추정).', 'offsetMm'),
+      tri('G28 기준점 기계 좌표(mm)', 'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.', 'referenceMm'),
+      tri('허용 범위 최소(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMin'),
+      tri('허용 범위 최대(mm)', '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.', 'limitMax'),
+      check('공구를 실제 크기로 표시', '재생 중 공구 표시를 주석·공구 정의에서 읽은 지름 크기로 그립니다(모양은 공구 이름: 볼·드릴·엔드밀).', 'toolSize'),
+      h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다. 이 브라우저에 기억합니다.'),
+      reset,
+    ),
   );
 }
 

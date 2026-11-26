@@ -196,6 +196,12 @@ const PANEL_MPR = [
 /** "소재 깎기" 메뉴 항목(휴대폰 보기 설정, 넓은 화면 그리기 차례) */
 const simItems = (root: HTMLElement): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>('.toolbar .menu button')].filter((b) => b.textContent === '소재 깎기');
 const simMeshes = (): string[] => (FakeViewer().scenes[FakeViewer().scenes.length - 1]?.meshes ?? []).map((m) => m.id).filter((id) => id.startsWith('sim-'));
+/**
+ * 127차: 손가락 기기 안내 줄(coarse-only — 마우스 기기는 CSS가 감춘다)마다 [태그, 클래스, 바로 앞 칸의 풍선 글(title), 줄 글].
+ * 상자 풀이가 title(마우스를 올려야 뜨는 풍선 글)뿐이라 휴대폰·태블릿에서 볼 수 없던 것을 그 상자 바로 밑 줄로도 둔다
+ */
+const coarseTips = (body: Element): (string | null)[][] =>
+  [...body.querySelectorAll('.coarse-only')].map((e) => [e.tagName, e.className, e.previousElementSibling?.getAttribute('title') ?? null, e.textContent]);
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -345,6 +351,9 @@ describe('깎기 탭', () => {
     let body = root.querySelector('.panel-body')!;
     expect(body.textContent).toContain('깎인 소재 보이기');
     expect(body.textContent).toContain('꺼져 있습니다');
+    // 127차: 상자 풀이는 그 상자 바로 밑에 같은 글의 손가락 기기 안내 줄로도(풍선 글은 그대로). 풀이가 없는 「공구 경로도 보이기」는 줄 없음
+    const simHint = '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).';
+    expect(coarseTips(body)).toEqual([['P', 'hint coarse-only', simHint, simHint]]);
     // 공구 표: 주석의 지름·이름(T3 DRILL은 드릴)
     const kinds = [...body.querySelectorAll<HTMLSelectElement>('table.sim-tools select')].map((s) => s.value);
     expect(kinds).toEqual(['flat', 'flat', 'drill']);
@@ -646,6 +655,8 @@ describe('깎기 탭', () => {
     expect(ids.filter((id) => id.startsWith('mpr-op-')).length).toBeGreaterThan(0);
     await until(() => root.querySelector('.panel-body')!.textContent!.includes('시뮬레이션하지 않은 가공 2개'));
     const body = root.querySelector('.panel-body')!;
+    // 127차: 판재 상자 풀이 둘도 그 상자 바로 밑에 손가락 기기 안내 줄로
+    expect(coarseTips(body)).toEqual(['판 윗면 가공으로 판을 깎은 모양을 그립니다.', '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.'].map((t) => ['P', 'hint coarse-only', t, t]));
     expect(body.textContent).toContain('옆면 가공(수평 구멍·옆면 홈·경로) — 위에서 내려오지 않음');
     expect(body.textContent).toContain('아랫면 가공 — 위에서 내려오지 않음');
     expect(body.textContent).toContain('판 크기(LA·BR·DI)');

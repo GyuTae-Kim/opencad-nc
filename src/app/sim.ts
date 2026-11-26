@@ -781,20 +781,22 @@ export class SimView {
     const u = unitLabel(d.scene.units);
     const row = (k: string, ...v: (Node | string)[]): HTMLElement => h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, k), h('span', { class: 'v sim-v' }, ...v));
     const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
-    const check = (label: string, on: boolean, run: (on: boolean) => void, hint = ''): HTMLElement => {
+    // 127차: 풀이(title — 마우스를 올려야 뜨는 풍선 글)는 휴대폰·태블릿에서 볼 수 없어 같은 글을 상자 바로 밑의 손가락 기기 안내 줄로도 둔다
+    // (styles.css coarse-only — 마우스 기기는 감춘다, panel-info.ts withTips와 같은 길). 풀이가 없으면 줄도 없다
+    const check = (label: string, on: boolean, run: (on: boolean) => void, hint = ''): (HTMLElement | null)[] => {
       const cb = h('input', { type: 'checkbox' });
       cb.checked = on;
       cb.addEventListener('change', () => run(cb.checked));
-      return h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label));
+      return [h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label)), hint ? h('p', { class: 'hint coarse-only' }, hint) : null];
     };
     this.statusEl = h('p', { class: 'hint sim-status', 'aria-live': 'polite' }, this.statusText());
     const head: (Node | null)[] = [
-      panel
+      ...(panel
         ? check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '판 윗면 가공으로 판을 깎은 모양을 그립니다.')
-        : check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).'),
-      panel
+        : check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).')),
+      ...(panel
         ? check('가공 그림도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on }), '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.')
-        : check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on })),
+        : check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on }))),
       this.statusEl,
     ];
     if (this.block) {

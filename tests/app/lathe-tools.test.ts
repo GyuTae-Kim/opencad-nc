@@ -154,3 +154,43 @@ describe('정보 탭: 음수를 쳐 넣는 숫자 칸(119차)', () => {
     expect(input('G54 원점의 기계 좌표(mm) — Z').value).toBe('-400');
   });
 });
+
+/**
+ * 127차: 정보 탭 칸 풀이는 title(마우스를 올려야 뜨는 풍선 글)뿐이라 휴대폰·태블릿(손가락 기기)에서 볼 수 없었다(HTML 표준 title 절 — 풍선 글에 포인터 기기가 필요해
+ * 손가락만 쓰는 사용자가 빠진다). 해석 설정·보기 선택·기계·읽기 설정 묶음 바로 아래 칸 가운데 풀이가 있는 칸마다 같은 글의 안내 줄(coarse-only — 마우스 기기는 CSS가 감춤,
+ * 시작 화면 손가락 안내와 같은 길)을 그 칸 바로 밑에 둔다. 풍선 글은 그대로이고, 값 칸(.v)의 풍선 글(잘린 값의 온 글)에는 두지 않는다
+ */
+describe('정보 탭: 손가락 기기의 칸 풀이(127차)', () => {
+  it('풀이가 있는 칸마다 바로 밑에 같은 글의 손가락 기기 안내 줄(coarse-only), 풍선 글은 그대로', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const group = (t: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.prop-group')].find((g) => g.querySelector('h3')?.textContent === t);
+    await until(() => !!group('기계·읽기 설정'));
+    const titled = (t: string): HTMLElement[] => [...group(t)!.querySelectorAll<HTMLElement>(':scope > [title]')];
+    const tip = (el: HTMLElement): (string | null)[] => {
+      const n = el.nextElementSibling;
+      return [n?.tagName ?? null, n?.className ?? null, n?.textContent ?? null];
+    };
+    const three = ['해석 설정', '보기 선택', '기계·읽기 설정'];
+    for (const t of three) for (const el of titled(t)) expect(tip(el), `${t}: ${el.title}`).toEqual(['P', 'hint coarse-only', el.title]);
+    expect(titled('해석 설정').map((el) => el.title)).toContain('G20/G21이 없을 때 쓰는 단위');
+    expect(titled('보기 선택').map((el) => el.querySelector('.name')?.textContent)).toEqual(['보정 경로 보기', '선반 모드']);
+    // 기계·읽기 설정: 풀이 열 개(빈 칸의 뜻은 손가락 기기에서 이 줄로만 볼 수 있다)
+    const settings = titled('기계·읽기 설정').map((el) => el.title);
+    expect(settings).toHaveLength(10);
+    expect(settings.filter((t) => /비우면|빈 칸은/.test(t))).toEqual([
+      '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).',
+      'G54 원점의 기계 좌표와 함께 씁니다. 빈 칸은 0.',
+      '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.',
+      '작업 좌표(G54) 기준. 벗어나는 이동을 경고합니다. 빈 칸은 제한 없음.',
+    ]);
+    // 정보 탭의 안내 줄은 이 세 묶음의 풀이 칸에만 — 공구 경로 값 칸(.v)의 풍선 글에는 없다
+    expect(root.querySelector('.panel-body')!.querySelectorAll('.coarse-only')).toHaveLength(three.reduce((n, t) => n + titled(t).length, 0));
+    expect(group('공구 경로')!.querySelector('.v[title]')).not.toBeNull();
+  });
+});
