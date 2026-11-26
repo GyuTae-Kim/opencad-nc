@@ -1,0 +1,149 @@
+// @vitest-environment jsdom
+/**
+ * 125차: 측정 화면(줄자·방향 잠금·끌어온 점·가상 커서 알림·측정 띠·측정값 칸)의 보이는 원문을 네 언어 번역과 대조해(README 개발 125차 문단),
+ * 원문의 CAD 뜻(끝점 endpoint, 중간점 midpoint, 수직점 perpendicular foot, 나란함 parallel, 접선 tangent, 잠금 lock, 끌어온 점 tracking point)과 어긋난 줄을
+ * 같은 사전 안의 번역으로 고쳤다. 예: 중국어 마우스 측정 안내 「꼭짓점·끝점 가까우면 그 점에 붙습니다」가 「如果靠近顶点/端点，则捕捉到顶点」(끝점 가까이에서도
+ * 꼭짓점에 붙는다는 뜻)이었다 — 같은 안내의 손가락 꼴 「靠近顶点或端点时会捕捉到该点」(그 점에 붙음)과 같게.
+ * 측정 화면이 번역층에 넘기는 이름(스냅 종류·끌어온 축·잠근 선 위 교차·끌어온 점 안내 선이 만나는 점)은 코드(snapLabel·lockMeetLabel·trackDirName)로 지어
+ * 안내·버튼 이름·띠 위 알림(117·118차 글 포함)·가상 커서 알림 틀과 함께 네 언어 모두 한글 없이 옮겨지는지 본다.
+ */
+import { describe, expect, it } from 'vitest';
+import { KEY_SNAP_MESSAGES } from 'opencad-viewer3d';
+import { catalogs, translate } from '../site/i18n.mjs';
+import { measureFailText } from '../src/app/core';
+import { KEY_HELP, keySnapDictKey } from '../src/app/keysnap';
+import {
+  ARROW_LOCK_HINT,
+  LOCK_HINTS,
+  MEASURE_LOADING,
+  NO_LOCK_MOUSE,
+  NO_LOCK_TOUCH,
+  SHIFT_LOCK_HINTS,
+  TANGENT_LABEL,
+  lockMeetLabel,
+  measureHint,
+  panelMeasureHint,
+  snapLabel,
+  statusMeasureHint,
+  type LockMeet,
+} from '../src/app/measure';
+import { PERPENDICULAR_DIR_LABEL, trackDirName } from '../src/app/measure-lock';
+import { NO_TRACK_MOUSE, NO_TRACK_TOUCH, TRACKED, TRACK_LABEL, TRACK_TITLE } from '../src/app/measure-track';
+
+const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
+const dict = (lang: string): Record<string, string> => catalogs[lang] as Record<string, string>;
+const AXES = ['x', 'y', 'z'] as const;
+type Kind = Parameters<typeof snapLabel>[0];
+type DirPoint = Parameters<typeof trackDirName>[0];
+
+/** 측정 툴팁·측정 띠·상태 막대·결과 이름(코드로 지은 꼴 — 오지 않는 꼴은 빼고) */
+function snapNames(): Set<string> {
+  const names = new Set<string>();
+  const kinds: Kind[] = ['vertex', 'endpoint', 'midpoint', 'center', 'point', 'intersection', 'perpendicular', 'parallel', 'axis', null];
+  for (const k of kinds) names.add(snapLabel(k));
+  for (const a of AXES) {
+    names.add(snapLabel('axis', a));
+    for (const t of [true, 'edge', 'face', 'axisEdge', 'axisFace'] as const) names.add(snapLabel('axis', a, t));
+    for (const b of AXES) if (b !== a) names.add(snapLabel('axis', a, b));
+    names.add(snapLabel('axis', a, 'lockFrom'));
+  }
+  // 잠근 선(축·나란함·수직·모르는 방향, 원호 접선)이 모서리·면·끌어온 점의 축과 만나는 점(잠근 축과 같은 축은 오지 않는다)
+  const meets: LockMeet[] = ['lockEdge', 'lockFace', 'lockX', 'lockY', 'lockZ'];
+  for (const t of meets) {
+    for (const a of AXES) if (t.slice(4).toLowerCase() !== a) names.add(snapLabel('axis', a, t));
+    for (const k of ['parallel', 'perpendicular', null] as Kind[]) names.add(snapLabel(k, null, t));
+    names.add(lockMeetLabel(TANGENT_LABEL, t));
+  }
+  // 끌어온 점에서 지나간 모서리와 나란한 선·수직인 선, 그 선이 다른 것과 만나는 점(나란한 두 선은 만나지 않는다)
+  for (const snap of ['parallel', 'perpendicular'] as const) {
+    names.add(snapLabel(snap, null, 'dir'));
+    const at: Record<string, unknown>[] = [
+      ...AXES.map((axis) => ({ axis })),
+      ...AXES.map((axis) => ({ trackOther: { axis } })),
+      { segment: [[0, 0, 0], [1, 0, 0]] },
+      { face: {} },
+      { direction: [1, 0, 0] },
+      { trackGuide: { kind: 'perpendicular' } },
+      ...(snap === 'perpendicular' ? [{ trackGuide: { kind: 'parallel' } }] : []),
+    ];
+    for (const m of at) names.add(trackDirName({ snap, trackFrom: [0, 0, 0], ...m } as unknown as DirPoint) ?? '');
+  }
+  return names;
+}
+
+const MOUSE_VERTEX_HINT = '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다). Esc = 지우기';
+const TOUCH_VERTEX_HINT = '측정: 두 점을 누르십시오(꼭짓점·끝점 가까우면 그 점에 붙습니다) · 길게 누르면 정밀 조준';
+
+describe('측정 화면 번역(125차)', () => {
+  it('옛 오역 낱말이 다시 들어오지 않는다', () => {
+    // [열쇠에 든 말, 언어, 없어야 할 말] — 끝점 가까이에서도 꼭짓점에 붙는다는 뜻
+    const bans: [term: string, lang: string, ban: RegExp][] = [['가까우면 그 점에 붙습니다', 'zh-CN', /则捕捉到顶点|顶点\/端点/]];
+    for (const [term, lang, ban] of bans)
+      for (const [key, value] of Object.entries(dict(lang))) {
+        if (!key.includes(term)) continue;
+        expect(value, `${lang}: ${key}`).not.toMatch(ban);
+      }
+  });
+
+  it('고친 줄은 같은 사전의 말을 쓴다', () => {
+    const snaps = '（靠近顶点或端点时会捕捉到该点）';
+    expect(dict('zh-CN')[TOUCH_VERTEX_HINT]).toContain(snaps);
+    expect(dict('zh-CN')[MOUSE_VERTEX_HINT]).toBe(`测量：单击两点${snaps}。按 Esc 键清除`);
+    expect(translate(panelMeasureHint(), 'zh-CN')).toBe('测量：单击两点（靠近顶点或端点时会捕捉到该点）。按 Esc 键清除');
+  });
+
+  it('측정 화면 이름·안내·버튼·알림을 네 언어로 옮긴다(117·118차 글 포함)', () => {
+    const names = snapNames();
+    expect(names.size).toBe(92);
+    const texts = [
+      ...names,
+      MEASURE_LOADING,
+      TANGENT_LABEL,
+      PERPENDICULAR_DIR_LABEL,
+      ...Object.values(LOCK_HINTS),
+      ...Object.values(SHIFT_LOCK_HINTS),
+      ARROW_LOCK_HINT,
+      NO_LOCK_TOUCH,
+      NO_LOCK_MOUSE,
+      ...[0, 1, 2].flatMap((n) => [measureHint(n, false), measureHint(n, false, true)]),
+      ...[false, true].flatMap((touch) => [panelMeasureHint(touch), panelMeasureHint(touch, true), statusMeasureHint(touch)]),
+      // 끌어온 점 버튼(118차 — 기억한 점 수가 든 이름)과 띠 위 알림(117차)
+      TRACK_LABEL,
+      `${TRACK_LABEL} · 기억한 점 2개`,
+      TRACK_TITLE,
+      TRACKED,
+      NO_TRACK_TOUCH,
+      NO_TRACK_MOUSE,
+      // 툴바·측정 띠·잠금 버튼·툴팁·측정값 칸(app.ts·measure-lock.ts·panel.ts·doc.ts 원문)
+      '측정',
+      '두 점 거리·dx·dy·dz (Esc로 지우기)',
+      '측정 끝내기',
+      '다시 재기',
+      '찍은 점과 결과 지우기',
+      '잠금',
+      '방향 잠금',
+      '방향 잠금 풀기',
+      '지금 방향 잠그기(다시 누르면 풀기)',
+      '거리',
+      '거리 12.345 mm · dx 1 · dy -2 · dz 0',
+      '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준',
+      measureFailText(true),
+      measureFailText(false),
+      '측정 도구를 열 수 없습니다: Load failed',
+      // 가상 커서: 캔버스 설명과 코어 알림 틀(앱 사전 열쇠 — 고르기 종류는 앱 묶음 이름이 대신)
+      KEY_HELP,
+      ...Object.entries(KEY_SNAP_MESSAGES)
+        .filter(([key, ko]) => /[가-힣]/.test(ko) && !key.startsWith('pick.'))
+        .map(([, ko]) => keySnapDictKey(ko)),
+    ];
+    for (const lang of LANGS) for (const text of texts) expect(translate(text, lang), `${lang}: ${text}`).not.toMatch(/[가-힣]/);
+  });
+
+  it('그대로인 줄', () => {
+    expect(translate(MOUSE_VERTEX_HINT, 'ja')).toBe('測定: 2点をクリックしてください（頂点や端点に近い場合、その点にスナップします）。Esc = 消去');
+    expect(translate(TOUCH_VERTEX_HINT, 'zh-CN')).toBe('测量：点按两点（靠近顶点或端点时会捕捉到该点） · 长按可精确瞄准');
+    expect(LANGS.map((lang) => translate('수직점', lang))).toEqual(['Perpendicular', '垂線の足', '垂足', 'Lotfußpunkt']);
+    expect(LANGS.map((lang) => translate(PERPENDICULAR_DIR_LABEL, lang))).toEqual(['Perpendicular to edge', 'エッジに垂直', '垂直于边', 'Senkrecht zur Kante']);
+    expect(translate(`${TRACK_LABEL} · 기억한 점 2개`, 'de')).toBe('Punkt merken · Gemerkte Punkte 2');
+  });
+});
