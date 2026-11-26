@@ -66,5 +66,21 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
   // 모두 오류면 가장 오래된 것(한도는 늘 지킨다). 오류가 없으면 전과 같다
   while (host.childElementCount > 4) (host.querySelector(':scope>.info') ?? host.firstElementChild)?.remove();
-  setTimeout(() => el.remove(), ms);
+  // 157차: 마우스(손가락)가 알림 위에 있거나 초점이 알림 안(동작·닫기 버튼)에 있으면 시간이 되어도 닫지 않고, 떠나면(pointerleave·focusout) 그때부터 다시 ms를 잰다
+  // (WCAG 2.2.1 시간 조절 — 연장). 다시 볼 곳이 없는 오류·새 버전 안내를 읽거나 버튼을 누르려는 동안 사라져 초점이 문서로 빠지지 않게. 한도(넷)·✕·동작 버튼은 그대로
+  let over = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const later = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!over && !el.contains(document.activeElement)) el.remove();
+    }, ms);
+  };
+  el.addEventListener('pointerenter', () => (over = true));
+  el.addEventListener('pointerleave', () => {
+    over = false;
+    later();
+  });
+  el.addEventListener('focusout', later);
+  later();
 }

@@ -87,3 +87,56 @@ describe('알림 상자를 앱을 만들 때 빈 채로 붙여 두기(156차)', 
     expect(shown()).toEqual([['읽기를 멈췄습니다.', 'info']]);
   });
 });
+
+/**
+ * 157차: 마우스(손가락)가 알림 위에 있거나 초점이 알림 안(동작·닫기 버튼)에 있으면 시간이 되어도 닫지 않고, 떠나면 그때부터 다시 잰다(WCAG 2.2.1 시간 조절 — 연장).
+ * 전에는 저마다의 시간이 되면 그대로 닫혀, 다시 볼 곳이 없는 오류·새 버전 안내를 읽거나 버튼을 누르려는 동안 사라지고 초점이 문서로 빠졌다.
+ */
+describe('알림 위에 마우스가 있거나 초점이 안에 있으면 닫지 않기(157차)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it('마우스가 올라 있는 동안은 시간이 지나도 남고, 떠나면 그때부터 제 시간(2.5초) 뒤 닫힌다', () => {
+    const A = '이 줄은 이동을 만들지 않습니다.';
+    toast(A, 'info', 2500);
+    const el = document.querySelector<HTMLElement>('.toasts > .toast')!;
+    vi.advanceTimersByTime(2000);
+    el.dispatchEvent(new Event('pointerenter'));
+    vi.advanceTimersByTime(10_000);
+    expect(shown()).toEqual([[A, 'info']]);
+    el.dispatchEvent(new Event('pointerleave'));
+    vi.advanceTimersByTime(2499);
+    expect(shown()).toEqual([[A, 'info']]);
+    vi.advanceTimersByTime(1);
+    expect(shown()).toEqual([]);
+  });
+
+  it('키보드 초점이 동작·닫기 버튼에 있는 동안은 남아 초점을 지키고, 알림 밖으로 나가면 그때부터 제 시간 뒤 닫힌다', () => {
+    const outside = document.body.appendChild(document.createElement('button'));
+    let applied = 0;
+    toast('새 버전이 있습니다.', 'info', 60_000, { label: '새로 고침', run: () => applied++ });
+    const el = document.querySelector<HTMLElement>('.toasts > .toast')!;
+    const [act, close] = [...el.querySelectorAll('button')];
+    act!.focus();
+    vi.advanceTimersByTime(60_000);
+    expect(el.isConnected).toBe(true);
+    expect(document.activeElement).toBe(act);
+    // 알림 안에서 옮겨도(동작 → 닫기) 그대로
+    close!.focus();
+    vi.advanceTimersByTime(60_000);
+    expect(el.isConnected).toBe(true);
+    expect(document.activeElement).toBe(close);
+    // 알림 밖으로 나가면 그때부터 60초
+    outside.focus();
+    vi.advanceTimersByTime(59_999);
+    expect(el.isConnected).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect([el.isConnected, applied]).toEqual([false, 0]);
+    outside.remove();
+  });
+});
