@@ -319,6 +319,7 @@ WangShi PGI·KDT XML은 공개 형식 설명서가 없어, 비공개 리더의 �
   - 꺼진 가공(`enable`·`Enable` 0), 모르는 요소는 위치만 점으로(XML `FlatAnglePull`·`Engraving`은 한국어 이름), 깨진 값은 '해석 실패'로 목록에.
     문서 순서와 다른 `order`, 그리지 않는 진입 값(`entryL`·`entryZ`·`toolExtraOffset`), 면에서 벗어난 옆면 구멍은 경고로 알립니다.
   - 형식은 내용(뿌리 요소)으로 정합니다. `.xml`이라도 `<KDTPanelFormat>`이 아니면 G-code로 읽지 않고 알리며, woodWOP MPRX(XML)는 MPR로 저장해 열라고 안내합니다.
+    이 막기는 뷰어 앱이 열기 전에 하는 확인(`src/app/payload.ts` `checkNcInput`)이고, 라이브러리는 형식을 정하지 못한 파일을 G-code로 읽습니다(아래 「라이브러리로 쓰는 법」 — 132차).
   - XML은 웹 워커에서 돌도록 직접 읽습니다(`src/xml.ts` — 요소마다 원본 줄, DOCTYPE·개체 선언은 풀지 않음, 끊긴 문서는 닫힌 요소까지).
 - 여러 파일을 한 작업으로(`combineNcJob`·`combineNcFiles`·`splitNcJob`, `src/job.ts`): 주 프로그램 뒤에 나머지 파일을
   표지 줄(G-code `(OPENCAD-JOB-FILE 이름)`, Siemens·Heidenhain `; OPENCAD-JOB-FILE 이름`)로 나눠 잇고, 해석기는 표지 줄에서
@@ -700,6 +701,12 @@ const { parsed, scene } = loadNcFile('part.nc', bytes); // 형식은 앞부분·
 ```
 
 형식별 함수(`parseGcode`, `parseHeidenhain`, `parseMpr`, `parsePgi`, `parseKdtXml`, `ncToScene`, `mprToScene`)와 확장자 목록(`NC_EXTENSIONS` 등), `isPanelKind`도 `src/index.ts`에서 내보냅니다.
+
+형식 판별은 `detectNcFormat(name, bytes)`입니다. 내용을 먼저 보고(MPR·PGI·KDT XML 뿌리·Heidenhain 표지), 다음에 확장자, 그래도 모르면 G·M 낱말과 좌표가 셋 이상씩 보일 때 G-code이고,
+정하지 못하면 `null`입니다(`.xml`은 확장자만으로 정하지 않음). `parseNcFile`·`loadNcFile`은 `kind`를 주지 않았는데 `null`이면 G-code로 읽고, `combineNcFiles`도 그런 파일을 G-code로 보고 잇습니다.
+그래서 판재가 아닌 XML(`detectNcFormat('a.xml', '<config/>')`는 `null`)이나 woodWOP MPRX도 오류 없이 `kind: 'gcode'` 결과로 돌아옵니다.
+뷰어 앱처럼 막으려면 먼저 `detectNcFormat`이 `null`인지 보십시오 — 뷰어 앱은 `src/app/payload.ts` `checkNcInput`으로 빈 파일·이진 파일·MPRX·판재가 아닌 XML,
+형식도 확장자도 NC가 아닌 파일을 열기 전에 막고(여러 파일 작업도 파일마다 먼저 거름), NC 확장자인데 형식을 모르는 글만 G-code로 읽습니다(132차).
 
 선택 기능(기본은 모두 꺼짐 — 켜지 않으면 결과가 예전과 같습니다):
 
@@ -1679,6 +1686,15 @@ Siemens `_ZSD[2]` 줄을 실제 해석기로 읽어 나온 경고가 네 언어�
 이 앱의 헤드리스 그림·전체 시험·빌드 검사(`check:seo`·`check:i18n`·`test:seo`)·휴대폰 검사는 로컬에서 돌리지 않고 PR CI에 맡겼습니다(로컬은 위 시험 파일 셋, `tsc --noEmit`, 수정일 갱신의 vite 빌드만).
 크기는 이번 수정일 갱신의 vite 빌드로 깎기 조각 48,202 → 48,407바이트(+205, vite gzip 19.13 kB), 깎기 워커 19,590 → 19,838바이트(+248), 첫 화면 조각 147,642바이트 그대로(vite gzip 52.72 kB),
 정보 탭 조각 11,225바이트·측정 도구 조각 54,360바이트·코어 조각 473,079바이트·3D 보기 조각 4,710바이트·묶어 그리기 조각 46,558바이트·CSS 31,322바이트·언어 사전 조각 넷 그대로입니다.
+132차는 해석기·라이브러리 쪽 README 약속(위 「할 수 있는 것」·「라이브러리로 쓰는 법」·「구조」)을 해석기 코드(`src/*.ts`)와 대조했습니다(코어 판은 0.121.0 그대로 — 대조 결과는 아래 남은 일 「README 약속 대조(132차)」).
+「할 수 있는 것」의 판재 XML 줄은 「`.xml`이라도 `<KDTPanelFormat>`이 아니면 G-code로 읽지 않고 알리며, woodWOP MPRX는 … 안내」라고 적었지만, 이 막기는 뷰어 앱이 열기 전에 하는 확인
+(`src/app/payload.ts` `checkNcInput` — PGI·XML을 넣은 커밋 #13 본문도 앱 확인으로 적음)입니다. 라이브러리 `parseNcFile`·`loadNcFile`은 `detectNcFormat`이 형식을 정하지 못하면(`null`)
+G-code로 읽고(`src/index.ts` `?? 'gcode'`), `combineNcFiles`도 그런 파일을 G-code로 보고 잇습니다(`src/job.ts`). 그래서 라이브러리에서는 판재가 아닌 XML·MPRX가 오류 없이 `kind: 'gcode'`로 돌아옵니다.
+코드는 뜻한 대로라(`detectNcFormat` 풀이, `checkNcInput` 풀이 「모르면 null — 해석기가 G-code로 읽는다」, `tests/wangs.test.ts`는 판별 `null`만 기대) README를 코드에 맞췄습니다:
+그 줄에 앱 확인이라는 것을, 라이브러리 절에 `detectNcFormat`이 보는 차례와 `null`이면 G-code로 읽는다는 것, 앱처럼 막는 길을 적었습니다.
+라이브러리가 던지게 바꾸는 길은 라이브러리 기본 동작이 바뀌고(앱은 이미 걸러 닿지 않음) `parseNcFile`을 부르는 퍼징 시험(`tests/fuzz.test.ts`)에 닿을 수 있어 넣지 않았습니다.
+문서만이라 시험은 돌리지 않았고(근거는 위 코드 자리 grep), 수정일 갱신의 vite 빌드는 내용이 같아 `site/content-history.json`이 바뀌지 않았습니다(수정일 커밋 없음).
+크기는 그 빌드로 첫 화면 조각 147,642바이트(vite gzip 52.72 kB)·해석 워커 397,288바이트·깎기 조각 48,407바이트 그대로입니다.
 키보드 알림의 `formatNumber`는 측정 모드 알림의 좌표·거리를 위치 표시처럼 고정 소수 셋째 자리(인치 넷째)로 씁니다(`keysnap.ts`의 `keySnapNumber` — 고르기 모드는 앱 글 그대로).
 0.48.0·0.49.0의 밝은 테마 Y축·고른 것 강조색 대비는 코어만 올려 바뀝니다. 0.41.0 앱 점 우선, 0.42.0 인스턴싱(공구 경로는 선분 묶음이라 모으지 않음), 0.43.0 PBR,
 0.45.0 구간 단면, 0.49.0 주변 가림·`flyTo` 끝 알림, 0.51.0 나눠 올리기 걸음 몫은 쓰지 않습니다.
@@ -2127,6 +2143,20 @@ CPU를 4배 늦추면(휴대폰 흉내, 30만 이동) 두 쪽 모두 메인 스�
   맞춰 본 약속(어긋남 없음): 키 표(`keys.ts`)·가상 커서 5·50 CSS 화소, 정밀 조준 0.35초·64px·10화소, 끌어온 점 셋·0.5초, 가공 하나씩 따라가기의 차례와 막힌 버튼 초점,
   계산 진행률 자리, 급속 목록의 해석 경고 줄 빼기, 기본 공구 Ø6 mm·0.25 inch, 급속 기본 10000 mm/분·400 inch/분, 선반 공구 방향 1~9,
   해석기 상한(구멍 줄 10만·선반 층 9,999·원 1,000·나사 절입 499·이동 800만)과 FIX·FUP.
+- README 약속 대조(132차): 위 「할 수 있는 것」·「라이브러리로 쓰는 법」·「구조」의 해석기 약속을 해석기 코드에 대조했습니다. 라이브러리가 형식을 정하지 못한 파일
+  (판재가 아닌 XML·MPRX)을 G-code로 읽는다는 것을 적지 않았던 것은 풀림(132차)입니다(위 개발 132차 문단). 132차에 보고 둔 것:
+  「구조」 표에 `src/sl.ts`(Heidenhain SL 사이클의 평면 기하)·`src/affine.ts`(G68·G51·G68.2·Siemens 프레임·Heidenhain 좌표 변환 사이클이 함께 쓰는 아핀 변환)가 없고,
+  `src/heidenhain.ts` 칸이 11-20 용어 바꿈 전의 「Heidenhain 평문」이며 DIN/ISO가 빠졌습니다(문서만).
+  소수점 없는 값 띠 — 위 줄은 「끈 채 소수점 없는 100 이상 좌표가 절반을 넘으면」이지만 `src/gcode.ts` `finish`는 Fanuc·ISO·Haas 방언에서만, 그런 좌표가 셋 이상이고
+  0이 아닌 X·Y·Z 값의 절반 이상일 때 띠를 답니다(Siemens·LinuxCNC·GRBL·Mach3는 띠 없음 — 최소 입력 단위가 Fanuc 계열 설정이라 코드가 맞고 README 낱말만).
+  Siemens 판별 — 위 줄 「표지가 둘 넘거나」는 `detectGcodeDialect`가 표지 둘 이상(`>= 2`)이면 Siemens입니다(낱말만).
+  O9000번대 G65 — 경고 글은 「기계에 든 매크로로 보임」이지만 이름은 다른 빠진 프로그램처럼 `missing-program` 목록(띠)에 들어갑니다. 파일이 실제로 있을 수도 있어 띠에서 뺄 근거가 없어 그대로입니다.
+  장면 `meta.compRuns` 한 구간 형식(`NcCompRunMeta`, `src/scene.ts`)은 공개 입구에서 다시 내보내지 않습니다(`opencad-nc/scene` 하위 경로로는 가져올 수 있음 — 동작 차이 없음).
+  Siemens G18·G19 밀링의 깎기 3축 판정은 129차에 보고 둔 그대로입니다(실제 파일 표본으로 판단할 일).
+  맞춰 본 약속(어긋남 없음): `loadNcFile` 돌려주는 값·`parsed.kind` 다섯, 형식별 함수·확장자 목록 내보내기, `parseGcode` 선택(`lathe`·`latheSystem`·`rotary`·`toolTable`·`machine.latheToolsMm`)과
+  `compRuns` 칸(선반 `tool`·`orientation`·`orientationSource`), `ncToScene` `compPath`('nc-comp'·묶음 '보정 경로'·`meta.compRuns`)·`ncCompPath`·`compPathSegments`, `mprToScene` `meta.lids`,
+  라이브러리 기본 밀링과 선반 안내 경고, 기계 설정 칸, 안전 높이 + 25 mm·1 inch, 장면 묶음 이름, 사이클 상한(쪼기 1만·선반 층 9,999·LinuxCNC 층 1만·구간 200만·
+  Heidenhain 밀링 층 9,999·SL 이동 100만), SL 사이클 21 앞당김, Haas 표지, DIN/ISO 띠, 깎기 격자 256~2048칸.
 - 측정 툴팁과 장면 바꿈(97차·99차·100차·101차): 코어 0.103.0 측정 미리 보기 알림 하나로 맞춥니다 — 재생 붙잡기 한도·깎기 시뮬레이션 메시 바꾸기·되감기와
   공구·묶음 숨기기(패널 버튼을 키보드로 누를 때)·단면(단면 막대를 키보드로 움직일 때)도 툴팁·잠금 안내가 따릅니다(99차에 앱의 장면 길 목록을 걷음).
   코어 머무르기로 기억한 끌어온 점도 0.107.0부터 그 알림이 와 101차에 포인터 길(다음 포인터 이동 뒤 두 프레임)을 걷었습니다.
