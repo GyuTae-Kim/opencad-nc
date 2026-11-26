@@ -222,6 +222,16 @@ describe('여러 파일을 한 작업으로 열기', () => {
     expect([sel.closest('label')!.getAttribute('title'), sel.getAttribute('title'), sel.getAttribute('aria-label')]).toEqual([tip, tip, '주 프로그램']);
   });
 
+  it('145차: 주 프로그램 고르기의 풀이도 고르기 바로 밑에 같은 글의 손가락 기기 안내 줄(127차 coarse-only) — 풍선 글뿐이라 휴대폰·태블릿에서 볼 수 없었다', async () => {
+    const { app, root } = makeApp();
+    await app.openFiles([textFile('main.nc', MAIN), textFile('O1001.nc', SUB_A), textFile('1002.nc', SUB_B)]);
+    window.opencadApp!.setPanelTab('info');
+    const sel = root.querySelector<HTMLSelectElement>('select[aria-label="주 프로그램"]')!;
+    const tip = '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일';
+    const n = sel.closest('label')!.nextElementSibling;
+    expect([n?.tagName, n?.className, n?.textContent]).toEqual(['P', 'hint coarse-only', tip]);
+  });
+
   it('끌어다 놓은 여러 파일도 한 작업으로', async () => {
     const { root } = makeApp();
     const drop = new Event('drop', { bubbles: true, cancelable: true });

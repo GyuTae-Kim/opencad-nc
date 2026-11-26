@@ -241,3 +241,26 @@ describe('정보 탭: 칸 풀이를 칸 자신의 설명으로(142차)', () => {
     expect(fields('보기 선택')).toEqual([[off, '꺼진 가공도 그리기', off]]);
   });
 });
+
+/**
+ * 145차: 127차 손가락 기기 안내 줄은 정보 탭 조각(panel-info.ts withTips)이 그리는 묶음에만 닿아, 첫 화면 조각(panel.ts)이 그리는 판재 정보 탭 보기 선택
+ * 「꺼진 가공도 그리기」의 풀이는 풍선 글·상자 자신의 title(142차)뿐이라 휴대폰·태블릿에서 볼 수 없었다(142차 남은 일). 같은 규칙으로 상자 바로 밑에 같은 글의 안내 줄을 둔다
+ */
+describe('정보 탭: 판재 보기 선택의 손가락 기기 안내 줄(145차)', () => {
+  it('「꺼진 가공도 그리기」 상자 바로 밑에 같은 글의 안내 줄(coarse-only), 풍선 글·상자 자신의 title은 그대로', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('s.mpr', '[H\nVERSION="4.0 Alpha"\n_BSX=600\n_BSY=400\n_BSZ=19\n\n<103 \\BohrHoriz\\\nXA="0"\nYA="100"\nZA="9.5"\nDU="8"\nTI="30"\nBM="XP"\n!\n', { mprDisabled: true });
+    await until(() => api.state.docName === 's.mpr' && api.state.parsed);
+    api.setPanelTab('info');
+    const group = (t: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.prop-group')].find((g) => g.querySelector('h3')?.textContent === t);
+    await until(() => !!group('보기 선택'));
+    const off = '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.';
+    const label = group('보기 선택')!.querySelector<HTMLElement>(':scope > [title]')!;
+    const n = label.nextElementSibling;
+    expect([label.title, label.querySelector('input')!.title, n?.tagName, n?.className, n?.textContent]).toEqual([off, off, 'P', 'hint coarse-only', off]);
+    expect(group('보기 선택')!.querySelectorAll('.coarse-only')).toHaveLength(1);
+  });
+});
