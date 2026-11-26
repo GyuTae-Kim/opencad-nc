@@ -2261,7 +2261,11 @@ export class NcViewerApp implements PanelHost {
       if (lock) t.append(h('span', { class: 'mb-sub mb-lock-hint' }, lock));
     }
     // 다시 재기는 끌어온 점만 있어도(첫 점 전) 지운다 — 코어 clearMeasure가 끌어온 점도 지운다
+    const had = document.activeElement;
     this.measureClear.disabled = !d.measure && !v.measurePointCount && !v.measureTrackPoints.length;
+    // 138차: 키보드로 누른 다시 재기가 지워 막히면 HTML focus fixup이 초점을 문서로 보낸다 — 3D 보기로(Enter로 가상 커서를 켜 다시 재는 곳).
+    // 초점이 그 버튼에 없거나 막히지 않았으면 그대로(자주 불리는 갱신이 초점을 끌어오지 않게)
+    if (had === this.measureClear && this.measureClear.disabled) v.canvas.focus({ preventScroll: true });
     this.mtrack?.update();
     this.mlock?.update();
   }
