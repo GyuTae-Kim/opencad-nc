@@ -152,6 +152,9 @@ describe('끌어온 점 단추(실제 코어 판정)', () => {
     expect(v.measureTrackPoints).toEqual([P]);
     expect(track.count).toBe(1);
     expect(track.button.classList.contains('on')).toBe(true);
+    // 118차: 화면 읽기 이름에도 기억한 점 수(수 표시 mb-badge는 aria-hidden — 이름에서 한 번만 읽는다)
+    expect(track.button.getAttribute('aria-label')).toBe('끌어온 점 기억 · 기억한 점 1개');
+    expect(track.button.querySelector('.mb-badge')!.getAttribute('aria-hidden')).toBe('true');
     // 기억한 점이 있으면 조준하지 않아도 보인다(점 수)
     expect(track.button.hidden).toBe(false);
     expect(w.flashes.at(-1)).toBe(TRACKED);
@@ -208,11 +211,15 @@ describe('끌어온 점 단추(실제 코어 판정)', () => {
     w.press();
     expect(v.measureTrackPoints).toEqual([Q, B, A]);
     expect(w.track.count).toBe(3);
+    // 118차: 같은 점을 앞으로 옮겨도 셋이면 이름의 수도 셋
+    expect(w.track.button.getAttribute('aria-label')).toBe('끌어온 점 기억 · 기억한 점 3개');
     // 측정을 지우면(다시 재기) 끌어온 점도 지운다 — 단추 수도
     v.clearMeasure();
     w.track.update();
     expect(v.measureTrackPoints).toEqual([]);
     expect(w.track.count).toBe(0);
+    // 수가 없으면 이름은 전과 같은 글
+    expect(w.track.button.getAttribute('aria-label')).toBe(TRACK_LABEL);
     expect(w.track.button.classList.contains('on')).toBe(false);
     expect(w.track.button.hidden).toBe(true);
   });
@@ -299,5 +306,18 @@ describe('새 문구 다섯 언어', () => {
         expect(translate(text, code), `${code}: ${text}`).not.toMatch(/[가-힣]/);
       }
     }
+  });
+
+  it('118차: 수를 넣은 단추 이름도 네 사전의 틀 하나가 옮기고 수는 그대로 끼운다', () => {
+    const key = '끌어온 점 기억 · 기억한 점 {0}개';
+    for (const code of ['en', 'ja', 'zh-CN', 'de'] as const) {
+      expect(catalogs[code]![key], `${code}: ${key}`).toBeTruthy();
+      const got = translate('끌어온 점 기억 · 기억한 점 2개', code);
+      expect(got, code).not.toMatch(/[가-힣]/);
+      expect(got, code).toContain('2');
+      // 수 없는 이름의 번역이 앞에 그대로(같은 단추 — 화면 읽기에서 이름이 같은 말로 시작)
+      expect(got.startsWith(translate(TRACK_LABEL, code)), code).toBe(true);
+    }
+    expect(translate('끌어온 점 기억 · 기억한 점 2개', 'en')).toBe('Remember tracked point · Remembered points 2');
   });
 });

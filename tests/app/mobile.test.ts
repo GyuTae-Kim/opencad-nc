@@ -355,6 +355,8 @@ describe('측정 띠(휴대폰·터치)', () => {
     press();
     expect(v.trackPts).toEqual([[20, 10, -1]]);
     expect(track.querySelector('.mb-badge')!.textContent).toBe('1');
+    // 118차: 화면 읽기 이름에도 기억한 점 수(수 표시는 aria-hidden)
+    expect(label(track)).toBe('끌어온 점 기억 · 기억한 점 1개');
     expect(track.classList.contains('on')).toBe(true);
     expect(bar.querySelector('.measure-flash')!.textContent).toContain('끌어온 점으로 기억했습니다');
     // 조준 손가락을 떼도 기억한 점이 있으니 단추(점 수)는 남는다
@@ -367,6 +369,7 @@ describe('측정 띠(휴대폰·터치)', () => {
     clear.click();
     expect(v.trackPts).toEqual([]);
     expect(track.querySelector<HTMLElement>('.mb-badge')!.hidden).toBe(true);
+    expect(label(track)).toBe('끌어온 점 기억');
     expect(track.hidden).toBe(true);
     expect(clear.disabled).toBe(true);
   });

@@ -1099,6 +1099,7 @@
   "끌어온 점으로 기억했습니다: 그 점의 X·Y·Z축에도 붙습니다": "Als gemerkten Punkt gespeichert: fängt auch auf seiner X-, Y- und Z-Achse",
   "기억할 점이 없습니다: 길게 눌러 조준하며 끝점·중심 같은 점에 맞춘 뒤 누르세요": "Kein Punkt zum Merken: lange drücken zum Zielen, auf einen Punkt wie Endpunkt oder Mittelpunkt ausrichten und dann tippen",
   "기억할 점이 없습니다: 커서를 끝점·중심 같은 점 위에 0.5초 멈추면 기억합니다": "Kein Punkt zum Merken: den Cursor 0,5 s auf einem Punkt wie Endpunkt oder Mittelpunkt ruhen lassen, um ihn zu merken",
+  "끌어온 점 기억 · 기억한 점 {0}개": "Punkt merken · Gemerkte Punkte {0}",
   "G5.3 뒤에 이동 꼴(G0·G1 등) 없이 좌표가 옴 — 이송 직선으로 그림": "Koordinaten nach G5.3 ohne Bewegungsart (G0, G1 usw.) — als gerade Vorschubbewegung gezeichnet",
   "G5.3 앞에 G5.2가 없음": "Kein G5.2 vor G5.3",
   "G5.3 블록의 좌표는 쓰지 않음": "Koordinaten im G5.3-Satz werden nicht verwendet",
