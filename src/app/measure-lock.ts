@@ -142,6 +142,12 @@ const NO_LOCK = 'no-lock';
 const UNDO_PX = 4;
 
 /**
+ * 117차: 비운 띠 위 알림의 모습 — 화면에서는 1화소로 잘라 감추고 숨김 속성은 두지 않는다(keysnap.ts .key-live와 같은 값).
+ * 알림 영역(role=status)은 글을 바꾸기 전에 접근성 트리에 있어야 화면 읽기 프로그램이 바뀐 글을 읽는다 — 숨김을 글과 함께 풀면 읽지 않을 수 있다
+ */
+const FLASH_EMPTY = 'position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
+
+/**
  * 잠금 안내(첫 점을 찍은 뒤 결과가 없을 때만 — 둘째 점의 방향을 잡는 동안): 잠갔으면 그 방향, 아니면 키보드 기기에만 —
  * 커서 아래에 Shift로 잠글 방향(hover — 코어 measureHoverLock)이 있으면 "Shift로 그 방향 잠그기", 없으면 화살표 안내
  * (손가락 기기는 측정 띠의 잠금 단추). 상태 줄·측정 띠는 안내 글 다음에 따로 둔다(번역이 안내 글을 한 덩어리로 찾게)
@@ -355,7 +361,8 @@ export class MeasureLock {
       if (performance.now() - pressedAt < 1000) return;
       this.toggle();
     });
-    this.flash = h('div', { class: 'measure-flash', role: 'status', hidden: true });
+    // 117차: 띠 안에 늘 두고 비었을 때는 화면에서만 감춘다(FLASH_EMPTY — 띠가 보이는 동안 알림 영역이 먼저 있게)
+    this.flash = h('div', { class: 'measure-flash', role: 'status', style: FLASH_EMPTY });
   }
 
   /**
@@ -793,19 +800,20 @@ export class MeasureLock {
     else toast(text, 'info', 3200);
   }
 
-  /** 측정 띠 위 알림(kind를 붙이면 그 종류로 거둘 수 있다) */
+  /** 측정 띠 위 알림(kind를 붙이면 그 종류로 거둘 수 있다). 117차: 늘 있는 같은 요소에 글을 넣고 인라인 모습을 지워 클래스 모습(알림 상자)으로 보인다 */
   showFlash(text: string, ms = 1600, kind: string | null = null): void {
     this.flash.textContent = text;
-    this.flash.hidden = false;
+    this.flash.removeAttribute('style');
     this.flashKind = kind;
     if (this.flashTimer) clearTimeout(this.flashTimer);
     this.flashTimer = setTimeout(() => this.dropFlash(null), ms);
   }
 
-  /** 알림 거두기(kind를 주면 그 종류일 때만) */
+  /** 알림 거두기(kind를 주면 그 종류일 때만). 117차: 요소는 남기고 글을 비워 화면에서만 감춘다(FLASH_EMPTY) */
   dropFlash(kind: string | null): void {
-    if (this.flash.hidden || (kind !== null && this.flashKind !== kind)) return;
-    this.flash.hidden = true;
+    if (!this.flash.textContent || (kind !== null && this.flashKind !== kind)) return;
+    this.flash.textContent = '';
+    this.flash.style.cssText = FLASH_EMPTY;
     this.flashKind = null;
     if (this.flashTimer) clearTimeout(this.flashTimer);
     this.flashTimer = null;
@@ -816,7 +824,7 @@ export class MeasureLock {
     const hidden = this.tip.hidden;
     return {
       tip: hidden ? null : this.tip.textContent,
-      flash: this.flash.hidden ? null : this.flash.textContent,
+      flash: this.flash.textContent || null,
       lock: this.lock,
       hoverLock: this.hoverLock,
       button: !this.button.hidden,

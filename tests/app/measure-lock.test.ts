@@ -547,3 +547,48 @@ describe('112차: 마우스 미리 보기 Tab 돌리기의 차례·수(코어 0.
     expect(live.textContent).toBe('Endpoint 1/2');
   });
 });
+
+describe('117차: 측정 띠 위 알림은 글을 바꾸기 전부터 있는 알림 영역(화면 읽기)', () => {
+  it('알림 요소는 처음부터 숨김 없이 띠 안에 비어 있고(화면에서는 1화소로 잘라 감춤), 띄우고 거둘 때 같은 요소의 글·모습만 바뀐다', () => {
+    const { v, lock, bar } = setup(true);
+    const el = lock.flash;
+    // 비었을 때: 띠 안에 숨김 속성 없이(접근성 트리에 남게) role=status, 화면에서는 1화소로 잘라 감춘다(keysnap.ts .key-live와 같은 꼴)
+    const empty = (): void => {
+      expect(el.parentElement).toBe(bar);
+      expect(el.hidden).toBe(false);
+      expect(el.getAttribute('role')).toBe('status');
+      expect(el.textContent).toBe('');
+      expect([el.style.position, el.style.width, el.style.height, el.style.overflow]).toEqual(['absolute', '1px', '1px', 'hidden']);
+      expect(lock.snapshot().flash).toBeNull();
+    };
+    // 보일 때: 같은 요소에 글, 인라인 모습 없이 클래스 모습(.measure-flash — 지금 그 알림 상자) 그대로
+    const shown = (text: string): void => {
+      expect(lock.flash).toBe(el);
+      expect(el.parentElement).toBe(bar);
+      expect(el.hidden).toBe(false);
+      expect(el.textContent).toBe(text);
+      expect(el.getAttribute('style')).toBeNull();
+      expect(lock.snapshot().flash).toBe(text);
+    };
+    empty();
+    // 잠글 방향이 없으면 같은 요소에 글을 넣는다(띠 위 알림)
+    v.hover = END;
+    expect(lock.toggle()).toBe(false);
+    shown(NO_LOCK_TOUCH);
+    // 잠금이 걸리면 그 알림을 거둔다 — 요소는 남기고 글만 비운다
+    v.hover = { point: [0, 0, 9], snap: 'axis', axis: 'z', direction: [0, 0, 1] };
+    v.hoverLock = Z;
+    expect(lock.toggle()).toBe(true);
+    empty();
+    // 시간이 지나 거둘 때도 같다
+    vi.useFakeTimers();
+    try {
+      lock.showFlash('복사했습니다', 1600);
+      shown('복사했습니다');
+      vi.advanceTimersByTime(1600);
+      empty();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
