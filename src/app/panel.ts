@@ -16,6 +16,7 @@ import { fileText, mix, type Mixed } from './filetext';
 import { mixNodes, mixText } from './i18n';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { icon } from './icons';
+import { tabMove } from './keys';
 import { panelMeasureHint, snapPair } from './measure';
 import type { SceneIssue } from 'opencad-viewer3d';
 import type { OptKey } from './panel-info';
@@ -114,6 +115,15 @@ export class NcPanel {
     private readonly workspace: HTMLElement,
   ) {
     this.tabsEl = h('div', { class: 'panel-tabs', role: 'tablist', 'aria-label': '패널 탭' });
+    // 150차: APG Tabs 수동 활성 — ←→(끝에서 둘레를 돎)·Home·End는 초점만 옮기고 고르기는 Enter·Space(버튼 누름), Tab 차례는 고른 탭 하나(render의 tabindex).
+    // 옮기면 바로 고르지 않는 까닭: 깎기 탭은 처음 열 때 깎기 조각을 받고 원문 전체를 훑는다 — 처음 탭에서 ← 한 번이 둘레를 돌아 깎기다
+    this.tabsEl.addEventListener('keydown', (e) => {
+      const tabs = [...this.tabsEl.children] as HTMLElement[];
+      const j = tabMove(e, tabs.indexOf(e.target as HTMLElement), tabs.length);
+      if (j < 0) return;
+      e.preventDefault();
+      tabs[j]!.focus();
+    });
     const close = h('button', { class: 'icon-btn', type: 'button', title: '패널 닫기', 'aria-label': '패널 닫기', html: icon('close') });
     close.addEventListener('click', () => this.host.togglePanel(false));
     this.play = h('div', { class: 'play', hidden: true });
@@ -273,7 +283,7 @@ export class NcPanel {
     this.tabsEl.textContent = '';
     for (const [k, label] of panelTabs(d)) {
       const on = k === d.panelTab;
-      const b = h('button', { class: `panel-tab${on ? ' active' : ''}`, type: 'button', role: 'tab', id: `panel-tab-${k}`, 'aria-controls': 'panel-body', 'aria-selected': on ? 'true' : 'false', 'data-tab': k }, label);
+      const b = h('button', { class: `panel-tab${on ? ' active' : ''}`, type: 'button', role: 'tab', id: `panel-tab-${k}`, 'aria-controls': 'panel-body', 'aria-selected': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-tab': k }, label);
       b.addEventListener('click', () => {
         if (d.panelTab === k) return;
         d.panelTab = k;

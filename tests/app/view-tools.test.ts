@@ -270,6 +270,52 @@ describe('패널 몸통 이름(141차)', () => {
   });
 });
 
+describe('패널 탭 줄 키(150차)', () => {
+  it('150차: ←→(끝에서 둘레를 돎)·Home·End는 탭 사이로 초점만 옮기고(재생할 수 있는 G-code라도 한 이동 걷기로 가지 않음), Enter·Space로 고르며 Tab 차례는 고른 탭 하나', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const tab = (k: string): HTMLButtonElement => root.querySelector<HTMLButtonElement>(`.panel-tabs [data-tab=${k}]`)!;
+    const stops = (): (string | null)[] => [...root.querySelectorAll<HTMLElement>('.panel-tabs [role=tab]')].map((b) => b.getAttribute('tabindex'));
+    // 초점이 있는 칸에 키를 보낸다(창 키 onKey는 창에서 캡처로 먼저 받는다) — 기본 동작을 막았으면 true
+    const press = (key: string, shiftKey = false): boolean => !document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
+    tab('code').focus();
+    expect(press('ArrowRight')).toBe(true);
+    expect(api.state.playSec).toBeNull();
+    expect(document.activeElement).toBe(tab('tools'));
+    // 옮기기만 하고 고르지 않는다(수동 활성 — 깎기 탭은 처음 열 때 조각을 받고 원문을 훑는다)
+    expect(api.state.panelTab).toBe('code');
+    // ← 둘: 코드를 지나 끝(깎기)으로 둘레를 돎, →는 끝에서 처음으로, End·Home
+    press('ArrowLeft');
+    expect(document.activeElement).toBe(tab('code'));
+    press('ArrowLeft');
+    expect(document.activeElement).toBe(tab('sim'));
+    press('ArrowRight');
+    expect(document.activeElement).toBe(tab('code'));
+    expect(press('End')).toBe(true);
+    expect(document.activeElement).toBe(tab('sim'));
+    expect(press('Home')).toBe(true);
+    expect(document.activeElement).toBe(tab('code'));
+    expect(api.state.panelTab).toBe('code');
+    expect(api.state.playSec).toBeNull();
+    expect(api.state.selLine).toBe(-1);
+    // Tab 차례는 고른 탭(코드) 하나
+    expect(stops()).toEqual(['0', '-1', '-1', '-1']);
+    // 정보 탭으로 옮겨 누르면(Enter·Space = 초점 버튼의 click — 136차 시험 꼴) 고르고, Tab 차례도 정보 탭, 초점은 새 줄의 정보 탭(136차)
+    press('End');
+    press('ArrowLeft');
+    expect(document.activeElement).toBe(tab('info'));
+    tab('info').click();
+    expect(api.state.panelTab).toBe('info');
+    expect(stops()).toEqual(['-1', '-1', '0', '-1']);
+    expect(document.activeElement).toBe(tab('info'));
+    // 수정 키가 있으면 탭 줄 키가 아니다 — Shift+→는 지금처럼 앱 키(10이동 걷기), 초점은 그대로
+    press('ArrowRight', true);
+    expect(api.state.playSec).not.toBeNull();
+    expect(document.activeElement).toBe(tab('info'));
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
