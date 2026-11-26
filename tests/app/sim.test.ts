@@ -652,6 +652,74 @@ describe('판재 가공 하나씩 따라가기', () => {
     expect(api.state.sim!.step).toBeNull();
     expect(strip.hidden).toBe(true);
   });
+
+  it('120차: 키보드로 누른 따라가기 단추가 막히면 초점을 반대쪽으로 가는 단추로 옮긴다(깎기 탭·3D 보기 아래 띠 — 막히지 않거나 초점이 단추 밖이면 그대로)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    const end = api.state.sim!.at!.move;
+    await until(() => !!root.querySelector('.panel-body .sim-steps'));
+    const box = (): Element => root.querySelector('.panel-body .sim-steps')!;
+    const btn = (label: string, scope: Element = box()): HTMLButtonElement => scope.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+    /** 키보드 누름: 초점을 두고 Enter(단추는 click 사건) */
+    const press = (b: HTMLButtonElement): void => {
+      b.focus();
+      b.click();
+    };
+    // 처음으로: 누르면 처음·이전이 막힌다 → 다음 가공으로(막힌 단추에 남으면 HTML focus fixup이 초점을 문서로 옮긴다)
+    press(btn('처음으로(깎기 전)'));
+    expect(btn('처음으로(깎기 전)').disabled).toBe(true);
+    expect(btn('이전 가공').disabled).toBe(true);
+    expect(document.activeElement).toBe(btn('다음 가공'));
+    await until(() => settled() && api.state.sim!.at!.move < end);
+    // 막히지 않으면 그대로, 끝에 닿아 다음이 막히면 이전 가공으로
+    btn('다음 가공').click();
+    expect(api.state.sim!.step).toMatchObject({ at: 1 });
+    expect(document.activeElement).toBe(btn('다음 가공'));
+    await until(settled);
+    btn('다음 가공').click();
+    expect(api.state.sim!.step).toMatchObject({ at: 2 });
+    expect(btn('다음 가공').disabled).toBe(true);
+    expect(document.activeElement).toBe(btn('이전 가공'));
+    await until(() => settled() && api.state.sim!.at!.move === end);
+    // 끝까지: 누르면 그 단추가 막힌다 → 이전 가공으로
+    press(btn('모든 가공 깎기(끝까지)'));
+    expect(api.state.sim!.step).toBeNull();
+    expect(btn('모든 가공 깎기(끝까지)').disabled).toBe(true);
+    expect(document.activeElement).toBe(btn('이전 가공'));
+    // 막대(초점이 단추 밖)는 그대로
+    const range = box().querySelector<HTMLInputElement>('input[type=range]')!;
+    range.focus();
+    range.value = '0';
+    range.dispatchEvent(new Event('input'));
+    expect(api.state.sim!.step).toMatchObject({ at: 0 });
+    expect(btn('처음으로(깎기 전)').disabled).toBe(true);
+    expect(document.activeElement).toBe(range);
+    await until(() => settled() && api.state.sim!.at!.move < end);
+    // 3D 보기 아래 띠도 같다(✕는 띠에서 막히지 않는다)
+    api.togglePanel(false);
+    const strip = root.querySelector<HTMLElement>('.play-strip.sim-steps')!;
+    expect(strip.hidden).toBe(false);
+    press(btn('다음 가공', strip));
+    expect(document.activeElement).toBe(btn('다음 가공', strip));
+    await until(settled);
+    btn('다음 가공', strip).click();
+    expect(api.state.sim!.step).toMatchObject({ at: 2 });
+    expect(document.activeElement).toBe(btn('이전 가공', strip));
+    await until(() => settled() && api.state.sim!.at!.move === end);
+    btn('이전 가공', strip).click();
+    expect(document.activeElement).toBe(btn('이전 가공', strip));
+    await until(settled);
+    btn('이전 가공', strip).click();
+    expect(api.state.sim!.step).toMatchObject({ at: 0 });
+    expect(btn('이전 가공', strip).disabled).toBe(true);
+    expect(document.activeElement).toBe(btn('다음 가공', strip));
+    await until(() => settled() && api.state.sim!.at!.move < end);
+  });
 });
 
 describe('장면 합치기·번역', () => {
