@@ -202,6 +202,16 @@ const simMeshes = (): string[] => (FakeViewer().scenes[FakeViewer().scenes.lengt
  */
 const coarseTips = (body: Element): (string | null)[][] =>
   [...body.querySelectorAll('.coarse-only')].map((e) => [e.tagName, e.className, e.previousElementSibling?.getAttribute('title') ?? null, e.textContent]);
+/**
+ * 128차: 공구 표 줄마다 출처 칸 [보이는 글(첫 글 마디), 풍선 글(title), 칸 안 손가락 기기 안내 줄 [태그, 클래스, 글] 또는 null].
+ * 바꾼 공구의 원래 파일 지름(「파일 값 Ø…」)이 풍선 글뿐이라 휴대폰·태블릿에서 볼 수 없던 것을 칸 안 작은 줄로도 둔다(표라 칸 밑 줄 대신)
+ */
+const sourceCells = (root: HTMLElement): unknown[][] =>
+  [...root.querySelectorAll<HTMLTableRowElement>('.panel-body table.sim-tools tbody tr')].map((tr) => {
+    const td = tr.cells[4]!;
+    const n = td.querySelector('.coarse-only');
+    return [td.firstChild?.textContent ?? null, td.getAttribute('title'), n ? [n.tagName, n.className, n.textContent] : null];
+  });
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -390,6 +400,12 @@ describe('깎기 탭', () => {
     await until(settled);
     expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 2: { kind: 'ball' } });
     expect(root.querySelector('table.sim-tools tbody tr:nth-child(2)')!.textContent).toContain('사용자 값');
+    // 128차: 바꾼 공구(T2 — 주석 D=6)의 원래 파일 지름은 풍선 글과 같은 글의 손가락 기기 안내 줄로 출처 칸 안에도. 파일 값 그대로인 T1·T3은 풍선 글·줄 없음
+    expect(sourceCells(root)).toEqual([
+      ['파일 값', null, null],
+      ['사용자 값', '파일 값 Ø6', ['P', 'hint coarse-only', '파일 값 Ø6']],
+      ['파일 값', null, null],
+    ]);
   });
 
   it('121차: 키보드로 바꾼 상자·숫자 칸·고르기·버튼 때문에 깎기 탭을 다시 그려도 초점은 새로 그린 같은 칸에(막혔으면 같은 묶음의 앞 칸, 탭 밖 초점은 그대로)', async () => {
@@ -606,6 +622,12 @@ describe('깎기 탭', () => {
     dia.dispatchEvent(new Event('change'));
     expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 100000: { diameter: 3 }, 100002: { diameter: 4 }, 'name:BULL_D10': { diameter: 12 } });
     expect(rows()[0]).toEqual(['BULL_D10', '12', '사용자 값']);
+    // 128차: 파일 지름이 없는 공구(이름 공구 셋 — 지름 칸 기본값)는 바꿔도 출처 칸에 풍선 글·손가락 기기 안내 줄이 없다(위 출처 칸 글 전체 견줌도 그대로)
+    expect(sourceCells(root)).toEqual([
+      ['사용자 값', null, null],
+      ['파일 값', null, null],
+      ['사용자 값', null, null],
+    ]);
     // 다른 파일: 처음 이름 공구(FLAT_D4)가 같은 차례 100000이어도 BULL_D10 값을 이어받지 않고, 둘째 차례(100001)의 BULL_D10은 이름으로 이어받는다
     await open(app, 'other.h', OTHER_H);
     api.setPanelTab('sim');
@@ -674,6 +696,8 @@ describe('깎기 탭', () => {
     dia.dispatchEvent(new Event('change'));
     await until(settled);
     expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 'panel:D8': { diameter: 10 } });
+    // 128차: 바꾼 판재 공구도 원래 파일 지름(구멍 지름 8)을 출처 칸 안 손가락 기기 안내 줄로
+    expect(sourceCells(root)).toEqual([['사용자 값', '파일 값 Ø8', ['P', 'hint coarse-only', '파일 값 Ø8']]]);
     // 가공 그림을 빼면 가공 그물도 뺀다
     await api.setSim(true, { paths: false });
     await until(() => FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.every((m) => !m.id.startsWith('mpr-op-')) && settled());

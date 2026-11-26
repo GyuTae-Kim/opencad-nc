@@ -956,6 +956,8 @@ export class SimView {
         extra = el;
       }
       const from = r.kindFrom === 'user' || r.diameterFrom === 'user' ? 'user' : r.diameterFrom === 'file' || r.kindFrom === 'file' ? 'file' : 'default';
+      // 128차: 바꾼 공구의 원래 파일 지름(풍선 글)은 휴대폰·태블릿에서 볼 수 없어 같은 글을 출처 칸 안 손가락 기기 안내 줄로도 둔다
+      // (127차 상자 풀이와 같은 coarse-only — 표라 칸 밑 줄 대신 칸 안 작은 줄). 파일 지름이 없으면 풍선 글·줄 모두 없다
       const fileNote = from === 'user' && r.file.diameter ? `파일 값 Ø${fmtNum(r.file.diameter)}` : '';
       tbody.append(
         h(
@@ -965,7 +967,7 @@ export class SimView {
           h('td', {}, kind),
           h('td', { class: 'sim-num' }, dia),
           h('td', { class: 'sim-num' }, extra),
-          h('td', { class: 'dim', title: fileNote || null }, FROM_LABEL[from]),
+          h('td', { class: 'dim', title: fileNote || null }, FROM_LABEL[from], fileNote ? h('p', { class: 'hint coarse-only' }, fileNote) : null),
         ),
       );
     }
