@@ -419,6 +419,93 @@ describe('측정 띠(휴대폰·터치)', () => {
   });
 });
 
+describe('화면 폭 바뀜 초점(153차)', () => {
+  it('153차: 화면 폭이 바뀌어(넓은 화면 ↔ 휴대폰) 닫는 메뉴·단면 상자, 그 폭에서 숨는 막대 버튼·측정 띠에 있던 초점은 연 버튼(보이면)이나 3D 보기로 — 초점이 그 밖이거나 칸이 남으면 그대로', async () => {
+    // 화면 흉내를 바꿀 수 있게(조건은 media()와 같게 보고 matches는 읽을 때마다 다시 본다) 휴대폰 질의의 change 듣기를 모아, 폭을 바꾼 뒤 부른다
+    const scr = { narrow: true, coarse: false };
+    const changes: (() => void)[] = [];
+    const one = (c: string): boolean => (c.includes('coarse') ? scr.coarse : c.includes('max-width') ? scr.narrow : false);
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      media: q,
+      get matches() {
+        return q.split(',').some((part) => part.split(' and ').every(one));
+      },
+      addEventListener: (_type: string, cb: () => void) => {
+        if (q.includes('max-height')) changes.push(cb);
+      },
+      removeEventListener: () => {},
+    }));
+    const resize = (narrow: boolean): void => {
+      scr.narrow = narrow;
+      for (const cb of changes) cb();
+    };
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    const app = new NcViewerApp(root);
+    expect(await app.openSample()).toBe(true);
+    expect(changes).toHaveLength(1);
+    const v = fake.FakeViewer.last!;
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    v.canvas.tabIndex = 0;
+    const wrapOf = (name: string): HTMLElement => menuButton(root, name).closest<HTMLElement>('.menu-wrap')!;
+    // 휴대폰 → 넓은 화면: 보기 설정 메뉴는 닫히고 그 버튼도 숨어(narrow-only) 3D 보기로(jsdom은 focus fixup이 없어 고치기 전에는 숨은 항목에 남는다 — 브라우저는 문서로 보낸다)
+    const more = menuButton(root, '보기 설정');
+    more.click();
+    expect(document.activeElement).toBe(itemByText(wrapOf('보기 설정'), '원근 투영'));
+    resize(false);
+    expect(wrapOf('보기 설정').querySelector<HTMLElement>('.menu')!.hidden).toBe(true);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(v.canvas);
+    // 넓은 화면 → 휴대폰: 그리기 메뉴(wide-only)도 버튼이 숨어 3D 보기로
+    menuButton(root, '그리기').click();
+    expect(document.activeElement!.textContent).toBe('음영 + 모서리');
+    resize(true);
+    expect(wrapOf('그리기').querySelector<HTMLElement>('.menu')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(v.canvas);
+    // 두 폭에 다 있는 표준 뷰 메뉴·단면 상자는 닫고 연 버튼으로(Esc와 같은 곳)
+    const views = menuButton(root, '표준 뷰');
+    views.click();
+    expect(document.activeElement).toBe(menuItems(wrapOf('표준 뷰'))[0]);
+    resize(false);
+    expect(views.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(views);
+    const section = menuButton(root, '단면');
+    section.click();
+    expect(document.activeElement!.textContent).toBe('끔');
+    resize(true);
+    expect(root.querySelector<HTMLElement>('.sec-pop')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(section);
+    // 메뉴가 닫혀 있어도 그 폭에서 숨는 막대 버튼(휴대폰 → 보기 설정, 넓은 화면 → 격자)에 있던 초점은 3D 보기로
+    more.focus();
+    resize(false);
+    expect(document.activeElement).toBe(v.canvas);
+    menuButton(root, '격자').focus();
+    resize(true);
+    expect(document.activeElement).toBe(v.canvas);
+    // 두 폭에 다 있는 버튼이면 그대로
+    const measure = menuButton(root, '측정');
+    measure.focus();
+    resize(false);
+    expect(document.activeElement).toBe(measure);
+    // 측정 띠: 휴대폰에서는 남아 그대로, 마우스 기기에서 넓어지면 숨어 3D 보기로(측정은 그대로 이어 잼)
+    measure.click();
+    expect(app.state().measuring).toBe(true);
+    const close = root.querySelector<HTMLButtonElement>('.measure-bar [aria-label="측정 끝내기"]')!;
+    close.focus();
+    resize(true);
+    expect(document.activeElement).toBe(close);
+    resize(false);
+    expect(document.activeElement).toBe(v.canvas);
+    expect(app.state().measuring).toBe(true);
+    // 손가락 기기는 넓어져도 측정 띠가 보여 그대로
+    scr.coarse = true;
+    resize(true);
+    close.focus();
+    resize(false);
+    expect(document.activeElement).toBe(close);
+  });
+});
+
 describe('손가락 기기의 파일 고르기와 시작 화면', () => {
   it('마우스 기기는 확장자로 거르고, 손가락 기기는 거르지 않는다(iOS가 .nc·.mpr를 흐리게 막지 않게)', () => {
     let input = makeApp(false, false).root.querySelector<HTMLInputElement>('input[type=file]')!;
