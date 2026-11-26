@@ -183,6 +183,57 @@ describe('패널 탭 버튼 초점(136차)', () => {
   });
 });
 
+describe('패널 몸통 다시 그리기 초점(137차)', () => {
+  it('137차: 공구 탭 눈 버튼·정보 탭 해석 설정·기계·읽기 설정을 키보드로 바꿔 몸통을 새로 그려도(다시 읽은 뒤 포함) 초점은 새 몸통의 같은 칸에(몸통 밖 초점은 그대로)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    api.setPanelTab('tools');
+    const eyes = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>('table.tools button.toggle')];
+    expect(eyes().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'true']);
+    // 키보드(Enter·Space)로 누름 = 초점이 있는 버튼의 click — T2 눈 버튼(이름이 「T2 숨기기」 → 「T2 보이기」로 바뀌어 data-key가 열쇠)
+    const eye = eyes()[1]!;
+    eye.focus();
+    eye.click();
+    expect(eye.isConnected).toBe(false);
+    expect(eyes()[1]!.getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(eyes()[1]);
+    // 정보 탭 해석 설정(G-code 형식 고르기 — 다시 읽은 뒤 정보 탭을 새로 그린다)
+    api.setPanelTab('info');
+    const dialect = (): HTMLSelectElement => root.querySelector<HTMLSelectElement>('select[aria-label="G-code 형식"]')!;
+    const sel = dialect();
+    sel.focus();
+    sel.value = 'fanuc';
+    sel.dispatchEvent(new Event('change'));
+    await tick();
+    await tick();
+    expect(sel.isConnected).toBe(false);
+    expect(dialect().value).toBe('fanuc');
+    expect(document.activeElement).toBe(dialect());
+    // 기계·읽기 설정(H·D 번호 확인 상자 — 감싼 label 글이 열쇠): 끄고 다시 켜도(기본값으로 돌림) 같은 칸에
+    const hd = (): HTMLInputElement => [...root.querySelectorAll<HTMLLabelElement>('label.group-item')].find((l) => l.textContent === 'H·D 번호 확인')!.querySelector('input')!;
+    for (const on of [false, true]) {
+      const cb = hd();
+      cb.focus();
+      cb.click();
+      await tick();
+      await tick();
+      expect(cb.isConnected).toBe(false);
+      expect(hd().checked).toBe(on);
+      expect(document.activeElement).toBe(hd());
+    }
+    // 초점이 몸통 밖이면 다시 읽어 새로 그려도 그대로
+    const out = document.body.appendChild(document.createElement('button'));
+    out.focus();
+    dialect().value = 'auto';
+    dialect().dispatchEvent(new Event('change'));
+    await tick();
+    await tick();
+    expect(dialect().value).toBe('auto');
+    expect(document.activeElement).toBe(out);
+  });
+});
+
 describe('현재 블록 상태', () => {
   it('줄을 고르면 패널 아래 띠에 이송·주축·공구·H·모달 G·끝점, 재생 중에는 재생 막대 아래', async () => {
     const { app, root } = makeApp();
