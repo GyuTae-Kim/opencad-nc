@@ -120,8 +120,10 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
 function settingsGroup(host: PanelHost): HTMLElement {
   const s = host.settings;
   const set = (patch: Partial<NcSettings>): void => host.setSettings({ ...host.settings, ...patch });
-  const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = ''): HTMLInputElement => {
-    const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label, placeholder });
+  // signed(119차 — 기계 좌표·허용 범위): 음수를 쳐 넣으므로 소수 자판(inputmode="decimal" — 음수 기호를 약속하지 않음)을 두지 않고
+  // type="number"에 맞춰 브라우저가 자판을 고르게 한다. 0보다 큰 값만 쓰는 칸은 소수 자판 그대로
+  const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = '', signed = false): HTMLInputElement => {
+    const el = h('input', { type: 'number', step: 'any', inputmode: signed ? null : 'decimal', class: 'num-input', 'aria-label': label, placeholder });
     el.value = v === null ? '' : String(v);
     el.addEventListener('change', () => {
       const t = el.value.trim();
@@ -150,6 +152,7 @@ function settingsGroup(host: PanelHost): HTMLElement {
               set({ [key]: v });
             },
             'XYZ'[a]!,
+            true,
           ),
         ),
       ),

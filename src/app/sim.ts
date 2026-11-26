@@ -809,8 +809,9 @@ export class SimView {
     // 소재 상자
     const box = this.stockBox();
     if (box) {
+      // 119차: 범위는 음수(원점 아래·왼쪽)를 쳐 넣으므로 소수 자판(inputmode="decimal" — 음수 기호를 약속하지 않음)을 두지 않는다(공구 표 칸은 0보다 큰 값이라 그대로)
       const num = (v: number, label: string, set: (n: number) => void): HTMLInputElement => {
-        const el = h('input', { type: 'number', step: 'any', inputmode: 'decimal', class: 'num-input', 'aria-label': label });
+        const el = h('input', { type: 'number', step: 'any', class: 'num-input', 'aria-label': label });
         el.value = String(Math.round(v * 1e6) / 1e6);
         el.addEventListener('change', () => {
           const n = Number(el.value);
