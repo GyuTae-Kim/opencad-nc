@@ -492,7 +492,93 @@ describe('깎기 탭', () => {
     await until(settled);
   });
 
-  it('135차: 계산하지 못한 오류(소재 상자가 올바르지 않음)는 다시 그린 깎기 탭 상태 글이 role=alert(새로 붙어도 화면 읽기가 읽음), 꺼짐·진행·끝 글은 aria-live=polite 그대로', async () => {
+  it('196차: 계산 결과(급속 목록)·계산 오류로 깎기 탭을 다시 그려도 숫자 칸에 쳐 넣고 아직 바꾸지 않은 글은 새로 그린 같은 칸에 남고(모델에 넣지 않음), Enter·다른 칸으로 옮길 때 한 번 건다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    const body = (): Element => root.querySelector('.panel-body')!;
+    // (이름의 「~」는 jsdom 선택자가 따옴표 안에서도 잇는 기호로 읽어 속성 선택자 대신 이름으로 찾는다)
+    const ctl = (label: string): HTMLInputElement => [...body().querySelectorAll<HTMLInputElement>('input')].find((el) => el.getAttribute('aria-label') === label)!;
+    const auto = (): boolean => [...body().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '자동으로')!.disabled;
+    /** 칸에 초점을 두고 글을 친다(change 없음 — 아직 바꾸지 않은 글) */
+    const type = (label: string, v: string): HTMLInputElement => {
+      const el = ctl(label);
+      el.focus();
+      el.value = v;
+      return el;
+    };
+    /** [친 칸이 아닌 새 칸인지, 초점이 그 새 칸인지, 글, aria-invalid, 새 계산 요청 수, 자동으로 막힘] */
+    const look = (label: string, typed: HTMLInputElement, inits: number): unknown[] => [
+      ctl(label) !== typed,
+      document.activeElement === ctl(label),
+      ctl(label).value,
+      ctl(label).getAttribute('aria-invalid'),
+      FakeWorker.inits.length - inits,
+      auto(),
+    ];
+    /** 계산 워커가 멈춤(앱 쪽 까닭 — 144차 꼴) */
+    const stop = (): void => (FakeWorker.last!.onerror as (e: object) => void)({ message: '', preventDefault: () => {} });
+    const enter = (el: HTMLInputElement): boolean => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    // (1) 켜면(상자 — 사용자 change, 그 자리에서 다시 그림) 계산을 시작하고, 첫 결과가 오면(급속 목록 열쇠가 비었다 채워짐) 탭을 다시 그린다 — 그 사이 X 최대에 친 글
+    body().querySelector<HTMLInputElement>('input[type=checkbox]')!.click();
+    let inits = FakeWorker.inits.length;
+    expect(ctl('X 범위 — 최대').value).not.toBe('123.25');
+    let typed = type('X 범위 — 최대', '123.25');
+    await until(settled);
+    expect(look('X 범위 — 최대', typed, inits)).toEqual([true, true, '123.25', null, 0, true]);
+    // Enter로 끝내면(스크립트가 넣은 글이라 브라우저 change가 없다 — jsdom도 내지 않음) 한 번 건다: 다시 계산, 직접 정함, 초점은 새 칸
+    enter(ctl('X 범위 — 최대'));
+    await until(() => FakeWorker.inits.length > inits);
+    await until(settled);
+    expect([FakeWorker.inits.length - inits, ctl('X 범위 — 최대').value, document.activeElement === ctl('X 범위 — 최대'), auto(), body().textContent!.includes('직접 정함')]).toEqual([1, '123.25', true, false, true]);
+
+    // (2) 계산 오류(워커가 멈춤)로 다시 그려도 Y 최소에 친 글은 남고, 다른 칸으로 옮기면(blur) 한 번 건다 — 초점은 옮겨 간 칸(새로 그린 Y 최대)
+    inits = FakeWorker.inits.length;
+    expect(ctl('Y 범위 — 최소').value).not.toBe('-33.5');
+    typed = type('Y 범위 — 최소', '-33.5');
+    stop();
+    expect(look('Y 범위 — 최소', typed, inits)).toEqual([true, true, '-33.5', null, 0, false]);
+    ctl('Y 범위 — 최대').focus();
+    await until(() => FakeWorker.inits.length > inits);
+    expect([FakeWorker.inits.length - inits, ctl('Y 범위 — 최소').value, document.activeElement === ctl('Y 범위 — 최대')]).toEqual([1, '-33.5', true]);
+    await until(settled);
+
+    // (3) 받지 않은 값(169차 — 걸지 않고 aria-invalid)도 표시와 함께 남고, 같은 칸에서 더 고친 글도 남으며, 끝낼 때 브라우저 change도 오면(사용자가 고친 글) 한 번만 건다
+    inits = FakeWorker.inits.length;
+    typed = type('T1 지름', '0');
+    typed.dispatchEvent(new Event('change'));
+    expect([typed.getAttribute('aria-invalid'), ctl('T1 지름') === typed]).toEqual(['true', true]);
+    stop();
+    expect(look('T1 지름', typed, inits)).toEqual([true, true, '0', 'true', 0, false]);
+    typed = ctl('T1 지름');
+    typed.value = '12';
+    stop();
+    expect(look('T1 지름', typed, inits)).toEqual([true, true, '12', 'true', 0, false]);
+    enter(ctl('T1 지름'));
+    ctl('T1 지름').dispatchEvent(new Event('change'));
+    await until(settled);
+    expect([
+      FakeWorker.inits.length - inits,
+      ctl('T1 지름').value,
+      ctl('T1 지름').hasAttribute('aria-invalid'),
+      document.activeElement === ctl('T1 지름'),
+      JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!),
+    ]).toEqual([1, '12', false, true, { 1: { diameter: 12 } }]);
+
+    // (4) 브라우저가 읽지 못한 글(badInput — 값이 빈 글)은 되살릴 수 없어 121차 그대로(새 칸은 모델 값, 초점만)
+    inits = FakeWorker.inits.length;
+    const z0 = ctl('Z 범위(바닥 ~ 윗면) — 최소').value;
+    typed = type('Z 범위(바닥 ~ 윗면) — 최소', '');
+    Object.defineProperty(typed, 'validity', { configurable: true, value: { badInput: true } });
+    stop();
+    expect(look('Z 범위(바닥 ~ 윗면) — 최소', typed, inits)).toEqual([true, true, z0, null, 0, false]);
+  });
+
+  it('135차:계산하지 못한 오류(소재 상자가 올바르지 않음)는 다시 그린 깎기 탭 상태 글이 role=alert(새로 붙어도 화면 읽기가 읽음), 꺼짐·진행·끝 글은 aria-live=polite 그대로', async () => {
     const { app, root } = makeApp();
     await open(app, 'opencad-sample.nc', ncSampleProgram());
     const api = window.opencadApp!;

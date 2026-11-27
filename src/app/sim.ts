@@ -262,20 +262,49 @@ function tabControls(body: ParentNode): Map<string, TabControl> {
  * 121차: 패널 깎기 탭을 다시 그린다(host.refreshPanel — panel.ts render가 탭 내용을 통째로 새로 만든다). 초점이 있던 칸이 떼어지면 HTML focus fixup이
  * 초점을 문서로 옮겨 제자리를 잃었다(키보드로 바꾼 상자·고르기·숫자 칸·버튼마다, 계산이 끝나 급속 목록이 바뀌거나 계산 오류일 때도) —
  * 다시 그린 탭의 같은 열쇠 칸으로 옮기고, 그 칸이 막혔으면(누른 자동으로·기억 지우기) 같은 묶음에서 그 앞의 막히지 않은 칸으로.
- * 초점이 탭 밖이거나 칸이 그대로 있으면(다른 탭을 보는 중) 아무것도 하지 않는다. 시험의 가짜 this(tabEls 없음)는 다시 그리기만
+ * 초점이 탭 밖이거나 칸이 그대로 있으면(다른 탭을 보는 중) 아무것도 하지 않는다. 시험의 가짜 this(tabEls 없음)는 다시 그리기만.
+ * 196차: keep(사용자 change가 아닌 앱 쪽 까닭 — 계산 결과의 급속 목록·계산 오류)이면 같은 칸으로 간 때 친 글도 되살린다(keepTyped — 읽지 못한 글 badInput은 빼고)
  */
-function redrawTab(host: Pick<SimHost, 'refreshPanel'>, sim: { tabEls?: Map<string, TabControl> }): void {
+function redrawTab(host: Pick<SimHost, 'refreshPanel'>, sim: { tabEls?: Map<string, TabControl> }, keep = false): void {
   const had = document.activeElement;
   let key: string | undefined;
   if (sim.tabEls) for (const [k, el] of sim.tabEls) if (el === had) key = k;
   host.refreshPanel();
   if (key === undefined || had?.isConnected) return;
-  let to = sim.tabEls?.get(key);
+  const same = sim.tabEls?.get(key);
+  let to = same;
   if (to?.disabled) {
     const all = [...(to.closest('section')?.querySelectorAll<TabControl>(TAB_CONTROLS) ?? [])];
     to = all.slice(0, all.indexOf(to)).reverse().find((el) => !el.disabled);
   }
   to?.focus({ preventScroll: true });
+  if (keep && to === same && had instanceof HTMLInputElement && to instanceof HTMLInputElement && !had.validity.badInput && had.value !== to.value) keepTyped(had, to);
+}
+
+/**
+ * 196차: 앱 쪽 까닭으로 다시 그린 깎기 탭에서 초점이 있던 숫자 칸에 쳐 넣고 아직 바꾸지(change) 않은 글(169차 받지 않은 값이면 aria-invalid도)과
+ * 커서·고른 범위(number 칸은 브라우저가 내주지 않아 건너뜀)를 새로 그린 같은 칸에 옮긴다 — 121차는 초점만 옮겨 글이 새 칸의 값으로 돌아갔다(사용자가 친 글을 앱이 지움).
+ * 모델에는 넣지 않는다. 스크립트가 넣은 글은 사용자 편집이 아니어서 브라우저가 Enter·blur에 change를 내지 않으므로(사용자가 더 고치지 않으면)
+ * 사용자가 끝낼 때(Enter·blur) 다음 차례에 그 칸에 change가 없었고 글이 그린 값과 다르면 한 번 낸다 — 전처럼 건다(브라우저 change가 먼저 오면 그것만)
+ */
+function keepTyped(had: HTMLInputElement, to: HTMLInputElement): void {
+  const shown = to.value;
+  to.value = had.value;
+  if (had.hasAttribute('aria-invalid')) to.setAttribute('aria-invalid', 'true');
+  const s = had.selectionStart;
+  if (s !== null) to.setSelectionRange(s, had.selectionEnd, had.selectionDirection ?? undefined);
+  let fired = false;
+  to.addEventListener('change', () => {
+    fired = true;
+  });
+  const end = (e: Event): void => {
+    if (e instanceof KeyboardEvent && e.key !== 'Enter') return;
+    window.setTimeout(() => {
+      if (!fired && to.isConnected && to.value !== shown) to.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+  to.addEventListener('keydown', end);
+  to.addEventListener('blur', end);
 }
 
 export class SimView {
@@ -577,7 +606,7 @@ export class SimView {
       w.onmessage = (ev: MessageEvent<SimResponse>) => this.onMessage(ev.data);
       w.onerror = (ev: ErrorEvent) => {
         ev.preventDefault();
-        this.fail(ev.message || '워커가 멈췄습니다(메모리가 모자랄 수 있습니다)');
+        this.fail(ev.message || '워커가 멈췄습니다(메모리가 모자랄 수 있습니다)', true);
       };
       this.worker = w;
     }
@@ -622,10 +651,11 @@ export class SimView {
     if (refresh && this.shown) this.scheduleRefresh(true);
   }
 
-  private fail(message: string): void {
+  /** keep(196차): 워커가 알린 오류(앱 쪽 까닭)면 탭을 다시 그릴 때 친 글을 되살린다 — 사용자 change 길 안의 오류는 121차 그대로 */
+  private fail(message: string, keep = false): void {
     this.error = `시뮬레이션을 계산하지 못했습니다: ${message}`;
     this.stop();
-    this.showError();
+    this.showError(keep);
   }
 
   /**
@@ -633,8 +663,8 @@ export class SimView {
    * 재생 띠로 재생) 다른 탭이라 칸을 그리지 않음 — 시뮬레이션을 불러오지 못한 오류(app.ts setSim)와 같은 알림 상자(오류 — role=alert)로 같은 글을 알린다.
    * 진행 칩은 멈추며 거두고 장면은 문서 장면으로 돌아가 그 밖에 알릴 곳이 없었다. 탭이 보이면 탭 글(135차 alert)만 — 두 번 읽지 않게
    */
-  private showError(): void {
-    redrawTab(this.host, this);
+  private showError(keep = false): void {
+    redrawTab(this.host, this, keep);
     const el = this.statusEl;
     if (this.error && !(el?.isConnected && !el.closest('[hidden]'))) toast(uiText(this.error), 'error');
   }
@@ -694,7 +724,7 @@ export class SimView {
   private onMessage(msg: SimResponse): void {
     if (msg.gen !== this.gen) return;
     if (msg.type === 'error') {
-      this.fail(msg.message);
+      this.fail(msg.message, true);
       return;
     }
     const changed: Mesh3d[] = [];
@@ -719,7 +749,8 @@ export class SimView {
     const ek = more?.length ? `${msg.events.length + more.length}:${more[more.length - 1]}` : `${msg.events.length}:${msg.events[msg.events.length - 1]?.move ?? -1}`;
     if (ek !== this.eventsKey) {
       this.eventsKey = ek;
-      redrawTab(this.host, this);
+      // 196차: 계산이 보낸 결과로 다시 그린다(사용자 change가 아님) — 숫자 칸에 쳐 넣던 글은 남긴다
+      redrawTab(this.host, this, true);
     }
   }
 
