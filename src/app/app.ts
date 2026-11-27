@@ -2334,11 +2334,16 @@ export class NcViewerApp implements PanelHost {
     }
   }
 
-  /** 알림이 3D 보기 아래쪽 띠를 가리지 않게: 화면 아래쪽에 붙은 띠 가운데 맨 위의 높이(화면 아래에서 잰 px)를 --toast-clear로 */
+  /**
+   * 알림이 3D 보기 아래쪽 띠를 가리지 않게: 화면 아래쪽에 붙은 띠 가운데 맨 위의 높이(화면 아래에서 잰 px)를 --toast-clear로.
+   * 188차: 좁은 화면 판단 띠도 재생·측정 띠 맨 위를 비키게 — 판단 띠를 재기 전에 두 띠 맨 위(3D 보기 아래에서 잰 px + 10)를 --notice-clear로(CSS가 76·140px과 큰 쪽).
+   * 판단 띠 자신은 넣지 않아 고리가 없고(옮겨도 크기는 그대로), 판단 띠는 옮긴 자리를 재어 알림은 그 위로
+   */
   private liftToasts(): void {
     const vh = window.innerHeight;
     let top = Infinity;
-    for (const el of [this.noticeBar, this.playStrip.el, this.measureBar]) {
+    for (const el of [this.playStrip.el, this.measureBar, this.noticeBar]) {
+      if (el === this.noticeBar) this.viewEl.style.setProperty('--notice-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(this.viewEl.getBoundingClientRect().bottom - top + 10))}px` : '0px');
       if (el.hidden) continue;
       const r = el.getBoundingClientRect();
       if (r.height > 0 && r.bottom > vh / 2 && r.top < top) top = r.top;
