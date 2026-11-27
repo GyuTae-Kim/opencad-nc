@@ -25,7 +25,9 @@ jobs:
       - name: Start installing mobile audit tools in the background
         run: |
           mkdir -p "$RUNNER_TEMP/bg"
-          nohup sh -c 'sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk; echo $? > "$RUNNER_TEMP/bg/fonts.rc"' > "$RUNNER_TEMP/bg/fonts.log" 2>&1 &
+          # CI 7차: 글꼴을 넣은 뒤 비교와 같은 플래그의 headless Chrome을 빈 쪽으로 한 번 띄워 데운다(빌드와 겹침 — 비교 첫 번 baseline-1이
+          # Chrome 찬 시작(디스크·글꼴 캐시, CI 6차가 찍은 값 1~22초)을 혼자 물던 것). 비교는 그대로 번마다 새 프로필이다
+          nohup sh -c 'sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk; rc=$?; t=$(date +%s%N); timeout 60 "$(command -v google-chrome-stable || command -v google-chrome)" --headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader --user-data-dir="$RUNNER_TEMP/bg/warm-profile" --dump-dom about:blank > /dev/null 2>&1; w=$?; echo "chrome warm-up exit $w in $(( ($(date +%s%N) - t) / 1000000 )) ms"; echo $rc > "$RUNNER_TEMP/bg/fonts.rc"' > "$RUNNER_TEMP/bg/fonts.log" 2>&1 &
           nohup sh -c 'npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli; echo $? > "$RUNNER_TEMP/bg/audit.rc"' > "$RUNNER_TEMP/bg/audit.log" 2>&1 &
       - run: npm run test:seo
       - uses: actions/upload-artifact@v4
