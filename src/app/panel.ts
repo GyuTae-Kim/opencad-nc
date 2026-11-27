@@ -38,6 +38,9 @@ export function sheetFraction(f: number): number {
   return Math.max(0.22, Math.min(0.85, Number.isFinite(f) ? f : 0.45));
 }
 
+/** 172차: 손잡이를 끌지 않고 누르면 갈 크기 — 지금보다 뚜렷이(5%) 큰 첫 크기, 가장 크면 첫(가장 작은) 크기로 */
+const nextSize = (now: number, sizes: number[]): number => sizes.find((s) => s > now * 1.05) ?? sizes[0]!;
+
 /** 패널이 부르는 앱 기능 */
 export interface PanelHost {
   readonly speed: PlaySpeed;
@@ -130,7 +133,7 @@ export class NcPanel {
     // 141차: 몸통 하나를 모든 탭 버튼이 aria-controls로 가리키고, 몸통 이름은 render가 지금 탭 버튼으로(aria-labelledby — APG Tabs). 패널은 앱에 하나라 id도 하나
     this.body = h('div', { class: 'panel-body', role: 'tabpanel', id: 'panel-body' });
     this.foot = h('div', { class: 'panel-foot', hidden: true, 'aria-live': 'polite' });
-    const grip = h('div', { class: 'panel-grip', title: '끌어서 크기 바꾸기', 'aria-hidden': 'true' });
+    const grip = h('div', { class: 'panel-grip', title: '끌거나 눌러 크기 바꾸기', 'aria-hidden': 'true' });
     this.el = h('aside', { class: 'panel', hidden: true, 'aria-label': '문서 패널' }, grip, h('div', { class: 'panel-head' }, this.tabsEl, close), this.play, this.body, this.foot);
     workspace.append(this.el);
     const w = Number(safeGet(WIDTH_KEY));
@@ -140,30 +143,49 @@ export class NcPanel {
     this.bindResize(grip);
   }
 
-  /** 넓으면 폭, 좁으면(아래 시트) 높이를 끌어서 바꾼다 */
+  /**
+   * 넓으면 폭, 좁으면(아래 시트) 높이를 끌어서 바꾼다. 172차(WCAG 2.5.7 끄는 동작의 한 점 대안): 끌지 않고 떼면 다음 정해진 크기로 —
+   * 작게(끌기 최소)·보통(CSS 기본 380px·46%)·크게(끌기 최대)를 돈다. 끌기 판정은 코어 문턱과 같다(마우스·펜 4px, 손가락 10px).
+   * 지금 크기는 둔 변수를 먼저 읽는다(넓은 화면 패널은 CSS 최대 60%라 그린 폭이 변수보다 작을 수 있다)
+   */
   private bindResize(grip: HTMLElement): void {
     grip.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
       grip.setPointerCapture(ev.pointerId);
       const asSheet = window.innerWidth < NARROW_WIDTH;
       const x0 = ev.clientX;
+      const y0 = ev.clientY;
+      const slop = ev.pointerType === 'touch' ? 10 : 4;
+      let moved = false;
       const w0 = this.el.getBoundingClientRect().width;
       const area = this.workspace.getBoundingClientRect();
+      const maxW = Math.min(900, area.width - 200);
+      const fitW = (w: number): number => Math.max(260, Math.min(maxW, w));
       let width = w0;
       let sheet = sheetFraction(this.el.getBoundingClientRect().height / Math.max(1, area.height));
       const move = (e: PointerEvent) => {
+        if (Math.hypot(e.clientX - x0, e.clientY - y0) >= slop) moved = true;
         if (asSheet) {
           sheet = sheetFraction((area.bottom - e.clientY) / Math.max(1, area.height));
           this.workspace.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
           return;
         }
-        width = Math.max(260, Math.min(Math.min(900, area.width - 200), w0 + (x0 - e.clientX)));
+        width = fitW(w0 + (x0 - e.clientX));
         this.el.style.setProperty('--panel-w', `${Math.round(width)}px`);
       };
-      const up = () => {
+      const up = (e: PointerEvent) => {
         grip.removeEventListener('pointermove', move);
         grip.removeEventListener('pointerup', up);
         grip.removeEventListener('pointercancel', up);
+        if (!moved && e.type === 'pointerup') {
+          if (asSheet) {
+            sheet = nextSize(parseFloat(this.workspace.style.getPropertyValue('--sheet-h')) / 100 || sheet, [0.22, 0.46, 0.85]);
+            this.workspace.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
+          } else {
+            width = nextSize(parseFloat(this.el.style.getPropertyValue('--panel-w')) || w0, [260, 380, maxW].map(fitW));
+            this.el.style.setProperty('--panel-w', `${Math.round(width)}px`);
+          }
+        }
         if (asSheet) safeSet(SHEET_KEY, sheet.toFixed(3));
         else safeSet(WIDTH_KEY, String(Math.round(width)));
       };
