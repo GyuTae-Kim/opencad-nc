@@ -159,14 +159,20 @@ describe('100차: 카메라만 움직이면 측정 툴팁이 그 점의 새 화�
     expect(shown).toEqual(now);
   });
 
-  it('보기 키(7 — 남동 등각, 움직임): 원호 중심 위에 멈춘 채 3D 보기에서 보기를 바꾸면 움직임이 끝난 자리에서 툴팁이 중심을 따른다', async () => {
+  it('보기 키(7 — 남동 등각, 움직임): 원호 중심 위에 멈춘 채 3D 보기에서 보기를 바꾸면 움직임이 끝난 자리에서 툴팁이 중심을 따른다(171차 설정 끔)', async () => {
     const { app, v } = await measuring();
+    // 171차: 설정 메뉴 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」(menuitemcheckbox — 기본 켬)를 눌러 끈다
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.menu [role="menuitemcheckbox"]')].find((b) => b.textContent === '3D 보기 밖에서도 한 글자 단축키(F·1~7)')!;
+    expect(item.getAttribute('aria-checked')).toBe('true');
+    item.click();
+    expect(item.getAttribute('aria-checked')).toBe('false');
+    expect(localStorage.getItem('opencad-nc.charKeys')).toBe('off');
     await hover(v, [30, 0, 0]);
     const pre = app.state().measureLock!;
     expect(pre.tip).toBe('중심');
     const hv = hoverKey(v);
     const c0 = v.getCamera();
-    // 171차(WCAG 2.1.4 문자 키 단축키): 초점이 3D 보기 밖(body — 초점 없음)이면 앱 onKey가 글자·숫자 키를 뷰어로 넘기지 않는다 — 카메라 그대로
+    // 171차(WCAG 2.1.4 문자 키 단축키): 끄면 초점이 3D 보기 밖(body — 초점 없음)일 때 앱 onKey가 글자·숫자 키를 뷰어로 넘기지 않는다 — 카메라 그대로
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '7', bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 600));
     await frames();
@@ -184,6 +190,9 @@ describe('100차: 카메라만 움직이면 측정 툴팁이 그 점의 새 화�
     expect(now.tip).toBe('중심');
     expect(now.tipRect).not.toEqual(pre.tipRect);
     expect(shown).toEqual(now);
+    // 다음 시험을 위해 다시 켠다(같은 앱·같은 저장소)
+    item.click();
+    expect([item.getAttribute('aria-checked'), localStorage.getItem('opencad-nc.charKeys')]).toEqual(['true', 'on']);
   });
 
   it('비용 그대로: 측정을 껐거나 툴팁이 없으면 카메라가 바뀌어도 툴팁을 셈하지 않는다', async () => {
