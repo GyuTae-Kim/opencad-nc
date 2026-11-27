@@ -20,6 +20,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # 휴대폰 로딩 비교에 쓰는 한글 글꼴(apt)과 lighthouse·playwright-cli(npm)는 빌드·기준 빌드와 함께 뒤에서 설치한다
+      # (CI 1차 — 전에는 기준 빌드가 끝난 뒤 차례로 설치해 약 15~25초를 더 기다렸다). 비교 바로 앞 단계에서 끝을 기다리고 실패면 멈춘다
+      - name: Start installing mobile audit tools in the background
+        run: |
+          mkdir -p "$RUNNER_TEMP/bg"
+          nohup sh -c 'sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk; echo $? > "$RUNNER_TEMP/bg/fonts.rc"' > "$RUNNER_TEMP/bg/fonts.log" 2>&1 &
+          nohup sh -c 'npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli; echo $? > "$RUNNER_TEMP/bg/audit.rc"' > "$RUNNER_TEMP/bg/audit.log" 2>&1 &
       - run: npm run test:seo
       - uses: actions/upload-artifact@v4
         with:
@@ -34,19 +41,25 @@ jobs:
           mv dist .runtime/performance/candidate
           git restore site/content-history.json
           git fetch --no-tags origin "$BASE_SHA"
+          # 기준 커밋과 이 커밋의 의존성(package.json·package-lock.json)이 같으면 node_modules를 그대로 쓴다(CI 1차 — 전에는 npm ci 두 번)
+          same_deps=0
+          if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- package.json package-lock.json; then same_deps=1; fi
           git checkout --detach "$BASE_SHA"
-          npm ci
+          if [ "$same_deps" = 0 ]; then npm ci; fi
           npm run build
           mv dist .runtime/performance/baseline
           git checkout --detach "$GITHUB_SHA"
           # 기준 커밋의 node_modules를 이 커밋의 것으로 되돌린다(성능 명령은 공용 사이트 도구 opencad-site-kit에 있다)
-          npm ci
-      - name: Install Korean glyphs for representative browser rendering
-        run: sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+          if [ "$same_deps" = 0 ]; then npm ci; fi
+      - name: Wait for mobile audit tools (Korean glyphs, lighthouse, playwright-cli)
+        timeout-minutes: 5
+        run: |
+          until [ -e "$RUNNER_TEMP/bg/fonts.rc" ] && [ -e "$RUNNER_TEMP/bg/audit.rc" ]; do sleep 0.5; done
+          tail -n 3 "$RUNNER_TEMP/bg/fonts.log" "$RUNNER_TEMP/bg/audit.log"
+          [ "$(cat "$RUNNER_TEMP/bg/fonts.rc")" = 0 ] && [ "$(cat "$RUNNER_TEMP/bg/audit.rc")" = 0 ]
       - name: Compare cold mobile loads
         timeout-minutes: 8
         run: |
-          npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli
           node_modules/.bin/opencad-site serve-performance .runtime/performance/baseline 4320 > "$RUNNER_TEMP/mobile-baseline.log" 2>&1 &
           baseline_pid=$!
           node_modules/.bin/opencad-site serve-performance .runtime/performance/candidate 4321 > "$RUNNER_TEMP/mobile-candidate.log" 2>&1 &
