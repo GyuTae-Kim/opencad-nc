@@ -872,6 +872,33 @@ describe('재생 띠(패널을 닫았을 때)', () => {
     expect(range.getAttribute('aria-valuetext')).toBe(time());
     expect(panelRange.getAttribute('aria-valuetext')).toBe(time());
   });
+
+  it('178차: 다시 읽기·새 문서 열기는 재생을 멈추고 재생 자리를 지운다(전체 경로) — 띠도 함께 숨어 옛 시간·「재생 멈춤」으로 남지 않는다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    api.togglePanel(false);
+    // 재생 자리가 있는 채(멈춤) 다시 읽기 — 해석 판단 띠의 동작 버튼과 같은 길
+    api.seek(1);
+    expect(strip.hidden).toBe(false);
+    await api.reparse({});
+    expect(api.state.playSec).toBeNull();
+    expect(strip.hidden).toBe(true);
+    // 재생 중 새 문서 열기: 새 문서는 재생 자리가 없다
+    app.togglePlay();
+    expect(api.state.playing).toBe(true);
+    expect(strip.hidden).toBe(false);
+    expect(strip.querySelector('button[aria-label="재생 멈춤"]')).not.toBeNull();
+    expect(await open(app, 'n.nc', MILL)).toBe(true);
+    expect(api.state.playing).toBe(false);
+    expect(api.state.playSec).toBeNull();
+    expect(strip.hidden).toBe(true);
+    // 새 문서에서 재생 자리를 정하면 띠가 새 시간으로 다시 보인다
+    api.seek(1);
+    expect(strip.hidden).toBe(false);
+    expect(strip.querySelector('.ps-time')!.textContent).toMatch(/^0:01\.0 \/ /);
+  });
 });
 
 describe('경고 → 줄', () => {
