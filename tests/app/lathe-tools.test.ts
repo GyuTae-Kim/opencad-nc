@@ -310,3 +310,70 @@ describe('정보 탭: 보정 구간 줄을 목록으로(148차)', () => {
     expect(css.match(/(^|\n)\.panel-body\s*\{([^}]*)\}/)![2]).not.toMatch(/display/);
   });
 });
+
+/**
+ * 168차: 기계·읽기 설정 숫자 칸과 선반 공구 표 노즈 R 칸은 읽지 못한 글(브라우저가 빈 값으로 돌리고 validity.badInput — 쉼표 소수 등)·받지 않는 수(급속 속도 0·음수,
+ * 공구 교환 시간 음수, 노즈 R 0·음수)를 빈 칸처럼 null로 걸어 기억한 값을 말없이 지우고 다시 읽었다(WCAG 3.3.1 — 무엇이 틀렸는지 알 길 없음).
+ * 이제 걸지 않고(기억한 값·다시 읽기 그대로) 칸에 aria-invalid="true"를 두며, 받는 값·빈 칸을 넣으면 거두고 전처럼 건다
+ */
+describe('정보 탭: 받지 않는 숫자 값(168차)', () => {
+  it('읽지 못한 글·받지 않는 수는 기억한 값을 지우지 않고 다시 읽지 않으며 칸에 aria-invalid, 받는 값·빈 칸이면 거두고 건다', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const input = (label: string): HTMLInputElement => root.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    await until(() => !!input('급속 속도(mm/분)'));
+    const saved = (): Record<string, unknown> => JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Record<string, unknown>;
+    /** 칸에 글을 넣고 change — bad면 브라우저가 읽지 못한 글(빈 값 + validity.badInput) */
+    const put = (label: string, v: string, bad = false): HTMLInputElement => {
+      const el = input(label);
+      if (bad) Object.defineProperty(el, 'validity', { configurable: true, value: { badInput: true } });
+      el.value = v;
+      el.dispatchEvent(new Event('change'));
+      return el;
+    };
+    const settle = async (n: number): Promise<void> => {
+      await until(() => fake.opens.length === n && api.state.parsed);
+      await tick();
+    };
+    put('급속 속도(mm/분)', '5000');
+    await settle(2);
+    put('T1 노즈 반지름(mm)', '0.4');
+    await settle(3);
+    expect([saved().rapidFeedMm, saved().latheTools]).toEqual([5000, { 1: { radiusMm: 0.4, orientation: null } }]);
+    const bad: [string, string, boolean][] = [
+      ['급속 속도(mm/분)', '0', false],
+      ['급속 속도(mm/분)', '-1', false],
+      ['급속 속도(mm/분)', '', true],
+      ['공구 교환 시간(초)', '-2', false],
+      ['G54 원점의 기계 좌표(mm) — X', '', true],
+      ['T1 노즈 반지름(mm)', '0', false],
+      ['T1 노즈 반지름(mm)', '-0.2', false],
+      ['T1 노즈 반지름(mm)', '', true],
+    ];
+    const marks = bad.map(([l, v, b]) => [l, v, put(l, v, b).getAttribute('aria-invalid')]);
+    await tick();
+    await tick();
+    expect(marks).toEqual(bad.map(([l, v]) => [l, v, 'true']));
+    expect(fake.opens).toHaveLength(3);
+    expect([saved().rapidFeedMm, saved().toolChangeSec, saved().offsetMm, saved().latheTools]).toEqual([5000, null, [null, null, null], { 1: { radiusMm: 0.4, orientation: null } }]);
+    // 받는 값을 넣으면 거둔다(공구 교환 시간 0은 전처럼 null = 0초 — 다시 읽지 않음)
+    expect(put('공구 교환 시간(초)', '0').hasAttribute('aria-invalid')).toBe(false);
+    expect(saved().toolChangeSec).toBe(null);
+    // 노즈 R 칸이 받지 않는 값인 채 방향을 고르면 반지름은 기억한 값으로(전에는 지워짐)
+    const q = root.querySelector<HTMLSelectElement>('select[aria-label="T1 공구 방향"]')!;
+    q.value = '3';
+    q.dispatchEvent(new Event('change'));
+    await settle(4);
+    expect(saved().latheTools).toEqual({ 1: { radiusMm: 0.4, orientation: 3 } });
+    expect([input('T1 노즈 반지름(mm)').value, input('T1 노즈 반지름(mm)').hasAttribute('aria-invalid'), input('급속 속도(mm/분)').value]).toEqual(['0.4', false, '5000']);
+    // 빈 칸은 전처럼 기본값으로 걸고 다시 읽는다
+    expect(put('급속 속도(mm/분)', '').hasAttribute('aria-invalid')).toBe(false);
+    await settle(5);
+    expect(saved().rapidFeedMm).toBe(null);
+  });
+});
