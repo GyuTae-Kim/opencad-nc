@@ -1973,10 +1973,11 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
-/* 판재: 시뮬레이션하지 않은 가공의 까닭 머리 */
+/* 판재: 시뮬레이션하지 않은 가공의 까닭 머리(h4 — 기본 굵기 대신 감싼 글을 이어받아 까닭 글 b만 굵고 흐린 수는 보통, 163차) */
 .sim-skip-head {
   margin: 8px 0 2px;
   overflow-wrap: anywhere;
+  font-weight: inherit;
 }
 table.sim-tools .select.small {
   max-width: 9.5em;

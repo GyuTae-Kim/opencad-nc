@@ -3,6 +3,8 @@
  * 깎기 시뮬레이션 화면(app.ts·sim.ts): 켜고 끄기, 문서 장면 + 소재 그물, 재생 막대 따라가기, 깎기 탭(소재·공구 표·급속 경고),
  * 시뮬레이션하지 않는 프로그램 알림. 뷰어 코어(WebGL)는 가짜, 워커는 같은 실행기(SimRunner)를 같은 스레드에서 돌리는 가짜.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
@@ -935,6 +937,42 @@ describe('깎기 탭', () => {
     await until(() => FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.every((m) => !m.id.startsWith('mpr-op-')) && settled());
     ids = FakeViewer().scenes[FakeViewer().scenes.length - 1]!.meshes.map((m) => m.id);
     expect(ids.every((id) => id.startsWith('sim-'))).toBe(true);
+  });
+
+  it('163차: 시뮬레이션하지 않은 가공의 까닭 머리(굵은 까닭 글 — 바로 밑 그 까닭의 가공 목록 머리)는 글 모양만이 아니라 제목 요소 — 묶음 제목(h3) 밑 단계 4(h4), 모양(여백·굵은 까닭 글·흐린 수)은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    await until(() => root.querySelector('.panel-body')!.textContent!.includes('시뮬레이션하지 않은 가공 2개'));
+    const sec = [...root.querySelectorAll<HTMLElement>('.panel-body .prop-group')].find((g) => g.querySelector('h3')?.textContent === '시뮬레이션하지 않은 가공 2개')!;
+    // 까닭마다 머리 하나(PANEL_SKIP_TEXT 열쇠 차례): 제목 요소 h4, 글은 그대로(굵은 까닭 b + 흐린 수)
+    const heads = [...sec.querySelectorAll<HTMLElement>('.sim-skip-head')];
+    expect(heads.map((e) => [e.tagName, e.querySelector('b')?.textContent, e.querySelector('.dim')?.textContent])).toEqual([
+      ['H4', PANEL_SKIP_TEXT.side, '1개'],
+      ['H4', PANEL_SKIP_TEXT.bottom, '1개'],
+    ]);
+    // 머리 바로 다음이 그 까닭의 가공 목록(옆면 구멍 = 가공 3, 아랫면 = 가공 4)
+    expect(heads.map((e) => [e.nextElementSibling?.tagName, [...(e.nextElementSibling?.querySelectorAll('.ln') ?? [])].map((x) => x.textContent)])).toEqual([
+      ['UL', ['가공 3']],
+      ['UL', ['가공 4']],
+    ]);
+    // 묶음 안 그 밖의 제목은 묶음 제목 h3 하나(까닭 머리는 그 밑 단계 — 다른 시험의 `.panel-body h3` 목록에 끼지 않음)
+    expect([...sec.querySelectorAll('h1, h2, h3, h5, h6')].map((e) => e.textContent)).toEqual(['시뮬레이션하지 않은 가공 2개']);
+    // 모양: jsdom은 CSS를 그리지 않아 styles.css 글로 본다(view-tools 160~162차 꼴 — 주석과 @media 덩어리를 뺀 맨 바깥 규칙).
+    // 브라우저 기본 h4는 굵게·위아래 여백 1.33em(글자 크기는 정하지 않아 감싼 글 그대로) — 여백은 이 클래스가 덮고, 굵기는 감싼 글을 이어받아 흐린 수는 보통·까닭 글(b)만 굵게(p 때와 같음)
+    const css = readFileSync(join(__dirname, '../../src/app/styles.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    expect(rules.filter((r) => r.sels.includes('.sim-skip-head')).map((r) => r.body)).toEqual([{ margin: '8px 0 2px', 'overflow-wrap': 'anywhere', 'font-weight': 'inherit' }]);
+    // h4를 따로 꾸미는 규칙은 없다(묶음 제목 `.prop-group h3` 꼴이 까닭 머리에 걸리지 않음)
+    expect(rules.filter((r) => r.sels.some((s) => /(^|[\s>+~(])h4(?![\w-])/.test(s)))).toEqual([]);
   });
 
   it('판 윗면 가공이 없는 판재 파일은 까닭과 목록만', async () => {
