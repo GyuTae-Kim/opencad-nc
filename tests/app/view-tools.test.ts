@@ -419,6 +419,46 @@ describe('앱 펼침 메뉴 초점 테두리(161차)', () => {
   });
 });
 
+describe('잘리는 초점 테두리(162차)', () => {
+  it('162차: 패널 탭·코드 목록은 부모가 잘라 바깥 초점 테두리가 한두 변만 남아(첫 탭은 세로 한 줄, 코드 목록은 찾기 줄 아래 가로 한 줄) 단면 축 버튼(.seg)과 같은 안쪽 2px 강조 테두리, 마우스 올림·고른 탭 모양과 vlist.css 차례는 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.opencadApp!.setPanelTab('code');
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>('.panel-tabs [role=tab]')];
+    expect(tabs.map((b) => b.dataset.tab)).toEqual(['code', 'tools', 'info', 'sim']);
+    const list = root.querySelector<HTMLElement>('.panel-body .code-list')!;
+    expect(list.getAttribute('tabindex')).toBe('0');
+    // jsdom은 CSS를 그리지 않아 CSS 글로 본다(160·161차 꼴): 주석과 @media 덩어리를 뺀 맨 바깥 규칙
+    const read = (path: string): string => readFileSync(join(ROOT, path), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const rules = parse(read('src/app/styles.css'));
+    const body = (sel: string): Record<string, string> | undefined => rules.find((r) => r.sels.includes(sel))?.body;
+    // 잘리는 까닭: 탭 줄은 가로 굴림 상자(세로도 auto)이고 높이가 탭 36px라 위·아래가, 코드 몸통은 여백 없이 잘라 왼·오른·아래가 잘린다
+    expect(body('.panel-tabs')).toMatchObject({ 'overflow-x': 'auto' });
+    expect(body('.panel-tab')).toMatchObject({ height: '36px' });
+    expect(body('.panel-body.code')).toMatchObject({ padding: '0', overflow: 'hidden' });
+    const seg = body('.seg:focus-visible');
+    expect(seg).toEqual({ outline: '2px solid var(--accent)', 'outline-offset': '-2px' });
+    // 칸 모두에 맞는 선택자의 상태 규칙(바탕 선택자가 빈 맨 :focus-visible 기본 테두리는 뺀다). 같은 구체성이면 뒤 규칙이 이긴다
+    const on = (els: HTMLElement[], state: string) =>
+      rules.filter((r) => r.sels.some((s) => s.endsWith(state) && s.length > state.length && els.every((e) => e.matches(s.slice(0, -state.length)))));
+    for (const els of [tabs, [list]]) {
+      const ring = on(els, ':focus-visible').filter((r) => 'outline' in r.body).pop();
+      expect(ring?.body).toEqual(seg);
+      expect(ring!.sels.some((s) => s.includes(':hover'))).toBe(false);
+    }
+    // 마우스 올림(글 색)·고른 탭(밑줄·굵은 글) 모양은 그대로
+    expect(on(tabs, ':hover').map((r) => r.body)).toEqual([{ color: 'var(--text)' }]);
+    expect(body('.panel-tab.active')).toEqual({ 'border-bottom-color': 'var(--accent)', color: 'var(--text)', 'font-weight': '600' });
+    // vlist.css의 outline: 0(같은 구체성이라 뒤의 맨 :focus-visible에 지는 차례)은 그대로 — 새 규칙은 구체성이 높아 차례와 무관
+    expect(parse(read('src/view/vlist.css')).find((r) => r.sels.includes('.vlist'))!.body.outline).toBe('0');
+  });
+});
+
 describe('단면 펼침 상자 초점(152차)', () => {
   it('152차: 단면 상자(role=dialog, 모달 아님)는 열면 눌린 축 버튼에 초점·Esc는 닫고 단면 버튼으로, 초점이 상자·단면 버튼 밖으로 나가면(Tab으로 나감) 닫혀 그 칸의 Esc를 가져가지 않고, 펼친 메뉴도 같은 규칙', async () => {
     const { app, root } = makeApp();
