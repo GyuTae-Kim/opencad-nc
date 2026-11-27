@@ -37,7 +37,7 @@ import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
-import { isEditableTarget, isPressTarget, keyAction, tabMove, viewKeyOf } from './keys';
+import { isEditableTarget, isPressTarget, keyAction, readCharKeysPref, tabMove, viewKeyOf, writeCharKeysPref } from './keys';
 import { MEASURE_LOADING, measureHint, measureLines, snapPair, trackMarks } from './measure';
 import type { MeasureLock } from './measure-lock';
 import type { TrackPick } from './measure-track';
@@ -230,6 +230,8 @@ export class NcViewerApp implements PanelHost {
 
   private theme: ThemeName;
   private readonly storage = safeStorage();
+  /** 171차: 설정 메뉴 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」(기본 켬 — 끄면 그 키는 3D 보기에 초점이 있을 때만, WCAG 2.1.4) */
+  private charKeys = readCharKeysPref(this.storage);
   private panelOpen = !isPhone();
   private playing = false;
   private raf = 0;
@@ -367,8 +369,14 @@ export class NcViewerApp implements PanelHost {
     themeChoice.addEventListener('click', () => this.setTheme(otherTheme(this.theme), true));
     const analyticsChoice = h('button', { type: 'button', role: 'menuitem' }, '방문 통계 설정');
     analyticsChoice.addEventListener('click', showAnalyticsSettings);
+    // 171차(WCAG 2.1.4): 켜고 끄는 항목(격자·뷰 큐브와 같은 menuitemcheckbox) — 끄면 F·1~7은 3D 보기에 초점이 있을 때만(keyAction), 이 브라우저에 기억
+    const charKeysChoice = menuItem('3D 보기 밖에서도 한 글자 단축키(F·1~7)', 'menuitemcheckbox', () => {
+      writeCharKeysPref(this.storage, (this.charKeys = !this.charKeys));
+      charKeysChoice.setAttribute('aria-checked', String(this.charKeys));
+    });
+    charKeysChoice.setAttribute('aria-checked', String(this.charKeys));
     // 다른 웹페이지에 넣은 화면(iframe)에서는 방문 통계를 켜지 않으므로 그 설정 항목도 뺀다
-    const settings = this.menu('settings', this.themeBtn, isFramed() ? [themeChoice] : [themeChoice, analyticsChoice], false);
+    const settings = this.menu('settings', this.themeBtn, isFramed() ? [themeChoice, charKeysChoice] : [themeChoice, charKeysChoice, analyticsChoice], false);
     const toolsLink = h('a', { class: 'tbtn', href: TOOLS_URL, title: 'OpenCAD 도구 모음', 'aria-label': 'OpenCAD 도구', html: `${icon('apps')}<span class="lbl">OpenCAD 도구</span>` });
     const repoLink = h('a', { class: 'tbtn', href: REPO_URL, target: '_blank', rel: 'noopener', title: 'GitHub 저장소(소스 코드)', 'aria-label': 'GitHub', html: `${icon('code')}<span class="lbl">GitHub</span>` });
     this.docNameEl = h('span', { class: 'docname' });
@@ -725,7 +733,8 @@ export class NcViewerApp implements PanelHost {
       if (over > 0) list.style.left = `${-over}px`;
       // 아래가 모자라면(휴대폰 가로 등) 메뉴 안에서 굴린다
       if (r.bottom > vp.height - 8) list.style.maxHeight = `${Math.max(120, vp.height - r.top - 8)}px`;
-      const checked = list.querySelector<HTMLElement>('[aria-checked="true"]');
+      // 고른 하나(radio)에 초점 — 171차: 켜고 끄는 항목(checkbox)은 빼서 설정 메뉴는 켜 둔 한 글자 단축키 항목이 아닌 첫 항목에서 연다(다른 메뉴는 radio가 앞이라 그대로)
+      const checked = list.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]');
       (checked ?? items[0])?.focus();
     });
     list.addEventListener('click', (ev) => {
@@ -2380,6 +2389,7 @@ export class NcViewerApp implements PanelHost {
       arrowOwner: !!this.openMenu || !!t?.closest?.('[role="menu"], [role="tablist"], [role="listbox"], [role="tree"]'),
       canStepOps: !!this.sim?.canStepOps,
       keyCursor: !!this.keySnap?.cursor,
+      charKeysOff: !this.charKeys,
     });
     if (!a) return;
     if (a.type === 'open') {
@@ -2392,7 +2402,7 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     switch (a.type) {
       case 'viewer':
-        // F·1~7(·측정 점이 있을 때 Esc)은 뷰어 규칙대로. 받지 않은 키는 그대로 흘려보낸다
+        // F·1~7·Shift·Tab 등은 뷰어 규칙대로(171차: 설정을 끄면 F·1~7은 3D 보기에서만 — keyAction이 넘기지 않음). 받지 않은 키는 그대로 흘려보낸다
         if (v.handleKey(ev)) ev.stopPropagation();
         return;
       case 'escape':

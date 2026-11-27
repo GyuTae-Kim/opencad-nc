@@ -2,7 +2,8 @@
  * 키 고르기(순수 함수): 눌린 키와 지금 상황으로 할 일을 정한다. 실제 이벤트 처리는 app.ts가 한다.
  *
  * - 뷰어 키(F 전체 보기, 1~7 표준 뷰, Esc 측정 지우기)의 규칙은 뷰어 코어가 가진다(Viewer3d.handleKey).
- *   캔버스에 초점이 있으면 뷰어가 직접 받고, 초점이 다른 곳(단추·패널 등)이면 앱이 창 키를 handleKey로 넘긴다.
+ *   캔버스에 초점이 있으면 뷰어가 직접 받고, 초점이 다른 곳(단추·패널 등)이면 앱이 창 키를 handleKey로 넘긴다
+ *   (171차: 설정 「3D 보기 밖에서도 한 글자 단축키」를 끄면 글자·숫자 키 F·1~7은 넘기지 않는다 — 3D 보기에 초점이 있을 때만, WCAG 2.1.4).
  * - 입력 칸(글·선택 상자)에서는 아무것도 가로채지 않는다.
  * - 앱 키: F7 = 격자, Space = 재생/멈춤(버튼·체크 상자처럼 Space를 스스로 쓰는 칸에 초점이 있으면 그 칸에 둔다 — isPressTarget), Ctrl/⌘+O = 열기,
  *   Esc = (측정 중이면 측정 먼저) 고른 것 지우기.
@@ -67,6 +68,8 @@ export interface KeyContext {
   canStepOps?: boolean;
   /** 3D 보기의 가상 커서가 켜져 있음(코어 keyboardCursor — 캔버스의 화살표·Esc는 코어가 받는다) */
   keyCursor?: boolean;
+  /** 171차: 설정 「3D 보기 밖에서도 한 글자 단축키」를 껐음(캔버스 밖의 글자 키를 뷰어로 넘기지 않는다 — 기본은 켬) */
+  charKeysOff?: boolean;
 }
 
 /** 화살표 → 잠글 축(↓는 지금 방향 = null) */
@@ -89,7 +92,32 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canPlay) return { type: 'step', delta: (c.key === 'ArrowRight' ? 1 : -1) * (c.shift ? 10 : 1) };
   if ((c.key === 'ArrowRight' || c.key === 'ArrowLeft') && c.canStepOps && !c.arrowOwner && !c.inCode) return { type: 'opStep', delta: c.key === 'ArrowRight' ? 1 : -1 };
   if ((c.key === 'ArrowDown' || c.key === 'ArrowUp') && (c.onCanvas || c.inCode)) return { type: 'line', delta: c.key === 'ArrowDown' ? 1 : -1 };
-  return c.onCanvas ? null : { type: 'viewer' };
+  // 171차(WCAG 2.1.4 문자 키 단축키): 설정 「3D 보기 밖에서도 한 글자 단축키」를 끄면 글자·숫자·기호 키 하나(F 전체 보기·1~7 표준 뷰 — Space는 위에서 따로)는
+  // 3D 보기(캔버스)에 초점이 있을 때만 — 코어가 캔버스에서 직접 받는다. 켜 두면(기본) 캔버스 밖(초점 없는 body·버튼·패널·코드 목록)에서도 넘긴다(170차까지 그대로)
+  return c.onCanvas || (c.charKeysOff && c.key.length === 1) ? null : { type: 'viewer' };
+}
+
+/** 171차: 설정 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」의 localStorage 열쇠(값 'off'면 끔 — 없거나 못 읽으면 켬) */
+export const CHAR_KEYS_KEY = 'opencad-nc.charKeys';
+
+/** 171차: 기억한 「3D 보기 밖에서도 한 글자 단축키」 켬 여부(기본 켬 — 저장소가 없거나 예외를 던지면 켬) */
+export function readCharKeysPref(s: Pick<Storage, 'getItem'> | null): boolean {
+  try {
+    return s?.getItem(CHAR_KEYS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+/** 171차: 켬 여부를 기억한다(저장소가 없거나 실패하면 조용히 넘어간다 — 이번 창에서만). 기억했으면 true */
+export function writeCharKeysPref(s: Pick<Storage, 'setItem'> | null, on: boolean): boolean {
+  if (!s) return false;
+  try {
+    s.setItem(CHAR_KEYS_KEY, on ? 'on' : 'off');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 표준 뷰 → 숫자 키(메뉴 글용, VIEW_KEYS를 뒤집은 것). 키가 없는 뷰는 undefined */
