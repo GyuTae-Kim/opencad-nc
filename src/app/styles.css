@@ -826,11 +826,12 @@ table.grid button.linkish {
     bottom: 10px;
   }
   /* 측정 띠가 있으면 그 위로, 재생 띠(더 높다)면 그 위로 */
+  /* 188차(WCAG 1.4.10·2.4.11): 76·140px은 한 줄 띠 어림이라 측정 띠가 두 줄(187차)·재생 띠 줄 글이 감겨 높아지면 덮었다 — 앱이 잰 두 띠 맨 위(--notice-clear, liftToasts)와 큰 쪽 */
   .view:has(.measure-bar:not([hidden])) .notice-bar {
-    bottom: 76px;
+    bottom: max(76px, var(--notice-clear, 0px));
   }
   .view:has(.play-strip:not([hidden])) .notice-bar {
-    bottom: 140px;
+    bottom: max(140px, var(--notice-clear, 0px));
   }
   /* 185차(WCAG 1.4.10): 동작 버튼은 줄을 바꾸지 않아 320px에서 버튼 글이 길면(독일어 등) 글 칸만 몇 글자 폭으로 줄었다 — 글 칸이 8em보다 좁아지면 버튼을 다음 줄 오른쪽으로 */
   .notice {

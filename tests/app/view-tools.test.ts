@@ -1271,6 +1271,148 @@ describe('해석 판단 띠', () => {
     // 휴대폰 검사 폭(390)에서 줄을 감싸는 것은 독일어 가장 긴 버튼 글뿐 — 나머지는 지금처럼 한 줄(글 칸이 남은 폭을 다 받음)
     expect(wrapped).toEqual(['de Als kleinstes Inkrement lesen']);
   });
+
+  it('188차: 좁은 화면 판단 띠는 측정 띠가 있으면 한 줄 띠 어림(bottom 76px)·재생 띠면 140px에만 있어 측정 띠가 66px를 넘으면(187차 두 줄 띠 약 95px — 29px, 결과 114px — 48px)·재생 띠 줄 글이 감기면 띠 맨 위를 덮던 것을 — liftToasts가 판단 띠를 뺀 두 띠 맨 위(3D 보기 아래에서 잰 px + 10)를 --notice-clear로 주고 좁은 화면 규칙은 76·140px과 큰 쪽(WCAG 1.4.10·2.4.11), 알림은 옮긴 판단 띠 위로, 넓은 화면 규칙은 그대로', async () => {
+    const cbs: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          cbs.push(cb);
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    // 3D 보기 안 띠 셋(app.ts): 측정 띠·해석 판단 띠(선반 판단으로 보임)·재생 띠 — 아래 띠 둘은 하나씩 보인다(측정 중에는 재생 띠가 숨음)
+    const view = root.querySelector<HTMLElement>('.view')!;
+    const [bar, notice, strip] = ['measure-bar', 'notice-bar', 'play-strip'].map((c) => view.querySelector<HTMLElement>(`:scope > .${c}`)!) as [HTMLElement, HTMLElement, HTMLElement];
+    expect([bar.hidden, notice.hidden, strip.hidden]).toEqual([true, false, true]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(185~187차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 좁은 화면 덩어리(@media (max-width: 759.98px))
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (b: string): Record<string, string> =>
+      Object.fromEntries(b.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const wide = parse(raw.replace(media, ''));
+    const narrow = [...raw.matchAll(media)].filter((m) => m[1]!.trim() === '(max-width: 759.98px)').flatMap((m) => parse(m[2]!));
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const ON = { measure: '.view:has(.measure-bar:not([hidden])) .notice-bar', play: '.view:has(.play-strip:not([hidden])) .notice-bar' };
+    const rule = { measure: pick(narrow, ON.measure).bottom!, play: pick(narrow, ON.play).bottom! };
+    const px = (v?: string | null): number => parseFloat(v ?? '0') || 0;
+    const nums = (v: string): number[] => v.split(' ').map(px);
+    const vert = (v: string): number => nums(v)[0]! + (nums(v)[2] ?? nums(v)[0]!);
+    // 넓은 화면 판단 띠는 3D 보기 위(top 8px — 아래 띠와 만나지 않음), 좁은 화면 띠 없음은 아래 10px, 두 띠 규칙의 바닥(76·140px)은 그대로
+    expect([o('.notice-bar').top, o('.notice-bar').bottom, pick(narrow, '.notice-bar'), o(ON.measure), o(ON.play)]).toEqual(['8px', undefined, { 'max-width': 'calc(100% - 16px)', top: 'auto', bottom: '10px' }, {}, {}]);
+    const floor = { measure: px(rule.measure.replace(/^max\(/, '')), play: px(rule.play.replace(/^max\(/, '')) };
+    expect([floor.measure, floor.play]).toEqual([76, 140]);
+    /** 규칙 값의 판단 띠 bottom(3D 보기 아래에서 px): max(Apx, var(--notice-clear, 0px)) 꼴이면 앱이 넣은 값과 큰 쪽, 아니면 그 px */
+    const bottomOf = (v: string, clear: number): number => {
+      const m = /^max\((\d+)px, var\(--notice-clear, 0px\)\)$/.exec(v);
+      return m ? Math.max(Number(m[1]), clear) : px(v);
+    };
+    // 띠 자리 흉내: 3D 보기 아래끝 VB(상태 막대 26px 위), 띠는 모두 3D 보기 아래에 붙음. jsdom은 CSS 사용자 속성을 담지 않으므로 넣는 값을 본다
+    const VB = innerHeight - 26;
+    const box = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 8, right: 312, width: 304, x: 8, y: top, toJSON: () => ({}) }) as DOMRect;
+    view.getBoundingClientRect = () => box(VB - 400, 400);
+    const setView = vi.spyOn(view.style, 'setProperty');
+    const setBody = vi.spyOn(document.body.style, 'setProperty');
+    const last = (spy: typeof setView, name: string): number => px(spy.mock.calls.filter((c) => c[0] === name).at(-1)?.[1]);
+    let NH = 47; // 판단 띠 높이(띠 한 줄 — 글 두 줄 35.1 + 여백·테두리 12)
+    let now = rule.measure;
+    // 판단 띠는 그때까지 넣은 --notice-clear로 놓인 자리를 잰다(브라우저 getBoundingClientRect가 새 값으로 다시 배치하듯)
+    notice.getBoundingClientRect = () => {
+      const b = bottomOf(now, last(setView, '--notice-clear'));
+      return box(VB - b - NH, NH);
+    };
+    /** 아래 띠 el(높이 h)을 3D 보기 아래 10px에 두고 크기 알림을 보내면: 판단 띠 아래끝과 띠 위끝 사이 틈, 넣은 --notice-clear, 알림이 판단 띠 위끝 8px 위인지 */
+    const place = (el: HTMLElement, h: number): { gap: number; clear: number; above: boolean } => {
+      el.getBoundingClientRect = () => box(VB - 10 - h, h);
+      cbs.forEach((cb) => cb());
+      const clear = last(setView, '--notice-clear');
+      const b = bottomOf(now, clear);
+      return { gap: b - 10 - h, clear, above: last(setBody, '--toast-clear') >= innerHeight - (VB - b - NH) + 8 - 0.5 };
+    };
+    // 측정 띠 높이(187차 어림 — styles.css 값): 여백·테두리 + 한 줄이면 max(버튼, 글), 두 줄(187차 줄 감싸기)이면 글 + 줄 사이 + 버튼. 글 = 줄마다 글자 크기 × 줄 높이 × 감긴 줄 수
+    const lh = Number(o('.mb-text')['line-height']);
+    const [hint, sub, value] = ['.mb-hint', '.mb-sub', '.mb-value'].map((s) => px(o(s)['font-size'])) as [number, number, number];
+    const mChrome = vert(o('.measure-bar').padding!) + 2 * px(o('.measure-bar').border);
+    const rowGap = px(o('.measure-bar').gap);
+    const btnH = px(o('.mb-btn').height);
+    expect([lh, hint, sub, value, mChrome, rowGap, btnH]).toEqual([1.3, 13.5, 12, 16, 14, 10, 38]);
+    type Shape = [name: string, rows: 1 | 2, lines: [number, number][]];
+    const shapes: Shape[] = [
+      ['한 줄 안내', 1, [[hint, 1]]],
+      ['한 줄 안내 + 잠금 안내', 1, [[hint, 1], [sub, 1]]],
+      ['한 줄 결과', 1, [[value, 1], [sub, 1], [sub, 1]]],
+      ['한 줄 안내 두 줄 + 잠금 안내', 1, [[hint, 2], [sub, 1]]],
+      ['한 줄 안내 두 줄 + 잠금 안내 두 줄', 1, [[hint, 2], [sub, 2]]],
+      ['한 줄 결과 축 길이 두 줄', 1, [[value, 1], [sub, 2], [sub, 1]]],
+      ['두 줄 안내', 2, [[hint, 1]]],
+      ['두 줄 안내 + 잠금 안내', 2, [[hint, 1], [sub, 1]]],
+      ['두 줄 결과', 2, [[value, 1], [sub, 1], [sub, 1]]],
+    ];
+    const barH = ([, rows, lines]: Shape): number => {
+      const text = lines.reduce((a, [f, k]) => a + f * lh * k, 0);
+      return mChrome + (rows === 1 ? Math.max(btnH, text) : text + rowGap + btnH);
+    };
+    // 재생 띠 높이: 여백·테두리 + 시간·줄 글 k줄(여러 파일 작업의 줄 글이 감기면 둘째 줄로·다시 감김) + 상태 한 줄(nowrap) + 줄 사이 + 사이 둘 + 버튼 + 위치 막대(Chrome 기본 어림 16 + margin 2·2 — CSS에 없음)
+    const [ps, info] = [o('.play-strip'), o('.play-strip .ps-info')];
+    const bodyLh = Number(/\/([\d.]+)/.exec(o('body').font!)![1]);
+    expect([ps.padding, ps.gap, info.gap, info['font-size'], o('.play-strip .ps-state')['font-size'], o('.play-strip .ps-state')['white-space'], bodyLh]).toEqual(['6px 8px', '4px', '2px 10px', '12.5px', '12px', 'nowrap', 1.45]);
+    const RANGE = 16 + 2 * 2;
+    const stripH = (k: 1 | 2 | 3): number =>
+      vert(ps.padding!) + 2 * px(ps.border) + (k * px(info['font-size']) + px(o('.play-strip .ps-state')['font-size'])) * bodyLh + (k === 1 ? 1 : 2) * nums(info.gap!)[0]! + 2 * px(ps.gap) + btnH + RANGE;
+    const bad: string[] = [];
+    const seen: Record<string, number[]> = {};
+    const check = (tag: string, el: HTMLElement, h: number, min: number): void => {
+      const r = place(el, h);
+      if (r.gap < 8 || !r.above) bad.push(`${tag}: 띠 ${h.toFixed(2)} 틈 ${r.gap.toFixed(2)}${r.above ? '' : ' 알림이 판단 띠 아래'}`);
+      seen[tag] = [h, min - 10 - h, r.gap];
+    };
+    bar.hidden = false;
+    for (const s of shapes) check(`측정 ${s[0]}`, bar, barH(s), floor.measure);
+    bar.hidden = true;
+    strip.hidden = false;
+    now = rule.play;
+    for (const k of [1, 2, 3] as const) check(`재생 줄 글 ${k}줄`, strip, stripH(k), floor.play);
+    // 띠 꼴 모두에서 판단 띠 아래끝이 띠 위끝보다 8px 넘게 위(겹치지 않음), 알림은 판단 띠 위
+    expect(bad).toEqual([]);
+    // 손셈 자리값 [띠 높이, 고치기 전 틈(76·140 그대로), 고친 뒤 틈]: 한 줄 측정 띠·한 파일 재생 띠는 지금 자리 그대로(바닥 76·140), 결과 한 줄 띠는 닿던 것이 10px, 두 줄 띠 29px·48px 겹침이 10px 틈
+    expect(['측정 한 줄 안내', '측정 한 줄 결과', '측정 두 줄 안내 + 잠금 안내', '측정 두 줄 결과', '재생 줄 글 1줄', '재생 줄 글 2줄'].map((t) => seen[t])).toEqual(
+      [
+        [52, 14, 14],
+        [66, 0, 10],
+        [95.15, -29.15, 9.85],
+        [114, -48, 10],
+        [117.525, 12.475, 12.475],
+        [137.65, -7.65, 10.35],
+      ].map((r) => r.map((v) => expect.closeTo(v, 6))),
+    );
+    // 판단 띠 자신은 재지 않는다(고리 없음): 판단 띠가 높아져도(띠 둘이 버튼 둘째 줄 — 145px) --notice-clear는 그대로, 알림만 그 위로
+    strip.hidden = true;
+    bar.hidden = false;
+    now = rule.measure;
+    const tall = barH(shapes[7]!);
+    const a = place(bar, tall);
+    NH = 145;
+    const b = place(bar, tall);
+    expect([a.clear, b.clear, a.above, b.above]).toEqual([115, 115, true, true]);
+    // 아래 띠가 모두 숨으면 0px(띠 없음 규칙은 변수를 읽지 않음)
+    bar.hidden = true;
+    cbs.forEach((cb) => cb());
+    expect(setView).toHaveBeenLastCalledWith('--notice-clear', '0px');
+    // 고친 길: 두 띠 규칙만 앱이 잰 값과 큰 쪽 — 이 변수를 읽는 곳은 이 둘뿐
+    expect([rule.measure, rule.play, raw.match(/--notice-clear/g)?.length]).toEqual(['max(76px, var(--notice-clear, 0px))', 'max(140px, var(--notice-clear, 0px))', 2]);
+    // app.ts 원문: --notice-clear는 liftToasts 한 곳에서, 띠 차례(재생·측정·판단) 가운데 판단 띠를 재기 전에 넣는다
+    const src = readFileSync(join(ROOT, 'src/app/app.ts'), 'utf8');
+    const i = src.indexOf('\n  private liftToasts(): void {');
+    const fn = src.slice(i, src.indexOf('\n  }\n', i));
+    expect([i > 0, src.split("setProperty('--notice-clear'").length - 1, fn.includes("setProperty('--notice-clear'"), fn.includes('[this.playStrip.el, this.measureBar, this.noticeBar]')]).toEqual([true, 1, true, true]);
+  });
 });
 
 describe('낮은 창의 패널 시트(186차)', () => {
