@@ -1258,11 +1258,15 @@ export class NcViewerApp implements PanelHost {
   private setBusy(stage: string | null, fraction = 0, name = ''): void {
     const shown = stage !== null && this.busyEl.hidden;
     const had = document.activeElement;
+    const was = this.busy;
     this.busy = stage !== null;
     this.stage = stage ?? '';
     this.busyEl.hidden = !this.busy;
     this.root.classList.toggle('is-busy', this.busy);
     this.refreshBar();
+    // 181차: 덮개를 보이거나 숨길 때 재생 띠·따라가기 띠도 맞춘다(두 띠 조건에 덮개 — 덮개 밑에 비쳐 Tab으로 닿고 눌려 읽는 중에 재생·따라가기가 돌았다).
+    // 숨을 때는 띠가 먼저 다시 보이고 그다음 아래 「취소」 초점. 단계·진척만 바뀌는 잦은 부름은 건너뛴다
+    if (was !== this.busy) this.refreshPlayStrip();
     if (!this.busy) {
       this.busyHold = null;
       // 180차: 「취소」(덮개의 초점 칸)에 초점이 있는 채 덮개가 숨으면(취소·다시 읽기 끝·실패) 초점이 문서로 빠진다 — 덮개 안이었을 때만
@@ -1889,6 +1893,7 @@ export class NcViewerApp implements PanelHost {
         selectMprOp: (i, r) => this.selectMprOp(i, r),
         panelOpen: () => this.panelOpen,
         measuring: () => this.measuring,
+        busy: () => this.busy,
         refreshPanel: () => {
           if (this.doc?.panelTab === 'sim') this.panel.refresh();
         },
