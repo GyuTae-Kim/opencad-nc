@@ -271,6 +271,38 @@ describe('여러 파일을 한 작업으로 열기', () => {
     expect(window.opencadApp!.state.jobFiles).toBeNull();
   });
 
+  it('띠 ✕를 키보드로 누르면(초점이 그 버튼) 초점은 남은 안내의 같은 차례(모자라면 마지막) 줄의 ✕로, 띠가 숨으면 3D 보기로(176차)', async () => {
+    const { app, root } = makeApp();
+    const both = (): Promise<boolean> => app.openFiles([textFile('main.nc', MAIN), textFile('O1001.nc', SUB_A)]);
+    const btn = (k: string, x = true): HTMLButtonElement => root.querySelector<HTMLButtonElement>(`[data-notice=${k}] .mb-btn${x ? '.icon' : ':not(.icon)'}`)!;
+    await both();
+    expect(notices(root)).toEqual(['job', 'missing-program']);
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    const canvas = root.querySelector<HTMLCanvasElement>('.v3d canvas')!;
+    canvas.tabIndex = 0;
+    // 둘째(마지막) 줄 ✕ → 남은 줄이 하나라 그 마지막 줄의 ✕
+    btn('missing-program').focus();
+    btn('missing-program').click();
+    expect(notices(root)).toEqual(['job']);
+    expect(document.activeElement).toBe(btn('job'));
+    // 새 문서는 전처럼 3D 보기로(setDoc) — 첫 줄 ✕ → 같은 번째(이제 첫 줄)의 ✕
+    await both();
+    expect(document.activeElement).toBe(canvas);
+    btn('job').focus();
+    btn('job').click();
+    expect(notices(root)).toEqual(['missing-program']);
+    expect(document.activeElement).toBe(btn('missing-program'));
+    // 띠를 다시 그리면(언어 바꿈) 동작 버튼은 같은 줄 동작 버튼으로
+    btn('missing-program', false).focus();
+    root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+    expect(document.activeElement).toBe(btn('missing-program', false));
+    // 마지막 안내 ✕ → 띠가 숨어 3D 보기로
+    btn('missing-program').focus();
+    btn('missing-program').click();
+    expect(root.querySelector<HTMLElement>('.notice-bar')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(canvas);
+  });
+
   it('최근 문서의 작업은 파일 수를 보이고, 다시 열면 같은 작업으로 읽힌다', async () => {
     const recent = memoryBackend();
     const first = makeApp(recent);

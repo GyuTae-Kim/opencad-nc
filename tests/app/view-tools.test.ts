@@ -944,6 +944,46 @@ describe('해석 판단 띠', () => {
     expect(bar.hidden).toBe(true);
   });
 
+  it('띠 안 버튼을 키보드로 누르면(초점이 그 버튼) 띠가 숨은 뒤 초점은 3D 보기로 — 동작은 다시 읽은 뒤, ✕는 곧바로(176차)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    const canvas = fake.FakeViewer.last!.canvas;
+    canvas.tabIndex = 0;
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    const act = [...bar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '밀링으로 읽기')!;
+    act.focus();
+    act.click();
+    await tick();
+    await tick();
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(canvas);
+    await open(app, 'od.nc', LATHE);
+    const x = bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!;
+    x.focus();
+    x.click();
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(canvas);
+  });
+
+  it('초점이 띠 밖이면 띠 버튼을 눌러 띠가 숨어도 초점은 그대로(176차)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    const out = root.querySelector<HTMLButtonElement>('.tbtn[aria-label="열기"]')!;
+    out.focus();
+    [...bar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '밀링으로 읽기')!.click();
+    await tick();
+    await tick();
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(out);
+    await open(app, 'od.nc', LATHE);
+    out.focus();
+    bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!.click();
+    expect(bar.hidden).toBe(true);
+    expect(document.activeElement).toBe(out);
+  });
+
   it('좁은 화면: 띠 글을 누르면 펼치고(다시 누르면 접음), 알림은 아래쪽 띠 맨 위보다 위로(--toast-clear)', async () => {
     const cbs: (() => void)[] = [];
     const roCb = (): void => cbs.forEach((cb) => cb());
