@@ -237,7 +237,8 @@ function latheToolRows(host: PanelHost, runs: readonly { tool?: number }[]): HTM
   };
   const rows = keys.map((key) => {
     const cur = host.settings.latheTools[key];
-    const r = h('input', { type: 'number', step: 'any', min: '0', inputmode: 'decimal', class: 'num-input', 'aria-label': `T${key} 노즈 반지름(mm)`, placeholder: 'R' });
+    // 183차(WCAG 2.5.3): 이름은 보이는 줄 이름의 앞 조각 그대로(「노즈 반지름」이면 보이는 「R」을 품지 않아 음성 입력으로 부를 수 없었다)
+    const r = h('input', { type: 'number', step: 'any', min: '0', inputmode: 'decimal', class: 'num-input', 'aria-label': `T${key} 노즈 R(mm)`, placeholder: 'R' });
     r.value = cur?.radiusMm != null ? String(cur.radiusMm) : '';
     const q = h('select', { class: 'select', 'aria-label': `T${key} 공구 방향` });
     q.append(h('option', { value: '' }, '—'), ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => h('option', { value: String(n) }, String(n))));
