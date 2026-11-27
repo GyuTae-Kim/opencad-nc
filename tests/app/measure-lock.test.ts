@@ -12,6 +12,7 @@ import { installLocalization } from '../../src/app/i18n';
 import { dictLookup, keySnapMessageFn } from '../../src/app/keysnap';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
 import { MeasureLock, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { NO_TRACK_TOUCH } from '../../src/app/measure-track';
 
 type Dir = [number, number, number];
 interface Lock {
@@ -766,5 +767,66 @@ describe('191차: 커서 옆 툴팁도 띠·뷰 큐브 자리(coverRects)를 비
     (v as unknown as { viewCubeRect: MeasureLabelRect | null }).viewCubeRect = { x: 150, y: 40, width: 100, height: 100 };
     lock.update();
     expect(lock.snapshot().tipRect).toEqual({ x: 18, y: 112 });
+  });
+});
+
+describe('192차: 측정 띠 위 알림이 떠 있는 동안 그 자리(띠 상자 밖)도 커서 옆 툴팁·코어 거리 글상자가 비킨다(WCAG 1.4.13·2.4.11)', () => {
+  it('알림이 뜨면(뒤에 맞추기가 없는 끌어온 점 버튼 길도) 두 프레임 안에 툴팁이 알림을 비키고 코어에 알림 자리를 넘기며, 알림이 지면(시간·잠금) 제자리 — 빈 알림(1화소)은 넣지 않는다', () => {
+    const { v, layer, bar } = setup(true);
+    const rect = (x: number, y: number, w: number, ht: number) => () => ({ left: x, top: y, width: w, height: ht, right: x + w, bottom: y + ht, x, y, toJSON() {} }) as DOMRect;
+    // 390×844 손가락(3D 보기 390×727): 측정 띠 한 줄 58~332 × 665~717, 그 위 5px 가운데 두 줄 알림(358 × 42.8 — 12px × 줄 높이 1.45 두 줄 + 여백 8), 툴팁 80×20(jsdom)
+    layer.getBoundingClientRect = rect(0, 0, 390, 727);
+    v.canvas.getBoundingClientRect = rect(0, 0, 390, 727);
+    bar.getBoundingClientRect = rect(58, 665, 274, 52);
+    const lock = new MeasureLock({ viewer: () => v as unknown as LockViewer, touch: () => true, layer, changed: vi.fn(), overlays: () => [bar] });
+    bar.append(lock.button, lock.flash);
+    lock.flash.getBoundingClientRect = rect(16, 617.2, 358, 42.8);
+    const BAR = { x: 58, y: 665, width: 274, height: 52 };
+    const FLASH = { x: 16, y: 617, width: 358, height: 43 };
+    const FIRST = { x: 207, y: 612, width: 80, height: 20 };
+    v.project = () => ({ x: 195, y: 600, onScreen: true });
+    v.hover = END;
+    vi.useFakeTimers();
+    try {
+      lock.update();
+      // 빈 알림(117차 — 1화소로 잘라 감춤)은 비킬 자리에 넣지 않는다: 오른쪽 아래 제자리, 코어에는 툴팁 첫 자리와 띠만
+      expect(lock.snapshot()).toMatchObject({ tip: '끝점', flash: null, tipRect: { x: 207, y: 612 } });
+      expect(lock.labelAvoid?.rects).toEqual([FIRST, BAR]);
+      // 끌어온 점 버튼(스냅한 점 없음 — 뒤에 맞추기가 없는 길): 두 프레임 안에 툴팁이 알림(오른쪽·왼쪽 아래가 15 × 80 걸림)을 비켜 오른쪽 위, 코어 글상자도 알림을 비킨다
+      lock.showFlash(NO_TRACK_TOUCH, 3200, 'track');
+      vi.advanceTimersByTime(50);
+      expect(lock.snapshot()).toMatchObject({ flash: NO_TRACK_TOUCH, tipRect: { x: 207, y: 568 } });
+      expect(lock.labelAvoid?.rects).toEqual([FIRST, BAR, FLASH]);
+      // 3.2초 뒤 알림이 지면 두 프레임 안에 제자리, 코어에 넘기는 자리에서도 뺀다
+      vi.advanceTimersByTime(3200);
+      expect(lock.snapshot()).toMatchObject({ flash: null, tipRect: { x: 207, y: 612 } });
+      expect(lock.labelAvoid?.rects).toEqual([FIRST, BAR]);
+      // 잠금 버튼(잠글 방향 없음 — 같은 처리의 update): 바로 비킨다
+      expect(lock.toggle()).toBe(false);
+      expect(lock.snapshot()).toMatchObject({ flash: NO_LOCK_TOUCH, tipRect: { x: 207, y: 568 } });
+      expect(lock.labelAvoid?.rects).toEqual([FIRST, BAR, FLASH]);
+      // 코어 Shift 잠금이 걸려 알림을 거두면(update 안 — 앱 창 키는 그 뒤 다시 맞추지 않는다) 두 프레임 안에 제자리
+      v.hoverLock = X;
+      v.shift(true);
+      lock.update();
+      vi.advanceTimersByTime(50);
+      expect(lock.snapshot()).toMatchObject({ lock: 'x', flash: null, tipRect: { x: 207, y: 612 } });
+      expect(lock.labelAvoid?.rects).toEqual([FIRST, BAR]);
+      // 1280×800 손가락(3D 보기 1280×683): 측정 띠 503~777 × 621~673, 한 줄 알림(430 × 25.4) — 점 (640, 580)의 아래 둘이 20 × 80 걸려 오른쪽 위
+      v.shift(false);
+      v.hoverLock = null;
+      layer.getBoundingClientRect = rect(0, 0, 1280, 683);
+      v.canvas.getBoundingClientRect = rect(0, 0, 1280, 683);
+      bar.getBoundingClientRect = rect(503, 621, 274, 52);
+      lock.flash.getBoundingClientRect = rect(425, 590.6, 430, 25.4);
+      v.project = () => ({ x: 640, y: 580, onScreen: true });
+      lock.update();
+      expect(lock.snapshot().tipRect).toEqual({ x: 652, y: 592 });
+      expect(lock.toggle()).toBe(false);
+      expect(lock.snapshot().tipRect).toEqual({ x: 652, y: 548 });
+      expect(lock.labelAvoid?.rects).toEqual([{ x: 652, y: 592, width: 80, height: 20 }, { x: 503, y: 621, width: 274, height: 52 }, { x: 425, y: 590, width: 430, height: 26 }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
