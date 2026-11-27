@@ -637,9 +637,10 @@ export class NcPanel {
       });
       const items = toolItems(d.scene, t.number);
       const cur = items.length > 0 && d.highlight.length === items.length && items.every((id) => d.highlight.includes(id));
+      // 174차(WCAG 4.1.2): 강조한 공구 줄은 바탕으로만 보여 화면 읽기가 몰랐다 — 표 줄의 aria-selected는 격자 안에서만 뜻이 있어 클래스와 같은 자리에서 aria-current(한 표에 하나)
       const tr = h(
         'tr',
-        { class: `clickable${cur ? ' current' : ''}${visible ? '' : ' off'}`, title: `처음 나온 줄 ${lineNumberText(d, t.firstLine)}` },
+        { class: `clickable${cur ? ' current' : ''}${visible ? '' : ' off'}`, 'aria-current': cur ? 'true' : null, title: `처음 나온 줄 ${lineNumberText(d, t.firstLine)}` },
         h('td', {}, eye),
         h('td', {}, h('span', { class: 'swatch', style: `background:${rgbCss(t.color ?? [0.5, 0.5, 0.5])}` })),
         h('td', {}, label),
@@ -724,9 +725,10 @@ export class NcPanel {
       ].filter(Boolean);
       // 값 조각("깊이 13")은 한 덩어리로 두고 " · "에서만 줄을 바꾼다(긴 가공 이름 옆에서 글자 하나 폭으로 접히지 않게)
       const detailCell = h('td', { class: 'wrap' }, ...detail.flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nb' }, t)]));
+      // 174차: 고른 가공 줄도 공구 표와 같은 규칙(aria-current — 한 표에 하나)
       const tr = h(
         'tr',
-        { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, title: o.line != null ? `줄 ${o.line + 1}` : '' },
+        { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, 'aria-current': sel ? 'true' : null, title: o.line != null ? `줄 ${o.line + 1}` : '' },
         h('td', { class: 'num faint' }, String(o.index + 1)),
         // MPR 가공 이름(MNM·주석·매크로 이름)은 파일 글, PGI·XML은 앱이 지은 이름(옮긴다)
         h('td', { class: 'wrap', translate: o.label && d.kind === 'mpr' ? 'no' : null }, o.label || MPR_KIND[o.kind] || o.kind),
