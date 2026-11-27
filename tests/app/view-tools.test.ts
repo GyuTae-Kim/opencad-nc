@@ -1272,3 +1272,120 @@ describe('해석 판단 띠', () => {
     expect(wrapped).toEqual(['de Als kleinstes Inkrement lesen']);
   });
 });
+
+describe('낮은 창의 패널 시트(186차)', () => {
+  it('186차: 낮은 창(높이 256·300·360 CSS px — 1280×1024 화면 400% 확대·가로 휴대폰)의 좁은 화면 시트는 머리(탭 줄)와 재생 막대가 시트를 다 써 몸통이 0이라 탭 내용에 닿을 수 없던 것을 — 낮은 창 규칙에서만 시트째 굴리고 몸통은 96px에서 멈춰 굴려 닿게(WCAG 1.4.10), 시트 높이·3D 보기·넓은 화면·높은 창 규칙은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    // 시트 틀(panel.ts): 손잡이·머리(탭 줄·닫기)·재생 막대(줄·위치 막대·상태)·몸통(코드 탭은 찾기 줄 + 코드 목록)·아래 띠 — 아래에서 읽는 규칙의 선택자가 실제 칸에 맞는다
+    const panel = root.querySelector<HTMLElement>('aside.panel')!;
+    const [grip, head, play, body, foot] = [...panel.children] as HTMLElement[];
+    expect([panel.children.length, grip!.matches('.panel-grip'), head!.matches('.panel-head'), play!.matches('.play'), body!.matches('.panel-body.code'), foot!.matches('.panel-foot'), play!.hidden]).toEqual([5, true, true, true, true, true, false]);
+    expect([
+      head!.querySelectorAll('.panel-tabs > .panel-tab').length > 1,
+      !!head!.querySelector(':scope > .icon-btn'),
+      play!.querySelectorAll(':scope > .play-row > .btn.small').length,
+      !!play!.querySelector(':scope > .play-row > select.select.small'),
+      !!play!.querySelector(":scope > input[type='range']"),
+      !!play!.querySelector(':scope > .play-state'),
+      !!body!.querySelector(':scope > .code-search > input'),
+      !!body!.querySelector(':scope > .vlist'),
+    ]).toEqual([true, true, 6, true, true, true, true, true]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160~185차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 @media 덩어리(조건 글로 고름)
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (b: string): Record<string, string> =>
+      Object.fromEntries(b.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const at = (q: string) => [...raw.matchAll(media)].filter((m) => m[1]!.trim() === q).flatMap((m) => parse(m[2]!));
+    const wide = parse(raw.replace(media, ''));
+    const LOW = '(max-width: 759.98px) and (max-height: 499.98px)';
+    const [narrow, coarse, low] = [at('(max-width: 759.98px)'), at('(pointer: coarse)'), at(LOW)];
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const n = (sel: string): Record<string, string> => ({ ...o(sel), ...pick(narrow, sel) });
+    // 넓은 화면(옆 패널)·좁은 화면(시트) 규칙은 그대로: 시트 높이는 작업 영역의 몫(--sheet-h, 기본 46%), 몸통은 남는 높이를 받고 0까지 줄며 안에서 굴림
+    expect(n('.panel')).toEqual({
+      position: 'relative',
+      display: 'flex',
+      flex: 'none',
+      'flex-direction': 'column',
+      width: 'auto',
+      'max-width': 'none',
+      'min-height': '0',
+      'border-left': '0',
+      background: 'var(--bg-panel)',
+      height: 'var(--sheet-h, 46%)',
+      'border-top': '1px solid var(--border)',
+      'border-radius': '12px 12px 0 0',
+      'box-shadow': '0 -6px 18px rgba(0, 0, 0, 0.18)',
+    });
+    expect([o('.panel').width, o('.panel')['max-width'], o('.panel').overflow, o('.panel')['overflow-y']]).toEqual(['var(--panel-w, 380px)', '60%', undefined, undefined]);
+    expect(o('.panel-body')).toEqual({ flex: '1 1 auto', 'min-height': '0', padding: '4px 10px 12px', overflow: 'auto', 'overscroll-behavior': 'contain' });
+    // 높이 손셈(px): 제목 막대 + 도구 막대(줄 수 — 320 폭 마우스는 약 322px라 두 줄, 185차) + 상태 막대를 뺀 작업 영역 × 시트 몫 = 시트, 시트 − 머리 − 재생 막대 = 몸통
+    const px = (v: string | undefined): number => parseFloat(v ?? '0') || 0;
+    const vert = (pad: string | undefined): number => {
+      const t = (pad ?? '0').split(' ').map(px);
+      return t[0]! + (t[2] ?? t[0]!);
+    };
+    const RANGE = 16; // 위치 막대(input range)의 Chrome 기본 높이 어림 — CSS에 없음
+    type Win = { vw: number; vh: number; touch: boolean; bars: number; rows: number };
+    const applies = (w: Win): boolean => low.length > 0 && w.vw <= 759.98 && w.vh <= 499.98;
+    /** 창 w에서 시트 몫 frac·탭(정보 = 몸통 padding, 코드 = 찾기 줄)·재생 상태 두 줄이 있을 때 굴려서 볼 수 있는 몸통 글 높이와 3D 보기 높이 */
+    const lay = (w: Win, frac: number, tab: 'info' | 'code', state: boolean): { seen: number; view: number } => {
+      const t = (sel: string): Record<string, string> => (w.touch ? { ...o(sel), ...pick(coarse, sel) } : o(sel));
+      const bar = vert(o('.toolbar').padding) + px(o('.toolbar')['border-bottom']) + w.bars * px(t('.tbtn').height) + (w.bars - 1) * px(o('.toolbar').gap);
+      const ws = w.vh - px(o('.titlebar').height) - bar - px(o('.statusbar').height) - px(o('.statusbar')['border-top']);
+      const sheet = frac * ws;
+      const top = px(n('.panel-head')['padding-top']) + Math.max(px(o('.panel-tab').height), px(o('.icon-btn').height)) + px(o('.panel-head')['border-bottom']);
+      const lines = state ? px(o('.play').gap) + px(o('.play-state')['margin-top']) + 2 * px(o('.play-state')['font-size']) * Number(o('.play-state')['line-height']) : 0;
+      const strip =
+        vert(o('.play').padding) + px(o('.play')['border-bottom']) + w.rows * px(t('.btn.small').height) + (w.rows - 1) * px(o('.play-row').gap) + px(o('.play').gap) + RANGE + px(o(".play input[type='range']").margin) + lines;
+      const chrome = tab === 'code' ? vert(o('.code-search').padding) + px(t('.code-search input').height) + px(o('.code-search')['border-bottom']) : vert(o('.panel-body').padding);
+      const lo = applies(w);
+      const scrolls = lo && pick(low, '.panel')['overflow-y'] === 'auto';
+      const room = sheet - top - strip;
+      const box = Math.max(px(lo ? pick(low, '.panel-body')['min-height'] : o('.panel-body')['min-height']), room);
+      // 시트가 굴림 상자면 몸통 칸 어느 자리든 시트 높이만큼 보이고, 아니면 시트 아래 끝(작업 영역이 자름)까지만
+      const seen = scrolls ? Math.min(box - chrome, sheet) : Math.max(0, room - chrome);
+      return { seen, view: ws - sheet };
+    };
+    // 낮은 창: 320 폭 마우스(1280 화면 400% 확대 — 높이 256·300·360, 도구 막대·재생 줄 두 줄)와 가로 휴대폰(손가락, 폭 760 미만 — 한 줄씩)
+    const lows: Win[] = [
+      { vw: 320, vh: 256, touch: false, bars: 2, rows: 2 },
+      { vw: 320, vh: 300, touch: false, bars: 2, rows: 2 },
+      { vw: 320, vh: 360, touch: false, bars: 2, rows: 2 },
+      { vw: 568, vh: 320, touch: true, bars: 1, rows: 1 },
+      { vw: 667, vh: 375, touch: true, bars: 1, rows: 1 },
+      { vw: 740, vh: 360, touch: true, bars: 1, rows: 1 },
+    ];
+    const bad: string[] = [];
+    for (const w of lows)
+      for (const frac of [0.46, 0.85])
+        for (const tab of ['info', 'code'] as const)
+          for (const state of [false, true]) {
+            const r = lay(w, frac, tab, state);
+            // 몸통 글이 한두 줄(48px — 코드 목록은 마우스 18px 두 줄 넘고 손가락 24px 두 줄) 넘게 보여야 닿는다
+            if (r.seen < 48) bad.push(`${w.vw}×${w.vh}${w.touch ? ' 손가락' : ''} ${frac * 100}% ${tab}${state ? ' 상태' : ''}: ${Math.round(r.seen)}`);
+          }
+    expect(bad).toEqual([]);
+    // 손셈 자리값: 320×256 마우스 기본 시트(46%)는 작업 영역 111의 51px, 3D 보기 60px — 굴려 정보·코드 모두 시트 높이(51)만큼 보임
+    expect([lay(lows[0]!, 0.46, 'info', false), lay(lows[0]!, 0.46, 'code', true)].map((r) => [Math.round(r.seen), Math.round(r.view)])).toEqual([
+      [51, 60],
+      [51, 60],
+    ]);
+    // 낮은 창 규칙은 이 둘뿐 — 시트 높이·3D 보기는 그대로(높이 규칙 없음), 넓은 화면(옆 패널)·높은 창(500px 이상)에는 걸리지 않는다
+    expect(low.map((r) => [r.sels, r.body])).toEqual([
+      [['.panel'], { 'overflow-y': 'auto' }],
+      [['.panel-body'], { 'min-height': '96px' }],
+    ]);
+    const others: Win[] = [
+      { vw: 390, vh: 844, touch: true, bars: 1, rows: 2 },
+      { vw: 320, vh: 568, touch: false, bars: 2, rows: 2 },
+      { vw: 759, vh: 500, touch: false, bars: 1, rows: 1 },
+      { vw: 844, vh: 390, touch: true, bars: 1, rows: 2 },
+      { vw: 1280, vh: 1024, touch: false, bars: 1, rows: 1 },
+    ];
+    expect([...lows, ...others].map(applies)).toEqual([true, true, true, true, true, true, false, false, false, false, false]);
+  });
+});
