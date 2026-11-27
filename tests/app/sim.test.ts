@@ -718,6 +718,110 @@ describe('깎기 탭', () => {
   });
 
   /**
+   * 197차: 깎기 진행 칩(`.sim-chip`)이 role=status라 계산마다 첫 진행 글과 함께 새로 붙어(알림 영역은 글이 바뀌기 전에 있어야 읽음 — 117·156차 꼴, WCAG 4.1.3)
+   * 첫 진행 글을 읽지 않을 수 있었고, 붙은 동안은 퍼센트가 바뀔 때마다 알렸다(120차가 칩을 늘 두지 않은 까닭 — 재생으로 목표가 바뀔 때마다 새 계산의 첫 글까지 알림).
+   * 알림 영역은 칩과 떼어 조각을 처음 쓸 때 빈 채로 붙여 두고(화면에서만 1화소로 자름) 새 계산의 시작(첫 결과)·끝(상태 글 한 줄)만 넣는다. 칩은 보이는 글만(aria-hidden)
+   */
+  it('197차: 깎기 계산 알림 영역은 진행 칩과 떼어 빈 채로 먼저 붙여 두고 새 계산의 시작·끝만 넣는다 — 퍼센트 진행·목표만 바뀐 계산·끝나기 전 다시 시작은 알리지 않고, 오류·끄기는 비운다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    // 워커 대신: 받은 요청을 적고 시험이 결과를 보낸다(같은 스레드 실행기는 작은 프로그램을 한 결과에 깎아 진행 결과가 없다)
+    class Scripted {
+      static last: Scripted | null = null;
+      onmessage: ((ev: { data: unknown }) => void) | null = null;
+      onerror: unknown = null;
+      readonly got: SimRequest[] = [];
+      constructor() {
+        Scripted.last = this;
+      }
+      postMessage(m: SimRequest): void {
+        this.got.push(m);
+      }
+      terminate(): void {}
+    }
+    vi.stubGlobal('Worker', Scripted);
+    const count = app.doc!.nc!.moves.count;
+    expect(count).toBeGreaterThan(8);
+    const stats = { computeMs: 1500, meshMs: 0, work: 0, checkpoints: 0, checkpointBytes: 0, rewinds: 0 };
+    // 워커 결과 하나: 지금 목표(state.sim.target)의 f만큼 깎음(null = 목표에 닿음). 보낸 진행의 칩 글을 돌려준다
+    const reply = (f: number | null): string => {
+      const w = Scripted.last!;
+      const gen = w.got.filter((m) => m.type === 'init').at(-1)!.gen;
+      const t = api.state.sim!.target!;
+      const at = f === null ? t : { move: Math.floor((t.move + t.frac) * f), frac: 0 };
+      w.onmessage!({ data: { type: 'update', gen, at, target: t, reached: f === null, tiles: [], events: [], stats } });
+      return `소재 계산 중 ${Math.min(99, Math.floor(((at.move + at.frac) / (t.move + t.frac)) * 100))}%`;
+    };
+    const view = root.querySelector<HTMLElement>('.view')!;
+    // 진행 칩 [글, role, aria-live, aria-hidden] — 없으면 null
+    const chip = (): (string | null)[] | null => {
+      const c = view.querySelector('.sim-chip');
+      return c ? [c.textContent, c.getAttribute('role'), c.getAttribute('aria-live'), c.getAttribute('aria-hidden')] : null;
+    };
+    // 이동 k까지 깎은 끝 글(재생 자리 — 상태 글 한 줄)
+    const upTo = (t: { move: number; frac: number }): string => `이동 ${(t.move + (t.frac > 0 ? 1 : 0)).toLocaleString('ko-KR')} / ${count.toLocaleString('ko-KR')}까지 깎았습니다 · 1.5초`;
+    await api.setSim(true);
+    // ① 켠 차례: 알림 영역이 이미 붙어 비어 있고(시작 글은 첫 결과에), 칩은 보이는 글만
+    const live = view.querySelector<HTMLElement>(':scope > .sim-live');
+    expect([live?.isConnected, live?.getAttribute('role'), live?.getAttribute('aria-live'), live?.textContent, live?.hidden]).toEqual([true, 'status', 'polite', '', false]);
+    expect([live!.style.position, live!.style.width, live!.style.height, live!.style.overflow]).toEqual(['absolute', '1px', '1px', 'hidden']);
+    expect(chip()).toEqual(['소재 계산 중 0%', null, null, 'true']);
+    expect(live!.contains(view.querySelector('.sim-chip'))).toBe(false);
+    // 알림 영역에 글을 넣을 때마다 넣은 글(비우면 빈 글 — 같은 글을 다시 넣어도 하나로 센다). await 사이에 관찰 함수로 넘어간 기록도 센다
+    const said: string[] = [];
+    const push = (rs: MutationRecord[]): void => {
+      for (const r of rs) said.push(r.type === 'characterData' ? (r.target.textContent ?? '') : [...r.addedNodes].map((n) => n.textContent).join(''));
+    };
+    const obs = new MutationObserver(push);
+    obs.observe(live!, { childList: true, characterData: true, subtree: true });
+    const take = (): string[] => {
+      push(obs.takeRecords());
+      return said;
+    };
+    // ② 첫 결과(진행 중)에 시작 한 번, 그 뒤 퍼센트 진행은 칩만
+    const s1 = reply(0.25);
+    expect(take()).toEqual([s1]);
+    const p2 = reply(0.5);
+    expect([take(), chip()]).toEqual([[s1], [p2, null, null, 'true']]);
+    // ③ 시작을 알린 계산 중 재생 자리를 옮김(목표만 바뀜): 시작을 다시 내지 않고 닿으면 끝 한 줄
+    app.seekMove(2);
+    reply(0.5);
+    expect(take()).toEqual([s1]);
+    const t1 = api.state.sim!.target!;
+    reply(null);
+    expect([take(), chip()]).toEqual([[s1, upTo(t1)], null]);
+    // ④ 닿은 뒤 목표만 바뀐 계산(재생·한 이동씩): 칩은 전처럼 보이고 알림은 없음
+    app.seekMove(5);
+    expect(chip()?.slice(1)).toEqual([null, null, 'true']);
+    reply(0.5);
+    reply(null);
+    expect([take(), chip()]).toEqual([[s1, upTo(t1)], null]);
+    // ⑤ 새 계산(해상도 바꿈): 시작·끝 — 끝나기 전 다시 시작(또 바꿈)은 시작을 다시 내지 않는다
+    await api.setSim(true, { res: 256 });
+    const s2 = reply(0.5);
+    await api.setSim(true, { res: 512 });
+    reply(0.25);
+    const t2 = api.state.sim!.target!;
+    reply(null);
+    expect(take()).toEqual([s1, upTo(t1), s2, upTo(t2)]);
+    // ⑥ 오류(워커 멈춤 — 144차 알림 상자 alert가 읽음)·끄기는 영역을 비우고, 끈 뒤 켜면 새 시작
+    await api.setSim(true, { res: 1024 });
+    const s3 = reply(0.5);
+    (Scripted.last!.onerror as (e: object) => void)({ message: '', preventDefault: () => {} });
+    await api.setSim(false);
+    await api.setSim(true);
+    const s4 = reply(0.5);
+    await api.setSim(false);
+    await api.setSim(true);
+    const s5 = reply(0.5);
+    expect(take()).toEqual([s1, upTo(t1), s2, upTo(t2), s3, '', s4, '', s5]);
+    // 알림 글은 모두 이미 있는 원문(칩 글·상태 글 틀) — 영역은 하나 그대로
+    expect(view.querySelectorAll('.sim-live')).toHaveLength(1);
+    obs.disconnect();
+  });
+
+  /**
    * 142차: 상자 풀이(title)가 감싼 label에만 있으면 상자에 초점을 둔 화면 읽기 프로그램이 풀이를 상자의 설명으로 듣지 못한다(HTML-AAM 설명 차례는
    * aria-describedby → 상자 자신의 title — 감싼 label의 title은 쓰지 않는다). 상자 자신에도 같은 title(이름은 감싼 label 글이라 title은 설명), 풀이 없는 상자는 없음
    */
