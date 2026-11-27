@@ -3,6 +3,8 @@
  * 여러 파일을 한 작업으로(app.ts·panel.ts·doc.ts): 여러 개 고르기·끌어다 놓기, 주 프로그램 바꾸기, 작업 파일 목록,
  * 찾지 못한 프로그램 띠와 파일 더하기, 최근 문서. 뷰어 코어(WebGL)는 가짜로, 해석은 워커와 같은 길(parseForView)로 바로 부른다.
  */
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
@@ -58,6 +60,8 @@ import { jobLineText } from '../../src/app/payload';
 import { plainText } from '../../src/app/filetext';
 import { RecentStore } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
+
+const ROOT = resolve(__dirname, '../..');
 
 const MAIN = `%
 O1000 (MAIN)
@@ -317,5 +321,74 @@ describe('여러 파일을 한 작업으로 열기', () => {
     await until(() => !!window.opencadApp?.state.jobFiles);
     expect(window.opencadApp!.state.jobFiles).toEqual(['main.nc', 'O1001.nc', '1002.nc']);
     expect(window.opencadApp!.state.moves).toBe(5);
+  });
+});
+
+describe('패널 재생 칸 줄 글(190차)', () => {
+  it('190차: 여러 파일 작업의 줄 글(「파일 · 줄 N」)은 줄을 바꾸지 않아(.mono-dim nowrap) 파일 이름이 길면 재생 칸보다 넓어져 오른쪽(줄 번호)이 잘리고 낮은 창 시트(186차 굴림 상자)는 가로로 굴던 것을 — 남는 폭이 모자랄 때만 줄 글을 감아(WCAG 1.4.10), 넉넉하면 한 줄 그대로', async () => {
+    const LONG = 'O1000_bracket_left_side_finishing_op20.nc';
+    const MAIN2 = `%\nO1000 (MAIN)\nG21 G17 G90 G54\nT1 M6\nS1000 M3\nG0 X0 Y0 Z5\nG1 Z-1 F100\nX20\nM98 P1001\nM30\n%\n`;
+    const { app, root } = makeApp();
+    await app.openFiles([textFile(LONG, MAIN2), textFile('O1001.nc', SUB_A)]);
+    app.togglePanel(true);
+    app.stepMove(1);
+    // 실제 칸(panel.ts buildPlay): 재생 막대 줄 끝 play-info 안 mono-dim 둘(시간·줄) — 줄 글은 주 프로그램 파일 이름과 그 파일 안 줄
+    const info = root.querySelector<HTMLElement>('aside.panel > .play > .play-row > .play-info')!;
+    const spans = [...info.children] as HTMLElement[];
+    const text = spans[1]!.textContent!;
+    expect([window.opencadApp!.state.jobFiles?.length, spans.length, spans.every((s) => s.matches('span.mono-dim')), text.startsWith(`${LONG} · 줄 `), /^\d$/.test(text.slice(LONG.length + 5))]).toEqual([
+      2,
+      2,
+      true,
+      true,
+      true,
+    ]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(186차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 @media 덩어리(조건 글로 고름)
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (b: string): Record<string, string> =>
+      Object.fromEntries(b.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const at = (q: string) => [...raw.matchAll(media)].filter((m) => m[1]!.trim() === q).flatMap((m) => parse(m[2]!));
+    const wide = parse(raw.replace(media, ''));
+    const [narrow, low] = [at('(max-width: 759.98px)'), at('(max-width: 759.98px) and (max-height: 499.98px)')];
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const n = (sel: string): Record<string, string> => ({ ...o(sel), ...pick(narrow, sel) });
+    const px = (v: string | undefined): number => parseFloat(v ?? '0') || 0;
+    // 줄 글 꼴: .mono-dim(11.5px 고정폭)에 play-info 안 규칙을 겹침. 글 폭 어림 — 한글 1em(고정폭 글꼴에 없어 대신 글꼴), 그 밖 0.6em
+    const line = { ...o('.mono-dim'), ...o('.play-info .mono-dim') };
+    const em = px(line.font);
+    const cw = (c: string): number => (/[ㄱ-ㆎ가-힣]/.test(c) ? 1 : 0.6) * em;
+    const width = (s: string): number => [...s].reduce((a, c) => a + cw(c), 0);
+    // 최소 내용 폭(flex 항목 play-info가 줄 수 있는 끝): 줄을 바꾸지 않으면 글 전체, 감으면 빈칸 사이 낱말 — overflow-wrap: anywhere면 글자 하나
+    const minContent = (s: string): number =>
+      line['white-space'] === 'nowrap' ? width(s) : line['overflow-wrap'] === 'anywhere' ? Math.max(...[...s].map(cw)) : Math.max(...s.split(' ').map(width));
+    // 줄 칸 폭 = 패널(border-box) − 왼쪽 테두리(넓은 화면 옆 패널만) − .play 좌우 여백. 넓은 화면 패널은 손잡이 「작게」 260·CSS 기본 380(panel.ts), 좁은 화면은 창 폭
+    const side = o('.play').padding!.split(' ').map(px);
+    const inner = (w: number, sel: (s: string) => Record<string, string>): number => w - px(sel('.panel')['border-left']) - 2 * side[1]!;
+    const rows = [
+      { at: '넓은 화면 작게 260', w: inner(260, o), low: false },
+      { at: '넓은 화면 보통 380', w: inner(380, o), low: false },
+      { at: '320', w: inner(320, n), low: false },
+      { at: '320 낮은 창', w: inner(320, n), low: true },
+      { at: '360', w: inner(360, n), low: false },
+      { at: '390', w: inner(390, n), low: false },
+    ];
+    expect([em, Math.round(width(text) * 10) / 10, ...rows.map((r) => r.w)]).toEqual([11.5, 328.9, 243, 363, 304, 304, 344, 374]);
+    // 넘친 몫: 옆 패널·높은 창 시트는 작업 영역(overflow: hidden)이 잘라 줄 번호가 먼저 사라지고, 낮은 창 시트는 굴림 상자(overflow-y: auto라 x도 auto)라 시트가 가로로 굴렀다
+    const scrolls = pick(low, '.panel')['overflow-y'] === 'auto' && !o('.panel')['overflow-x'];
+    const bad: string[] = [];
+    for (const r of rows) {
+      const over = minContent(text) - r.w;
+      if (over > 0) bad.push(`${r.at}: ${r.low && scrolls ? '시트 가로 굴림' : '잘림'} ${Math.round(over)}px`);
+    }
+    expect(bad).toEqual([]);
+    // 고친 길: play-info 안 두 글만 감고(찾기 줄 수 .mono-dim은 그대로), 넉넉한 폭은 한 줄 그대로(최대 내용 폭은 같은 글 — 줄 나누기 차례도 그대로)
+    expect([o('.mono-dim')['white-space'], o('.play-info .mono-dim'), rows.filter((r) => width(text) <= r.w).map((r) => r.at)]).toEqual([
+      'nowrap',
+      { 'white-space': 'normal', 'overflow-wrap': 'anywhere' },
+      ['넓은 화면 보통 380', '360', '390'],
+    ]);
   });
 });
