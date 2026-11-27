@@ -1052,6 +1052,69 @@ describe('해석 판단 띠', () => {
     expect(document.activeElement).toBe(out);
   });
 
+  it('182차: 읽는 동안 덮개가 뜨면 덮는 자리(3D 보기·시작 화면·패널)를 inert로 — 덮개·「취소」·덮개 밖 막대는 아니고 걷히면 거둔다. 판단 띠에 있던 초점은 「취소」로, 걷히면 그 자리로(덮개 밑 판단 띠 버튼에 Tab이 닿고 눌려 읽던 파일을 버렸다 — WCAG 2.4.3)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    const canvas = fake.FakeViewer.last!.canvas;
+    canvas.tabIndex = 0;
+    const busy = root.querySelector<HTMLElement>('.busy')!;
+    const cancel = busy.querySelector<HTMLButtonElement>('.busy-cancel')!;
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    const act = [...bar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '밀링으로 읽기')!;
+    const out = root.querySelector<HTMLButtonElement>('.tbtn[aria-label="열기"]')!;
+    // 덮개가 덮는 자리 = 작업 영역(덮개의 부모)에서 덮개 밖 칸
+    const covered = [...busy.parentElement!.children].filter((el) => el !== busy);
+    expect(covered.map((el) => el.className)).toEqual(['view', 'start', 'panel']);
+    const inert = (): boolean[] => covered.map((el) => el.hasAttribute('inert'));
+    // 해석을 풀 때까지 쥔다(덮개가 남는다 — 가짜 해석기 인스턴스의 open만 이 시험 동안 바꾼다)
+    const client = (app as unknown as { client: { open: (...a: unknown[]) => Promise<unknown> } }).client;
+    const real = client.open;
+    let release = (): void => {};
+    client.open = (...a) => new Promise((r) => (release = () => r(real.apply(client, a))));
+    // 브라우저처럼 inert 안 칸은 초점을 받지 않게(jsdom은 inert 속성만 두고 초점을 막지 않는다) — 이 시험 동안만
+    const focus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, o?: FocusOptions): void {
+      if (!this.closest('[inert]')) focus.call(this, o);
+    };
+    try {
+      expect(inert()).toEqual([false, false, false]);
+      // 판단 띠 동작 버튼을 키보드로(초점이 그 버튼) 눌러 다시 읽기: 덮는 자리만 inert, 초점은 「취소」로
+      act.focus();
+      act.click();
+      expect(busy.hidden).toBe(false);
+      expect(inert()).toEqual([true, true, true]);
+      expect([busy, cancel, out].map((el) => el.closest('[inert]'))).toEqual([null, null, null]);
+      expect(document.activeElement).toBe(cancel);
+      // 덮개 밑 판단 띠 버튼은 초점을 받지 않는다
+      act.focus();
+      expect(document.activeElement).toBe(cancel);
+      // Esc 취소: 걷히면 inert를 거두고 초점은 뜰 때 자리(판단 띠 버튼)로, 늦게 온 다시 읽기는 버린다(띠 그대로)
+      cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      expect(busy.hidden).toBe(true);
+      expect(inert()).toEqual([false, false, false]);
+      expect(document.activeElement).toBe(act);
+      release();
+      await tick();
+      expect(act.isConnected).toBe(true);
+      expect(bar.hidden).toBe(false);
+      // 초점이 덮개 밖(제목 막대 「열기」)이면 그대로 — 새 문서는 전처럼 3D 보기로(결과를 넣기 앞에서 덮개를 걷어 inert가 없을 때)
+      out.focus();
+      const next = open(app, 'n.nc', MILL);
+      expect(busy.hidden).toBe(false);
+      expect(inert()).toEqual([true, true, true]);
+      expect(document.activeElement).toBe(out);
+      release();
+      expect(await next).toBe(true);
+      expect(busy.hidden).toBe(true);
+      expect(inert()).toEqual([false, false, false]);
+      expect(document.activeElement).toBe(canvas);
+    } finally {
+      HTMLElement.prototype.focus = focus;
+      client.open = real;
+    }
+  });
+
   it('좁은 화면: 띠 글을 누르면 펼치고(다시 누르면 접음), 알림은 아래쪽 띠 맨 위보다 위로(--toast-clear)', async () => {
     const cbs: (() => void)[] = [];
     const roCb = (): void => cbs.forEach((cb) => cb());
