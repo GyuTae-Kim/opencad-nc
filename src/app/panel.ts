@@ -417,6 +417,9 @@ export class NcPanel {
         const play = this.host.playbackInfo();
         const warn = this.warnAt(i);
         el.className = `vlist-row${i === doc.selLine ? ' sel' : ''}${play && play.line === i ? ' cur' : ''}${this.isHit(i) ? ' hit' : ''}${warn ? ' warn' : ''}`;
+        // 173차(WCAG 4.1.2): 지금 줄(고른 줄, 없으면 재생 중인 줄 — focusRow, 한 무리에 하나)은 바탕으로만 보여 화면 읽기가 몰랐다 — 클래스와 같은 자리에서 aria-current로.
+        // 줄은 role 없는 div라 aria-selected는 뜻이 없다(listbox로 바꾸면 창 키 arrowOwner가 ↑↓ 줄 옮기기를 막음). 재생이 줄마다 옮겨도 aria-live는 두지 않는다
+        el.setAttribute('aria-current', String(i === (doc.selLine >= 0 ? doc.selLine : (play?.line ?? -1))));
         el.textContent = '';
         el.append(h('span', { class: 'ln', style: `width:${digits + 1}ch`, ...(warn ? { title: warn } : {}) }, lineNumberText(doc, i)), h('span', { class: 'tx' }, this.lineText(doc, i).replace(/\t/g, '    ')));
       },
