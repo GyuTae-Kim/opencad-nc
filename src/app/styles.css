@@ -1745,6 +1745,15 @@ tr.off td:not(:first-child) {
     max-width: 50%;
   }
 }
+/* 186차(WCAG 1.4.10): 낮은 창에서는 시트 머리(47)와 재생 막대(320 폭 95~135)가 시트(256 높이 46% = 51)를 다 써 몸통이 0이었다 — 시트째 굴리고 몸통은 96px에서 멈춘다 */
+@media (max-width: 759.98px) and (max-height: 499.98px) {
+  .panel {
+    overflow-y: auto;
+  }
+  .panel-body {
+    min-height: 96px;
+  }
+}
 
 /* 선택 기능 켜고 끄기(정보 탭) */
 .group-item.opt .hint.inline {
