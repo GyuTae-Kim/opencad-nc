@@ -261,6 +261,53 @@ describe('패널 몸통 다시 그리기 초점(137차)', () => {
   });
 });
 
+describe('코드 탭으로 가는 몸통 버튼 초점(175차)', () => {
+  const WARN = `G21 G90 G17\nT1 M6\nG0 X0 Y0 Z10\nG1 Z-1 F100\nG53 G0 Z0\nG0 X10\nG1 Z-1\nG53 G0 Z0\nM30`;
+  it('175차: 초점이 정보 탭 해석 경고 버튼에 있으면 코드 탭으로 바꿔 몸통을 새로 그린 뒤 코드 목록으로(떼어진 버튼에서 문서로 빠지지 않게), 코드 목록에 있으면 코드 탭을 다시 그려도 그 목록에', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'w.nc', WARN);
+    const api = window.opencadApp!;
+    const list = (): HTMLElement => root.querySelector<HTMLElement>('.panel-body .code-list')!;
+    api.setPanelTab('info');
+    const btn = [...root.querySelectorAll<HTMLButtonElement>('.warn-list .warn-item')].find((b) => b.textContent!.includes('G53 기계 좌표 쪽'))!;
+    // 키보드(Enter·Space)로 누름 = 초점이 있는 버튼의 click
+    btn.focus();
+    btn.click();
+    expect(api.state.panelTab).toBe('code');
+    expect(api.state.selLine).toBe(4);
+    expect(btn.isConnected).toBe(false);
+    expect(document.activeElement).toBe(list());
+    // 다른 길(API·다시 읽기·언어 바꿈의 show)로 코드 탭을 다시 그려 목록이 떼였다 다시 붙어도 그 목록에
+    api.setPanelTab('code');
+    expect(document.activeElement).toBe(list());
+  });
+
+  it('175차: 공구 탭 Z 최저도 같은 규칙(키보드로 누르면 코드 목록), 초점이 몸통 밖이면 코드 탭으로 바꿔 다시 그려도 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const list = (): HTMLElement => root.querySelector<HTMLElement>('.panel-body .code-list')!;
+    const cells = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>('table.tools button.linkish')];
+    api.setPanelTab('tools');
+    const deep = cells()[1]!;
+    deep.focus();
+    deep.click();
+    expect(api.state.panelTab).toBe('code');
+    expect(api.state.selLine).toBe(11);
+    expect(deep.isConnected).toBe(false);
+    expect(document.activeElement).toBe(list());
+    // 초점이 몸통 밖(다른 칸 — 누르기가 버튼에 초점을 주지 않는 브라우저도)이면 옮기지 않는다
+    const out = document.body.appendChild(document.createElement('button'));
+    out.focus();
+    api.setPanelTab('tools');
+    cells()[0]!.click();
+    expect(api.state.panelTab).toBe('code');
+    expect(document.activeElement).toBe(out);
+    api.setPanelTab('code');
+    expect(document.activeElement).toBe(out);
+  });
+});
+
 describe('패널 몸통 이름(141차)', () => {
   it('141차: 패널 몸통(tabpanel)의 이름은 지금 탭 버튼(aria-labelledby), 탭 버튼마다 aria-controls는 몸통 — 탭을 바꾸거나 몸통을 새로 그리거나 새 문서를 열어도 지금 탭을 따르고 id는 하나뿐', async () => {
     const { app, root } = makeApp();
