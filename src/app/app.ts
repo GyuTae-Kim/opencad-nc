@@ -1485,6 +1485,8 @@ export class NcViewerApp implements PanelHost {
     this.mtrack = track;
     this.measureActs.prepend(lock.button, track.button);
     this.measureBar.append(lock.flash);
+    // 193차: 알림이 뜨고 지면(빈 1화소 ↔ 글) 크기가 바뀌어 아래쪽 띠 관찰이 liftToasts를 다시 부른다(측정 도구는 한 번만 만든다 — 관찰도 한 번)
+    this.bandRo?.observe(lock.flash);
     this.attachMeasure();
   }
 
@@ -2347,11 +2349,13 @@ export class NcViewerApp implements PanelHost {
    * 188차: 좁은 화면 판단 띠도 재생·측정 띠 맨 위를 비키게 — 판단 띠를 재기 전에 두 띠 맨 위(3D 보기 아래에서 잰 px + 10)를 --notice-clear로(CSS가 76·140px과 큰 쪽).
    * 판단 띠 자신은 넣지 않아 고리가 없고(옮겨도 크기는 그대로), 판단 띠는 옮긴 자리를 재어 알림은 그 위로.
    * 189차: 깎기 조각이 붙인 판재 따라가기 띠(simStrip — 붙기 전 null)도 재생 띠와 같은 자리로 잰다
+   * 193차: 측정 띠 위 잠깐 알림(띠 상자 밖 — 띠 rect에 들지 않아 판단 띠가 알림 글을 덮었다)도 글이 있을 때만 측정 띠 다음에(빈 알림은 1화소 클립)
    */
   private liftToasts(): void {
     const vh = window.innerHeight;
+    const f = this.mlock?.flash;
     let top = Infinity;
-    for (const el of [this.playStrip.el, this.simStrip, this.measureBar, this.noticeBar]) {
+    for (const el of [this.playStrip.el, this.simStrip, this.measureBar, f?.textContent ? f : null, this.noticeBar]) {
       if (el === this.noticeBar) this.viewEl.style.setProperty('--notice-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(this.viewEl.getBoundingClientRect().bottom - top + 10))}px` : '0px');
       if (!el || el.hidden) continue;
       const r = el.getBoundingClientRect();
