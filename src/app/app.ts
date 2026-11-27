@@ -1257,6 +1257,7 @@ export class NcViewerApp implements PanelHost {
 
   private setBusy(stage: string | null, fraction = 0, name = ''): void {
     const shown = stage !== null && this.busyEl.hidden;
+    const had = document.activeElement;
     this.busy = stage !== null;
     this.stage = stage ?? '';
     this.busyEl.hidden = !this.busy;
@@ -1264,6 +1265,9 @@ export class NcViewerApp implements PanelHost {
     this.refreshBar();
     if (!this.busy) {
       this.busyHold = null;
+      // 180차: 「취소」(덮개의 초점 칸)에 초점이 있는 채 덮개가 숨으면(취소·다시 읽기 끝·실패) 초점이 문서로 빠진다 — 덮개 안이었을 때만
+      // 열린 문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸으로(153차 차례의 남는 칸). 새 문서는 setDoc이 먼저 3D 보기로 두고, 밖이면 그대로
+      if (this.busyEl.contains(had)) (this.doc && this.viewer ? this.viewer.canvas : this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus({ preventScroll: true });
       return;
     }
     // 줄임표는 따로 둔다(단계 글만 번역 사전에서 찾게)
