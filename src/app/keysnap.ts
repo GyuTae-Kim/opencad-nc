@@ -172,6 +172,8 @@ export class KeySnap {
   private msgs: KeySnapText;
   /** 지금 언어의 「모서리에 수직」(111차 — 측정 알림, sync) */
   private perpName = KEY_PERP_DIR_NAME;
+  /** 200차: 마지막으로 틀을 맞춘 화면 언어(sync — 언어가 바뀌면 알림 영역의 앞 언어 글을 비운다) */
+  private lang = '';
   /** 고르기 후보 묶음 열쇠(코어 pickCycle group — 지금 문서의 pickTarget 열쇠, 문서가 없으면 묶지 않는다) */
   private readonly group = (p: Pick3d): string | undefined => {
     const d = this.host.doc;
@@ -196,6 +198,10 @@ export class KeySnap {
     if (!v) return;
     this.through = this.host.pickThrough;
     const lang = document.documentElement.lang || 'ko';
+    // 200차: 알림 영역은 번역층이 건너뛰어(그때 언어 글을 넣는다) 언어를 바꾸면 앞 언어로 넣은 마지막 알림(「가상 커서를 껐습니다」 등)이 다음 알림까지 남았다 —
+    // 화면에는 보이지 않으나 화면 읽기 프로그램의 읽기 모드로 읽힌다(WCAG 3.1.2). 비운다(빈 글은 알리지 않는다 — 197차 깎기 알림 비우기와 같은 꼴)
+    if (this.lang && lang !== this.lang && this.live.textContent) this.live.textContent = '';
+    this.lang = lang;
     const lookup = dictLookup(lang);
     const messages = keySnapMessageFn(this.core, lookup);
     this.msgs = messages;
