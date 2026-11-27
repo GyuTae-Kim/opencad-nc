@@ -752,6 +752,8 @@
   "이전 찾기 (Shift+Enter)": "Find previous (Shift+Enter)",
   "일반 ISO": "General ISO",
   "읽기 {0}": "Read {0}",
+  "읽기 {0}초": "Read {0} seconds",
+  "읽기 {0}분 {1}초": "Read {0} minutes {1} seconds",
   "읽기 멈추기 (Esc) — 열린 문서는 그대로 둡니다": "Stop reading (Esc) — leave open documents as they are",
   "읽기를 멈췄습니다 — 열린 문서는 그대로 둡니다.": "Reading stopped — open documents remain as they are.",
   "읽기를 멈췄습니다.": "Reading stopped.",

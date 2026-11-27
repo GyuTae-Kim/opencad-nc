@@ -29,8 +29,11 @@ export const fileSpan = (text: string, cls?: string): HTMLSpanElement => h('span
 /** 글 조각 목록 → 마디(앱 글 조각은 번역층이 따로 옮기고, 파일 글 조각은 옮기지 않는다) */
 export const pieces = (parts: readonly (string | FileText)[]): (string | Node)[] => parts.map((p) => (typeof p === 'string' ? p : fileSpan(p.file)));
 
-/** 파일 글이 섞인 글을 지금 언어로 옮겨 담은 span(번역층은 건너뛴다 — 언어를 바꾸면 그린 쪽이 다시 그린다) */
-export const mixSpan = (m: Mixed, cls?: string): HTMLSpanElement => h('span', { class: cls, 'data-i18n-skip': true }, ...mixNodes(m));
+/**
+ * 파일 글이 섞인 글을 지금 언어로 옮겨 담은 span(번역층은 건너뛴다 — 언어를 바꾸면 그린 쪽이 다시 그린다).
+ * ui면 사전 틀이 잡은 앱 글(오류 까닭 등)도 옮긴다(199차 — i18n.ts mixNodes)
+ */
+export const mixSpan = (m: Mixed, cls?: string, ui?: boolean): HTMLSpanElement => h('span', { class: cls, 'data-i18n-skip': true }, ...mixNodes(m, ui));
 
 let toastHost: HTMLElement | null = null;
 

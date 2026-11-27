@@ -30,11 +30,12 @@ export function localizeCubeFaces(faces: readonly { label: string }[]): void {
 /**
  * 파일 글이 섞인 글(filetext.ts)을 지금 언어로(54차, opencad-skp 52차와 같은 꼴): 파일 글 자리를 번역기가 보지 않는 사용 영역 글자(U+E000~)로
  * 바꿔 옮긴 뒤 되돌린다(사전 틀의 {0}이 그 글자를 그대로 잡고, 나눔 글로 조각낼 때도 한글이 없는 조각이라 그대로 둔다).
- * 옮긴 글을 넣은 속성은 data-i18n-keep에, 마디를 담은 요소는 data-i18n-skip으로 번역층에서 빼고, 언어를 바꾸면 앱이 다시 그린다(app.ts languagechange)
+ * 옮긴 글을 넣은 속성은 data-i18n-keep에, 마디를 담은 요소는 data-i18n-skip으로 번역층에서 빼고, 언어를 바꾸면 앱이 다시 그린다(app.ts languagechange).
+ * ui(199차): 틀이 잡은 값도 옮긴다 — 파일 글 자리는 사용 영역 글자라 그대로이고 남은 한글은 앱 글뿐이다(오류 알림 「…: 다시 읽지 못했습니다 — {까닭}」의 까닭이 한국어로 남았다)
  */
-function mixed(parts: Mixed): [string, string[]] {
+function mixed(parts: Mixed, ui = false): [string, string[]] {
   const files: string[] = [];
-  return [translate(parts.map(p => typeof p === 'string' ? p : String.fromCharCode(0xe000 + files.push(p.file) - 1)).join(''), active), files];
+  return [translate(parts.map(p => typeof p === 'string' ? p : String.fromCharCode(0xe000 + files.push(p.file) - 1)).join(''), active, ui), files];
 }
 /** 글자 c가 파일 글 자리면 그 파일 글(아니면 undefined) */
 const slot = (c: string, files: string[]): string | undefined => c.length === 1 ? files[c.charCodeAt(0) - 0xe000] : undefined;
@@ -47,9 +48,9 @@ export function mixText(parts: Mixed): string {
  * 그대로 끼워 "Failed to save picture: 3D 보기 문맥이 …"처럼 까닭이 한국어로 남았다 — 잡은 값도 사전에서 옮긴다. 파일 이름이 끼는 글은 mix·mixText
  */
 export const uiText = (text: string): string => translate(text, active, true);
-/** 섞은 글 → 화면 마디(파일 글은 translate="no" 묶음). 담는 요소에 data-i18n-skip을 둔다 */
-export function mixNodes(parts: Mixed): (string | Node)[] {
-  const [text, files] = mixed(parts);
+/** 섞은 글 → 화면 마디(파일 글은 translate="no" 묶음). 담는 요소에 data-i18n-skip을 둔다. ui면 틀이 잡은 앱 글도 옮긴다(mixed) */
+export function mixNodes(parts: Mixed, ui?: boolean): (string | Node)[] {
+  const [text, files] = mixed(parts, ui);
   const out: (string | Node)[] = [];
   let run = '';
   for (const c of text) {

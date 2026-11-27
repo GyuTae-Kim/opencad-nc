@@ -1094,7 +1094,8 @@ export class NcViewerApp implements PanelHost {
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
-        this.showError(mix`${fileText(label)}: ${errorText(e)}`);
+        // 199차: 까닭은 따로 옮겨지게 글 마디마다(31차 꼴) — 「이름: 까닭」을 한 글로 이으면 맞는 사전 틀이 없어 다른 언어에서도 통째 한국어로 남았다
+        this.showError([fileText(label), ': ', errorText(e)], true);
         attempt.error('fetch_error');
       }
       return false;
@@ -1144,7 +1145,8 @@ export class NcViewerApp implements PanelHost {
       return true;
     } catch (e) {
       if (seq === this.loadSeq) {
-        this.showError(mix`${fileText(name)}: ${errorText(e)}`);
+        // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등 까닭은 따로 옮겨지게 글 마디마다(199차 — 위 openUrl과 같음)
+        this.showError([fileText(name), ': ', errorText(e)], true);
         attempt.error('parse_error');
       }
       return false;
@@ -1331,7 +1333,7 @@ export class NcViewerApp implements PanelHost {
   private errorMsg: [Mixed, boolean] = [[], false];
 
   /**
-   * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차),
+   * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다(199차),
    * split이면 조각마다 글 마디 하나(번역층이 따로 옮기고 파일 글 조각은 옮기지 않는다)
    */
   private showError(msg: string | Mixed, split = false): void {
@@ -1348,7 +1350,7 @@ export class NcViewerApp implements PanelHost {
 
   private errorNodes(): (string | Node)[] {
     const [m, split] = this.errorMsg;
-    return split ? pieces(m) : [mixSpan(m)];
+    return split ? pieces(m) : [mixSpan(m, undefined, true)];
   }
 
   private bindDrop(): void {
