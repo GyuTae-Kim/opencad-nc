@@ -1361,6 +1361,137 @@ describe('판재 가공 하나씩 따라가기', () => {
       client.open = real;
     }
   });
+
+  it('189차: 좁은 화면 3D 보기 아래 따라가기 띠(깎기 조각이 나중에 붙임 — play-strip sim-steps)는 앱이 재는 띠(liftToasts·ResizeObserver) 밖이라 이름이 감겨 높아지면(두 줄 122px·세 줄 140px) 해석 판단 띠(바닥 140px)·알림(바닥 160px)이 띠 맨 위를 덮던 것을 — 붙일 때 host로 알려 재생·측정 띠와 같이 관찰하고 잰다(WCAG 1.4.10·2.4.11, 관찰은 한 번 — 띠는 떼지 않고 숨기기만)', async () => {
+    // 앱 ResizeObserver(3D 보기 아래 띠를 보는 것)를 가려낸다: 만든 관찰자마다 콜백과 관찰한 칸
+    const ros: { cb: () => void; els: Element[] }[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly r: { cb: () => void; els: Element[] };
+        constructor(cb: () => void) {
+          this.r = { cb, els: [] };
+          ros.push(this.r);
+        }
+        observe(el: Element): void {
+          this.r.els.push(el);
+        }
+        disconnect(): void {}
+      },
+    );
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    // 패널을 닫고 →: 앱 refreshPlayStrip을 지나지 않고 깎기 조각(← → 키 → stepBy → setStep)이 띠를 처음 붙이는 길
+    api.togglePanel(false);
+    expect(root.querySelector('.play-strip.sim-steps')).toBeNull();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(api.state.sim!.step).toMatchObject({ at: 1, strip: true });
+    const view = root.querySelector<HTMLElement>('.view')!;
+    const strip = view.querySelector<HTMLElement>(':scope > .play-strip.sim-steps')!;
+    const notice = view.querySelector<HTMLElement>(':scope > .notice-bar')!;
+    // 판재 문서라 G-code 재생 띠는 없고, 측정 중이 아니라 측정 띠도 없다 — 아래 띠는 따라가기 띠 하나
+    const others = [':scope > .play-strip:not(.sim-steps)', ':scope > .measure-bar'].map((s) => view.querySelector<HTMLElement>(s)!.hidden);
+    expect([strip.hidden, others]).toEqual([false, [true, true]]);
+    const band = ros.find((r) => r.els.includes(view))!;
+    expect(band.els.filter((e) => e === view || e === notice)).toHaveLength(2);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(view-tools 188차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 좁은 화면 덩어리(@media (max-width: 759.98px))
+    const raw = readFileSync(join(__dirname, '../../src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (b: string): Record<string, string> =>
+      Object.fromEntries(b.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const wide = parse(raw.replace(media, ''));
+    const narrow = [...raw.matchAll(media)].filter((m) => m[1]!.trim() === '(max-width: 759.98px)').flatMap((m) => parse(m[2]!));
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const px = (v?: string | null): number => parseFloat(v ?? '0') || 0;
+    const nums = (v: string): number[] => v.split(' ').map(px);
+    // 띠 칸(sim.ts buildSteps): 정보 줄(걸음 수·이름)·버튼 줄·위치 막대 — .play-strip 뒤에 오는 .sim-steps가 같은 세기라 사이(gap)는 6px
+    expect([...strip.children].map((e) => e.className || e.tagName)).toEqual(['ps-info', 'ps-acts', 'INPUT']);
+    const ss = { ...o('.play-strip'), ...o('.sim-steps') };
+    const info = o('.sim-steps .ps-info');
+    const bodyLh = Number(/\/([\d.]+)/.exec(o('body').font!)![1]);
+    const btnH = px(o('.mb-btn').height);
+    expect([raw.indexOf('\n.play-strip {') < raw.indexOf('\n.sim-steps {'), ss.padding, ss.border, ss.gap, info.gap, info['font-size'], info['flex-wrap'], bodyLh, btnH]).toEqual([
+      true,
+      '6px 8px',
+      '1px solid var(--border-soft)',
+      '6px',
+      '2px 10px',
+      '12.5px',
+      'wrap',
+      1.45,
+      38,
+    ]);
+    // 판단 띠·알림 규칙은 이 띠에도 걸린다(클래스 play-strip) — 바닥 140·160px과 앱이 넣는 값 가운데 큰 쪽
+    const rule = pick(narrow, '.view:has(.play-strip:not([hidden])) .notice-bar').bottom!;
+    const toastRule = o('body:has(.play-strip:not([hidden])) .toasts').bottom!;
+    expect([strip.matches('.play-strip:not([hidden])'), rule, toastRule]).toEqual([true, 'max(140px, var(--notice-clear, 0px))', 'max(calc(160px + env(safe-area-inset-bottom, 0px)), var(--toast-clear, 0px))']);
+    const floor = Number(/^max\((\d+)px, var\(--notice-clear, 0px\)\)$/.exec(rule)![1]);
+    const toastFloor = Number(/^max\(calc\((\d+)px/.exec(toastRule)![1]);
+    // 띠 높이: 여백·테두리 + 정보 줄(이름 줄 k: 1 = 걸음 수와 한 줄, 2 = 이름이 다음 줄, 3 = 이름이 두 줄 …, 줄 사이 2) + 사이 둘 + 버튼 + 위치 막대(Chrome 기본 어림 16 + margin 2·2 — 188차 재생 띠와 같은 어림)
+    const RANGE = 16 + 2 * 2;
+    const stripH = (k: number): number =>
+      2 * nums(ss.padding!)[0]! + 2 * px(ss.border) + k * px(info['font-size']) * bodyLh + (k > 1 ? nums(info.gap!)[0]! : 0) + 2 * px(ss.gap) + btnH + RANGE;
+    // 띠 자리 흉내(188차 꼴): 3D 보기 아래끝 VB(상태 막대 26px 위), 띠는 3D 보기 아래 10px. jsdom은 CSS 사용자 속성을 담지 않으므로 넣는 값을 본다
+    const VB = innerHeight - 26;
+    const box = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 8, right: 312, width: 304, x: 8, y: top, toJSON: () => ({}) }) as DOMRect;
+    view.getBoundingClientRect = () => box(VB - 400, 400);
+    const setView = vi.spyOn(view.style, 'setProperty');
+    const setBody = vi.spyOn(document.body.style, 'setProperty');
+    const last = (spy: typeof setView, name: string): string | undefined => spy.mock.calls.filter((c) => c[0] === name).at(-1)?.[1] as string | undefined;
+    // 판단 띠(한 줄 — 띠가 보이면 글을 한 줄로 접음: 버튼 32 + 여백 10 + 테두리 2)는 그때까지 넣은 --notice-clear로 놓인 자리를 잰다
+    const NH = 44;
+    notice.getBoundingClientRect = () => box(VB - Math.max(floor, px(last(setView, '--notice-clear'))) - NH, NH);
+    /** 따라가기 띠(높이 h)를 3D 보기 아래 10px에 두고 크기 알림 → [판단 띠 아래끝 − 띠 위끝, 알림 바닥 − 창 아래에서 잰 위끝(판단 띠가 보이면 판단 띠, 아니면 따라가기 띠)] */
+    const place = (h: number): [number, number] => {
+      strip.getBoundingClientRect = () => box(VB - 10 - h, h);
+      band.cb();
+      const b = Math.max(floor, px(last(setView, '--notice-clear')));
+      const top = notice.hidden ? VB - 10 - h : VB - b - NH;
+      return [b - 10 - h, Math.max(toastFloor, px(last(setBody, '--toast-clear'))) - (innerHeight - top)];
+    };
+    const bad: string[] = [];
+    const seen: number[][] = [];
+    for (const hide of [false, true]) {
+      notice.hidden = hide;
+      for (const k of [1, 2, 3, 4]) {
+        const h = stripH(k);
+        const [gap, toast] = place(h);
+        if (gap < 8 || toast < 7.5) bad.push(`이름 ${k}줄${hide ? '(판단 띠 숨김)' : ''}: 띠 ${h} 판단 띠 틈 ${gap.toFixed(3)} 알림 틈 ${toast.toFixed(3)}`);
+        seen.push([h, gap, toast]);
+      }
+    }
+    // 이름 줄 수 모두에서 판단 띠 아래끝이 띠 위끝보다 8px 넘게 위, 알림은 판단 띠(숨으면 띠) 위끝 위(반올림 — 7.5 넘게)
+    expect(bad).toEqual([]);
+    // 손셈 자리값 [띠 높이, 판단 띠 틈, 알림 틈]: 이름 한 줄은 바닥 140·160 그대로, 두 줄부터 판단 띠는 띠 맨 위 10px 위(반올림), 알림은 판단 띠 위 8px(판단 띠가 숨으면 띠 위 8px — 반올림)
+    expect(seen).toEqual(
+      [
+        [102.125, 27.875, 8],
+        [122.25, 9.75, 8],
+        [140.375, 9.625, 8],
+        [158.5, 10.5, 8],
+        [102.125, 27.875, 21.875],
+        [122.25, 9.75, 7.75],
+        [140.375, 9.625, 7.625],
+        [158.5, 10.5, 8.5],
+      ].map((r) => r.map((v) => expect.closeTo(v, 6))),
+    );
+    // 관찰은 붙일 때 한 번: ✕로 숨으면 크기 알림에서 건너뛰어(다른 띠가 없으면) 두 값 0px, →로 다시 따라가도 같은 띠라 관찰이 늘지 않는다(떼지 않고 숨기기만 — 새는 관찰 없음)
+    expect(ros.filter((r) => r.els.includes(strip)).map((r) => r.els.filter((e) => e === strip).length)).toEqual([1]);
+    strip.querySelector<HTMLButtonElement>('button[aria-label="하나씩 따라가기 끝내기(모든 가공)"]')!.click();
+    expect(strip.hidden).toBe(true);
+    band.cb();
+    expect([last(setView, '--notice-clear'), last(setBody, '--toast-clear')]).toEqual(['0px', '0px']);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect([strip.hidden, view.querySelectorAll('.sim-steps').length, ros.filter((r) => r.els.includes(strip)).map((r) => r.els.filter((e) => e === strip).length)]).toEqual([false, 1, [1]]);
+    await until(settled);
+  });
 });
 
 describe('장면 합치기·번역', () => {

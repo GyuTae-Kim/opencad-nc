@@ -1407,11 +1407,11 @@ describe('해석 판단 띠', () => {
     expect(setView).toHaveBeenLastCalledWith('--notice-clear', '0px');
     // 고친 길: 두 띠 규칙만 앱이 잰 값과 큰 쪽 — 이 변수를 읽는 곳은 이 둘뿐
     expect([rule.measure, rule.play, raw.match(/--notice-clear/g)?.length]).toEqual(['max(76px, var(--notice-clear, 0px))', 'max(140px, var(--notice-clear, 0px))', 2]);
-    // app.ts 원문: --notice-clear는 liftToasts 한 곳에서, 띠 차례(재생·측정·판단) 가운데 판단 띠를 재기 전에 넣는다
+    // app.ts 원문: --notice-clear는 liftToasts 한 곳에서, 띠 차례(재생·따라가기(189차 — 깎기 조각이 붙인 띠, sim.test)·측정·판단) 가운데 판단 띠를 재기 전에 넣는다
     const src = readFileSync(join(ROOT, 'src/app/app.ts'), 'utf8');
     const i = src.indexOf('\n  private liftToasts(): void {');
     const fn = src.slice(i, src.indexOf('\n  }\n', i));
-    expect([i > 0, src.split("setProperty('--notice-clear'").length - 1, fn.includes("setProperty('--notice-clear'"), fn.includes('[this.playStrip.el, this.measureBar, this.noticeBar]')]).toEqual([true, 1, true, true]);
+    expect([i > 0, src.split("setProperty('--notice-clear'").length - 1, fn.includes("setProperty('--notice-clear'"), fn.includes('[this.playStrip.el, this.simStrip, this.measureBar, this.noticeBar]')]).toEqual([true, 1, true, true]);
   });
 });
 
