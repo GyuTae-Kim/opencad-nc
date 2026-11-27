@@ -85,13 +85,11 @@ jobs:
           done
           # CI 5차: 요약(performance-summary)·예산(check-performance-budget)이 읽는 것은 performance·accessibility·seo 분류와 FCP·LCP·TBT·CLS·JS 바이트뿐이라,
           # 쓰지 않는 best-practices 분류와 전체 페이지 스크린숏(보고서 그림)은 빼고 잰다(여섯 번마다 그만큼 덜 모음 — 재는 값·세 번 가운데 값은 그대로)
-          for round in 1 2 3; do
-            for variant in baseline candidate; do
-              port=4320
-              if [ "$variant" = candidate ]; then port=4321; fi
-              "$RUNNER_TEMP/mobile-audit/node_modules/.bin/lighthouse" "http://127.0.0.1:$port/" --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader" --only-categories=performance,accessibility,seo --disable-full-page-screenshot --output=json --output=html --output-path=".runtime/performance/$variant-$round" --quiet
-            done
-          done
+          # CI 6차: 여섯 번(기준·후보 × 세 번)을 node 한 프로세스에서 lighthouse Node API로 차례로 돌린다(.github/lighthouse-rounds.mjs).
+          # 명령줄 lighthouse는 번마다 node 시작·모듈 읽기를 새로 했다(번마다 시작 간격 약 10초 가운데 lighthouse 안 시간 약 4.5초).
+          # 설정·Chrome 플래그·차례·보고서 이름은 그대로이고 Chrome은 번마다 새 프로필로 띄우고 끈다(재는 조건 그대로). 번마다 걸린 시간을 찍는다
+          cp .github/lighthouse-rounds.mjs "$RUNNER_TEMP/mobile-audit/"
+          node "$RUNNER_TEMP/mobile-audit/lighthouse-rounds.mjs" .runtime/performance
           node_modules/.bin/opencad-site performance-summary .runtime/performance >> "$GITHUB_STEP_SUMMARY"
           cli="$RUNNER_TEMP/mobile-audit/node_modules/.bin/playwright-cli"
           session="mobile-$GITHUB_RUN_ID"

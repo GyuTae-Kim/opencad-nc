@@ -23,7 +23,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # CI 6차: main으로 가는 PR에서는 휴대폰 검사(mobile-validation.yml)가 같은 npm run test:seo와 npm run build(tsc --noEmit — typecheck와 같은 일 —
+      # · vite build · check:seo · check:i18n)를 돌리므로 여기서는 시험만 돌린다. 다른 base의 PR과 손으로 돌린 실행에서는 전처럼 모두 돌린다
       - run: npm run typecheck
+        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
       - run: npm test
       - run: npm run test:seo
+        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
       - run: npm run build
+        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
