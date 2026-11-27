@@ -1149,4 +1149,126 @@ describe('해석 판단 띠', () => {
     roCb();
     expect(set).toHaveBeenLastCalledWith('--toast-clear', '0px');
   });
+
+  it('185차: 폭 320px(WCAG 1.4.10 — 1280 화면 400% 확대)에서 동작 버튼은 줄을 바꾸지 않아 긴 버튼 글(독일어 「Als kleinstes Inkrement lesen」 등)이면 글 칸만 몇 글자 폭으로 줄던 것을 — 좁은 화면 규칙에서만 줄을 감싸 글 칸이 8em보다 좁아지면 버튼을 다음 줄로(✕도 정한 32px), 넓은 화면 규칙은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    // 띠 한 줄(app.ts renderNotices): 글(.nt-text)·동작 버튼(.mb-btn)·✕(.mb-btn.icon) — 아래에서 읽는 규칙의 선택자가 실제 칸에 맞는다
+    const row = root.querySelector<HTMLElement>('.notice-bar .notice')!;
+    const [text, act, close] = [...row.children] as HTMLElement[];
+    expect([row.children.length, text!.matches('.notice .nt-text'), act!.matches('.notice .mb-btn:not(.icon)'), close!.matches('.notice .mb-btn.icon')]).toEqual([3, true, true, true]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160~170차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 좁은 화면 덩어리(@media (max-width: 759.98px))
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const wide = parse(raw.replace(media, ''));
+    const narrow = [...raw.matchAll(media)].filter((m) => m[1]!.trim() === '(max-width: 759.98px)').flatMap((m) => parse(m[2]!));
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const n = (sel: string): Record<string, string> => ({ ...o(sel), ...pick(narrow, sel) });
+    // 넓은 화면(맨 바깥 규칙)은 그대로: 한 줄(감싸지 않음), 글 칸 기준 크기는 글 폭(auto), 버튼 글은 줄을 바꾸지 않음
+    expect(o('.notice')).toEqual({
+      display: 'flex',
+      'align-items': 'center',
+      gap: '8px',
+      padding: '5px 5px 5px 12px',
+      border: '1px solid var(--border-soft)',
+      'border-left': '3px solid var(--accent, #3b82f6)',
+      'border-radius': '10px',
+      background: 'color-mix(in srgb, var(--bg-panel) 94%, transparent)',
+      'box-shadow': 'var(--shadow)',
+      'font-size': '13px',
+      'line-height': '1.35',
+    });
+    expect(o('.notice .nt-text')).toEqual({ flex: '1 1 auto', 'min-width': '0', 'overflow-wrap': 'anywhere' });
+    expect(o('.mb-btn')).toMatchObject({ padding: '0 12px', border: '1px solid var(--border-soft)', 'font-size': '13px', 'white-space': 'nowrap' });
+    // 폭 손셈(어림): 13px 글에서 한글·가나·한자 1em, 빈칸 0.3em, 그 밖(라틴·숫자·기호) 0.6em — Helvetica 꼴 라틴 평균(약 0.5em)보다 넉넉히
+    const em = parseFloat(o('.notice')['font-size']!);
+    const width = (s: string): number =>
+      [...s].reduce((w, c) => w + (/[ᄀ-ᇿ　-ヿ㄰-㆏㐀-鿿가-힯＀-￯]/.test(c) ? 1 : c === ' ' ? 0.3 : 0.6) * em, 0);
+    const nums = (v: string): number[] => v.split(' ').map((t) => parseFloat(t));
+    const [, padR, , padL] = nums(o('.notice').padding!);
+    const chrome = padL! + padR! + parseFloat(o('.notice')['border-left']!) + parseFloat(o('.notice').border!);
+    const gap = parseFloat(o('.notice').gap!);
+    const edge = 2 * nums(o('.mb-btn').padding!)[1]! + 2 * parseFloat(o('.mb-btn').border!);
+    // ✕: 정한 폭 32, 자동 최소 크기는 정한 폭과 내용(그림 16 + 테두리 2) 가운데 작은 쪽 — 줄이 넘치면 여기까지 준다
+    const xBase = parseFloat(o('.notice .mb-btn.icon').width!);
+    const xMin = Math.min(xBase, parseFloat(o('.mb-btn svg').width!) + 2 * parseFloat(o('.mb-btn').border!));
+    // 좁은 화면 띠 최대 폭: 100% − 16px
+    const side = Number(/^calc\(100% - (\d+)px\)$/.exec(n('.notice-bar')['max-width']!)![1]);
+    expect([chrome, gap, edge, xBase, xMin, side]).toEqual([21, 8, 26, 32, 18, 16]);
+    const [grow, , auto] = n('.notice .nt-text').flex!.split(' ');
+    const basis = n('.notice .nt-text')['flex-basis'] ?? auto!;
+    const wraps = n('.notice')['flex-wrap'] === 'wrap';
+    type Item = { base: number; min: number; grow: number };
+    // 한 줄 크기 나누기(CSS Flexbox 9.7): 남으면 grow 비율로 더하고, 모자라면 shrink(모두 1) × 기준 크기 비율로 줄이되 최소에 걸린 칸은 묶고 다시 나눈다
+    const share = (items: Item[], space: number): number[] => {
+      const size = items.map((it) => it.base);
+      const free = space - size.reduce((a, b) => a + b, 0);
+      const grows = items.reduce((a, it) => a + it.grow, 0);
+      if (free >= 0) return items.map((it) => it.base + (grows ? (free * it.grow) / grows : 0));
+      const frozen = items.map(() => false);
+      for (let hit = true; hit; ) {
+        hit = false;
+        const left = space - items.reduce((a, it, i) => a + (frozen[i] ? size[i]! : it.base), 0);
+        const scaled = items.reduce((a, it, i) => a + (frozen[i] ? 0 : it.base), 0);
+        items.forEach((it, i) => {
+          if (frozen[i]) return;
+          const v = it.base + (left * it.base) / scaled;
+          size[i] = Math.max(v, it.min);
+          if (v < it.min) hit = frozen[i] = true;
+        });
+      }
+      return size;
+    };
+    /** 띠 한 줄(글·버튼·✕)을 화면 폭 vw에 놓으면: 글 칸 폭, ✕ 폭, 줄 수, 줄마다 칸이 띠 안에 드는지 */
+    const lay = (vw: number, note: string, label: string): { text: number; x: number; lines: number; fits: boolean } => {
+      const btn = width(label) + edge;
+      const items: Item[] = [
+        { base: basis === 'auto' ? width(note) : parseFloat(basis) * em, min: 0, grow: Number(grow) },
+        { base: btn, min: btn, grow: 0 },
+        { base: xBase, min: xMin, grow: 0 },
+      ];
+      // 띠 폭: 칸들의 한 줄 max-content(글 한 줄 + 버튼 + ✕ + 사이)와 좁은 화면 최대 폭 가운데 작은 쪽
+      const inner = Math.min(width(note) + btn + xBase + 2 * gap + chrome, vw - side) - chrome;
+      const lines: Item[][] = [];
+      for (const it of items) {
+        const last = lines.at(-1);
+        const used = last ? last.reduce((a, x) => a + Math.max(x.base, x.min) + gap, 0) : 0;
+        if (last && (!wraps || used + Math.max(it.base, it.min) <= inner)) last.push(it);
+        else lines.push([it]);
+      }
+      const sizes = new Map<Item, number>();
+      for (const line of lines) share(line, inner - gap * (line.length - 1)).forEach((s, i) => sizes.set(line[i]!, s));
+      const fits = lines.every((l) => l.reduce((a, it) => a + sizes.get(it)!, 0) + gap * (l.length - 1) <= inner + 1e-9);
+      return { text: sizes.get(items[0]!)!, x: sizes.get(items[2]!)!, lines: lines.length, fits };
+    };
+    // 동작 버튼 글 여섯(doc.ts noticeViews)과 판단 글 둘: 이 띠의 선반 판단(긴 글)·Siemens 판별(짧은 글 — 그래도 8em의 두 배 넘음)
+    const labels = [...readFileSync(join(ROOT, 'src/app/doc.ts'), 'utf8').matchAll(/action: \{ label: '([^']+)'/g)].map((m) => m[1]!);
+    expect(labels).toEqual(['작업 파일', '밀링으로 읽기', '최소 단위로 읽기', 'G-code 형식 바꾸기', '체계 바꾸기', '파일 더하기']);
+    const notes = [text!.textContent!, 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).'];
+    const least = 8 * em;
+    const bad: string[] = [];
+    const wrapped: string[] = [];
+    for (const lang of ['ko', 'en', 'ja', 'zh-CN', 'de']) {
+      const tr = (s: string): string => (lang === 'ko' ? s : translate(s, lang));
+      if (lang !== 'ko') expect([...notes, ...labels].map(tr).filter((s) => /[가-힣]/.test(s)), lang).toEqual([]);
+      for (const [k, note] of notes.map(tr).entries()) {
+        expect(width(note), `${lang}: ${note}`).toBeGreaterThan(2 * least);
+        for (const label of labels.map(tr)) {
+          for (const vw of [320, 390, 759]) {
+            const r = lay(vw, note, label);
+            if (r.text < least || r.x !== xBase || !r.fits) bad.push(`${vw} ${lang} 「${label}」: 글 ${Math.round(r.text)} ✕ ${Math.round(r.x)}${r.fits ? '' : ' 넘침'}`);
+            if (vw === 390 && k === 0 && r.lines > 1) wrapped.push(`${lang} ${label}`);
+          }
+        }
+      }
+    }
+    // 320·390·759(좁은 화면 끝)에서 다섯 언어·버튼 글 여섯·판단 글 둘 모두 글 칸 8em 이상, ✕ 32px, 칸이 띠 밖으로 넘치지 않음
+    expect(bad).toEqual([]);
+    // 휴대폰 검사 폭(390)에서 줄을 감싸는 것은 독일어 가장 긴 버튼 글뿐 — 나머지는 지금처럼 한 줄(글 칸이 남은 폭을 다 받음)
+    expect(wrapped).toEqual(['de Als kleinstes Inkrement lesen']);
+  });
 });

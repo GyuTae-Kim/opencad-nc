@@ -832,8 +832,14 @@ table.grid button.linkish {
   .view:has(.play-strip:not([hidden])) .notice-bar {
     bottom: 140px;
   }
+  /* 185차(WCAG 1.4.10): 동작 버튼은 줄을 바꾸지 않아 320px에서 버튼 글이 길면(독일어 등) 글 칸만 몇 글자 폭으로 줄었다 — 글 칸이 8em보다 좁아지면 버튼을 다음 줄 오른쪽으로 */
+  .notice {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
   /* 띠 글은 두 줄까지(띠가 둘 넘거나 재생 띠가 있으면 한 줄), 글을 누르면 펼친다 — 3D 보기를 덜 가리게 */
   .notice .nt-text {
+    flex-basis: 8em;
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;
