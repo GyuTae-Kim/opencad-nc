@@ -377,3 +377,59 @@ describe('정보 탭: 받지 않는 숫자 값(168차)', () => {
     expect(saved().rapidFeedMm).toBe(null);
   });
 });
+
+/**
+ * 169차: 168차 aria-invalid는 화면 읽기에만 닿았다 — 스타일시트에 `[aria-invalid]` 규칙이 없어 틀린 값 칸이 눈에는 받는 칸과 같았다(WCAG 3.3.1).
+ * 받지 않는 값인 숫자 칸(.num-input — 정보 탭·깎기 탭)은 테두리를 1px에서 2px로 굵게 위험 색(--danger)으로: 색만이 아니고(굵기 — 1.4.1, 강제 색 모드에서도 남음),
+ * 높이는 고정·border-box라 줄 높이 그대로, 초점 테두리(바깥 1px 띄운 강조 outline)와 겹치지 않는다. 표시와 칸 바탕·패널 바탕의 대비는 두 테마 모두 3:1 넘음(1.4.11)
+ */
+describe('정보 탭: 받지 않는 숫자 값의 보이는 표시(169차)', () => {
+  it('aria-invalid 칸만 테두리 2px 위험 색(두 테마 모두 칸 바탕·패널 바탕과 3:1 넘음), 칸 높이 고정·border-box, 손가락 화면 규칙은 테두리를 바꾸지 않고 초점은 바깥 outline 그대로', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const input = (label: string): HTMLInputElement => root.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    await until(() => !!input('급속 속도(mm/분)'));
+    const bad = input('급속 속도(mm/분)');
+    bad.value = '0';
+    bad.dispatchEvent(new Event('change'));
+    const good = input('공구 교환 시간(초)');
+    expect([bad.getAttribute('aria-invalid'), good.hasAttribute('aria-invalid')]).toEqual(['true', false]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160~167차 꼴): 주석을 뺀 글의 맨 바깥 규칙, @media 덩어리는 따로
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g;
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const rules = parse(raw.replace(media, ''));
+    const body = (sel: string): Record<string, string> | undefined => rules.find((r) => r.sels.includes(sel))?.body;
+    // 틀린 값 표시 규칙은 하나 — aria-invalid 칸에만 맞고 받는 칸에는 맞지 않으며, 테두리 굵기·색만(높이·여백·outline·그림자는 그대로)
+    const marks = rules.filter((r) => r.sels.some((s) => s.includes('aria-invalid')));
+    expect(marks.map((r) => r.body)).toEqual([{ 'border-width': '2px', 'border-color': 'var(--danger)' }]);
+    expect(marks[0]!.sels.map((s) => [bad.matches(s), good.matches(s)])).toEqual([[true, false]]);
+    // 받는 칸은 1px 흐린 테두리, 높이 고정 + border-box라 2px로 굵어져도 칸 바깥 크기·줄 높이 그대로
+    expect(body('.num-input')).toMatchObject({ height: '28px', border: '1px solid var(--border-soft)' });
+    expect(body('*')).toEqual({ 'box-sizing': 'border-box' });
+    // 손가락 화면 규칙은 높이·글자 크기만(테두리를 건드리지 않음)
+    const coarse = [...raw.matchAll(media)].map((m) => m[0]).filter((b) => b.includes('.num-input'));
+    expect(coarse.flatMap((b) => parse(b).filter((r) => r.sels.includes('.num-input')).map((r) => r.body))).toEqual([{ height: '36px', 'font-size': '16px' }]);
+    // 초점은 맨 :focus-visible 바깥 테두리(칸 경계 밖 1px 띄움) 그대로 — 숫자 칸만의 상태 규칙이 없어 안쪽 위험 색 테두리와 겹치지 않음
+    expect(body(':focus-visible')).toEqual({ outline: '2px solid var(--accent)', 'outline-offset': '1px' });
+    expect(rules.filter((r) => r.sels.some((s) => s.includes('num-input') && s.includes(':')))).toEqual([]);
+    // 대비(WCAG 1.4.11 — 상대 휘도): 위험 색 vs 칸 바탕·패널 바탕, 어두운(:root)·밝은 테마 모두 3:1 넘음(손셈 5.69·4.46 / 5.62·5.44)
+    const lum = (hex: string): number =>
+      [0.2126, 0.7152, 0.0722].reduce((s, w, i) => {
+        const c = parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255;
+        return s + w * (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+      }, 0);
+    const ratio = (a: string, b: string): number => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+    for (const theme of [':root', ":root[data-theme='light']"]) {
+      const v = body(theme)!;
+      expect(Math.min(ratio(v['--danger']!, v['--bg-input']!), ratio(v['--danger']!, v['--bg-panel']!))).toBeGreaterThan(3);
+    }
+  });
+});
