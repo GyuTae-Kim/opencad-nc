@@ -144,10 +144,12 @@ describe('여러 파일을 한 작업으로 열기', () => {
     expect(info.textContent).toContain('작업 파일 3개');
     const items = [...info.querySelectorAll<HTMLButtonElement>('.job-files .warn-item')];
     expect(items.map((b) => b.textContent)).toEqual(['주 프로그램main.nc', '함께 연 파일O1001.nc', '함께 연 파일1002.nc']);
-    // 파일을 누르면 코드 탭에서 그 파일이 시작하는 줄(표지 줄)로
+    // 파일을 누르면 코드 탭에서 그 파일이 시작하는 줄(표지 줄)로 — 175차: 키보드로 누르면(초점이 그 버튼) 초점은 새 몸통의 코드 목록으로
+    items[1]!.focus();
     items[1]!.click();
     expect(window.opencadApp!.state.panelTab).toBe('code');
     expect(window.opencadApp!.state.selLine).toBe(11);
+    expect(document.activeElement).toBe(root.querySelector('.panel-body .code-list'));
     // 최근 문서: 이은 글을 주 프로그램 이름으로, 파일 수와 함께
     await until(() => recent.entries.size > 0);
     const saved = [...recent.entries.values()];

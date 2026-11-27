@@ -316,6 +316,7 @@ export class NcPanel {
     }
     // 137차: 몸통도 같은 꼴 — 초점이 몸통 칸에 있었으면 그 칸의 열쇠(지난번 그린 바로 뒤 적어 둔 것)
     const key = this.keys.get(document.activeElement as Element);
+    const inBody = this.body.contains(document.activeElement);
     const scroll = this.body.scrollTop;
     const sameTab = this.body.dataset.tab === d.panelTab;
     this.body.dataset.tab = d.panelTab;
@@ -340,6 +341,9 @@ export class NcPanel {
       this.keys.set(el, k);
       if (k === key && !this.body.contains(document.activeElement)) el.focus({ preventScroll: true });
     }
+    // 175차(WCAG 2.4.3): 코드 탭으로 가는 몸통 버튼(정보 탭 경고·작업 파일, 공구 탭 Z 최저)은 같은 열쇠 칸이 없고 코드 목록(열쇠 칸 밖)은 떼였다 다시 붙어
+    // 초점이 문서로 빠졌다 — 초점이 몸통 안이었을 때만 같은 자리의 코드 목록으로(그 줄이 지금 줄, ↑↓로 줄을 옮김 — 찾기 칸 Esc와 같은 곳)
+    if (inBody && d.panelTab === 'code' && !this.body.contains(document.activeElement)) this.code?.el.focus({ preventScroll: true });
     this.renderFoot();
     this.onPlayback();
   }
