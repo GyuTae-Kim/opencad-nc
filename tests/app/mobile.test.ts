@@ -3,6 +3,8 @@
  * 휴대폰·터치 화면(app.ts): 좁은 화면 도구 막대, "보기 설정" 메뉴, 측정 띠, 손가락 기기의 파일 고르기·안내 글, 시작 화면의 최근 문서.
  * 뷰어 코어(WebGL)와 해석 워커는 가짜로 바꾼다 — 코어 쪽은 앱이 부르는 것만 흉내 내고 나머지 부르기는 null을 돌려준다.
  */
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
@@ -128,11 +130,13 @@ vi.mock('../../src/app/dom', async (importOriginal) => {
 import { NcViewerApp } from '../../src/app/app';
 import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
-import { ARROW_LOCK_HINT, SHIFT_LOCK_HINTS, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { ARROW_LOCK_HINT, LOCK_HINTS, SHIFT_LOCK_HINTS, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
 import { AIM_HOLD_MS, touchPointerEvent } from '../../src/app/aim';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';
 import { translate } from '../../site/i18n.mjs';
+
+const ROOT = resolve(__dirname, '../..');
 
 /** 화면 폭·높이·누르개 흉내(matchMedia). 쉼표는 "또는", and는 "그리고"로 조건마다 흉내 낸 값을 본다 */
 function media(narrow: boolean, coarse: boolean, low: boolean): void {
@@ -416,6 +420,148 @@ describe('측정 띠(휴대폰·터치)', () => {
     clear!.click();
     expect(clear!.disabled).toBe(true);
     expect(document.activeElement).toBe(other);
+  });
+
+  it('187차: 폭 320px(WCAG 1.4.10 — 1280 화면 400% 확대)에서 측정 띠 버튼 묶음은 줄지 않아(flex: none) 버튼이 셋·넷이면 글 칸만 몇 글자 폭으로 줄던 것을 — 좁은 화면 규칙에서만 줄을 감싸 글 칸이 8em(글이 더 짧으면 글 폭)보다 좁아지면 묶음을 다음 줄 오른쪽으로, 지금 맞는 띠와 넓은 화면 규칙은 그대로', async () => {
+    const { app, root } = makeApp(true, true);
+    await app.openSample();
+    menuButton(root, '측정').click();
+    // 띠 틀(app.ts·measure-lock.ts·measure-track.ts): 글(.mb-text)·버튼 묶음(.mb-acts — 잠금·끌어온 점·다시 재기·끝내기)·띠 위 알림(absolute — 줄 밖) — 아래에서 읽는 규칙의 선택자가 실제 칸에 맞는다
+    const bar = root.querySelector<HTMLElement>('.measure-bar')!;
+    const [text, acts, flash] = [...bar.children] as HTMLElement[];
+    const btns = [...acts!.children] as HTMLElement[];
+    expect([bar.children.length, text!.matches('.mb-text'), acts!.matches('.mb-acts'), flash!.matches('.measure-flash'), btns.length]).toEqual([3, true, true, true, 4]);
+    expect(btns.map((b) => [b.matches('.mb-btn'), b.matches('.mb-btn.icon')])).toEqual([[true, true], [true, true], [true, false], [true, true]]);
+    const clearLabel = btns[2]!.querySelector(':scope > span')!.textContent!;
+    expect([!!btns[2]!.querySelector(':scope > svg'), clearLabel, text!.querySelector(':scope > .mb-hint')!.textContent]).toEqual([true, '다시 재기', measureHint(0, false, true)]);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(185·186차 꼴): 주석을 뺀 글의 맨 바깥 규칙과 @media 덩어리(조건 글로 고름)
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media([^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    const decl = (b: string): Record<string, string> =>
+      Object.fromEntries(b.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const pick = (rules: ReturnType<typeof parse>, sel: string): Record<string, string> => Object.assign({}, ...rules.filter((r) => r.sels.includes(sel)).map((r) => r.body));
+    const at = (q: string) => [...raw.matchAll(media)].filter((m) => m[1]!.trim() === q).flatMap((m) => parse(m[2]!));
+    const wide = parse(raw.replace(media, ''));
+    const [narrow, shown] = [at('(max-width: 759.98px)'), at('(max-width: 759.98px), (pointer: coarse)')];
+    const o = (sel: string): Record<string, string> => pick(wide, sel);
+    const n = (sel: string): Record<string, string> => ({ ...o(sel), ...pick(narrow, sel) });
+    // 넓은 화면(맨 바깥 규칙)은 그대로: 한 줄, 띠 폭은 칸의 한 줄 폭(최대 100% − 16px), 글 칸은 글 폭에서 0까지 줄고 묶음은 줄지 않음
+    expect(o('.measure-bar')).toEqual({
+      position: 'absolute',
+      left: '50%',
+      bottom: '10px',
+      'z-index': '7',
+      display: 'none',
+      'align-items': 'center',
+      gap: '10px',
+      width: 'max-content',
+      'max-width': 'calc(100% - 16px)',
+      padding: '6px 6px 6px 12px',
+      border: '1px solid var(--border-soft)',
+      'border-radius': '12px',
+      background: 'color-mix(in srgb, var(--bg-panel) 94%, transparent)',
+      'box-shadow': 'var(--shadow)',
+      transform: 'translateX(-50%)',
+    });
+    expect(o('.mb-text')).toEqual({ display: 'flex', flex: '1 1 auto', 'flex-direction': 'column', 'min-width': '0', 'line-height': '1.3', 'overflow-wrap': 'anywhere' });
+    expect(o('.mb-acts')).toEqual({ display: 'flex', flex: 'none', gap: '4px' });
+    expect(o('.mb-btn')).toMatchObject({ gap: '5px', padding: '0 12px', border: '1px solid var(--border-soft)', 'font-size': '13px', 'white-space': 'nowrap' });
+    expect([o('.mb-btn.icon'), o('.mb-btn svg').width, o('.measure-flash').position]).toEqual([{ width: '38px', padding: '0' }, '16px', 'absolute']);
+    // 띠를 보이는 덩어리(좁은 화면·손가락)는 그대로 — 넓은 손가락 화면(태블릿)에는 새 규칙이 걸리지 않는다
+    expect(shown.map((r) => r.sels)).toEqual([['.measure-bar:not([hidden])'], ['body:has(.measure-bar:not([hidden])) .toasts']]);
+    // 폭 손셈(어림 — 185차와 같음): 한글·가나·한자 1em, 빈칸 0.3em, 그 밖(라틴·숫자·기호) 0.6em. 띠 글은 body 13px을 물려받아 8em = 104px
+    const em = parseFloat(o('body').font!);
+    const width = (s: string, px: number): number =>
+      [...s].reduce((w, c) => w + (/[ᄀ-ᇿ　-ヿ㄰-㆏㐀-鿿가-힯＀-￯]/.test(c) ? 1 : c === ' ' ? 0.3 : 0.6) * px, 0);
+    const nums = (v: string): number[] => v.split(' ').map((t) => parseFloat(t));
+    const [, padR, , padL] = nums(o('.measure-bar').padding!);
+    const chrome = padL! + padR! + 2 * parseFloat(o('.measure-bar').border!);
+    const gap = parseFloat(o('.measure-bar').gap!);
+    const side = Number(/^calc\(100% - (\d+)px\)$/.exec(o('.measure-bar')['max-width']!)![1]);
+    const edge = 2 * nums(o('.mb-btn').padding!)[1]! + 2 * parseFloat(o('.mb-btn').border!) + parseFloat(o('.mb-btn svg').width!) + parseFloat(o('.mb-btn').gap!);
+    const icon = parseFloat(o('.mb-btn.icon').width!);
+    const actGap = parseFloat(o('.mb-acts').gap!);
+    expect([em, chrome, gap, side, edge, icon, actGap]).toEqual([13, 20, 10, 16, 47, 38, 4]);
+    /**
+     * 띠 하나를 화면 폭 vw에 놓으면(CSS Flexbox 9.3 줄 나누기·9.7 크기 나누기): 글 칸 폭, 줄 수, 글·묶음의 가로 자리, 넘침 없음.
+     * 띠 폭은 칸의 한 줄 max-content(글 + 사이 + 묶음 — 여러 줄 행 flex도 합)와 최대 폭 가운데 작은 쪽. 글 칸 가설 크기 = 기준 크기(없으면 글 폭)를 최대 폭으로 자른 값
+     */
+    const lay = (vw: number, mc: number, aw: number, r: (sel: string) => Record<string, string>) => {
+      const [b, t] = [r('.measure-bar'), r('.mb-text')];
+      const inner = Math.min(mc + gap + aw + chrome, vw - side) - chrome;
+      const max = t['max-width'] === 'max-content' ? mc : Infinity;
+      const hyp = Math.min(t['flex-basis'] ? parseFloat(t['flex-basis']) * em : mc, max);
+      const [end, auto] = [b['justify-content'] === 'flex-end', t['margin-right'] === 'auto'];
+      if (b['flex-wrap'] !== 'wrap' || hyp + gap + aw <= inner + 1e-9) {
+        // 한 줄: 묶음은 줄지 않고 글 칸이 남은 폭을 받는다(모자라면 0까지 — min-width 0, 글 폭에 닿으면 멈추고 남는 폭은 auto 여백·justify-content)
+        const size = Math.min(Math.max(0, inner - gap - aw), max);
+        const left = inner - gap - aw - size;
+        return { inner, text: size, lines: 1, textX: end && !auto ? left : 0, actsX: size + gap + (end || auto ? left : 0), fits: inner - gap - aw >= -1e-9 };
+      }
+      // 두 줄: 첫 줄 글 혼자(글 폭에서 멈추면 auto 여백이 남는 폭을 받음), 둘째 줄 묶음(justify-content)
+      const size = Math.min(inner, max);
+      return { inner, text: size, lines: 2, textX: end && !auto ? inner - size : 0, actsX: end ? inner - aw : 0, fits: aw <= inner + 1e-9 };
+    };
+    // 띠 글(줄마다 글자 크기 — 가장 긴 줄이 글 폭): 첫 점 전 안내 · 첫 점 뒤 안내 + 잠금 안내(마우스는 화살표·Shift·잠근 방향, 손가락은 잠근 방향) · 결과(거리·축 길이·스냅 이름)
+    const [hint, sub, value, btnPx] = ['.mb-hint', '.mb-sub', '.mb-value', '.mb-btn'].map((s) => parseFloat(o(s)['font-size']!)) as [number, number, number, number];
+    type State = { lines: [string, number][]; lock: boolean; mc?: number };
+    const states = (tr: (s: string) => string, touch: boolean): State[] => [
+      { lines: [[tr(measureHint(0, false, touch)), hint]], lock: false },
+      ...[null, ...(touch ? [] : [ARROW_LOCK_HINT, ...Object.values(SHIFT_LOCK_HINTS)]), ...Object.values(LOCK_HINTS)].map(
+        (s): State => ({ lines: [[tr(measureHint(1, false, touch)), hint], ...(s ? [[tr(s), sub] as [string, number]] : [])], lock: true }),
+      ),
+      { lines: [['50 mm', value], ['dx 30 · dy -40 · dz 0', sub], [`${tr('끝점')} → ${tr('중심')}`, sub]], lock: false },
+      // 결과 글은 수에 따라 짧다(축 하나 재기 「dx 10 · dy 0 · dz 0」은 실제 글꼴로 약 90~100px — 8em보다 짧을 수 있음): 4em~7.5em 글 폭도 본다
+      ...[4, 5, 6, 7, 7.5].map((k): State => ({ lines: [['', 0]], lock: false, mc: k * em })),
+    ];
+    const bad: string[] = [];
+    const changed: string[] = [];
+    const wrapped = new Set<string>();
+    const seen: Record<string, number[]> = {};
+    for (const lang of ['ko', 'en', 'ja', 'zh-CN', 'de']) {
+      const tr = (s: string): string => (lang === 'ko' ? s : translate(s, lang));
+      const clear = width(tr(clearLabel), btnPx) + edge;
+      for (const touch of [false, true]) {
+        const list = states(tr, touch);
+        if (lang !== 'ko') expect(list.flatMap((st) => st.lines.map(([s]) => s)).filter((s) => /[가-힣]/.test(s)), lang).toEqual([]);
+        for (const st of list) {
+          const mc = st.mc ?? Math.max(...st.lines.map(([s, px]) => width(s, px)));
+          // 묶음: 다시 재기·끝내기 + 첫 점 뒤 잠금, 정밀 조준 중이거나 기억한 점이 있으면 끌어온 점(마우스도 머무르기로 기억)
+          for (const count of st.lock ? [3, 4] : [2, 3]) {
+            const aw = clear + (count - 1) * icon + (count - 1) * actGap;
+            for (const vw of [320, 360, 390, 759]) {
+              const before = lay(vw, mc, aw, o);
+              const after = lay(vw, mc, aw, n);
+              const least = Math.min(8 * em, mc);
+              const tag = `${vw}${touch ? ' 손가락' : ''} ${lang} ${count}개 글 ${Math.round(mc)}`;
+              if (after.text < least - 1e-9 || !after.fits || after.textX !== 0 || Math.abs(after.actsX - (after.inner - aw)) > 1e-9) bad.push(`${tag}: 글 칸 ${Math.round(after.text)}${after.fits ? '' : ' 넘침'}`);
+              // 지금 글 칸이 8em(글이 더 짧으면 글 폭) 이상인 띠는 고친 뒤에도 한 줄 그대로(같은 글 칸)
+              if (before.text >= least - 1e-9 && (after.lines !== 1 || Math.abs(after.text - before.text) > 1e-9)) changed.push(tag);
+              if (vw === 390 && after.lines > 1 && st.lines[0]![1]) wrapped.add(`${lang} ${count}`);
+              if (vw === 320 && st === list[1] && count === 4) seen[`${lang}${touch ? ' 손가락' : ''}`] = [before.text, after.text, after.lines];
+            }
+          }
+        }
+      }
+    }
+    // 320·360·390·759(좁은 화면 끝)에서 다섯 언어·띠 글·버튼 둘~넷 모두 글 칸이 8em(글이 더 짧으면 글 폭) 이상, 글은 왼쪽·묶음은 오른쪽, 띠 밖으로 넘치지 않음
+    expect(bad).toEqual([]);
+    expect(changed).toEqual([]);
+    // 손셈 자리값(320, 첫 점 뒤 잠금 안내 없음, 버튼 넷): 고치기 전 글 칸 → 고친 뒤 글 칸·줄 수 — 영어 손가락은 3.5px(글자마다 한 줄)에서 안내 한 줄 폭 194px로
+    expect([seen['ko'], seen['de 손가락'], seen['ja 손가락']].map((v) => v!.map(Math.round))).toEqual([
+      [45, 223, 2],
+      [27, 194, 2],
+      [49, 201, 2],
+    ]);
+    expect([seen['en 손가락']![0], seen['en 손가락']![1], seen['en 손가락']![2]]).toEqual([expect.closeTo(3.5, 6), expect.closeTo(194.4, 6), 2]);
+    // 휴대폰 검사 폭(390)에서 줄을 감싸는 것은 버튼 넷(첫 점 뒤 조준 중·기억한 점)의 영어·독일어뿐 — 나머지는 지금처럼 한 줄
+    expect([...wrapped].sort()).toEqual(['de 4', 'en 4']);
+    // 좁은 화면 규칙은 이 둘뿐(줄 감싸기·묶음 오른쪽 / 글 칸 기준 크기 8em·글 폭에서 멈춤·남는 폭은 글 오른쪽 여백)
+    expect(narrow.filter((r) => r.sels.some((s) => ['.measure-bar', '.mb-text', '.mb-acts', '.mb-btn'].includes(s))).map((r) => [r.sels, r.body])).toEqual([
+      [['.measure-bar'], { 'flex-wrap': 'wrap', 'justify-content': 'flex-end' }],
+      [['.mb-text'], { 'flex-basis': '8em', 'max-width': 'max-content', 'margin-right': 'auto' }],
+    ]);
   });
 });
 
