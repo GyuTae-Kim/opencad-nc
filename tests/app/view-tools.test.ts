@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
   class FakeViewer {
@@ -62,6 +62,7 @@ vi.mock('../../src/app/client', async () => {
 
 import { translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
+import { NO_LOCK_TOUCH } from '../../src/app/measure';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -1407,11 +1408,98 @@ describe('해석 판단 띠', () => {
     expect(setView).toHaveBeenLastCalledWith('--notice-clear', '0px');
     // 고친 길: 두 띠 규칙만 앱이 잰 값과 큰 쪽 — 이 변수를 읽는 곳은 이 둘뿐
     expect([rule.measure, rule.play, raw.match(/--notice-clear/g)?.length]).toEqual(['max(76px, var(--notice-clear, 0px))', 'max(140px, var(--notice-clear, 0px))', 2]);
-    // app.ts 원문: --notice-clear는 liftToasts 한 곳에서, 띠 차례(재생·따라가기(189차 — 깎기 조각이 붙인 띠, sim.test)·측정·판단) 가운데 판단 띠를 재기 전에 넣는다
+    // app.ts 원문: --notice-clear는 liftToasts 한 곳에서, 띠 차례(재생·따라가기(189차 — 깎기 조각이 붙인 띠, sim.test)·측정·측정 띠 위 알림(193차 — 글이 있을 때만, 아래 시험)·판단) 가운데 판단 띠를 재기 전에 넣는다
     const src = readFileSync(join(ROOT, 'src/app/app.ts'), 'utf8');
     const i = src.indexOf('\n  private liftToasts(): void {');
     const fn = src.slice(i, src.indexOf('\n  }\n', i));
-    expect([i > 0, src.split("setProperty('--notice-clear'").length - 1, fn.includes("setProperty('--notice-clear'"), fn.includes('[this.playStrip.el, this.simStrip, this.measureBar, this.noticeBar]')]).toEqual([true, 1, true, true]);
+    expect([i > 0, src.split("setProperty('--notice-clear'").length - 1, fn.includes("setProperty('--notice-clear'"), fn.includes('[this.playStrip.el, this.simStrip, this.measureBar, f?.textContent ? f : null, this.noticeBar]')]).toEqual([true, 1, true, true]);
+  });
+});
+
+describe('측정 띠 위 알림과 판단 띠(193차)', () => {
+  // 측정 도구 조각은 문서를 열 때 import()로 받고 정한 시간만 기다린다 — 처음 받기가 늦어 시험 파일이 끝난 뒤 평가되지 않게 미리 불러 둔다(맨 위 곁효과 없음)
+  beforeAll(async () => {
+    await import('../../src/app/measure-tools');
+  });
+
+  it('193차: 좁은 화면 판단 띠는 아래 띠 맨 위만 재어(liftToasts — 측정 띠 위 잠깐 알림은 띠 상자 밖 absolute라 띠 크기에 들지 않음) 알림(.measure-flash — 띠 위끝 5px 위, 한 줄 25.4·두 줄 42.8px)이 떠 있으면 알림 글 위쪽을 덮던 것을(한 줄 띠·두 줄 알림 33.8px, 두 줄 띠 37.95px) — 첫 화면이 붙이는 알림도 띠 크기 관찰에 넣고 글이 있을 때만 측정 띠 다음에 재어 판단 띠·알림 상자가 그 위로(WCAG 1.4.13·2.4.11), 빈 알림(1화소 클립)은 건너뜀', async () => {
+    // 앱 ResizeObserver(3D 보기 아래 띠를 보는 것)를 가려낸다: 만든 관찰자마다 콜백과 관찰한 칸(189차 sim.test 꼴)
+    const ros: { cb: () => void; els: Element[] }[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly r: { cb: () => void; els: Element[] };
+        constructor(cb: () => void) {
+          this.r = { cb, els: [] };
+          ros.push(this.r);
+        }
+        observe(el: Element): void {
+          this.r.els.push(el);
+        }
+        disconnect(): void {}
+      },
+    );
+    const { app, root } = makeApp();
+    await open(app, 'od.nc', LATHE);
+    const view = root.querySelector<HTMLElement>('.view')!;
+    const [bar, notice] = ['measure-bar', 'notice-bar'].map((c) => view.querySelector<HTMLElement>(`:scope > .${c}`)!) as [HTMLElement, HTMLElement];
+    const flash = bar.querySelector<HTMLElement>(':scope > .measure-flash')!;
+    const band = ros.find((r) => r.els.includes(view))!;
+    // 알림은 측정 도구 조각이 만들고 첫 화면이 측정 띠 끝에 붙인다(선반 판단으로 판단 띠가 보임) — 띠 크기 관찰이 알림도 한 번 본다(뜨고 질 때 크기가 바뀜)
+    expect([notice.hidden, flash.textContent, band.els.filter((e) => e === flash).length]).toEqual([false, '', 1]);
+    const lock = (app as unknown as { mlock: { showFlash(text: string, ms?: number, kind?: string | null): void; dropFlash(kind: string | null): void } }).mlock;
+    // 자리 흉내(188차 꼴 — 390×844 손가락 3D 보기 727): 3D 보기 아래끝 VB(상태 막대 26px 위), 측정 띠(높이 H)는 3D 보기 아래 10px, 알림(높이 FH — 빈 알림은 클래스 자리에 1×1)은 띠 위끝 5px 위,
+    // 판단 띠(높이 47 — 글 두 줄)는 그때까지 넣은 --notice-clear와 좁은 화면 바닥 76px 가운데 큰 쪽에 놓인 자리를 잰다. jsdom은 CSS 사용자 속성을 담지 않으므로 넣는 값을 본다
+    const VB = innerHeight - 26;
+    const NH = 47;
+    const box = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 16, right: 374, width: 358, x: 16, y: top, toJSON: () => ({}) }) as DOMRect;
+    view.getBoundingClientRect = () => box(VB - 727, 727);
+    const setView = vi.spyOn(view.style, 'setProperty');
+    const setBody = vi.spyOn(document.body.style, 'setProperty');
+    const last = (spy: typeof setView, name: string): number => parseFloat(String(spy.mock.calls.filter((c) => c[0] === name).at(-1)?.[1] ?? '0'));
+    notice.getBoundingClientRect = () => box(VB - Math.max(76, last(setView, '--notice-clear')) - NH, NH);
+    bar.hidden = false;
+    /** 측정 띠 H·알림 FH(0 = 빈 알림)로 두고 크기 알림 → [넣은 --notice-clear, 판단 띠 아래끝 − 알림 위끝(3D 보기 아래에서 잰 px — 음수면 겹침), 알림 상자 바닥 − 판단 띠 위끝(창 아래에서 잰 px)] */
+    const place = (h: number, fh: number): [number, number, number] => {
+      const top = VB - 10 - h;
+      bar.getBoundingClientRect = () => box(top, h);
+      flash.getBoundingClientRect = () => box(top - 5 - (fh || 1), fh || 1);
+      band.cb();
+      const b = Math.max(76, last(setView, '--notice-clear'));
+      return [last(setView, '--notice-clear'), b - (15 + h + fh), last(setBody, '--toast-clear') - (innerHeight - (VB - b - NH))];
+    };
+    // 빈 알림(화면에는 없음)은 재지 않는다: 한 줄 띠면 --notice-clear는 띠 위끝 + 10 = 72(1×1 상자를 재면 78), 판단 띠는 바닥 76px 그대로
+    expect(place(52, 0)[0]).toBe(72);
+    // 잠글 방향 없음 알림(3.2초 — 실제 길: 글을 넣고 인라인 감춤을 지움)
+    lock.showFlash(NO_LOCK_TOUCH, 3200, 'no-lock');
+    expect([flash.textContent, flash.getAttribute('style')]).toEqual([NO_LOCK_TOUCH, null]);
+    // 손셈 [--notice-clear, 판단 띠 틈, 알림 상자 틈]: 판단 띠는 알림 위끝 10px 위(반올림 — 고치기 전 틈은 차례로 −33.8·−16.4·−37.95·−20.55·−37.8), 알림 상자는 판단 띠 위 8px
+    const seen = (
+      [
+        [52, 42.8],
+        [52, 25.4],
+        [95.15, 42.8],
+        [95.15, 25.4],
+        [114, 42.8],
+      ] as const
+    ).map(([h, fh]) => place(h, fh));
+    expect(seen).toEqual(
+      [
+        [120, 10.2, 8],
+        [102, 9.6, 8],
+        [163, 10.05, 8],
+        [146, 10.45, 8],
+        [182, 10.2, 8],
+      ].map((r) => r.map((v) => expect.closeTo(v, 6))),
+    );
+    // 판단 띠가 없으면 알림 상자는 알림 위끝 8px 위(창 아래 26 + 알림 위끝 109.8 + 8 — 고치기 전에는 측정 띠 위 8px라 알림을 덮음)
+    notice.hidden = true;
+    place(52, 42.8);
+    expect(last(setBody, '--toast-clear')).toBe(144);
+    notice.hidden = false;
+    // 알림이 지면(시간·잠금이 걸림 — 글을 비워 1화소로) 판단 띠는 제자리(바닥 76px)
+    lock.dropFlash(null);
+    expect([flash.textContent, place(52, 0)[0]]).toEqual(['', 72]);
   });
 });
 
