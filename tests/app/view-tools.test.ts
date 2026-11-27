@@ -705,6 +705,87 @@ describe('코드 목록 지금 줄(173차)', () => {
   });
 });
 
+describe('공구·가공 표 지금 줄(174차)', () => {
+  // 174차(WCAG 4.1.2·1.3.1): 공구 표의 강조한 공구 줄·판재 가공 표의 고른 가공 줄(tr.current)은 바탕으로만 보여 화면 읽기가 몰랐다 — 표(table) 줄의
+  // aria-selected는 격자 안에서만 뜻이 있어 173차 코드 목록과 같은 전역 aria-current를 줄을 만드는 자리에서(한 표에 하나, 다른 줄은 속성 없음)
+  const rows = (root: HTMLElement, table: string, cell: number, sel = ''): string[] =>
+    [...root.querySelectorAll<HTMLTableRowElement>(`.panel-body table.${table} tbody tr${sel}`)].map((tr) => tr.cells[cell]!.textContent!);
+  const pick = (app: NcViewerApp, p: unknown): void => (app as unknown as { onPick(p: unknown): void }).onPick(p);
+
+  it('174차: 공구 표 — 줄 누름·다시 눌러 풂·두 번 누름·3D에서 고름·빈 곳 누름(고르기)과 눈 버튼·탭 바꿈(다시 그림) 어느 길에도 강조한 공구 줄에만 aria-current="true"', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    window.opencadApp!.setPanelTab('tools');
+    const tools = (sel = ''): string[] => rows(root, 'tools', 2, sel);
+    const row = (n: string): HTMLTableRowElement => [...root.querySelectorAll<HTMLTableRowElement>('table.tools tbody tr')].find((tr) => tr.cells[2]!.textContent === n)!;
+    expect(tools()).toEqual(['T1', 'T2']);
+    expect(tools('[aria-current]')).toEqual([]);
+    row('T1').click();
+    expect(tools('.current')).toEqual(['T1']);
+    expect(tools('[aria-current="true"]')).toEqual(['T1']);
+    expect(tools('[aria-current]')).toEqual(['T1']);
+    row('T2').click();
+    expect(tools('.current')).toEqual(['T2']);
+    expect(tools('[aria-current]')).toEqual(['T2']);
+    row('T2').click();
+    expect(tools('.current')).toEqual([]);
+    expect(tools('[aria-current]')).toEqual([]);
+    row('T1').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    expect(tools('[aria-current="true"]')).toEqual(['T1']);
+    // 다시 그리는 길: 눈 버튼(T2 숨기기)·다른 탭에 갔다 옴 — 강조는 그대로
+    root.querySelectorAll<HTMLButtonElement>('table.tools button.toggle')[1]!.click();
+    expect(tools('.off')).toEqual(['T2']);
+    expect(tools('[aria-current]')).toEqual(['T1']);
+    root.querySelector<HTMLButtonElement>('.panel-tabs [data-tab=code]')!.click();
+    root.querySelector<HTMLButtonElement>('.panel-tabs [data-tab=tools]')!.click();
+    expect(tools('[aria-current="true"]')).toEqual(['T1']);
+    // 3D에서 선분을 고르면 줄 고르기로 가고 공구 강조는 풀림, 빈 곳을 누르면 풀림
+    pick(app, { kind: 'line', id: 'nc-feed', index: 4, point: [0, 0, 0] });
+    expect(tools('.current')).toEqual([]);
+    expect(tools('[aria-current]')).toEqual([]);
+    row('T2').click();
+    expect(tools('[aria-current="true"]')).toEqual(['T2']);
+    pick(app, null);
+    expect(tools('.current')).toEqual([]);
+    expect(tools('[aria-current]')).toEqual([]);
+  });
+
+  it('174차: 판재 가공 표 — 줄 누름·API로 고름·3D에서 고름·빈 곳 누름(고르기)과 탭 바꿈(다시 그림) 어느 길에도 고른 가공 줄에만 aria-current="true"', async () => {
+    const MPR = `[H\nVERSION="4.0 Alpha"\n_BSX=600.000000\n_BSY=400.000000\n_BSZ=19.000000\n\n<100 \\WerkStck\\\nLA="600"\nBR="400"\nDI="19"\n\n${[100, 200, 300].map((x) => `<102 \\BohrVert\\\nXA="${x}"\nYA="100"\nTI="12"\nDU="8"\n`).join('\n')}`;
+    // 3D에서 고르면 그 줄로 굴린다(scrollIntoView — jsdom에 없어 잠깐 둔다, sim.test 꼴)
+    const proto = Element.prototype as { scrollIntoView?: unknown };
+    const had = proto.scrollIntoView;
+    proto.scrollIntoView = () => {};
+    try {
+      const { app, root } = makeApp();
+      await open(app, 'p.mpr', MPR);
+      expect(window.opencadApp!.state.panelTab).toBe('ops');
+      const ops = (sel = ''): string[] => rows(root, 'grid', 0, sel);
+      expect(ops()).toEqual(['1', '2', '3']);
+      expect(ops('[aria-current]')).toEqual([]);
+      root.querySelectorAll<HTMLTableRowElement>('.panel-body table.grid tbody tr')[1]!.click();
+      expect(ops('.current')).toEqual(['2']);
+      expect(ops('[aria-current="true"]')).toEqual(['2']);
+      expect(ops('[aria-current]')).toEqual(['2']);
+      app.selectMprOp(2);
+      expect(ops('.current')).toEqual(['3']);
+      expect(ops('[aria-current]')).toEqual(['3']);
+      pick(app, { kind: 'mesh', id: 'mpr-op-0', index: 0, point: [0, 0, 0] });
+      expect(ops('.current')).toEqual(['1']);
+      expect(ops('[aria-current="true"]')).toEqual(['1']);
+      // 다시 그리는 길: 다른 탭에 갔다 옴 — 고른 가공은 그대로
+      root.querySelector<HTMLButtonElement>('.panel-tabs [data-tab=vars]')!.click();
+      root.querySelector<HTMLButtonElement>('.panel-tabs [data-tab=ops]')!.click();
+      expect(ops('[aria-current]')).toEqual(['1']);
+      pick(app, null);
+      expect(ops('.current')).toEqual([]);
+      expect(ops('[aria-current]')).toEqual([]);
+    } finally {
+      proto.scrollIntoView = had;
+    }
+  });
+});
+
 describe('재생 띠(패널을 닫았을 때)', () => {
   it('패널이 닫혀 있고 재생 자리가 있으면 3D 보기 아래 띠: 시간·줄·상태, 이전·다음·끝내기', async () => {
     const { app, root } = makeApp();
