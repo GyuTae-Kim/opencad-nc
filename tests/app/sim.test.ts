@@ -119,6 +119,9 @@ import { SIM_BLOCK_TEXT } from '../../src/sim/setup';
 import { SimRunner } from '../../src/sim/runner';
 import { ncSampleProgram } from '../../src/view/sample';
 
+/** 202차: 알림 상자에 부른 글 — 까닭까지 옮긴 오류는 원문을 든 조각 목록(mixSpan — 언어를 바꾸면 새 언어로 다시 옮김, dom.ts relangToasts)으로 온다 */
+const toastText = (m: unknown): unknown => (Array.isArray(m) ? m.map((n) => (n instanceof Node ? n.textContent : n)).join('') : m);
+
 /** 워커 대신: 같은 실행기를 이 스레드에서(메시지는 다음 틱에) */
 class FakeWorker {
   static made = 0;
@@ -631,7 +634,7 @@ describe('깎기 탭', () => {
     const api = window.opencadApp!;
     const ERR = '시뮬레이션을 계산하지 못했습니다: 워커가 멈췄습니다(메모리가 모자랄 수 있습니다)';
     // 그 오류 글로 부른 알림 상자 [글, 종류]
-    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => m === ERR).map(([m, k]) => [m, k]);
+    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => toastText(m) === ERR).map(([m, k]) => [toastText(m), k]);
     // 깎기 탭 상태 글 칸 [글, role, 숨은 조상(닫힌 패널) 안인지] — 칸이 없으면 null
     const status = (): unknown[] | null => {
       const el = root.querySelector('.panel-body .sim-status');
@@ -691,7 +694,7 @@ describe('깎기 탭', () => {
     );
     const ERR = `시뮬레이션을 계산하지 못했습니다: ${WHY}`;
     // 그 오류 글로 부른 알림 상자 [글, 종류]
-    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => m === ERR).map(([m, k]) => [m, k]);
+    const said = (): unknown[][] => vi.mocked(toast).mock.calls.filter(([m]) => toastText(m) === ERR).map(([m, k]) => [toastText(m), k]);
     // 깎기 탭 상태 글 칸 [글, role, 숨은 조상(닫힌 패널) 안인지] — 칸이 없으면 null
     const status = (): unknown[] | null => {
       const el = root.querySelector('.panel-body .sim-status');

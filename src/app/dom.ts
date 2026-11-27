@@ -29,13 +29,32 @@ export const fileSpan = (text: string, cls?: string): HTMLSpanElement => h('span
 /** 글 조각 목록 → 마디(앱 글 조각은 번역층이 따로 옮기고, 파일 글 조각은 옮기지 않는다) */
 export const pieces = (parts: readonly (string | FileText)[]): (string | Node)[] => parts.map((p) => (typeof p === 'string' ? p : fileSpan(p.file)));
 
+/** 202차: mixSpan이 담은 원문(알림 상자 조각은 그린 쪽이 다시 그리지 않아 언어를 바꾸면 relangToasts가 이 원문으로 다시 옮긴다) */
+const mixSource = new WeakMap<Element, [Mixed, boolean | undefined]>();
+
 /**
  * 파일 글이 섞인 글을 지금 언어로 옮겨 담은 span(번역층은 건너뛴다 — 언어를 바꾸면 그린 쪽이 다시 그린다).
  * ui면 사전 틀이 잡은 앱 글(오류 까닭 등)도 옮긴다(199차 — i18n.ts mixNodes)
  */
-export const mixSpan = (m: Mixed, cls?: string, ui?: boolean): HTMLSpanElement => h('span', { class: cls, 'data-i18n-skip': true }, ...mixNodes(m, ui));
+export function mixSpan(m: Mixed, cls?: string, ui?: boolean): HTMLSpanElement {
+  const el = h('span', { class: cls, 'data-i18n-skip': true }, ...mixNodes(m, ui));
+  mixSource.set(el, [m, ui]);
+  return el;
+}
 
 let toastHost: HTMLElement | null = null;
+
+/**
+ * 202차: 언어가 바뀌면(app.ts languagechange) 떠 있는 알림의 그때 언어 조각(mixSpan — 「…: 다시 읽었습니다.」·「읽지 않은 파일: …」·오류 글)을 원문에서 새 언어로 다시 옮긴다.
+ * 201차까지는 상자에서 빠질 때(2.5~8초)까지 앞 언어 글이 새 화면 언어 아래 남았다(WCAG 3.1.2). 거두지 않는 까닭: 알림 상자의 글 마디 알림은 번역층이 이미 새 언어로 옮기고
+ * (알림 영역 안 글이 바뀜 — 화면 읽기 프로그램에 따라 다시 읽힘, 상태 막대와 같음), 거두면 읽지 못한 알림(문서가 열린 동안 다시 볼 곳이 없는 오류 — 147차)을 잃는다
+ */
+export function relangToasts(): void {
+  for (const el of toastArea().querySelectorAll('[data-i18n-skip]')) {
+    const s = mixSource.get(el);
+    if (s) el.replaceChildren(...mixNodes(...s));
+  }
+}
 
 /**
  * 알림 상자(aria-live) — 없거나 문서 밖이면(몸을 간 시험 등) 빈 상자를 body에 새로 붙인다.

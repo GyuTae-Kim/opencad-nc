@@ -685,7 +685,7 @@ export class SimView {
     this.hush();
     redrawTab(this.host, this, keep);
     const el = this.statusEl;
-    if (this.error && !(el?.isConnected && !el.closest('[hidden]'))) toast(uiText(this.error), 'error');
+    if (this.error && !(el?.isConnected && !el.closest('[hidden]'))) toast([mixSpan([this.error], undefined, true)], 'error');
   }
 
   private post(msg: SimRequest): void {
@@ -863,6 +863,14 @@ export class SimView {
   /** 197차: 알릴 차례를 버리고 알림 영역을 비운다(오류·끄기·새 문서 — 빈 글은 읽지 않는다) */
   private hush(): void {
     this.saying = 0;
+    this.quiet();
+  }
+
+  /**
+   * 202차: 알림 영역의 지난 글만 비운다(앱이 화면 언어가 바뀔 때 부른다 — 글 마디라 번역층이 지난 끝 글을 새 언어로 다시 옮겨 화면 읽기 프로그램이 또 읽을 수 있었다;
+   * 201차 첫 화면 알림 영역과 같은 꼴). 알릴 차례는 그대로라 계산 중이면 끝 글은 새 언어로 알린다. 보이는 깎기 탭 상태 글·진행 칩은 그대로(새 언어로 다시 그림)
+   */
+  quiet(): void {
     if (this.said.textContent) this.said.textContent = '';
   }
 

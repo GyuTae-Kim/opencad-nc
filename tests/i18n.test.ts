@@ -33,6 +33,15 @@ describe('language URLs and UI presentation', () => {
     expect(translate(example,'en')).toContain('FILE_A.skp');
     expect(translate(example,'en')).not.toBe(example);
   });
+  it('keeps every catalog key a Korean text or a {n} template — no bare symbol key besides the sharing image URL (202nd)', () => {
+    // 202차(ci-guard 9번): 201차가 더한 열쇠 ':'(중국어 「：」)는 translate가 앞뒤 빈칸을 뺀 열쇠로 찾아 값만 돌려줘, 조각을 이어 옮기는 길(mixNodes·uiText·조각마다 옮기기)에서
+    // 영어 「: 」가 「:」로 빈칸을 잃었다(mobile.test 31차 「sub.h:No tool …」 — PR CI 실패). 기호 하나를 언어마다 다르게 하려면 그 기호가 든 통째 원문·틀 열쇠로
+    const image = metadataForLanguage('ko').image.url;
+    for (const {code} of languages.filter(item => item.code !== 'ko')) {
+      expect(Object.keys(catalogs[code]).filter(key => !/[가-힣]/.test(key) && !/\{\d+\}/.test(key)), code).toEqual([image]);
+      for (const piece of [': ', ' (', ')']) expect(translate(piece, code), `${code}: ${piece}`).toBe(piece);
+    }
+  });
   it('has no machine-translation leftovers: stray extra lines or wrong-sense words', () => {
     for (const {code} of languages.filter(item => item.code !== 'ko'))
       for (const [key, value] of Object.entries(catalogs[code])) {
