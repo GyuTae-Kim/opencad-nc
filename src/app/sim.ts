@@ -828,10 +828,12 @@ export class SimView {
     };
     this.statusEl = h('p', { class: 'hint sim-status' }, this.statusText());
     statusLive(this.statusEl, this.on && !!this.error);
+    // 165차: 켜고 끄는 상자는 같은 일을 하는 도구 막대 메뉴 항목(app.ts — 넓은 화면 「그리기」·휴대폰 「보기 설정」)과 같은 이름 「소재 깎기」(WCAG 3.2.4).
+    // 예전 「깎인 소재 보이기」는 정보 탭 「깎인 소재」 묶음 상자(SIM_GROUP — 소재 메시 보이기, 다른 일)와도 거의 같았다
     const head: (Node | null)[] = [
       ...(panel
-        ? check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '판 윗면 가공으로 판을 깎은 모양을 그립니다.')
-        : check('깎인 소재 보이기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).')),
+        ? check('소재 깎기', this.on, (on) => this.setOn(on), '판 윗면 가공으로 판을 깎은 모양을 그립니다.')
+        : check('소재 깎기', this.on, (on) => this.setOn(on), '재생 막대를 따라 공구가 소재를 깎은 모양을 그립니다(앞으로 감기는 이어서, 되감기는 저장점에서 다시 계산).')),
       ...(panel
         ? check('가공 그림도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on }), '해석한 구멍·홈·포켓·윤곽 그림을 함께 그립니다.')
         : check('공구 경로도 보이기', this.prefs.paths, (on) => this.setOptions({ paths: on }))),
