@@ -304,7 +304,8 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 32px;
+  /* 높이는 최소만: 메뉴 폭이 min-width 190(항목 글 자리 144px)로 정해져 글 간격을 넓히면(WCAG 1.4.12) 긴 항목이 두세 줄 — 고정 32px면 넘쳐 이웃 항목에 걸치거나 겹쳤다(170차) */
+  min-height: 32px;
   padding: 0 10px 0 26px;
   border: 0;
   border-radius: 5px;
@@ -1632,7 +1633,7 @@ tr.off td:not(:first-child) {
   }
   /* 메뉴 항목을 손가락 크기로, 단축키 표시는 뺀다 */
   .menu button {
-    height: 40px;
+    min-height: 40px;
   }
   .menu kbd {
     display: none;
