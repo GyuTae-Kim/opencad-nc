@@ -488,6 +488,46 @@ describe('시작 화면 열기 칸 초점(167차)', () => {
   });
 });
 
+describe('메뉴 항목 글 간격(170차)', () => {
+  it('170차: 펼침 메뉴 항목은 고정 높이가 아니라 최소 높이(32px, 손가락 40px) — 메뉴 폭이 190px로 정해져 글 간격(WCAG 1.4.12)을 넓히면 긴 항목이 두세 줄이 되어 고정 높이 칸을 넘어 이웃 항목에 걸치거나 겹쳤다, 한 줄 항목의 높이·여백은 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    // 가장 긴 한국어 항목(제목 막대 설정 메뉴) — 기본 약 141~151px, 글자 간격 0.12em·낱말 간격 0.16em이면 33px 남짓 늘어 글 자리(144px)를 넘어 두 줄
+    const items = [...root.querySelectorAll<HTMLButtonElement>('.menu button')];
+    expect(items.map((b) => b.textContent)).toContain('밝은 / 어두운 테마로 바꾸기');
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160~169차 꼴): 주석을 뺀 글의 맨 바깥 규칙, @media 덩어리는 따로
+    const raw = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const media = /@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g;
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const parse = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const rules = parse(raw.replace(media, ''));
+    const body = (sel: string): Record<string, string> | undefined => rules.find((r) => r.sels.includes(sel))?.body;
+    // 메뉴 폭: 버튼 폭의 감싼 칸(relative) 안 absolute에 width가 없어 줄일 수 있는 만큼 줄고 min-width 190 — 항목 글 자리 190 − 테두리 2 − 여백 8 − 항목 여백 36 = 144px
+    expect(body('.menu-wrap')).toEqual({ position: 'relative', display: 'inline-flex' });
+    const menu = body('.menu')!;
+    expect(menu).toMatchObject({ position: 'absolute', left: '0', 'min-width': '190px', padding: '4px', border: '1px solid var(--border)' });
+    expect('width' in menu).toBe(false);
+    const item = body('.menu button')!;
+    const pad = item.padding!.split(' ').map((v) => parseFloat(v));
+    expect(parseFloat(menu['min-width']!) - 2 * parseFloat(menu.border!) - 2 * parseFloat(menu.padding!) - pad[1]! - pad[3]!).toBe(144);
+    // 줄을 바꾼다: .menu로 시작하는 규칙 어디에도 white-space가 없다
+    expect(rules.filter((r) => r.sels.some((s) => s.startsWith('.menu')) && 'white-space' in r.body)).toEqual([]);
+    // 항목은 최소 높이 32px(고정 height 없음) — 여백은 좌우만·테두리 0·flex: none(메뉴를 max-height로 줄여도 항목은 그대로 굴림) 그대로
+    expect(item).toMatchObject({ flex: 'none', 'min-height': '32px', padding: '0 10px 0 26px', border: '0' });
+    expect('height' in item).toBe(false);
+    // 손가락 화면 규칙도 최소 높이 40px만
+    const coarse = [...raw.matchAll(media)].map((m) => m[0]).filter((b) => b.includes('.menu button'));
+    expect(coarse.flatMap((b) => parse(b).filter((r) => r.sels.includes('.menu button')).map((r) => r.body))).toEqual([{ 'min-height': '40px' }]);
+    // 손셈: 글 13px/1.45 → 한 줄 18.85 < 32(기본 간격의 한 줄 항목은 높이 그대로), 줄 높이 1.5배 두 줄 39 > 32(고정 높이면 위아래 3.5씩 넘침)
+    const font = rules.filter((r) => r.sels.includes('body')).map((r) => r.body.font).filter(Boolean);
+    expect(font).toEqual(['13px/1.45 var(--font)']);
+    const [size, lh] = font[0]!.split(' ')[0]!.split('/').map((v) => parseFloat(v));
+    const min = parseFloat(item['min-height']!);
+    expect([size! * lh! < min, size! * 1.5 * 2 > min]).toEqual([true, true]);
+  });
+});
+
 describe('단면 펼침 상자 초점(152차)', () => {
   it('152차: 단면 상자(role=dialog, 모달 아님)는 열면 눌린 축 버튼에 초점·Esc는 닫고 단면 버튼으로, 초점이 상자·단면 버튼 밖으로 나가면(Tab으로 나감) 닫혀 그 칸의 Esc를 가져가지 않고, 펼친 메뉴도 같은 규칙', async () => {
     const { app, root } = makeApp();
