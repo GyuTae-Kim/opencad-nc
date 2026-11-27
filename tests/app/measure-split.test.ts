@@ -226,7 +226,9 @@ describe('측정 도구는 문서를 열 때 받는다', () => {
     fake.ctl.mode = 'hold';
     btn().click();
     fake.ctl.reject(new Error('boom'));
-    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith('측정 도구를 열 수 없습니다: boom', 'error', 8000));
+    // 202차: 까닭까지 옮긴 글을 원문을 든 조각(mixSpan — uiText와 같은 글)으로 담는다 — 언어를 바꾸면 알림 상자가 새 언어로 다시 옮긴다(dom.ts relangToasts)
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith([expect.any(HTMLSpanElement)], 'error', 8000));
+    expect((vi.mocked(toast).mock.lastCall![0] as HTMLElement[])[0]!.textContent).toBe('측정 도구를 열 수 없습니다: boom');
     expect(app.state().measureLoading).toBe(false);
   });
 });

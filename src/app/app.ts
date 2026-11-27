@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, mixSpan, pieces, toast, toastArea } from './dom';
+import { h, mixSpan, pieces, relangToasts, toast, toastArea } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -344,8 +344,14 @@ export class NcViewerApp implements PanelHost {
       // 201차: 알림 영역(.app-live)은 판단 띠 새 줄 글을 그때 언어로 옮긴 조각(번역층이 건너뜀)으로 넣고 아래 renderNotices는 같은 줄을 다시 넣지 않아, 언어를 바꾸면
       // 앞 언어 글이 다음 새 줄까지 남았다(화면에는 보이지 않으나 화면 읽기 프로그램의 읽기 모드로 읽힘 — WCAG 3.1.2). 비운다(빈 글은 알리지 않는다 — 200차 KeySnap.sync 꼴).
       // 그래픽 잃음 안내(글 마디 — 번역층이 새 언어로 다시 옮긴다)도 함께 빈다(보이는 안내는 그대로)
+      // 202차: 깎기 계산 알림 영역(.sim-live — 화면에 보이지 않음, 글 마디라 번역층이 지난 글을 새 언어로 다시 옮겨 또 읽힐 수 있음)도 같은 꼴로 비우고,
+      // 알림 상자의 그때 언어 조각은 원문에서 새 언어로 다시 옮긴다(보이는 글 — dom.ts relangToasts)
       const lang = (e as CustomEvent<string>).detail;
-      if (lang !== this.saidLang) this.said.textContent = '';
+      if (lang !== this.saidLang) {
+        this.said.textContent = '';
+        this.sim?.quiet();
+        relangToasts();
+      }
       this.saidLang = lang;
       if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize);
       // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다. 키보드 붙잡기 알림 틀도(56차)
@@ -1862,8 +1868,9 @@ export class NcViewerApp implements PanelHost {
   /** 측정을 켤 때 받던 측정 도구 조각이 왔다(또는 받지 못했다): 그때까지 바랐으면 켜고, 받지 못했으면 바랐을 때만 알린다 */
   private measureArrived(want: true | null, error: unknown): void {
     if (error) {
-      // 108차: 끼운 까닭(「파일을 받지 못했습니다(네트워크 오류).」 같은 앱 글)까지 화면 언어로(uiText — 번역층은 {0} 자리 값을 그대로 둔다)
-      if (want) toast(isChunkLoadError(error) ? measureFailText(navigator.onLine !== false) : uiText(`측정 도구를 열 수 없습니다: ${errorText(error)}`), 'error', 8000);
+      // 108차: 끼운 까닭(「파일을 받지 못했습니다(네트워크 오류).」 같은 앱 글)까지 화면 언어로(uiText — 번역층은 {0} 자리 값을 그대로 둔다).
+      // 202차: 원문을 든 mixSpan(ui — uiText와 같은 글)으로 담아 언어를 바꾸면 새 언어로 다시 옮긴다(dom.ts relangToasts)
+      if (want) toast(isChunkLoadError(error) ? measureFailText(navigator.onLine !== false) : [mixSpan([`측정 도구를 열 수 없습니다: ${errorText(error)}`], undefined, true)], 'error', 8000);
     } else if (want && this.mlock && this.viewer && this.doc) {
       this.toggleMeasure(true);
       return;
@@ -1919,8 +1926,8 @@ export class NcViewerApp implements PanelHost {
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('지금 화면을 PNG로 저장했습니다.', 'info', 2500);
     } catch (e) {
-      // 107차: 까닭(코어 Error 글)까지 화면 언어로 — 번역층은 {0} 자리 값을 그대로 둔다(uiText)
-      toast(uiText(`그림을 저장하지 못했습니다: ${errorText(e)}`), 'error');
+      // 107차: 까닭(코어 Error 글)까지 화면 언어로 — 번역층은 {0} 자리 값을 그대로 둔다(uiText와 같은 글 — 202차: 원문을 든 mixSpan)
+      toast([mixSpan([`그림을 저장하지 못했습니다: ${errorText(e)}`], undefined, true)], 'error');
     }
   }
 
@@ -1971,8 +1978,8 @@ export class NcViewerApp implements PanelHost {
     try {
       s = await this.ensureSim();
     } catch (e) {
-      // 108차: 조각을 받지 못한 까닭(errorText가 앱 글로 바꾼 네트워크 오류 등)까지 화면 언어로
-      toast(uiText(`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`), 'error');
+      // 108차: 조각을 받지 못한 까닭(errorText가 앱 글로 바꾼 네트워크 오류 등)까지 화면 언어로(202차: 원문을 든 mixSpan — 언어를 바꾸면 따라감)
+      toast([mixSpan([`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`], undefined, true)], 'error');
       return;
     }
     if (opts) s.setOptions(opts);
