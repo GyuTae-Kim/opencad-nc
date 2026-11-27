@@ -636,6 +636,75 @@ describe('블록 걷기·여기까지 그리기·코드 찾기', () => {
   });
 });
 
+describe('코드 목록 지금 줄(173차)', () => {
+  // 173차(WCAG 4.1.2): 고른 줄·재생 중인 줄은 바탕(.sel·.cur)으로만 보여 화면 읽기가 지금 줄을 몰랐다 — 줄은 role 없는 div라 aria-selected는 뜻이 없어
+  // 전역 aria-current를 클래스와 같은 자리에서(지금 줄 = 고른 줄, 없으면 재생 중인 줄 — 한 무리에 하나)
+  const current = (root: HTMLElement): string[] => [...root.querySelectorAll<HTMLElement>('.code-list .vlist-row[aria-current="true"]')].map((r) => r.querySelector('.ln')!.textContent!);
+  const lnOf = (root: HTMLElement, cls: string): string[] => [...root.querySelectorAll<HTMLElement>(`.code-list .vlist-row.${cls}`)].map((r) => r.querySelector('.ln')!.textContent!);
+
+  it('173차: 고른 줄에 aria-current="true" — API로 고름·코드 목록 ↓·줄 누름(다시 누르면 풂)·3D에서 고름·코드 찾기 어느 길로 바뀌어도 .sel과 함께, 지금 줄은 하나뿐', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    await tick();
+    await tick();
+    const api = window.opencadApp!;
+    expect(root.querySelectorAll('.code-list .vlist-row')).toHaveLength(14);
+    expect(current(root)).toEqual([]);
+    api.selectLine(5);
+    expect(current(root)).toEqual(['6']);
+    expect(lnOf(root, 'sel')).toEqual(['6']);
+    const list = root.querySelector<HTMLElement>('.code-list')!;
+    list.focus();
+    list.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(api.state.selLine).toBe(6);
+    expect(current(root)).toEqual(['7']);
+    const row = (): HTMLElement => root.querySelector<HTMLElement>('.code-list .vlist-row[data-row="2"]')!;
+    row().click();
+    expect(current(root)).toEqual(['3']);
+    row().click();
+    expect(api.state.selLine).toBe(-1);
+    expect(current(root)).toEqual([]);
+    expect([...root.querySelectorAll('.code-list .vlist-row')].every((r) => r.getAttribute('aria-current') === 'false')).toBe(true);
+    (app as unknown as { onPick(p: unknown): void }).onPick({ kind: 'line', id: 'nc-feed', index: 4, point: [0, 0, 0] });
+    const picked = app.doc!.nc!.moves.line[4]!;
+    expect(api.state.selLine).toBe(picked);
+    expect(current(root)).toEqual([String(picked + 1)]);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
+    const input = root.querySelector<HTMLInputElement>('.code-search input')!;
+    input.value = ':13';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(api.state.selLine).toBe(12);
+    expect(current(root)).toEqual(['13']);
+    expect(lnOf(root, 'sel')).toEqual(['13']);
+  });
+
+  it('173차: 고른 줄이 없으면 재생 중인 줄이 지금 줄 — 재생이 옮기면 따라가고, 고른 줄이 생기면 그 줄로(재생 줄 .cur는 그대로 보임), 풀면 재생 줄로, 전체 경로면 없음', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    await tick();
+    await tick();
+    const api = window.opencadApp!;
+    api.seek(1);
+    const at = app.playbackInfo()!.line;
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(current(root)).toEqual([String(at + 1)]);
+    expect(lnOf(root, 'cur')).toEqual([String(at + 1)]);
+    api.selectLine(0);
+    expect(current(root)).toEqual(['1']);
+    expect(lnOf(root, 'cur')).toEqual([String(at + 1)]);
+    api.seek(1e9);
+    const end = app.playbackInfo()!.line;
+    expect(end).toBeGreaterThan(at);
+    expect(lnOf(root, 'cur')).toEqual([String(end + 1)]);
+    expect(current(root)).toEqual(['1']);
+    api.selectLine(-1);
+    expect(current(root)).toEqual([String(end + 1)]);
+    api.seek(null);
+    expect(lnOf(root, 'cur')).toEqual([]);
+    expect(current(root)).toEqual([]);
+  });
+});
+
 describe('재생 띠(패널을 닫았을 때)', () => {
   it('패널이 닫혀 있고 재생 자리가 있으면 3D 보기 아래 띠: 시간·줄·상태, 이전·다음·끝내기', async () => {
     const { app, root } = makeApp();
