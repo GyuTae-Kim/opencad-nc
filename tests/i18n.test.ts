@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
 import { installLocalization, localizeCubeFaces, uiText } from '../src/app/i18n';
-import { catalogs, currentLanguage, languageUrl, languages, translate } from '../site/i18n.mjs';
+import { catalogs, currentLanguage, languageUrl, languages, sourceMessage, translate } from '../site/i18n.mjs';
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
 import { noticeViews } from '../src/app/doc';
@@ -257,6 +257,34 @@ describe('language URLs and UI presentation', () => {
     expect(uiText(`열기: ${BINARY_MESSAGE}`)).toMatch(/^Öffnen: /);
     dispose(); dispose = undefined;
     expect(sim.statusText.call(state)).toBe(shown[2]);
+    dom.window.close();
+  });
+  it('reads the opening stage of the busy card differently from the Open command in every language (166th — WCAG 3.2.4·2.4.6)', async () => {
+    // 읽는 동안 덮개 단계 칸(app.ts busyStage — role=status, 첫 글 「여는 중…」 한 마디, setBusy는 단계 글과 「…」 두 마디)과 제목 막대 「열기」 버튼(보이는 글·aria-label):
+    // 다른 일(진행 상태·파일 고르기 명령)인데 독일어만 둘 다 「Öffnen」이라 화면 읽기가 상태를 명령 이름으로 읽었다
+    const stages = ['여는 중', '여는 중…', '다시 읽는 중', '파일 받는 중', '최근 문서 읽는 중'];
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) {
+      const open = translate('열기', code);
+      for (const stage of stages) expect(translate(stage, code), `${code}: ${stage}`).not.toBe(open);
+      expect(translate('여는 중…', code), code).not.toBe(`${open}…`);
+      expect(translate('여는 중…', code), code).toBe(`${translate('여는 중', code)}…`);
+    }
+    // 독일어는 같은 사전의 진행 꼴(「다시 읽는 중」 Wird neu gelesen·「불러오는 중…」 Wird geladen…)과 「geöffnet」(「최근 문서」 Zuletzt geöffnet)으로, 명령 「열기」는 그대로
+    expect([translate('다시 읽는 중', 'de'), translate('불러오는 중…', 'de'), translate('최근 문서', 'de')]).toEqual(['Wird neu gelesen', 'Wird geladen…', 'Zuletzt geöffnet']);
+    expect([translate('여는 중', 'de'), translate('여는 중…', 'de'), translate('열기', 'de')]).toEqual(['Wird geöffnet', 'Wird geöffnet…', 'Öffnen']);
+    // 옮긴 글을 원문으로 되찾을 때(번역층 sourceMessage — 같은 값이면 열쇠 하나로만 돌아갔다)도 갈린다
+    expect([sourceMessage(translate('여는 중', 'de')), sourceMessage(translate('열기', 'de'))]).toEqual(['여는 중', '열기']);
+    const dom = new JSDOM('<!doctype html><html><head><title>OpenCAD</title></head><body><div id="app"><header class="titlebar"><button class="tbtn primary" type="button" title="파일 열기 (Ctrl+O)" aria-label="열기"><span class="lbl">열기</span></button></header><div class="busy-stage" role="status" aria-live="polite">여는 중…</div></div></body></html>', {url:'https://gyutae-kim.github.io/opencad-nc/de/'});
+    for (const name of ['window','document','Node','Element','HTMLAnchorElement','MutationObserver','location','history','localStorage','CustomEvent']) vi.stubGlobal(name,(dom.window as unknown as Record<string,unknown>)[name]);
+    dispose = await installLocalization(document.getElementById('app')!);
+    const button = document.querySelector<HTMLButtonElement>('button.tbtn')!;
+    const stage = document.querySelector<HTMLElement>('.busy-stage')!;
+    expect([button.textContent, button.getAttribute('aria-label')]).toEqual(['Öffnen', 'Öffnen']);
+    expect(stage.textContent).toBe('Wird geöffnet…');
+    stage.replaceChildren(document.createTextNode('여는 중'), document.createTextNode('…'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stage.textContent).toBe('Wird geöffnet…');
+    dispose(); dispose = undefined;
     dom.window.close();
   });
   it('updates dynamic UI and switches languages without changing document data or listeners', async () => {
