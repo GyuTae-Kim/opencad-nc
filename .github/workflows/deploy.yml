@@ -22,9 +22,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run test:seo
+      # CI 4차: 빌드(tsc --noEmit 포함 — 전에 따로 돌던 typecheck와 같은 일)와 휴대폰 검사 기준 캐시 저장을 시험보다 먼저 한다.
+      # 전에는 시험 뒤(앱 약 1분·DWG 약 3분 20초)에 저장해, 병합 바로 뒤 연 PR의 휴대폰 검사가 캐시를 놓쳤다(DWG #364). 시험이 실패하면 전처럼 올리지 않는다
       - run: npm run build
       # 휴대폰 검사(mobile-validation.yml)가 PR의 기준 커밋(= 이 main 커밋)을 다시 빌드하지 않게, 같은 명령의 이 빌드를 커밋 열쇠로 남긴다(CI 3차)
       - name: Save this build as the mobile comparison baseline
@@ -32,6 +31,8 @@ jobs:
         with:
           path: dist
           key: mobile-baseline-${{ github.sha }}
+      - run: npm test
+      - run: npm run test:seo
       - name: Publish dist to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
