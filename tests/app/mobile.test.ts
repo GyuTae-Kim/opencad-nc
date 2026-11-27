@@ -934,6 +934,73 @@ describe('최근 문서(시작 화면)', () => {
     await vi.waitFor(() => expect(app.state().docName).toBe('old.nc'));
   });
 
+  it('180차: 덮개 「취소」에 초점이 있을 때 덮개가 숨으면 문서가 없으면 시작 화면 열기 칸, 있으면 3D 보기로 — 초점이 덮개 밖이면 그대로(WCAG 2.4.3)', async () => {
+    const backend = memoryBackend();
+    await new RecentStore(backend).add('old.nc', enc(PROGRAM), 1);
+    const { app, root } = makeApp(true, true, false, backend);
+    await vi.waitFor(() => expect(names(root)).toEqual(['old.nc']));
+    const read = backend.read;
+    let release = (): void => {};
+    let fail = false;
+    backend.read = async (id) => {
+      await new Promise<void>((r) => (release = r));
+      if (fail) throw new DOMException('Connection to Indexed Database server lost', 'UnknownError');
+      return read(id);
+    };
+    const openBtn = (name: string): HTMLButtonElement => rows(root).find((li) => li.querySelector('.recent-name')!.textContent === name)!.querySelector<HTMLButtonElement>('.recent-open')!;
+    const busy = root.querySelector<HTMLElement>('.busy')!;
+    const cancel = busy.querySelector<HTMLButtonElement>('.busy-cancel')!;
+    const zone = (): HTMLElement => root.querySelector<HTMLElement>('.start .dropzone')!;
+    const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
+
+    // 초점이 덮개 밖(누른 「열기」 버튼)이면 「취소」를 눌러도(초점을 옮기지 않는 누르기) 그대로
+    openBtn('old.nc').focus();
+    openBtn('old.nc').click();
+    expect(busy.hidden).toBe(false);
+    cancel.click();
+    expect(app.state().busy).toBe(false);
+    expect(busy.hidden).toBe(true);
+    expect(document.activeElement).toBe(openBtn('old.nc'));
+    release();
+    await settle();
+
+    // 문서 없음: 「취소」를 키보드로(초점이 그 버튼) — 숨은 버튼에 남거나 문서로 빠지지 않고 열기 칸으로
+    openBtn('old.nc').click();
+    cancel.focus();
+    cancel.click();
+    expect(busy.hidden).toBe(true);
+    expect(document.activeElement).toBe(zone());
+    release();
+    await settle();
+    expect(app.state().docName).toBeNull();
+
+    // 읽지 못해 덮개가 숨을 때도 같은 자리(setBusy 하나)
+    fail = true;
+    openBtn('old.nc').click();
+    cancel.focus();
+    release();
+    await vi.waitFor(() => expect(app.state().busy).toBe(false));
+    expect(busy.hidden).toBe(true);
+    expect(root.querySelector('.start-error')!.textContent).toBe('old.nc: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.');
+    expect(document.activeElement).toBe(zone());
+
+    // 문서 있음: 열린 문서는 그대로 두므로 3D 보기로
+    fail = false;
+    expect(await app.openFile(textFile('a.nc', PROGRAM))).toBe(true);
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    fake.FakeViewer.last!.canvas.tabIndex = 0;
+    await vi.waitFor(() => expect(names(root)).toContain('a.nc'));
+    openBtn('old.nc').click();
+    expect(app.state().busy).toBe(true);
+    cancel.focus();
+    cancel.click();
+    expect(busy.hidden).toBe(true);
+    expect(document.activeElement).toBe(fake.FakeViewer.last!.canvas);
+    release();
+    await settle();
+    expect(app.state().docName).toBe('a.nc');
+  });
+
   it('155차: 숨었던 덮개를 보이는 차례에는 단계 칸을 줄 바꿈 없는 빈칸으로 두고 한 번 그린 뒤 첫 단계 글을 넣는다 — 그사이 다음 단계면 그 글, 닫거나 다시 열었으면 늦은 글은 넣지 않음(STEP 157차)', async () => {
     // 그림 차례는 시험이 쥔다: 한 장 = 그 프레임의 rAF를 돌리고 그 뒤 타이머까지
     const frames: FrameRequestCallback[] = [];
