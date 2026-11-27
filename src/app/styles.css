@@ -939,10 +939,10 @@ table.grid button.linkish {
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
+/* 키보드 초점은 점선 테두리 색에 더해 앱 기본 초점 테두리(맨 :focus-visible)도 — outline: none으로 지우면 마우스 올림과 같고 강제 색 모드(테두리 색을 시스템 색으로 덮음)에서 초점 전후가 같다(WCAG 2.4.7, 167차) */
 .dropzone:hover,
 .dropzone:focus-visible {
   border-color: var(--accent);
-  outline: none;
 }
 .dz-icon {
   display: inline-flex;

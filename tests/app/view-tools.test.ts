@@ -459,6 +459,35 @@ describe('잘리는 초점 테두리(162차)', () => {
   });
 });
 
+describe('시작 화면 열기 칸 초점(167차)', () => {
+  it('167차: 시작 화면 열기 칸(role=button)의 키보드 초점은 앱 기본 초점 테두리를 지우지 않아 마우스 올림(점선 테두리 색만)과 갈리고 강제 색 모드에서도 보임, 점선 테두리 색 바꿈과 잘리지 않는 여백은 그대로', () => {
+    const { root } = makeApp();
+    const zone = root.querySelector<HTMLElement>('.start .dropzone')!;
+    expect([zone.getAttribute('role'), zone.getAttribute('tabindex')]).toEqual(['button', '0']);
+    // jsdom은 CSS를 그리지 않아 styles.css 글로 본다(160~162차 꼴): 주석과 @media 덩어리를 뺀 맨 바깥 규칙
+    const css = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    const decl = (body: string): Record<string, string> =>
+      Object.fromEntries(body.split(';').map((d) => d.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k!.trim(), v.join(':').trim()]));
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sels: m[1]!.split(',').map((s) => s.trim()), body: decl(m[2]!) }));
+    const body = (sel: string): Record<string, string> | undefined => rules.find((r) => r.sels.includes(sel))?.body;
+    // 열기 칸에 맞는 선택자의 상태 규칙(바탕 선택자가 빈 맨 :focus-visible 기본 테두리는 뺀다)
+    const on = (state: string) => rules.filter((r) => r.sels.some((s) => s.endsWith(state) && s.length > state.length && zone.matches(s.slice(0, -state.length))));
+    // 앱 기본 초점 테두리(다른 버튼이 쓰는 모양 — 바깥 1px에 2px 강조)
+    expect(body(':focus-visible')).toEqual({ outline: '2px solid var(--accent)', 'outline-offset': '1px' });
+    // 열기 칸의 초점 규칙은 outline을 정하지 않는다 — 구체성이 높아 outline: none이면 기본 테두리를 지워, 점선 테두리 색만 바뀌어 마우스 올림과 같았고
+    // 강제 색 모드(테두리 색을 시스템 색으로 덮음)에서는 초점 전후가 같았다(WCAG 2.4.7)
+    expect(on(':focus-visible').filter((r) => 'outline' in r.body)).toEqual([]);
+    // 점선 테두리 색 바꿈은 초점·마우스 올림 모두 그대로, 마우스 올림에는 테두리(outline)가 없다
+    expect(on(':focus-visible').map((r) => r.body['border-color'])).toEqual(['var(--accent)']);
+    expect(on(':hover').map((r) => r.body)).toEqual([{ 'border-color': 'var(--accent)' }]);
+    expect(body('.dropzone')).toMatchObject({ border: '2px dashed var(--border-soft)' });
+    // 바깥 3px(1 + 2) 테두리가 잘리지 않음: 시작 화면은 굴림 상자이나 여백이 16px 이상(좁은 화면 20px 16px 32px — @media)
+    expect(body('.start')).toMatchObject({ overflow: 'auto', padding: '28px 16px 40px' });
+  });
+});
+
 describe('단면 펼침 상자 초점(152차)', () => {
   it('152차: 단면 상자(role=dialog, 모달 아님)는 열면 눌린 축 버튼에 초점·Esc는 닫고 단면 버튼으로, 초점이 상자·단면 버튼 밖으로 나가면(Tab으로 나감) 닫혀 그 칸의 Esc를 가져가지 않고, 펼친 메뉴도 같은 규칙', async () => {
     const { app, root } = makeApp();
