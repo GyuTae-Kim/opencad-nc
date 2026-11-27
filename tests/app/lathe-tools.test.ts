@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { translate } from '../../site/i18n.mjs';
 
 const fake = vi.hoisted(() => {
   class FakeViewer {
@@ -95,7 +96,7 @@ describe('정보 탭: 선반 공구 표', () => {
     };
     expect(dirRow()).toBe('모름 — 노즈 중심');
     expect([...root.querySelectorAll('.prop-row .k')].map((k) => k.textContent)).toContain('T1 노즈 R(mm) · 방향');
-    const radius = root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 반지름(mm)"]')!;
+    const radius = root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 R(mm)"]')!;
     expect(radius.value).toBe('');
     radius.value = '0.4';
     radius.dispatchEvent(new Event('change'));
@@ -114,9 +115,9 @@ describe('정보 탭: 선반 공구 표', () => {
     const runRow = [...root.querySelectorAll('.prop-row')].find((e) => /번 줄 오른쪽$/.test(e.querySelector('.k')?.textContent ?? ''))!;
     expect(runRow.querySelector('.v')!.textContent).toBe('반지름 0.4 mm (선반 공구 표 T1)');
     expect(runRow.querySelector('.v')!.hasAttribute('title')).toBe(false);
-    expect(root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 반지름(mm)"]')!.value).toBe('0.4');
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 R(mm)"]')!.value).toBe('0.4');
     // 비우면 기억에서 빼고 다시 읽는다
-    const r2 = root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 반지름(mm)"]')!;
+    const r2 = root.querySelector<HTMLInputElement>('input[aria-label="T1 노즈 R(mm)"]')!;
     const s2 = root.querySelector<HTMLSelectElement>('select[aria-label="T1 공구 방향"]')!;
     r2.value = '';
     s2.value = '';
@@ -145,7 +146,7 @@ describe('정보 탭: 음수를 쳐 넣는 숫자 칸(119차)', () => {
     const signed = ['G54 원점의 기계 좌표(mm)', 'G28 기준점 기계 좌표(mm)', '허용 범위 최소(mm)', '허용 범위 최대(mm)'].flatMap((k) => ['X', 'Y', 'Z'].map((a) => `${k} — ${a}`));
     expect(signed.map((l) => [l, input(l)?.type, input(l)?.getAttribute('inputmode')])).toEqual(signed.map((l) => [l, 'number', null]));
     // 0보다 큰 값만 쓰는 칸은 소수 자판 그대로
-    expect(['급속 속도(mm/분)', '공구 교환 시간(초)', 'T1 노즈 반지름(mm)'].map((l) => input(l).getAttribute('inputmode'))).toEqual(['decimal', 'decimal', 'decimal']);
+    expect(['급속 속도(mm/분)', '공구 교환 시간(초)', 'T1 노즈 R(mm)'].map((l) => input(l).getAttribute('inputmode'))).toEqual(['decimal', 'decimal', 'decimal']);
     // 쳐 넣은 음수 기계 좌표: 세 축이 다 차면 다시 읽고 해석 옵션에 그 값
     for (const [a, v] of [['X', '-500'], ['Y', '-300.5'], ['Z', '-400']] as const) {
       const el = input(`G54 원점의 기계 좌표(mm) — ${a}`);
@@ -342,7 +343,7 @@ describe('정보 탭: 받지 않는 숫자 값(168차)', () => {
     };
     put('급속 속도(mm/분)', '5000');
     await settle(2);
-    put('T1 노즈 반지름(mm)', '0.4');
+    put('T1 노즈 R(mm)', '0.4');
     await settle(3);
     expect([saved().rapidFeedMm, saved().latheTools]).toEqual([5000, { 1: { radiusMm: 0.4, orientation: null } }]);
     const bad: [string, string, boolean][] = [
@@ -351,9 +352,9 @@ describe('정보 탭: 받지 않는 숫자 값(168차)', () => {
       ['급속 속도(mm/분)', '', true],
       ['공구 교환 시간(초)', '-2', false],
       ['G54 원점의 기계 좌표(mm) — X', '', true],
-      ['T1 노즈 반지름(mm)', '0', false],
-      ['T1 노즈 반지름(mm)', '-0.2', false],
-      ['T1 노즈 반지름(mm)', '', true],
+      ['T1 노즈 R(mm)', '0', false],
+      ['T1 노즈 R(mm)', '-0.2', false],
+      ['T1 노즈 R(mm)', '', true],
     ];
     const marks = bad.map(([l, v, b]) => [l, v, put(l, v, b).getAttribute('aria-invalid')]);
     await tick();
@@ -370,7 +371,7 @@ describe('정보 탭: 받지 않는 숫자 값(168차)', () => {
     q.dispatchEvent(new Event('change'));
     await settle(4);
     expect(saved().latheTools).toEqual({ 1: { radiusMm: 0.4, orientation: 3 } });
-    expect([input('T1 노즈 반지름(mm)').value, input('T1 노즈 반지름(mm)').hasAttribute('aria-invalid'), input('급속 속도(mm/분)').value]).toEqual(['0.4', false, '5000']);
+    expect([input('T1 노즈 R(mm)').value, input('T1 노즈 R(mm)').hasAttribute('aria-invalid'), input('급속 속도(mm/분)').value]).toEqual(['0.4', false, '5000']);
     // 빈 칸은 전처럼 기본값으로 걸고 다시 읽는다
     expect(put('급속 속도(mm/분)', '').hasAttribute('aria-invalid')).toBe(false);
     await settle(5);
@@ -431,5 +432,40 @@ describe('정보 탭: 받지 않는 숫자 값의 보이는 표시(169차)', () 
       const v = body(theme)!;
       expect(Math.min(ratio(v['--danger']!, v['--bg-input']!), ratio(v['--danger']!, v['--bg-panel']!))).toBeGreaterThan(3);
     }
+  });
+});
+
+/**
+ * 183차(WCAG 2.5.3 이름 안의 보이는 글): 선반 공구 표 노즈 R 숫자 칸의 이름이 「T1 노즈 반지름(mm)」이라 보이는 줄 이름 「T1 노즈 R(mm) · 방향」의 「R」을 품지 않아
+ * 음성 입력으로 보이는 글을 말하면(「T1 노즈 R」 누르기) 칸이 맞지 않았다(164차 다음 후보). 줄 이름 하나가 두 칸을 함께 불러 이름을 지우거나 줄 이름을 잇지 않고,
+ * 칸 이름을 줄 이름의 앞 조각 「T1 노즈 R(mm)」로 둔다. 번역층은 줄 이름(글)과 칸 이름(aria-label)을 따로 옮기므로 네 언어 사전에서도 같은 관계인지 본다
+ */
+describe('정보 탭: 선반 공구 표 칸 이름이 보이는 줄 이름을 품음(183차)', () => {
+  it('노즈 R 칸 이름은 줄 이름 앞 조각을 앞머리에, 방향 고르기 이름은 뒤 조각을 품는다 — 한국어와 네 언어 번역 뒤 모두', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    await api.open('l.nc', LATHE, { lathe: true, comp: true });
+    await until(() => api.state.parsed);
+    api.setPanelTab('info');
+    const row = (): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.prop-row.edit')].find((r) => r.querySelector('.k')?.textContent?.startsWith('T1 '));
+    await until(() => !!row());
+    const shown = row()!.querySelector('.k')!.textContent!;
+    const [radius, orient] = [...row()!.querySelectorAll<HTMLElement>('input, select')].map((c) => c.getAttribute('aria-label')!);
+    expect(shown).toBe('T1 노즈 R(mm) · 방향');
+    /** 보이는 줄 이름 「앞 조각 · 뒤 조각」: 숫자 칸 이름은 앞 조각으로 시작하고, 고르기 이름은 뒤 조각을 품는다(대소문자 무시) */
+    const check = (lang: string, s: string, r: string, o: string): void => {
+      const [head, tail] = s.split(' · ');
+      expect([r.startsWith(head!), o.toLowerCase().includes(tail!.toLowerCase())], `${lang}: ${s} / ${r} / ${o}`).toEqual([true, true]);
+    };
+    check('ko', shown, radius!, orient!);
+    expect([radius, orient]).toEqual(['T1 노즈 R(mm)', 'T1 공구 방향']);
+    for (const lang of ['en', 'ja', 'zh-CN', 'de']) {
+      const [s, r, o] = [shown, radius!, orient!].map((t) => translate(t, lang));
+      expect([s, r, o].filter((t) => /[가-힣]/.test(t!)), lang).toEqual([]);
+      check(lang, s!, r!, o!);
+    }
+    expect([shown, radius, orient].map((t) => translate(t!, 'en'))).toEqual(['T1 nose R (mm) · orientation', 'T1 nose R (mm)', 'T1 tool orientation']);
   });
 });
