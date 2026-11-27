@@ -20,6 +20,7 @@
   "3D 셰이더 연결 실패: {0}": "3D shader connection failure: {0}",
   "3D 셰이더 컴파일 실패: {0}": "3D shader compilation failed: {0}",
   "3D 형상을 다룹니다": "Works with 3D geometry",
+  ":": ":",
   "= 없음": "= missing",
   "> 없음": "> missing",
   "APPR·DEP(접근·이탈)는 끝점까지 직선으로 그림": "APPR/DEP (approach/departure) is drawn as a straight line to the end point.",

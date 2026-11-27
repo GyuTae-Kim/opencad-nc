@@ -330,6 +330,8 @@ export class NcViewerApp implements PanelHost {
    */
   private readonly said: HTMLDivElement;
   private saidKeys: string[] = [];
+  /** 201차: 알림 영역에 글을 넣은 화면 언어(languagechange — 언어가 바뀌면 앞 언어 글을 비운다; 번역층을 받기 전 앱은 한국어) */
+  private saidLang = 'ko';
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
   private readonly playStrip: { el: HTMLDivElement; time: HTMLSpanElement; line: HTMLSpanElement; state: HTMLDivElement; play: HTMLButtonElement; range: HTMLInputElement; speed: HTMLSelectElement };
   /** 189차: 깎기 조각이 붙인 판재 따라가기 띠(SimHost.stripAdded)와 아래쪽 띠 크기 관찰 — liftToasts가 재생·측정 띠와 함께 잰다 */
@@ -338,7 +340,13 @@ export class NcViewerApp implements PanelHost {
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
-    root.addEventListener('languagechange', () => {
+    root.addEventListener('languagechange', (e) => {
+      // 201차: 알림 영역(.app-live)은 판단 띠 새 줄 글을 그때 언어로 옮긴 조각(번역층이 건너뜀)으로 넣고 아래 renderNotices는 같은 줄을 다시 넣지 않아, 언어를 바꾸면
+      // 앞 언어 글이 다음 새 줄까지 남았다(화면에는 보이지 않으나 화면 읽기 프로그램의 읽기 모드로 읽힘 — WCAG 3.1.2). 비운다(빈 글은 알리지 않는다 — 200차 KeySnap.sync 꼴).
+      // 그래픽 잃음 안내(글 마디 — 번역층이 새 언어로 다시 옮긴다)도 함께 빈다(보이는 안내는 그대로)
+      const lang = (e as CustomEvent<string>).detail;
+      if (lang !== this.saidLang) this.said.textContent = '';
+      this.saidLang = lang;
       if (this.viewer) this.viewer.setViewCubeSize(this.viewer.viewCubeSize);
       // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다. 키보드 붙잡기 알림 틀도(56차)
       this.labelFormat();
