@@ -2236,7 +2236,11 @@ export class NcViewerApp implements PanelHost {
     const d = this.doc;
     const info = this.playbackInfo();
     const on = !!d && !!info && !this.panelOpen && !this.busy && !this.measuring && (this.playing || d.playSec !== null);
+    // 177차: ✕(재생 끝내기)를 키보드로 눌러 띠가 숨으면 초점이 문서로 빠진다 — 띠 안이었을 때만 연 버튼(막대 「재생」 — 두 폭에 다 있고 다시 누르면 다시 엶)으로(154차 toOpener).
+    // 띠가 남거나 초점이 띠 밖이면 그대로
+    const had = document.activeElement;
     s.el.hidden = !on;
+    this.toOpener(had, s.el, 'play');
     if (!on || !d || !info) return;
     const at = `${formatDuration(info.sec)} / ${formatDuration(info.total)}`;
     s.time.textContent = at;
