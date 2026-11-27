@@ -1503,7 +1503,7 @@ export class NcViewerApp implements PanelHost {
     this.renderStatus();
     const w = d.scene.warnings?.length ?? 0;
     // 선반 자동·소수점 없는 좌표·판별한 방언은 3D 보기 위 띠로(행동 단추와 함께), 경고는 알림으로
-    this.renderNotices();
+    this.renderNotices(false);
     if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
     // 코어 0.9.0부터 캔버스는 키보드 초점(:focus-visible)에 테두리를 그린다. 스크립트 초점은 브라우저가 입력 없이 연 경우(?sample·
     // 공유·파일 연결로 연 첫 화면)에도 테두리를 보이므로, 앞서 초점을 가진 것이 키보드 초점이었을 때만(열기 단추·최근 문서를 키보드로) 보인다
@@ -2254,9 +2254,13 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 해석 판단 띠: 선반 자동·소수점 없는 좌표·판별한 방언. 단추는 다른 설정으로 다시 읽거나 패널 탭을 연다, ✕는 이 문서에서 닫는다 */
-  private renderNotices(): void {
+  private renderNotices(keep = true): void {
     const d = this.doc;
     const bar = this.noticeBar;
+    // 176차: 줄을 모두 새로 만들어 띠 안 초점(✕·다시 읽은 뒤의 동작 버튼)이 문서로 빠진다 — 그 안이었으면 같은 차례(모자라면 마지막) 줄의 같은 자리 버튼(✕면 ✕, 아니면 첫 버튼),
+    // 띠가 숨으면 3D 보기로. 밖이었으면 그대로. keep = false(새 문서 — setDoc이 곧 3D 보기로 둔다)는 되살리지 않는다
+    const had = document.activeElement;
+    const at = keep && had && bar.contains(had) ? [...bar.children].findIndex((r) => r.contains(had)) : -1;
     bar.replaceChildren();
     const list = d ? noticeViews(d) : [];
     bar.hidden = !list.length;
@@ -2288,6 +2292,10 @@ export class NcViewerApp implements PanelHost {
       });
       row.append(x);
       bar.append(row);
+    }
+    if (at >= 0) {
+      const row = bar.children[Math.min(at, bar.children.length - 1)];
+      (row ? row.querySelector<HTMLElement>(had!.matches('.icon') ? '.icon' : 'button') : this.viewer?.canvas)?.focus({ preventScroll: true });
     }
   }
 
