@@ -8,6 +8,7 @@
  * - 고르기 Tab: 촘촘한 공구 경로(원호를 나눈 선분)·판재 가공(구멍 점과 그물)을 코드 줄·가공 단위로 묶어 돌리고, Enter는 그 묶음을 고른다
  *   (58차 — 코어 0.53.0 pickCycle group: 코어가 묶음마다 한 후보로 세어 한도 16·차례·수가 묶음 단위. 한 줄의 원호 선분이 16개를 넘게 겹쳐도 뒤 줄이 든다)
  * - 111차: 첫 점에서 지나간 모서리에 수직인 방향 위 후보(코어 0.115.0 perpendicularDir)는 측정 알림도 툴팁처럼 「모서리에 수직」(코어 틀은 수직 발과 같은 「수직점」)
+ * - 203차: 커서가 켜진 동안(화살표는 커서) 첫 점 뒤 X·Y·Z가 그 축으로 잠그고 같은 키로 푼다(measure-lock.ts axisKey — 화살표 잠금과 같은 arrow 길), 안내·알림
  */
 import type { Pick3d } from 'opencad-viewer3d';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -434,5 +435,96 @@ describe('111차: 가상 커서 측정 알림의 「모서리에 수직」(코�
       root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
       v.clearMeasure();
     }
+  });
+});
+
+describe('203차: 가상 커서가 켜진 동안 X·Y·Z로 측정 방향을 축에 잠근다(화살표는 커서 옮기기 — README 남은 일 56차, WCAG 2.1.1)', () => {
+  const frames = async (n = 8): Promise<void> => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+  const SHIFT: Record<string, string> = {
+    x: 'Shift로 X축 방향 잠그기',
+    y: 'Shift로 Y축 방향 잠그기',
+    z: 'Shift로 Z축 방향 잠그기',
+    parallel: 'Shift로 나란한 방향 잠그기',
+    perpendicular: 'Shift로 수직 방향 잠그기',
+    tangent: 'Shift로 접선 방향 잠그기',
+  };
+
+  it('첫 점 뒤 X·Y·Z는 그 축으로 잠그고 같은 키면 풀고 다른 축 키면 바꾼다(화살표 잠금과 같은 길) — 안내·알림, 첫 점 전·수정 키·커서가 꺼졌을 때는 잠그지 않는다', async () => {
+    const { app, v, center, key, live } = await open('a.nc', LINES);
+    app.toggleMeasure(true);
+    await vi.waitFor(() => expect(app.state().measuring).toBe(true));
+    // 문서를 연 뒤 늦게 오는 전체 보기를 먼저 지나 보낸다(111차 꼴)
+    await frames();
+    center([20, 15, 0], 25);
+    const lock = (): string | null | undefined => app.state().measureLock?.lock;
+    const hint = (): string => [...document.querySelectorAll('.st-sel .st-lock')].map((e) => e.textContent).join(' ');
+    /** 잠그지 않은 동안의 안내: 커서 아래에 Shift로 잠글 방향이 있으면 그것, 없으면 X·Y·Z(57차는 안내 없음) */
+    const free = (): string => {
+      const h = app.state().measureLock?.hoverLock;
+      return h ? SHIFT[h]! : 'X·Y·Z로 축 방향 잠금';
+    };
+    // 3D 보기 설명(aria-description)에 X·Y·Z
+    expect(v.canvas.getAttribute('aria-description')).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기).');
+    key('Enter');
+    expect(v.keyboardCursor).toMatchObject({ mode: 'measure' });
+    // 첫 점 전: 잠글 것이 없다(막지 않는다)
+    expect(key('x').defaultPrevented).toBe(false);
+    expect(lock()).toBeNull();
+    key('Enter');
+    expect(v.measurePoints).toHaveLength(1);
+    await vi.waitFor(() => expect(app.state().measureLock?.button).toBe(true));
+    await frames();
+    expect(hint()).toBe(free());
+    expect(hint()).not.toContain('화살표로 방향 잠금');
+    // X: X축으로 잠그고 기본 동작을 막는다 — 상태 줄 안내는 바로, 가상 커서 알림 영역은 그 그림 뒤 「X축 방향으로 잠금」(코어가 잠금 뒤 다시 구한 후보 알림이 있으면 그 앞)
+    expect(key('x').defaultPrevented).toBe(true);
+    expect(lock()).toBe('x');
+    expect(v.measureInferenceLock).toMatchObject({ kind: 'axis', axis: 'x' });
+    expect(hint()).toBe('X축 방향으로 잠금');
+    await frames();
+    expect(live()).toMatch(/^X축 방향으로 잠금( · .+)?$/);
+    // 같은 키(대문자도): 풂
+    key('X');
+    expect(lock()).toBeNull();
+    await frames();
+    expect(live()).toMatch(/^방향 잠금을 풀었습니다( · .+)?$/);
+    expect(hint()).toBe(free());
+    // Y → Z: 바꿈. 누른 채 되풀이는 막기만(잠갔다 풀었다 하지 않는다)
+    key('y');
+    expect(lock()).toBe('y');
+    key('z');
+    expect(lock()).toBe('z');
+    expect(key('z', { repeat: true }).defaultPrevented).toBe(true);
+    expect(lock()).toBe('z');
+    await frames();
+    expect(live()).toMatch(/^Z축 방향으로 잠금( · .+)?$/);
+    // 수정 키가 있으면 받지 않는다(Shift는 지금 방향 잠금, Ctrl·⌘·Alt는 브라우저·OS 몫)
+    for (const o of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      expect(key('x', o).defaultPrevented, JSON.stringify(o)).toBe(false);
+      expect(lock()).toBe('z');
+    }
+    // 한글 입력기(X 자리의 ㅌ)·독일어 자판(Y 자리에 적힌 z)
+    key('ㅌ', { code: 'KeyX' });
+    expect(lock()).toBe('x');
+    key('z', { code: 'KeyY' });
+    expect(lock()).toBe('z');
+    // 다른 글자는 그대로, 화살표는 그대로 커서(56차)
+    expect(key('a').defaultPrevented).toBe(false);
+    expect(lock()).toBe('z');
+    const x0 = v.keyboardCursor!.x;
+    key('ArrowRight');
+    expect(v.keyboardCursor!.x).toBe(x0 + 5);
+    expect(lock()).toBe('z');
+    // 커서가 꺼지면(초점이 떠남) X·Y·Z는 잠그지 않는다(그때는 화살표 → X · ← Y · ↑ Z)
+    key('z');
+    expect(lock()).toBeNull();
+    v.canvas.blur();
+    expect(v.keyboardCursor).toBeNull();
+    expect(key('x').defaultPrevented).toBe(false);
+    expect(lock()).toBeNull();
+    v.canvas.focus();
+    v.clearMeasure();
   });
 });

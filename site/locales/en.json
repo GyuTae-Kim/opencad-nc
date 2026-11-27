@@ -1102,6 +1102,8 @@
   "Shift로 나란한 방향 잠그기": "Shift locks parallel",
   "Shift로 수직 방향 잠그기": "Shift locks perpendicular",
   "화살표로 방향 잠금": "Arrow keys lock the direction",
+  "X·Y·Z로 축 방향 잠금": "X, Y or Z locks to that axis",
+  "방향 잠금을 풀었습니다": "Direction unlocked",
   "잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요": "No direction to lock: press and hold to aim, line up with an axis or a parallel direction, then tap",
   "잠글 방향이 없습니다: 커서를 축·나란한 방향에 맞춘 뒤 누르세요": "No direction to lock: line the cursor up with an axis or a parallel direction, then press",
   "잠금": "Locked",
@@ -1441,6 +1443,6 @@
   "[가상 커서 알림] 찍기 {0}": "Pick point {0}",
   "[가상 커서 알림] 고르기 {0}": "Select {0}",
   "[가상 커서 알림] 끄기 {0}": "Turn off {0}",
-  "Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다": "Press Enter for a virtual cursor: arrow keys move it, Tab cycles overlapping candidates, Enter selects or picks a point, Esc turns it off. While measuring, Tab and Shift+Tab also cycle candidates overlapping at the mouse pointer, and Esc stops cycling",
+  "Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기). 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다": "Press Enter for a virtual cursor: arrow keys move it, Tab cycles overlapping candidates, Enter selects or picks a point, Esc turns it off. After the first point while measuring, X, Y or Z locks to that axis (press again to unlock). While measuring, Tab and Shift+Tab also cycle candidates overlapping at the mouse pointer, and Esc stops cycling",
   "모서리에 수직": "Perpendicular to edge"
 }

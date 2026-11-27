@@ -27,7 +27,7 @@ import {
   statusMeasureHint,
   type LockMeet,
 } from '../src/app/measure';
-import { PERPENDICULAR_DIR_LABEL, trackDirName } from '../src/app/measure-lock';
+import { CURSOR_LOCK_HINT, PERPENDICULAR_DIR_LABEL, UNLOCK_SAID, trackDirName } from '../src/app/measure-lock';
 import { NO_TRACK_MOUSE, NO_TRACK_TOUCH, TRACKED, TRACK_LABEL, TRACK_TITLE } from '../src/app/measure-track';
 
 const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
@@ -145,5 +145,28 @@ describe('측정 화면 번역(125차)', () => {
     expect(LANGS.map((lang) => translate('수직점', lang))).toEqual(['Perpendicular', '垂線の足', '垂足', 'Lotfußpunkt']);
     expect(LANGS.map((lang) => translate(PERPENDICULAR_DIR_LABEL, lang))).toEqual(['Perpendicular to edge', 'エッジに垂直', '垂直于边', 'Senkrecht zur Kante']);
     expect(translate(`${TRACK_LABEL} · 기억한 점 2개`, 'de')).toBe('Punkt merken · Gemerkte Punkte 2');
+  });
+
+  it('203차: 가상 커서 축 잠금 안내(X·Y·Z)·푼 알림·3D 보기 설명의 더한 문장을 같은 사전의 잠금 낱말로 네 언어에 옮긴다', () => {
+    // [언어, 안내, 푼 알림, 3D 보기 설명에 더한 문장, 「Shift로 X축 방향 잠그기」의 잠금 낱말, 「방향 잠금 풀기」의 풂 낱말]
+    const want: [lang: string, hint: string, off: string, help: string, lockWord: string, offWord: string][] = [
+      ['en', 'X, Y or Z locks to that axis', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis (press again to unlock).', 'locks to', 'nlock'],
+      ['ja', 'X・Y・Z で軸方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向にロックします（もう一度押すと解除）。', '軸方向にロック', '方向ロックを解除'],
+      ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向（再按一次解除）。', '锁定为', '解除方向锁定'],
+      ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
+    ];
+    expect(want.map(([l]) => l)).toEqual([...LANGS]);
+    for (const [lang, hint, off, help, lockWord, offWord] of want) {
+      expect(translate(CURSOR_LOCK_HINT, lang), lang).toBe(hint);
+      expect(translate(UNLOCK_SAID, lang), lang).toBe(off);
+      expect(translate(KEY_HELP, lang), lang).toContain(help);
+      // 같은 사전 근거: 잠금 낱말·풂 낱말·「(다시 누르면 풀기)」 괄호 글
+      expect(dict(lang)[SHIFT_LOCK_HINTS.x], lang).toContain(lockWord);
+      expect(hint, lang).toContain(lockWord);
+      expect(dict(lang)['방향 잠금 풀기'], lang).toContain(offWord);
+      expect(off, lang).toContain(offWord);
+      expect(help, lang).toContain(/[（(][^（(]+[)）]$/.exec(dict(lang)['지금 방향 잠그기(다시 누르면 풀기)']!)![0]);
+    }
+    expect(KEY_HELP).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기).');
   });
 });
