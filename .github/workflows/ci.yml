@@ -15,7 +15,15 @@ concurrency:
 
 jobs:
   test:
+    # CI 8차: 시험 파일(162개 — 한 러너에서 약 60~95초)을 러너 두 대에 나눠 동시에 돈다(vitest --shard). 조각은 앞 CI에서 잰 파일 무게표
+    # (tests/shard-weights.json)로 무거운 것부터 가장 가벼운 조각에 넣는다(tests/weighted-sequencer.ts — DWG·DXF CI 2차 꼴).
+    # CI 6·7차로 휴대폰 검사가 약 70초로 줄어 시험 작업이 PR 벽시계를 쥐었다
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    name: test (${{ matrix.shard }}/2)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -26,9 +34,9 @@ jobs:
       # CI 6차: main으로 가는 PR에서는 휴대폰 검사(mobile-validation.yml)가 같은 npm run test:seo와 npm run build(tsc --noEmit — typecheck와 같은 일 —
       # · vite build · check:seo · check:i18n)를 돌리므로 여기서는 시험만 돌린다. 다른 base의 PR과 손으로 돌린 실행에서는 전처럼 모두 돌린다
       - run: npm run typecheck
-        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
-      - run: npm test
+        if: ${{ matrix.shard == 1 && !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
+      - run: npx vitest run --shard=${{ matrix.shard }}/2
       - run: npm run test:seo
-        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
+        if: ${{ matrix.shard == 1 && !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
       - run: npm run build
-        if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
+        if: ${{ matrix.shard == 1 && !(github.event_name == 'pull_request' && github.base_ref == 'main') }}
