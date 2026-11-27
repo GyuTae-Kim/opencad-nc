@@ -241,6 +241,12 @@ function statusLive(el: HTMLElement, alert: boolean): void {
   }
 }
 
+/**
+ * 197차: 깎기 계산 알림 영역의 모습 — 늘 화면에서만 1화소로 잘라 감추고 숨김 속성은 두지 않는다(keysnap.ts .key-live·measure-lock.ts FLASH_EMPTY와 같은 값, 보이는 쪽은 진행 칩).
+ * 알림 영역은 글을 바꾸기 전에 접근성 트리에 있어야 화면 읽기 프로그램이 바뀐 글을 읽는다(117·156차)
+ */
+const LIVE_HIDDEN = 'position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
+
 /** 121차: 깎기 탭에서 초점을 받는 칸 */
 type TabControl = HTMLButtonElement | HTMLInputElement | HTMLSelectElement;
 const TAB_CONTROLS = 'button, input, select';
@@ -356,10 +362,17 @@ export class SimView {
   private uploads = { scenes: 0, meshes: 0 };
   // ── 화면 ──
   private chip: HTMLDivElement | null = null;
+  /** 197차: 계산 알림 영역(진행 칩과 뗀 빈 칸 — 계산 시작·끝만) */
+  private readonly said: HTMLDivElement;
+  /** 197차: 알릴 차례 — 0 없음, 1 새 계산을 시작함(첫 결과에 시작 글), 2 시작을 알림(닿으면 끝 글) */
+  private saying: 0 | 1 | 2 = 0;
   private statusEl: HTMLElement | null = null;
   private eventsKey = '';
 
-  constructor(private readonly host: SimHost) {}
+  constructor(private readonly host: SimHost) {
+    // 197차: 첫 계산 글보다 먼저 있게 조각을 처음 쓸 때 3D 보기(앱이 한 번 만들고 지우지 않음)에 빈 채로 붙여 둔다
+    host.viewLayer.append((this.said = h('div', { class: 'sim-live', role: 'status', 'aria-live': 'polite', style: LIVE_HIDDEN })));
+  }
 
   get paths(): boolean {
     return this.prefs.paths;
@@ -379,6 +392,7 @@ export class SimView {
     } else {
       this.step = null;
       this.stop();
+      this.hush();
     }
     this.host.renderToolbar();
     redrawTab(this.host, this);
@@ -388,6 +402,7 @@ export class SimView {
   /** 새 문서·다시 읽은 결과: 문서마다 값을 새로 정하고 켜져 있으면 다시 계산 */
   docChanged(d: NcDoc | null): void {
     this.stop(false);
+    this.hush();
     this.key = null;
     this.userStock = null;
     this.panel = null;
@@ -612,6 +627,8 @@ export class SimView {
     }
     const moves = this.simMoves(d, box);
     if (!moves) return;
+    // 197차: 새 계산 — 시작 글은 첫 결과에(이미 시작을 알린 계산을 끝나기 전 다시 시작하면 그대로 — 같은 글을 되풀이하지 않음)
+    if (!this.saying) this.saying = 1;
     const used = new Set(this.rows.map((r) => r.number));
     const tools = [...used].map((n) => ({ number: n, tool: this.toolOf(n) }));
     const target = this.targetOf(d);
@@ -664,6 +681,8 @@ export class SimView {
    * 진행 칩은 멈추며 거두고 장면은 문서 장면으로 돌아가 그 밖에 알릴 곳이 없었다. 탭이 보이면 탭 글(135차 alert)만 — 두 번 읽지 않게
    */
   private showError(keep = false): void {
+    // 197차: 오류는 탭 글·알림 상자(alert)가 읽어 알림 영역은 비운다(두 번 읽지 않게)
+    this.hush();
     redrawTab(this.host, this, keep);
     const el = this.statusEl;
     if (this.error && !(el?.isConnected && !el.closest('[hidden]'))) toast(uiText(this.error), 'error');
@@ -811,16 +830,40 @@ export class SimView {
 
   private updateChip(): void {
     const p = this.on ? this.progress() : null;
+    this.announce(p);
     if (p === null) {
       this.chip?.remove();
       this.chip = null;
       return;
     }
     if (!this.chip) {
-      this.chip = h('div', { class: 'sim-chip', role: 'status', 'aria-live': 'polite' });
+      // 197차: 칩은 보이는 글만(퍼센트는 잦아 알리지 않음 — 화면 읽기는 알림 영역의 시작·끝)
+      this.chip = h('div', { class: 'sim-chip', 'aria-hidden': 'true' });
       this.host.viewLayer.append(this.chip);
     }
     this.chip.textContent = `소재 계산 중 ${p}%`;
+  }
+
+  /**
+   * 197차: 계산 시작·끝을 알림 영역에 한 번씩. 120차까지는 진행 칩(role=status)이 계산마다 첫 글과 함께 새로 붙어 첫 진행 글을 읽지 않을 수 있었고
+   * 붙은 동안은 퍼센트가 바뀔 때마다 알렸다. 시작은 새 계산(start)의 첫 결과에(칩 글 — 워커 결과는 늘 뒤 차례라 조각을 처음 받아 영역을 붙인 차례와 떨어진다),
+   * 끝은 그 계산이 목표에 닿을 때 상태 글 한 줄(첫 결과에 닿았으면 시작 없이 끝만). 재생·따라가기로 목표만 바뀐 계산(follow·setStep)은 알리지 않는다
+   */
+  private announce(p: number | null): void {
+    if (!this.saying || !this.last) return;
+    if (p === null) {
+      this.said.textContent = this.statusText();
+      this.saying = 0;
+    } else if (this.saying === 1) {
+      this.said.textContent = `소재 계산 중 ${p}%`;
+      this.saying = 2;
+    }
+  }
+
+  /** 197차: 알릴 차례를 버리고 알림 영역을 비운다(오류·끄기·새 문서 — 빈 글은 읽지 않는다) */
+  private hush(): void {
+    this.saying = 0;
+    if (this.said.textContent) this.said.textContent = '';
   }
 
   private statusText(): string {
