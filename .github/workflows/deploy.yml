@@ -26,6 +26,12 @@ jobs:
       - run: npm test
       - run: npm run test:seo
       - run: npm run build
+      # 휴대폰 검사(mobile-validation.yml)가 PR의 기준 커밋(= 이 main 커밋)을 다시 빌드하지 않게, 같은 명령의 이 빌드를 커밋 열쇠로 남긴다(CI 3차)
+      - name: Save this build as the mobile comparison baseline
+        uses: actions/cache/save@v4
+        with:
+          path: dist
+          key: mobile-baseline-${{ github.sha }}
       - name: Publish dist to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:

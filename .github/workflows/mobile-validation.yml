@@ -33,13 +33,27 @@ jobs:
           name: content-history
           path: site/content-history.json
       - run: npm run build
-      - name: Build comparison baseline in the same CI checkout
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - name: Set the candidate build aside
         run: |
           mkdir -p .runtime/performance
           mv dist .runtime/performance/candidate
           git restore site/content-history.json
+      # 기준 커밋(= main 커밋)의 빌드는 배포 워크플로가 같은 명령으로 이미 만들어 그 커밋 열쇠로 남긴다(deploy.yml — CI 3차).
+      # 있으면 기준 빌드(git checkout·npm run build — 10~26초)를 건너뛰고, 없으면(배포 전·배포가 멈춘 커밋) 전처럼 빌드한다
+      - name: Restore the comparison baseline saved by the main deploy
+        id: baseline-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: dist
+          key: mobile-baseline-${{ github.event.pull_request.base.sha }}
+      - name: Use the restored comparison baseline
+        if: steps.baseline-cache.outputs.cache-hit == 'true'
+        run: mv dist .runtime/performance/baseline
+      - name: Build comparison baseline in the same CI checkout
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
           git fetch --no-tags origin "$BASE_SHA"
           # 기준 커밋과 이 커밋의 의존성(package.json·package-lock.json)이 같으면 node_modules를 그대로 쓴다(CI 1차 — 전에는 npm ci 두 번)
           same_deps=0
