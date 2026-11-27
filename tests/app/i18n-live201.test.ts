@@ -5,8 +5,9 @@
  * 앞 언어 글이 다음 새 줄까지 남았다(화면에는 보이지 않으나 화면 읽기 프로그램의 읽기 모드로 읽힘 — 200차 가상 커서 알림 영역 `.key-live`와 같은 꼴). 언어가 바뀌면 비운다.
  * 같은 꼴인지 함께 본 것: 그래픽 잃음 안내·깎기 계산 알림(`.sim-live`)은 글 마디라 번역층이 새 언어로 다시 옮기고(앞 언어 글 남지 않음), 판단 띠·상태 막대는 앱이 다시 그린다.
  * 알림 상자의 그때 언어 조각(「…: 다시 읽었습니다.」)은 잠깐 뒤 상자에서 빠질 때까지 앞 언어다(둠 — 보이는 글, 비우면 읽지 못한 알림을 잃음).
- * (ㄴ) 열기 오류 「이름: 까닭」(시작 화면 오류 줄·알림 상자)은 조각마다 글 마디라 사이 글 ': '도 번역층을 지난다 — 사전 열쇠 ':'(중국어 「：」, 다른 언어는 원문 그대로)로 옮긴다
- * (번역층은 옮긴 글에 원문 글 마디의 앞뒤 빈칸을 다시 붙인다 — 중국어는 「： 」).
+ * (ㄴ) 열기 오류 「이름: 까닭」(시작 화면 오류 줄·알림 상자)은 조각마다 글 마디라 사이 글 ': '도 번역층을 지난다 — 201차는 사전 열쇠 ':'(중국어 「：」)로 옮겼으나
+ * 202차에 되돌렸다: 사이트 키트 translate가 앞뒤 빈칸을 뺀 열쇠로 찾아 값만 돌려줘, 조각을 이어 옮기는 길(mixNodes·uiText·조각마다 옮기기)에서 영어 「: 」가 「:」로
+ * 빈칸을 잃었다(mobile.test 31차 시험 「sub.h:No tool …」 — PR CI 실패, ci-guard 9번). 사이 글은 네 언어 모두 원문 ': ' 그대로다(중국어 「：」는 보고 둔 것).
  * 뷰어 코어(WebGL)는 가짜, 해석은 워커와 같은 길(parseForView), 깎기 워커는 같은 실행기를 같은 스레드에서(i18n-screens199.test.ts 꼴).
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -197,25 +198,22 @@ describe('201차: 언어를 바꾼 뒤 알림 영역의 앞 언어 글·열기 �
     });
   });
 
-  it.each([
-    ['zh-CN', '：'],
-    ['en', ':'],
-    ['ja', ':'],
-    ['de', ':'],
-  ])('(ㄴ) %s: 열기 오류 「이름%s 까닭」 — 조각 사이 글을 사전 열쇠 「:」로 옮긴다(중국어만 전각, 다른 언어는 원문 그대로)', async (lang, colon) => {
+  // 202차: 201차의 사전 열쇠 ':'(중국어 「：」)를 되돌려 사이 글은 네 언어 모두 원문 ': ' 그대로다 — 그 열쇠는 조각을 이어 옮기는 길에서 영어 「: 」의 빈칸을 지웠다
+  // (위 머리 주석, ci-guard 9번). 기호 하나를 언어마다 다르게 하려면 그 기호가 든 통째 원문·틀 열쇠로 해야 해 중국어 「：」는 보고 둔 것이다
+  it.each(['zh-CN', 'en', 'ja', 'de'])('(ㄴ) %s: 열기 오류 「이름: 까닭」 — 조각 사이 글은 원문 「: 」 그대로(202차 — 기호 열쇠를 되돌림)', async (lang) => {
     const { app, root } = await makeApp(lang);
     // 시작 화면 오류 줄: 파일 이름(파일 글 칸) · 사이 글 · 까닭(앱 글)
     expect(await app.openBuffer('notes.md', enc.encode('hello world\nsecond line\n').buffer as ArrayBuffer)).toBe(false);
     await tick();
     const err = root.querySelector<HTMLElement>('.start-error')!;
-    expect([...err.childNodes].map((n) => n.textContent)).toEqual(['notes.md', `${colon} `, translate(NOT_NC_MESSAGE, lang)]);
+    expect([...err.childNodes].map((n) => n.textContent)).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, lang)]);
     if (lang !== 'zh-CN') return;
-    // 문서가 열린 뒤의 열기 오류(알림 상자 — 같은 조각): 중국어 → 영어로 바꾸면 번역층이 사이 글을 원문 ': '로 되찾아 다시 옮긴다
+    // 문서가 열린 뒤의 열기 오류(알림 상자 — 같은 조각): 중국어 → 영어로 바꾸어도 사이 글은 ': ', 까닭은 번역층이 새 언어로 옮긴다
     expect(await app.openBuffer('part.MPF', enc.encode(SIE).buffer as ArrayBuffer)).toBe(true);
     expect(await app.openBuffer('notes.md', enc.encode('hello world\n').buffer as ArrayBuffer)).toBe(false);
     await tick();
     const box = (): string[] => [...document.querySelector<HTMLElement>('.toast.error')!.childNodes].slice(0, 3).map((n) => n.textContent ?? '');
-    expect(box()).toEqual(['notes.md', '： ', translate(NOT_NC_MESSAGE, 'zh-CN')]);
+    expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'zh-CN')]);
     await to('en');
     expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'en')]);
   });
