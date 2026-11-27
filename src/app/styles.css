@@ -1909,6 +1909,12 @@ html:lang(zh-CN) { --font: -apple-system, "PingFang SC", "Microsoft YaHei", sans
   font: inherit;
   font-variant-numeric: tabular-nums;
 }
+/* 받지 않는 값(aria-invalid — readNum, 168·169차): 테두리를 2px로 굵게 위험 색 — 색만이 아니고 강제 색 모드에도 굵기가 남음(WCAG 1.4.1),
+   칸 바탕·패널 바탕과 3:1 넘음(1.4.11). 높이 고정·border-box라 줄 높이 그대로, 초점은 바깥 outline이라 겹치지 않음(169차) */
+.num-input[aria-invalid='true'] {
+  border-width: 2px;
+  border-color: var(--danger);
+}
 .xyz-input {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

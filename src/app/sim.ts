@@ -149,6 +149,20 @@ function writeJson(key: string, v: unknown): void {
   }
 }
 
+/**
+ * 169차: 깎기 탭 숫자 칸 값 — 받는 수(유한하고 ok)면 그 수, 빈 칸·읽지 못한 글(validity.badInput — 쉼표 소수 등, 브라우저가 빈 값으로 돌림)·받지 않는 수는 undefined.
+ * 전처럼 걸지 않고(계산·기억·탭 다시 그리기는 앞 값 그대로) 칸 글을 친 그대로 둔 채 aria-invalid="true"를 둔다(받는 값이면 거둠 — WCAG 3.3.1, 보이는 표시는 styles.css).
+ * 정보 탭 readNum(168차)과 같은 꼴 — 이 칸들은 빈 칸에 기본값이 없어 빈 칸도 받지 않는 값(그 함수를 가져오면 정보 탭 조각을 끌어와 여기 둔다)
+ */
+function readNum(el: HTMLInputElement, ok: (n: number) => boolean = () => true): number | undefined {
+  const t = el.value.trim();
+  const n = Number(t);
+  const bad = el.validity.badInput || t === '' || !(Number.isFinite(n) && ok(n));
+  if (bad) el.setAttribute('aria-invalid', 'true');
+  else el.removeAttribute('aria-invalid');
+  return bad ? undefined : n;
+}
+
 /** 판재 공구 이름: 구멍은 지름, 경로는 공구 번호(MPR TNO)나 공구 폭 */
 export function panelToolLabel(t: PanelSimTool | undefined): string {
   if (!t) return '—';
@@ -903,8 +917,8 @@ export class SimView {
         const el = h('input', { type: 'number', step: 'any', class: 'num-input', 'aria-label': label });
         el.value = String(Math.round(v * 1e6) / 1e6);
         el.addEventListener('change', () => {
-          const n = Number(el.value);
-          if (el.value.trim() !== '' && Number.isFinite(n)) set(n);
+          const n = readNum(el);
+          if (n !== undefined) set(n);
         });
         return el;
       };
@@ -984,8 +998,8 @@ export class SimView {
       const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label('지름') });
       dia.value = String(r.tool.diameter);
       dia.addEventListener('change', () => {
-        const n = Number(dia.value);
-        if (n > 0) this.setTool(r, { diameter: n });
+        const n = readNum(dia, (x) => x > 0);
+        if (n !== undefined) this.setTool(r, { diameter: n });
       });
       let extra: HTMLElement | string = '';
       if (r.tool.kind === 'bull' || r.tool.kind === 'drill') {
@@ -993,8 +1007,8 @@ export class SimView {
         const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label(isBull ? '모서리 R' : '끝 각(도)') });
         el.value = String(isBull ? r.tool.corner : r.tool.angle);
         el.addEventListener('change', () => {
-          const n = Number(el.value);
-          if (n > 0) this.setTool(r, isBull ? { corner: n } : { angle: n });
+          const n = readNum(el, (x) => x > 0);
+          if (n !== undefined) this.setTool(r, isBull ? { corner: n } : { angle: n });
         });
         extra = el;
       }

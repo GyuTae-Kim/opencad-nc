@@ -1440,3 +1440,64 @@ describe('장면 합치기·번역', () => {
     }
   });
 });
+
+/**
+ * 169차: 깎기 탭 소재 범위·공구 지름·모서리 R·끝 각 칸은 빈 칸·0 이하(공구 칸)·읽지 못한 글(브라우저가 빈 값으로 돌리고 validity.badInput — 쉼표 소수 등)을
+ * 말없이 무시해(계산은 앞 값) 칸 글이 쓰는 값과 달라도 알 길이 없었다(WCAG 3.3.1). 정보 탭 168차 readNum과 같은 꼴로 칸에 aria-invalid="true"를 둔다 —
+ * 계산·기억·탭 다시 그리기는 그대로(바뀌는 것은 칸 표시뿐), 받는 값을 넣으면 거두고 전처럼 건다
+ */
+describe('깎기 탭: 받지 않는 숫자 값(169차)', () => {
+  it('소재 범위의 빈 칸·읽지 못한 글과 공구 지름·끝 각의 빈 칸·0 이하·읽지 못한 글은 걸지 않고 같은 칸에 aria-invalid, 받는 값이면 거두고 건다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    // (이름의 「~」는 jsdom 선택자가 따옴표 안에서도 잇는 기호로 읽어 속성 선택자 대신 이름으로 찾는다)
+    const ctl = (label: string): HTMLInputElement => [...root.querySelectorAll<HTMLInputElement>('.panel-body input')].find((el) => el.getAttribute('aria-label') === label)!;
+    /** 칸에 글을 넣고 change — bad면 브라우저가 읽지 못한 글(빈 값 + validity.badInput) */
+    const put = (label: string, v: string, bad = false): HTMLInputElement => {
+      const el = ctl(label);
+      Object.defineProperty(el, 'validity', { configurable: true, value: { badInput: bad } });
+      el.value = v;
+      el.dispatchEvent(new Event('change'));
+      return el;
+    };
+    const bad: [string, string, boolean][] = [
+      ['X 범위 — 최대', '', false],
+      ['X 범위 — 최대', '', true],
+      ['T1 지름', '0', false],
+      ['T1 지름', '-3', false],
+      ['T1 지름', '', false],
+      ['T1 지름', '', true],
+      ['T3 끝 각(도)', '0', false],
+      ['T3 끝 각(도)', '-1', false],
+      ['T3 끝 각(도)', '', true],
+    ];
+    // 걸지 않아 탭을 다시 그리지 않고(같은 칸이 남음) 그 칸에 aria-invalid
+    const marks = bad.map(([l, v, b]) => {
+      const el = put(l, v, b);
+      return [l, v, el.getAttribute('aria-invalid'), el === ctl(l)];
+    });
+    expect(marks).toEqual(bad.map(([l, v]) => [l, v, 'true', true]));
+    // 계산·기억은 앞 값 그대로: 다시 계산하지 않고, 공구 기억 없음, 소재는 자동(절삭 범위에서 추정) 그대로
+    expect(api.state.sim!.computing).toBe(false);
+    expect(localStorage.getItem('opencad-nc.sim.tools')).toBe(null);
+    expect(root.querySelector('.panel-body')!.textContent).not.toContain('직접 정함');
+    // 받는 값을 넣으면 그 칸의 aria-invalid를 거두고 전처럼 건다(다시 그린 탭의 새 칸도 표시 없음)
+    const x = put('X 범위 — 최대', '90');
+    expect([x.hasAttribute('aria-invalid'), ctl('X 범위 — 최대') === x, ctl('X 범위 — 최대').value, ctl('X 범위 — 최대').hasAttribute('aria-invalid')]).toEqual([false, false, '90', false]);
+    expect(root.querySelector('.panel-body')!.textContent).toContain('직접 정함');
+    await until(settled);
+    const d = put('T1 지름', '12');
+    expect(d.hasAttribute('aria-invalid')).toBe(false);
+    await until(settled);
+    const a = put('T3 끝 각(도)', '130');
+    expect(a.hasAttribute('aria-invalid')).toBe(false);
+    await until(settled);
+    expect(JSON.parse(localStorage.getItem('opencad-nc.sim.tools')!)).toEqual({ 1: { diameter: 12 }, 3: { angle: 130 } });
+    expect([ctl('T1 지름').value, ctl('T1 지름').hasAttribute('aria-invalid'), ctl('T3 끝 각(도)').value, ctl('T3 끝 각(도)').hasAttribute('aria-invalid')]).toEqual(['12', false, '130', false]);
+  });
+});
