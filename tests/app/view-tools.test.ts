@@ -1116,6 +1116,55 @@ describe('해석 판단 띠', () => {
     }
   });
 
+  /**
+   * 198차: 판단 띠(role=status)는 숨김을 줄과 함께 풀어(열기·다시 읽기는 덮개가 inert를 거둔 같은 차례) 화면 읽기 프로그램이 첫 줄을 읽지 않을 수 있었고(알림 영역은 글이 바뀌기 전에
+   * 있어야 읽음 — 117·156·197차 꼴, WCAG 4.1.3), 그릴 때마다 줄을 새로 붙여 동작 버튼·「이 안내 닫기」 이름까지 다시 읽었다. 앱을 만들 때 빈 채로 붙여 둔 알림 영역(#app 바로 밑 —
+   * 덮개 동안 inert가 되는 작업 영역 밖)에 새로 나온 줄의 글만 넣는다
+   */
+  it('198차: 판단 띠 글은 미리 붙여 둔 알림 영역에 새로 나온 줄만 한 번(버튼 이름 없이) — 띠는 알림 영역이 아니고, 언어 바꿈·✕·다시 읽기로 다시 그려도 남은 줄은 다시 넣지 않으며 새 문서면 다시 한 번', async () => {
+    const { app, root } = makeApp();
+    // 열기 전부터 숨김 없이 비어 있고 화면에서는 1화소로 잘라 감춘다(117·197차 꼴)
+    const live = root.querySelector<HTMLElement>(':scope > .app-live');
+    expect([live?.getAttribute('role'), live?.getAttribute('aria-live'), live?.textContent, live?.hidden]).toEqual(['status', 'polite', '', false]);
+    expect([live!.style.position, live!.style.width, live!.style.height, live!.style.overflow]).toEqual(['absolute', '1px', '1px', 'hidden']);
+    // 영역에 글을 넣을 때마다 넣은 글(197차 꼴 — await 사이에 관찰 함수로 넘어간 기록도 센다)
+    const said: string[] = [];
+    const push = (rs: MutationRecord[]): void => {
+      for (const r of rs) said.push(r.type === 'characterData' ? (r.target.textContent ?? '') : [...r.addedNodes].map((n) => n.textContent).join(''));
+    };
+    const obs = new MutationObserver(push);
+    obs.observe(live!, { childList: true, characterData: true, subtree: true });
+    const take = (): string[] => {
+      push(obs.takeRecords());
+      return said;
+    };
+    expect(await open(app, 'od.nc', LATHE)).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    const regions = '[role=status], [role=alert], [aria-live]';
+    expect([bar.hidden, bar.getAttribute('role'), bar.getAttribute('aria-live'), bar.querySelector(regions)]).toEqual([false, null, null, null]);
+    // 줄마다 글 뒤 빈칸 하나(줄 글이 붙어 읽히지 않게)
+    const rows = [...bar.querySelectorAll('.nt-text')].map((t) => `${t.textContent} `).join('');
+    expect(rows).toContain('선반 프로그램으로 보여');
+    // 새 문서: 띠의 줄 글만 한 번(영역에는 버튼이 없음), 영역은 열기 전 그 요소
+    expect(take()).toEqual([rows]);
+    expect([root.querySelector(':scope > .app-live'), live!.querySelector('button')]).toEqual([live, null]);
+    // 언어 바꿈으로 띠를 다시 그려도 남은 줄은 넣지 않는다
+    root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+    expect([bar.hidden, take()]).toEqual([false, [rows]]);
+    // ✕로 닫아도 넣지 않고, 같은 파일을 다시 열면(새 문서) 다시 한 번
+    bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!.click();
+    expect([bar.hidden, take()]).toEqual([true, [rows]]);
+    expect(await open(app, 'od.nc', LATHE)).toBe(true);
+    expect(take()).toEqual([rows, rows]);
+    // 다시 읽는 동안 띠(3D 보기 안)는 inert지만 영역은 아니다 — 밀링으로 읽어 줄이 없어지면 넣지 않는다
+    [...bar.querySelectorAll('button')].find((b) => b.textContent === '밀링으로 읽기')!.click();
+    expect([!!bar.closest('[inert]'), live!.closest('[inert]')]).toEqual([true, null]);
+    await tick();
+    await tick();
+    expect([bar.hidden, take()]).toEqual([true, [rows, rows]]);
+    obs.disconnect();
+  });
+
   it('좁은 화면: 띠 글을 누르면 펼치고(다시 누르면 접음), 알림은 아래쪽 띠 맨 위보다 위로(--toast-clear)', async () => {
     const cbs: (() => void)[] = [];
     const roCb = (): void => cbs.forEach((cb) => cb());

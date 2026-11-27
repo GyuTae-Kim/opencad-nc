@@ -84,6 +84,11 @@ const NARROW_QUERY = `(max-width: ${NARROW_WIDTH - 0.02}px)`;
 const PHONE_QUERY = `${NARROW_QUERY}, (pointer: coarse) and (max-height: 499.98px)`;
 /** 손가락이 주인 기기(휴대폰·태블릿): 안내 글·파일 고르기를 맞춘다 */
 const COARSE_QUERY = '(pointer: coarse)';
+/**
+ * 198차: 첫 화면 알림 영역의 모습 — 늘 화면에서만 1화소로 잘라 감추고 숨김 속성은 두지 않는다(keysnap.ts .key-live·measure-lock.ts FLASH_EMPTY·sim.ts LIVE_HIDDEN과 같은 값).
+ * 알림 영역은 글을 바꾸기 전에 접근성 트리에 있어야 화면 읽기 프로그램이 바뀐 글을 읽는다(117·156·197차)
+ */
+const LIVE_HIDDEN = 'position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
 
 /** 요소가 키보드 초점 표시(:focus-visible) 중인지(그 선택자를 모르는 환경이면 false) */
 export function matchesFocusVisible(el: Element): boolean {
@@ -319,6 +324,12 @@ export class NcViewerApp implements PanelHost {
   private mtrack: TrackPick | null = null;
   private readonly aimLayer: HTMLDivElement;
   private readonly noticeBar: HTMLDivElement;
+  /**
+   * 198차: 판단 띠 글·그래픽 잃음 안내를 알리는 영역 — 앱을 만들 때 #app에 빈 채로 붙여 둔다(작업 영역 밖이라 덮개 동안 inert가 되지 않음).
+   * saidKeys는 지난번 그린 판단 띠 줄의 열쇠(같은 줄은 다시 그려도 알리지 않는다)
+   */
+  private readonly said: HTMLDivElement;
+  private saidKeys: string[] = [];
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
   private readonly playStrip: { el: HTMLDivElement; time: HTMLSpanElement; line: HTMLSpanElement; state: HTMLDivElement; play: HTMLButtonElement; range: HTMLInputElement; speed: HTMLSelectElement };
   /** 189차: 깎기 조각이 붙인 판재 따라가기 띠(SimHost.stripAdded)와 아래쪽 띠 크기 관찰 — liftToasts가 재생·측정 띠와 함께 잰다 */
@@ -499,8 +510,8 @@ export class NcViewerApp implements PanelHost {
     this.measureBar = h('div', { class: 'measure-bar', role: 'group', 'aria-label': '측정', hidden: true }, this.measureText, this.measureActs);
     // 정밀 조준 십자선 층(캔버스 위, 누르기는 받지 않는다)
     this.aimLayer = h('div', { class: 'aim-layer', 'aria-hidden': 'true' });
-    // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언)
-    this.noticeBar = h('div', { class: 'notice-bar', role: 'status', 'aria-live': 'polite', hidden: true });
+    // 해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언). 198차: 알림 영역이 아니다 — 새로 나온 줄의 글은 미리 붙여 둔 알림 영역(said)이 알린다(renderNotices)
+    this.noticeBar = h('div', { class: 'notice-bar', hidden: true });
     this.playStrip = this.buildPlayStrip();
     this.viewEl.append(this.aimLayer, this.measureBar, this.noticeBar, this.playStrip.el);
     // 알림은 3D 보기 아래쪽 띠(해석 판단·재생·측정) 위로 올린다 — 띠가 나타나거나 크기가 바뀌면 다시 잰다
@@ -528,7 +539,8 @@ export class NcViewerApp implements PanelHost {
 
     root.textContent = '';
     root.classList.add('no-doc');
-    root.append(titlebar, toolbar, this.workspace, status, this.fileInput, this.dropMask);
+    // 198차: 판단 띠·그래픽 잃음 알림 영역도 빈 채로 지금(작업 영역 밖 — 절대 자리라 #app 격자 칸을 차지하지 않는다)
+    root.append(titlebar, toolbar, this.workspace, status, this.fileInput, this.dropMask, (this.said = h('div', { class: 'app-live', role: 'status', 'aria-live': 'polite', style: LIVE_HIDDEN })));
     // 156차: 알림 상자(aria-live)는 빈 채로 지금 붙여 둔다 — 첫 알림 때 상자째 붙이면 그 첫 안내를 화면 읽기 프로그램이 읽지 않을 수 있다(dom.ts toastArea)
     toastArea();
 
@@ -1423,11 +1435,18 @@ export class NcViewerApp implements PanelHost {
     this.renderSection(null);
     // 그래픽 문맥을 잃으면(휴대폰이 앱을 뒤로 보냈다 돌아올 때 등) 되찾을 때까지 3D 보기 가운데에 안내(코어 0.25.0 알림 — 놓기는 쓰지 않아
     // 코어가 장면을 그대로 다시 올린다). 가운데라 위·아래 띠, 왼쪽 위 계산 표시, 오른쪽 위 뷰 큐브와 겹치지 않는다
+    // 198차: 안내는 알림 영역이 아니다(role=status로 글과 함께 새로 붙어 첫 글을 읽지 않을 수 있었다) — 같은 글을 미리 붙여 둔 알림 영역에 잃을 때 한 번,
+    // 되찾으면 비운다(다음에 잃을 때 같은 글도 바뀜이 되게)
     let lost: HTMLElement | null = null;
-    v.onContextLost(() => this.viewEl.append((lost ??= h('div', { class: 'gl-lost', role: 'status' }, '그래픽을 다시 준비하는 중…'))));
+    v.onContextLost(() => {
+      if (lost) return;
+      this.viewEl.append((lost = h('div', { class: 'gl-lost' }, '그래픽을 다시 준비하는 중…')));
+      this.said.textContent = lost.textContent;
+    });
     v.onContextRestore(() => {
       lost?.remove();
       lost = null;
+      this.said.textContent = '';
     });
     // 55차(코어 0.50.0): 코어가 장면 입력에서 빼거나 고친 것(좌표 NaN·아주 큰 값 등 — 해석기가 이미 거르므로 드물다)을 정보 탭 경고 목록에.
     // setScene·setMesh 안에서 찾았을 때 불린다(applyDoc도 setScene 뒤에 맞춘다)
@@ -2309,7 +2328,13 @@ export class NcViewerApp implements PanelHost {
     bar.replaceChildren();
     const list = d ? noticeViews(d) : [];
     bar.hidden = !list.length;
+    // 198차: 띠가 알림 영역(role=status)이면 숨김을 줄과 함께 풀어(열기·다시 읽기는 덮개가 inert를 거둔 같은 차례) 첫 줄을 읽지 않을 수 있었고, 그릴 때마다
+    // 줄을 새로 붙여 언어 바꿈·✕에도 남은 줄을 동작 버튼·「이 안내 닫기」 이름까지 다시 읽었다 — 새로 나온 줄(새 문서면 모든 줄)의 글만 미리 붙여 둔 알림 영역에
+    const old = keep ? this.saidKeys : [];
+    const fresh: (string | Node)[] = [];
+    this.saidKeys = list.map((n) => n.key);
     for (const n of list) {
+      if (!old.includes(n.key)) fresh.push(mixSpan(n.text), ' ');
       // 좁은 화면은 글을 한두 줄로 줄여 보이고(3D 보기를 덜 가리게), 글을 누르면 펼친다
       // 글에 파일 글(주 프로그램·찾지 못한 프로그램 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
       const text = mixSpan(n.text, 'nt-text');
@@ -2338,6 +2363,7 @@ export class NcViewerApp implements PanelHost {
       row.append(x);
       bar.append(row);
     }
+    if (fresh.length) this.said.replaceChildren(...fresh);
     if (at >= 0) {
       const row = bar.children[Math.min(at, bar.children.length - 1)];
       (row ? row.querySelector<HTMLElement>(had!.matches('.icon') ? '.icon' : 'button') : this.viewer?.canvas)?.focus({ preventScroll: true });
