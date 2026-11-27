@@ -899,6 +899,47 @@ describe('재생 띠(패널을 닫았을 때)', () => {
     expect(strip.hidden).toBe(false);
     expect(strip.querySelector('.ps-time')!.textContent).toMatch(/^0:01\.0 \/ /);
   });
+
+  it('181차: 읽는 동안 덮개가 뜨면 재생 띠를 숨기고 걷히면 다시 맞춘다 — 멈춘 재생 자리의 띠가 덮개 밑에 비쳐 Tab으로 닿고 눌려 읽는 중에 앞 문서 재생이 돌았다(다른 파일 열기·다시 읽기)', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'm.nc', MILL);
+    const api = window.opencadApp!;
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    const busy = root.querySelector<HTMLElement>('.busy')!;
+    api.togglePanel(false);
+    api.seek(1);
+    expect(strip.hidden).toBe(false);
+    // 해석을 풀 때까지 쥔다(덮개가 남는다 — 가짜 해석기 인스턴스의 open만 이 시험 동안 바꾼다)
+    const client = (app as unknown as { client: { open: (...a: unknown[]) => Promise<unknown> } }).client;
+    const real = client.open;
+    let release = (): void => {};
+    client.open = (...a) => new Promise((r) => (release = () => r(real.apply(client, a))));
+    try {
+      // 다른 파일 열기: 덮개가 뜨면 재생 띠도 숨는다
+      const next = open(app, 'n.nc', MILL);
+      expect(busy.hidden).toBe(false);
+      expect(strip.hidden).toBe(true);
+      // 「취소」: 덮개가 걷히면 앞 문서의 재생 자리 그대로 띠가 다시 보인다
+      busy.querySelector<HTMLButtonElement>('.busy-cancel')!.click();
+      expect(busy.hidden).toBe(true);
+      expect(api.state.playSec).toBe(1);
+      expect(strip.hidden).toBe(false);
+      expect(strip.querySelector('.ps-time')!.textContent).toMatch(/^0:01\.0 \/ /);
+      release();
+      expect(await next).toBe(false);
+      // 다시 읽기: 덮개 동안 숨고, 다 읽으면 재생 자리를 지워(178차) 숨은 채
+      const again = api.reparse({});
+      expect(busy.hidden).toBe(false);
+      expect(strip.hidden).toBe(true);
+      release();
+      await again;
+      expect(busy.hidden).toBe(true);
+      expect(api.state.playSec).toBeNull();
+      expect(strip.hidden).toBe(true);
+    } finally {
+      client.open = real;
+    }
+  });
 });
 
 describe('경고 → 줄', () => {

@@ -75,6 +75,8 @@ export interface SimHost {
   panelOpen?(): boolean;
   /** 측정 중인지(측정 띠와 자리가 겹쳐 따라가기 띠를 숨긴다) */
   measuring?(): boolean;
+  /** 181차: 읽는 동안 덮개가 떠 있는지(덮개 밑에 띠가 비쳐 Tab으로 닿지 않게 숨긴다 — 재생 띠와 같은 조건) */
+  busy?(): boolean;
   /** 패널을 다시 그린다(깎기 탭을 보고 있으면) */
   refreshPanel(): void;
   /** 도구 막대 단추 상태를 맞춘다 */
@@ -1110,9 +1112,9 @@ export class SimView {
     this.setStep(k === null ? (delta > 0 ? Math.min(n, delta) : Math.max(0, n + delta)) : k + delta);
   }
 
-  /** 3D 보기 아래 따라가기 띠: 켜져 있고 판재를 하나씩 따라가는 중이며 패널이 닫혔고 측정 중이 아닐 때 */
+  /** 3D 보기 아래 따라가기 띠: 켜져 있고 판재를 하나씩 따라가는 중이며 패널이 닫혔고 측정 중·읽는 중(덮개)이 아닐 때 */
   refreshStrip(): void {
-    const show = this.canStepOps && this.step !== null && !(this.host.panelOpen?.() ?? false) && !(this.host.measuring?.() ?? false);
+    const show = this.canStepOps && this.step !== null && !(this.host.panelOpen?.() ?? false) && !(this.host.measuring?.() ?? false) && !(this.host.busy?.() ?? false);
     if (!show) {
       // 178차: ✕(하나씩 따라가기 끝내기)를 키보드로 눌러 띠가 숨으면 초점이 문서로 빠진다 — 띠 안이었을 때만 3D 보기로
       // (연 버튼이 도구 막대에 없다 — ←→로 다시 따라가는 곳). 초점이 띠 밖이면 그대로

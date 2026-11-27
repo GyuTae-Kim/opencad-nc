@@ -1320,6 +1320,47 @@ describe('판재 가공 하나씩 따라가기', () => {
     expect(strip.hidden).toBe(true);
     expect(document.activeElement).toBe(out);
   });
+
+  it('181차: 읽는 동안 덮개가 뜨면 3D 보기 아래 따라가기 띠도 숨기고(덮개 동안 다시 맞춰도 숨은 채 — 덮개 상태는 host로) 걷히면 다시 보인다 — 띠가 덮개 밑에 비쳐 Tab으로 닿고 눌렸다', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    await api.setSim(true, { step: 1 });
+    await until(settled);
+    api.togglePanel(false);
+    const strip = root.querySelector<HTMLElement>('.play-strip.sim-steps')!;
+    const busy = root.querySelector<HTMLElement>('.busy')!;
+    expect(strip.hidden).toBe(false);
+    expect(api.state.sim!.step).toMatchObject({ at: 1, strip: true });
+    // 해석을 풀 때까지 쥔다(덮개가 남는다 — 가짜 해석기 인스턴스의 open만 이 시험 동안 바꾼다)
+    const client = (app as unknown as { client: { open: (...a: unknown[]) => Promise<unknown> } }).client;
+    const real = client.open;
+    let release = (): void => {};
+    client.open = (...a) => new Promise((r) => (release = () => r(real.apply(client, a))));
+    try {
+      // 다른 파일 열기: 덮개가 뜨면 따라가기 띠도 숨는다(따라가는 자리는 그대로)
+      const next = open(app, 'q.mpr', PANEL_MPR);
+      expect(busy.hidden).toBe(false);
+      expect(strip.hidden).toBe(true);
+      expect(api.state.sim!.step).toMatchObject({ at: 1, strip: false });
+      // 덮개 동안 띠를 다시 맞추는 길(패널 닫기 — 재생 띠와 함께 따라가기 띠도 맞춘다)이 와도 숨은 채
+      api.togglePanel(false);
+      expect(strip.hidden).toBe(true);
+      // 「취소」: 덮개가 걷히면 그 자리 그대로 다시 보인다
+      busy.querySelector<HTMLButtonElement>('.busy-cancel')!.click();
+      expect(busy.hidden).toBe(true);
+      expect(strip.hidden).toBe(false);
+      expect(strip.querySelector('.ss-count')!.textContent).toBe('1 / 2');
+      release();
+      expect(await next).toBe(false);
+    } finally {
+      client.open = real;
+    }
+  });
 });
 
 describe('장면 합치기·번역', () => {
