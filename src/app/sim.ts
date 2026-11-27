@@ -1177,7 +1177,8 @@ export class SimView {
     for (const code of Object.keys(PANEL_SKIP_TEXT) as PanelSkipCode[]) {
       const list = byCode.get(code);
       if (!list) continue;
-      sec.append(h('p', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${list.length.toLocaleString('ko-KR')}개`)));
+      // 163차: 까닭 머리는 그 밑 가공 목록의 제목 — 굵은 글 모양만이 아니라 제목 요소로(묶음 제목 h3 밑 단계 4 — 화면 읽기의 제목 이동·목록에 든다, WCAG 1.3.1)
+      sec.append(h('h4', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${list.length.toLocaleString('ko-KR')}개`)));
       const ul = h('ul', { class: 'warn-list' });
       for (const s of list.slice(0, 50)) {
         const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 가공을 고릅니다' }, h('span', { class: 'ln' }, `가공 ${s.op + 1}`), this.opName(this.host.doc?.kind === 'mpr' ? { file: s.label } : s.label, 'msg'));
