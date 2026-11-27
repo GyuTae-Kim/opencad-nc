@@ -594,6 +594,45 @@ describe('칸 안에서 누른 닫기 초점(154차)', () => {
     expect(bar.hidden).toBe(false);
     expect(document.activeElement).toBe(v.canvas);
   });
+
+  it('177차: 재생 띠 ✕(재생 끝내기)를 키보드로 눌러 띠가 숨으면 초점을 연 버튼(막대 「재생」)으로 — 띠가 남거나 초점이 띠 밖이면 그대로', async () => {
+    const { app, root } = makeApp(true);
+    expect(await app.openSample()).toBe(true);
+    const v = fake.FakeViewer.last!;
+    v.canvas.tabIndex = 0;
+    const play = menuButton(root, '재생');
+    const strip = root.querySelector<HTMLElement>('.play-strip')!;
+    const next = strip.querySelector<HTMLButtonElement>('[aria-label="다음 이동"]')!;
+    const close = strip.querySelector<HTMLButtonElement>('[aria-label="재생 끝내기(전체 경로)"]')!;
+    // 휴대폰은 패널을 닫아 두고 시작한다 — 재생 자리가 생기면 3D 보기 아래 재생 띠
+    app.seek(1);
+    expect(strip.hidden).toBe(false);
+    // 띠가 남는 누름(다음 이동)은 초점을 그대로
+    next.focus();
+    next.click();
+    expect(strip.hidden).toBe(false);
+    expect(document.activeElement).toBe(next);
+    // 키보드로 누른 ✕: 띠가 숨으면(jsdom은 focus fixup이 없어 숨은 버튼에 초점이 남는다 — 브라우저는 문서로 보낸다) 막대 「재생」으로
+    close.focus();
+    close.click();
+    expect(app.state().playSec).toBeNull();
+    expect(strip.hidden).toBe(true);
+    expect(document.activeElement).toBe(play);
+    // 막대 「재생」은 숨은 뒤에도 보이고 누를 수 있다 — 누르면 처음부터 재생해 띠를 다시 연다(다시 누르면 멈춤 — 띠는 남음)
+    expect(play.hidden).toBe(false);
+    expect(play.disabled).toBe(false);
+    play.click();
+    expect(app.state().playing).toBe(true);
+    expect(strip.hidden).toBe(false);
+    play.click();
+    expect(app.state().playing).toBe(false);
+    expect(strip.hidden).toBe(false);
+    // 초점이 띠 밖(3D 보기)이면 ✕로 띠가 숨어도 그대로
+    v.canvas.focus();
+    close.click();
+    expect(strip.hidden).toBe(true);
+    expect(document.activeElement).toBe(v.canvas);
+  });
 });
 
 describe('손가락 기기의 파일 고르기와 시작 화면', () => {
