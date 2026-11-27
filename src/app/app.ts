@@ -321,6 +321,9 @@ export class NcViewerApp implements PanelHost {
   private readonly noticeBar: HTMLDivElement;
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
   private readonly playStrip: { el: HTMLDivElement; time: HTMLSpanElement; line: HTMLSpanElement; state: HTMLDivElement; play: HTMLButtonElement; range: HTMLInputElement; speed: HTMLSelectElement };
+  /** 189차: 깎기 조각이 붙인 판재 따라가기 띠(SimHost.stripAdded)와 아래쪽 띠 크기 관찰 — liftToasts가 재생·측정 띠와 함께 잰다 */
+  private simStrip: HTMLElement | null = null;
+  private bandRo: ResizeObserver | null = null;
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
@@ -503,10 +506,10 @@ export class NcViewerApp implements PanelHost {
     // 알림은 3D 보기 아래쪽 띠(해석 판단·재생·측정) 위로 올린다 — 띠가 나타나거나 크기가 바뀌면 다시 잰다
     // 측정 중이면 코어 거리 글상자가 비킬 띠·뷰 큐브 자리도 다시 넘긴다(3D 보기 크기가 바뀌면 오른쪽 위 뷰 큐브가 옮는다 — measure-lock.ts coverRects)
     if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(() => {
+      const ro = (this.bandRo = new ResizeObserver(() => {
         this.liftToasts();
         this.mlock?.schedule();
-      });
+      }));
       for (const el of [this.noticeBar, this.playStrip.el, this.measureBar, this.viewEl]) ro.observe(el);
     }
     this.workspace.append(this.viewEl, this.startEl);
@@ -1912,6 +1915,11 @@ export class NcViewerApp implements PanelHost {
         panelOpen: () => this.panelOpen,
         measuring: () => this.measuring,
         busy: () => this.busy,
+        // 189차: 붙인 따라가기 띠도 재생 띠처럼 크기를 보고 재어 판단 띠·알림이 그 위로(띠는 떼지 않고 숨기기만 하니 관찰은 한 번)
+        stripAdded: (el) => {
+          this.simStrip = el;
+          this.bandRo?.observe(el);
+        },
         refreshPanel: () => {
           if (this.doc?.panelTab === 'sim') this.panel.refresh();
         },
@@ -2337,14 +2345,15 @@ export class NcViewerApp implements PanelHost {
   /**
    * 알림이 3D 보기 아래쪽 띠를 가리지 않게: 화면 아래쪽에 붙은 띠 가운데 맨 위의 높이(화면 아래에서 잰 px)를 --toast-clear로.
    * 188차: 좁은 화면 판단 띠도 재생·측정 띠 맨 위를 비키게 — 판단 띠를 재기 전에 두 띠 맨 위(3D 보기 아래에서 잰 px + 10)를 --notice-clear로(CSS가 76·140px과 큰 쪽).
-   * 판단 띠 자신은 넣지 않아 고리가 없고(옮겨도 크기는 그대로), 판단 띠는 옮긴 자리를 재어 알림은 그 위로
+   * 판단 띠 자신은 넣지 않아 고리가 없고(옮겨도 크기는 그대로), 판단 띠는 옮긴 자리를 재어 알림은 그 위로.
+   * 189차: 깎기 조각이 붙인 판재 따라가기 띠(simStrip — 붙기 전 null)도 재생 띠와 같은 자리로 잰다
    */
   private liftToasts(): void {
     const vh = window.innerHeight;
     let top = Infinity;
-    for (const el of [this.playStrip.el, this.measureBar, this.noticeBar]) {
+    for (const el of [this.playStrip.el, this.simStrip, this.measureBar, this.noticeBar]) {
       if (el === this.noticeBar) this.viewEl.style.setProperty('--notice-clear', Number.isFinite(top) ? `${Math.max(0, Math.round(this.viewEl.getBoundingClientRect().bottom - top + 10))}px` : '0px');
-      if (el.hidden) continue;
+      if (!el || el.hidden) continue;
       const r = el.getBoundingClientRect();
       if (r.height > 0 && r.bottom > vh / 2 && r.top < top) top = r.top;
     }

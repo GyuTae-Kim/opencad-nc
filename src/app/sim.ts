@@ -77,6 +77,8 @@ export interface SimHost {
   measuring?(): boolean;
   /** 181차: 읽는 동안 덮개가 떠 있는지(덮개 밑에 띠가 비쳐 Tab으로 닿지 않게 숨긴다 — 재생 띠와 같은 조건) */
   busy?(): boolean;
+  /** 189차: 3D 보기 아래 따라가기 띠를 붙였다(한 번 — 앱이 재생 띠처럼 크기를 보고 재어 해석 판단 띠·알림을 그 위로 비킨다) */
+  stripAdded?(el: HTMLElement): void;
   /** 패널을 다시 그린다(깎기 탭을 보고 있으면) */
   refreshPanel(): void;
   /** 도구 막대 단추 상태를 맞춘다 */
@@ -1129,6 +1131,7 @@ export class SimView {
     if (!this.stepStrip) {
       this.stepStrip = this.buildSteps(true);
       this.host.viewLayer.append(this.stepStrip.el);
+      this.host.stripAdded?.(this.stepStrip.el);
     }
     this.stepStrip.el.hidden = false;
     this.fillSteps(this.stepStrip);
