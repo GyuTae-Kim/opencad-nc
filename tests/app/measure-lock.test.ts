@@ -695,3 +695,76 @@ describe('158차: 3D 보기가 받은 Esc로 붙잡기 툴팁 거두기(지울 �
     expect(lock.snapshot().tip).toBe('끝점');
   });
 });
+
+describe('191차: 커서 옆 툴팁도 띠·뷰 큐브 자리(coverRects)를 비킨다(WCAG 1.4.13·2.4.11)', () => {
+  it('placeTip 손셈: 띠와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위로, 다 겹치면 숨기지 않고 겹친 넓이가 가장 작은 자리 — 거리 글상자 비키기가 먼저, 띠가 없으면 전과 같음', () => {
+    // 390×844 손가락(3D 보기 390×727): 측정 띠 한 줄(52, 폭 274 어림, 아래 10)·판단 띠(한 알림 47, 폭 300 어림, 아래 76), 툴팁 80×24
+    const P390 = { width: 390, height: 727 };
+    const BAR = { x: 58, y: 665, width: 274, height: 52 };
+    const NOTICE = { x: 45, y: 604, width: 300, height: 47 };
+    // 점 바로 아래가 측정 띠: 오른쪽·왼쪽 아래가 띠 위 11px에 걸려 오른쪽 위
+    expect(placeTip(195, 640, 80, 24, P390, null, [BAR])).toEqual({ x: 207, y: 604 });
+    // 판단 띠 바로 위 점: 아래 둘이 판단 띠(글·버튼)에 걸려 오른쪽 위
+    expect(placeTip(195, 595, 80, 24, P390, null, [BAR, NOTICE])).toEqual({ x: 207, y: 559 });
+    // 두 띠 사이 틈(14px)이 툴팁보다 좁으면 네 자리가 다 걸린다 — 숨기지 않고 겹친 넓이가 가장 작은 오른쪽 아래(880 < 1,920)
+    expect(placeTip(195, 640, 80, 24, P390, null, [BAR, NOTICE])).toEqual({ x: 207, y: 652 });
+    // 휴대폰 폭보다 긴 툴팁(31차 — 네 자리가 다 층 밖이라 가로만 민 자리): 민 아래가 띠에 걸려 민 위
+    expect(placeTip(195, 640, 370, 24, P390, null, [BAR])).toEqual({ x: 16, y: 604 });
+    // 1280×800 마우스(3D 보기 1280×689): 판단 띠(위 8, 한 줄 44, 폭 560 어림 — 360~920). 측정 띠는 넓은 마우스 화면에서 숨어(크기 0) coverRects가 뺀다
+    const P1280 = { width: 1280, height: 689 };
+    const TOP = { x: 360, y: 8, width: 560, height: 44 };
+    // 판단 띠 왼쪽 옆 점: 오른쪽 아래가 띠에 62 × 10 걸려 왼쪽 아래(위 둘은 층 밖)
+    expect(placeTip(330, 30, 80, 24, P1280, null, [TOP])).toEqual({ x: 238, y: 42 });
+    // 둘 다 걸리면 덜 걸린 쪽(오른쪽 아래 800, 왼쪽 아래 80)
+    expect(placeTip(380, 30, 80, 24, P1280, null, [TOP])).toEqual({ x: 288, y: 42 });
+    // 거리 글상자 비키기가 먼저: 왼쪽 아래가 글상자에 걸리면 띠에 걸린 오른쪽 아래 그대로(전과 같음 — 띠를 비키려고 글상자를 덮지 않는다)
+    expect(placeTip(330, 30, 80, 24, P1280, { x: 200, y: 40, width: 100, height: 30 }, [TOP])).toEqual({ x: 342, y: 42 });
+    // 1280×800 손가락(3D 보기 1280×683): 측정 띠(폭 274 어림 — 503~777, 아래 10) 바로 위 점은 오른쪽 위
+    expect(placeTip(640, 610, 80, 24, { width: 1280, height: 683 }, null, [{ x: 503, y: 621, width: 274, height: 52 }])).toEqual({ x: 652, y: 574 });
+    // 띠가 없으면 전과 같다(여섯 인자 — 띠를 모르는 부름)
+    expect(placeTip(195, 640, 80, 24, P390, null, [])).toEqual(placeTip(195, 640, 80, 24, P390, null));
+    expect(placeTip(195, 640, 80, 24, P390, null)).toEqual({ x: 207, y: 652 });
+  });
+
+  it('update·카메라 따라가기: 측정 중 잰 띠 자리(캔버스 기준)를 층 기준으로 옮겨 툴팁 자리 정하기에 넘기고, 코어 글상자에 넘기는 툴팁 첫 자리는 그대로', () => {
+    const { v, layer } = setup();
+    const rect = (x: number, y: number, w: number, ht: number) => () => ({ left: x, top: y, width: w, height: ht, right: x + w, bottom: y + ht, x, y, toJSON() {} }) as DOMRect;
+    v.canvas.getBoundingClientRect = rect(0, 0, 800, 600);
+    const bar = document.createElement('div');
+    bar.getBoundingClientRect = rect(0, 60, 300, 40);
+    let camera = (): void => {};
+    (v as unknown as { onCameraChange(cb: () => void): void }).onCameraChange = (cb) => (camera = cb);
+    const lock = new MeasureLock({ viewer: () => v as unknown as LockViewer, touch: () => false, layer, changed: vi.fn(), overlays: () => [bar] });
+    lock.attach(v as unknown as LockViewer);
+    v.hover = END;
+    lock.update();
+    // 점 (100, 50)·툴팁 80×20(jsdom): 오른쪽 아래 (112, 62)·왼쪽 아래 (8, 62)가 띠(0~300 × 60~100)에 걸려 오른쪽 위
+    expect(lock.snapshot()).toMatchObject({ tip: '끝점', tipRect: { x: 112, y: 18 } });
+    // 코어 글상자가 비킬 자리는 툴팁 첫 자리(오른쪽 아래) 그대로 — 둘이 서로 쫓지 않는다
+    expect(lock.labelAvoid).toEqual({ rects: [{ x: 112, y: 62, width: 80, height: 20 }, { x: 0, y: 60, width: 300, height: 40 }], points: true, snapshotPoints: true });
+    // 카메라만 바뀌어 점이 띠 밖 (400, 50)으로 가면 오른쪽 아래, 다시 띠 위 (100, 50)이면 오른쪽 위(follow도 잰 띠 자리를 본다)
+    v.project = () => ({ x: 400, y: 50, onScreen: true });
+    camera();
+    expect(lock.snapshot().tipRect).toEqual({ x: 412, y: 62 });
+    v.project = () => ({ x: 100, y: 50, onScreen: true });
+    camera();
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 18 });
+    // 띠가 숨으면 다음 맞추기에서 제자리
+    bar.hidden = true;
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 112, y: 62 });
+    // 캔버스가 층 (10, 50)에 있으면: 띠 화면 자리 (0, 105, 300 × 40) → 캔버스 기준 (0, 55, 290 × 40) → 층 기준 (10, 105)로 견준다 —
+    // 점은 층 (110, 100), 아래 둘(y 112~132)이 걸려 오른쪽 위 (122, 68)(층 기준으로 옮기지 않으면 오른쪽 아래 (122, 112))
+    v.canvas.getBoundingClientRect = rect(10, 50, 375, 600);
+    bar.getBoundingClientRect = rect(0, 105, 300, 40);
+    bar.hidden = false;
+    lock.update();
+    expect(lock.labelAvoid?.rects).toEqual([{ x: 112, y: 62, width: 80, height: 20 }, { x: 0, y: 55, width: 290, height: 40 }]);
+    expect(lock.snapshot().tipRect).toEqual({ x: 122, y: 68 });
+    // 뷰 큐브(코어 viewCubeRect — 캔버스 기준 150~250 × 40~140, 층 기준 160~260 × 90~190)도 비킨다: 오른쪽 아래가 42 × 20 걸려 왼쪽 아래
+    bar.hidden = true;
+    (v as unknown as { viewCubeRect: MeasureLabelRect | null }).viewCubeRect = { x: 150, y: 40, width: 100, height: 100 };
+    lock.update();
+    expect(lock.snapshot().tipRect).toEqual({ x: 18, y: 112 });
+  });
+});

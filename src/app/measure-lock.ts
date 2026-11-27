@@ -16,6 +16,7 @@
  *   112차: 코어 0.118.0부터 마우스 미리 보기 자리 후보를 Tab·Shift+Tab으로 돌린 동안만 미리 보기 값에 차례·수(cycle)가 실려 이름 뒤에 「2/4」를 붙이고(cycleOrder),
  *   같은 글을 가상 커서 알림 영역에 넣는다(sayCycle — 화면 읽기).
  *   158차: 찍은 점·끌어온 점이 없을 때 3D 보기가 받은 Esc는 툴팁을 거둔다(escTip — 같은 점·같은 글인 동안 다시 띄우지 않음, WCAG 1.4.13 닫을 수 있음).
+ *   191차: 코어 글상자가 비키는 떠 있는 것(뷰 큐브·측정 띠·해석 판단 띠 — coverRects)도 비킨다(툴팁 z-index가 띠보다 높아 띠 글·버튼을 덮었다, WCAG 1.4.13·2.4.11).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -265,9 +266,11 @@ export function trackDirNames(points: readonly (TrackDirPoint | null | undefined
  * 툴팁 왼쪽 위 자리(층 기준 CSS 화소): 점(px, py) 오른쪽 아래가 먼저이고, 층(width × height) 밖으로 나가거나 피할 상자(코어 거리 글상자 —
  * 같은 층 기준)와 겹치면 왼쪽 아래·오른쪽 위·왼쪽 위 차례로 본다. 층 안이면서 겹치지 않는 곳이 없으면 층 안인 첫 자리.
  * 31차: 넷 모두 층 밖이면(점 양옆 어느 쪽에도 들어가지 않는 넓은 툴팁 — 휴대폰 폭의 긴 이름) 점 아래·위에서 가로만 층 안으로 민 자리(겹치지 않는 것 먼저),
- * 그것도 층 밖이면 오른쪽 아래
+ * 그것도 층 밖이면 오른쪽 아래.
+ * 191차: covers(뷰 큐브·측정 띠·해석 판단 띠 — 같은 층 기준, coverRects로 잰 것)도 비킨다 — 같은 차례에서 글상자와 겹치지 않는 자리가 먼저이고,
+ * 그다음 covers와 겹친 넓이가 가장 작은 자리(같으면 앞 차례 — 다 겹쳐도 숨기지 않는다). covers가 없으면 전과 같다
  */
-export function placeTip(px: number, py: number, w: number, ht: number, layer: { width: number; height: number }, avoid: MeasureLabelRect | null): { x: number; y: number } {
+export function placeTip(px: number, py: number, w: number, ht: number, layer: { width: number; height: number }, avoid: MeasureLabelRect | null, covers: readonly MeasureLabelRect[] = []): { x: number; y: number } {
   const right = px + TIP_GAP;
   const left = px - TIP_GAP - w;
   const below = py + TIP_GAP;
@@ -285,7 +288,13 @@ export function placeTip(px: number, py: number, w: number, ht: number, layer: {
     { x, y: below },
     { x, y: above },
   ];
-  return spots.find((s) => inside(s) && clear(s)) ?? spots.find(inside) ?? slid.find((s) => inside(s) && clear(s)) ?? slid.find(inside) ?? spots[0]!;
+  // 글상자와 겹치면 어느 넓이 합(툴팁 넓이 × covers 수 이하)보다 큰 값을 더해 겹치지 않는 자리가 늘 먼저다
+  const big = w * ht * covers.length + 1;
+  const cost = (s: { x: number; y: number }): number =>
+    (clear(s) ? 0 : big) + covers.reduce((a, r) => a + Math.max(0, Math.min(s.x + w, r.x + r.width) - Math.max(s.x, r.x)) * Math.max(0, Math.min(s.y + ht, r.y + r.height) - Math.max(s.y, r.y)), 0);
+  const pick = (list: { x: number; y: number }[]): { x: number; y: number } | undefined =>
+    list.filter(inside).reduce<{ x: number; y: number } | undefined>((b, s) => (!b || cost(s) < cost(b) ? s : b), undefined);
+  return pick(spots) ?? pick(slid) ?? spots[0]!;
 }
 
 export class MeasureLock {
@@ -505,6 +514,8 @@ export class MeasureLock {
     // 112차: Tab으로 돌린 동안만 이름 뒤 차례·수(칸이 없으면 빈 글 — 툴팁 마디는 전과 같다)
     const order = tip ? cycleOrder(hv?.cycle) : '';
     this.sayCycle(order ? tip!.name : null, order);
+    // 191차: 떠 있는 것(뷰 큐브·띠) 자리를 툴팁을 놓기 전에 잰다 — 툴팁도 비킨다(placeTipNow)
+    this.coverAvoid = on ? this.covers(v!) : [];
     // 158차: Esc로 거둔 툴팁(escTip)은 같은 글·같은 점인 동안 다시 띄우지 않는다 — 점·이름·차례·잠금이 바뀌거나 미리 보기가 없어지면 풀린다
     this.tipSaid = tip ? `${tip.name}${order}|${tip.locked}|${hv!.point.join(',')}` : '';
     if (this.tipOff !== this.tipSaid) this.tipOff = '';
@@ -520,7 +531,6 @@ export class MeasureLock {
       this.tipPoint = hv!.point;
       this.placeTipNow(v!);
     }
-    this.coverAvoid = on ? this.covers(v!) : [];
     this.measuring = on;
     this.pushAvoid();
     const lock = this.lock;
@@ -572,7 +582,9 @@ export class MeasureLock {
     // 코어 거리 글상자(캔버스 기준 — 지난 그리기)를 층 기준으로
     const r = v.measureLabelRect;
     const avoid = r ? { x: ox + r.x, y: oy + r.y, width: r.width, height: r.height } : null;
-    const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid);
+    // 191차: 떠 있는 것(뷰 큐브·띠 — 마지막 update가 잰 캔버스 기준 coverAvoid)도 층 기준으로 — 툴팁도 비킨다(카메라·툴팁 크기로 다시 놓을 때는 그 값 그대로)
+    const covers = this.coverAvoid.map((c) => ({ x: ox + c.x, y: oy + c.y, width: c.width, height: c.height }));
+    const at = placeTip(ox + sp.x, oy + sp.y, w, ht, l, avoid, covers);
     this.tip.style.left = `${Math.round(at.x)}px`;
     this.tip.style.top = `${Math.round(at.y)}px`;
   }
