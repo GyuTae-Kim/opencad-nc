@@ -741,7 +741,9 @@ export class NcPanel {
   private groupList(d: NcDoc): HTMLElement {
     const groups = this.host.groups();
     if (!groups.length) return group('묶음', h('p', { class: 'hint' }, '묶음이 없습니다.'));
-    const list = h('div', { class: 'groups' });
+    // 164차: 상자 이름은 「급속 이송 120」뿐이라 Tab으로 상자에 가면 켜고 끄는(보이기) 상자인지 몰랐다 — 목록을 role=group으로 묶고 이름은 보이는 묶음 제목(h3)을 잇는다
+    // (WCAG 1.3.1·4.1.2, 새 글 없음 — 제목 글을 번역층이 옮기면 이름도 따름). 패널은 앱에 하나이고 정보 탭은 몸통을 비운 뒤 한 번 그려 id도 하나
+    const list = h('div', { class: 'groups', role: 'group', 'aria-labelledby': 'panel-groups-title' });
     // 묶음 이름은 앱 낱말(급속 이송·구멍·공구 없음 등 — 다른 언어로 옮긴다). 이름 붙은 공구(Siemens T="…")의 묶음은 파일 자료라 그대로 둔다
     const toolNames = new Set((d.nc?.tools ?? []).map((t) => t.name).filter((n): n is string => !!n));
     for (const g of groups) {
@@ -750,7 +752,9 @@ export class NcPanel {
       cb.addEventListener('change', () => this.host.setGroupVisible(g.name, cb.checked));
       list.append(h('label', { class: 'group-item' }, cb, h('span', { class: 'name', translate: toolNames.has(g.name) ? 'no' : null }, g.name), h('span', { class: 'chip' }, String(g.count))));
     }
-    return group('묶음(켜고 끄기)', list);
+    const sec = group('묶음(켜고 끄기)', list);
+    sec.firstElementChild!.id = 'panel-groups-title';
+    return sec;
   }
 
   private renderInfo(d: NcDoc): void {

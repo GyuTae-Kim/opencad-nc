@@ -118,3 +118,34 @@ describe('149차: 창 키의 Space 재생은 Space를 스스로 쓰는 칸에 �
     expect(api.state.playing).toBe(false);
   });
 });
+
+describe('164차: 정보 탭 묶음(켜고 끄기) 상자 목록의 무리 이름', () => {
+  it('상자 목록은 role=group이고 이름은 보이는 묶음 제목(h3 — aria-labelledby, id는 문서에 하나) — 상자 이름은 그대로, 몸통을 다시 그려도 같음', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    const api = window.opencadApp!;
+    expect(await api.open('p.nc', PROGRAM)).toBe(true);
+    await until(() => api.state.parsed);
+    const drawn = (): boolean => !!root.querySelector('.groups') && !!root.querySelector('label.group-item.opt');
+    const check = (): void => {
+      const list = root.querySelector<HTMLElement>('.groups')!;
+      const by = list.getAttribute('aria-labelledby') ?? '';
+      const title = by ? document.getElementById(by) : null;
+      expect([list.getAttribute('role'), title?.tagName, title?.textContent, title?.parentElement === list.parentElement]).toEqual(['group', 'H3', '묶음(켜고 끄기)', true]);
+      expect(document.querySelectorAll(`[id="${by}"]`)).toHaveLength(1);
+      // 상자 자신의 이름(감싼 label 글 — 묶음 이름과 수)은 그대로
+      const box = list.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      expect([box.closest('label')?.textContent, box.getAttribute('aria-label')]).toEqual(['절삭 이송2', null]);
+    };
+    api.setPanelTab('info');
+    await until(drawn);
+    check();
+    // 다른 탭에 갔다 돌아와 몸통을 다시 그려도
+    api.setPanelTab('tools');
+    expect(root.querySelector('.groups')).toBeNull();
+    api.setPanelTab('info');
+    await until(drawn);
+    check();
+  });
+});
