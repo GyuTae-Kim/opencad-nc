@@ -83,11 +83,13 @@ jobs:
             if curl --fail --silent http://127.0.0.1:4320/ > /dev/null && curl --fail --silent http://127.0.0.1:4321/ > /dev/null; then break; fi
             sleep 0.2
           done
+          # CI 5차: 요약(performance-summary)·예산(check-performance-budget)이 읽는 것은 performance·accessibility·seo 분류와 FCP·LCP·TBT·CLS·JS 바이트뿐이라,
+          # 쓰지 않는 best-practices 분류와 전체 페이지 스크린숏(보고서 그림)은 빼고 잰다(여섯 번마다 그만큼 덜 모음 — 재는 값·세 번 가운데 값은 그대로)
           for round in 1 2 3; do
             for variant in baseline candidate; do
               port=4320
               if [ "$variant" = candidate ]; then port=4321; fi
-              "$RUNNER_TEMP/mobile-audit/node_modules/.bin/lighthouse" "http://127.0.0.1:$port/" --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader" --only-categories=performance,accessibility,best-practices,seo --output=json --output=html --output-path=".runtime/performance/$variant-$round" --quiet
+              "$RUNNER_TEMP/mobile-audit/node_modules/.bin/lighthouse" "http://127.0.0.1:$port/" --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader" --only-categories=performance,accessibility,seo --disable-full-page-screenshot --output=json --output=html --output-path=".runtime/performance/$variant-$round" --quiet
             done
           done
           node_modules/.bin/opencad-site performance-summary .runtime/performance >> "$GITHUB_STEP_SUMMARY"
