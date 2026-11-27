@@ -953,10 +953,12 @@ describe('최근 문서(시작 화면)', () => {
     const zone = (): HTMLElement => root.querySelector<HTMLElement>('.start .dropzone')!;
     const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
 
-    // 초점이 덮개 밖(누른 「열기」 버튼)이면 「취소」를 눌러도(초점을 옮기지 않는 누르기) 그대로
+    // 초점이 덮개 밑(누른 「열기」 버튼)이면 「취소」를 눌러도(초점을 옮기지 않는 누르기) 그 자리로
+    // 182차: 덮는 자리(시작 화면)는 inert라 뜰 때 초점은 「취소」로 갔다가 걷히면 돌아온다
     openBtn('old.nc').focus();
     openBtn('old.nc').click();
     expect(busy.hidden).toBe(false);
+    expect(document.activeElement).toBe(cancel);
     cancel.click();
     expect(app.state().busy).toBe(false);
     expect(busy.hidden).toBe(true);
@@ -965,6 +967,8 @@ describe('최근 문서(시작 화면)', () => {
     await settle();
 
     // 문서 없음: 「취소」를 키보드로(초점이 그 버튼) — 숨은 버튼에 남거나 문서로 빠지지 않고 열기 칸으로
+    // (182차: 덮개 밖 제목 막대에서 Tab으로 「취소」에 온 꼴 — 덮개 밑에서 뜨면 위처럼 그 자리로 돌아간다)
+    root.querySelector<HTMLButtonElement>('.tbtn[aria-label="열기"]')!.focus();
     openBtn('old.nc').click();
     cancel.focus();
     cancel.click();

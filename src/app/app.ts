@@ -241,6 +241,8 @@ export class NcViewerApp implements PanelHost {
   private stage = '';
   /** 155차: 숨었던 덮개를 보인 차례(그린 뒤 단계 글을 넣을 때까지 — 다시 열거나 닫으면 바뀌어 늦은 글을 버린다) */
   private busyHold: object | null = null;
+  /** 182차: 덮개가 뜰 때 덮는 자리(inert)에 있어 「취소」로 옮긴 초점 칸 — 걷히면 돌려준다 */
+  private busyFrom: HTMLElement | null = null;
   private error: string | null = null;
   private loadSeq = 0;
   private ready = false;
@@ -1119,6 +1121,8 @@ export class NcViewerApp implements PanelHost {
       }
       await this.ensureViewer();
       if (seq !== this.loadSeq) return false;
+      // 182차: 결과를 넣기 전에 덮개를 걷는다(inert를 거두고 초점을 뜰 때 자리로 — finally의 걷기는 그대로) — 새 문서의 3D 보기 초점(setDoc)이 inert에 막히지 않게
+      this.setBusy(null);
       // 여러 파일 작업이면 이름 = 주 프로그램, 크기 = 이은 글
       this.setDoc(createDoc(res.job?.main ?? name, res.job && res.nc ? res.nc.source.bytes.length : size, res, opts));
       attempt.success();
@@ -1158,6 +1162,8 @@ export class NcViewerApp implements PanelHost {
       });
       if (seq !== this.loadSeq || this.doc !== d) return;
       if (!sceneHasGeometry(res.scene)) throw new Error('이 설정으로는 그릴 공구 경로가 없습니다.');
+      // 182차: 결과를 넣기 전에 덮개를 걷는다(openBuffer와 같음) — 패널 칸(137차)·판단 띠(176차) 초점 되살림이 inert에 막히지 않게
+      this.setBusy(null);
       this.stopPlay();
       const cam = !unitsChanged ? this.viewer?.getCamera() : null;
       replaceResult(d, res, opts);
@@ -1263,6 +1269,15 @@ export class NcViewerApp implements PanelHost {
     this.stage = stage ?? '';
     this.busyEl.hidden = !this.busy;
     this.root.classList.toggle('is-busy', this.busy);
+    // 182차: 덮개가 덮는 자리(작업 영역의 덮개 밖 칸 — 3D 보기·시작 화면·패널)를 덮개 동안 inert로 — 덮개가 초점을 가두지 않아 Tab이 덮개 밑 판단 띠·패널 칸에 닿고 눌려
+    // 읽던 파일을 버리고 앞 문서를 다시 읽었다(WCAG 2.4.3). 숨을 때는 먼저 거두고 그다음 띠·초점. 뜰 때 초점이 그 안이면 「취소」로(inert 칸의 초점은 문서로 빠진다 — 걷히면 아래에서 돌려준다)
+    if (was !== this.busy) {
+      for (const el of this.workspace.children) if (el !== this.busyEl) el.toggleAttribute('inert', this.busy);
+      if (this.busy) {
+        this.busyFrom = this.workspace.contains(had) && !this.busyEl.contains(had) ? (had as HTMLElement) : null;
+        if (this.busyFrom) this.busyCancel.focus({ preventScroll: true });
+      }
+    }
     this.refreshBar();
     // 181차: 덮개를 보이거나 숨길 때 재생 띠·따라가기 띠도 맞춘다(두 띠 조건에 덮개 — 덮개 밑에 비쳐 Tab으로 닿고 눌려 읽는 중에 재생·따라가기가 돌았다).
     // 숨을 때는 띠가 먼저 다시 보이고 그다음 아래 「취소」 초점. 단계·진척만 바뀌는 잦은 부름은 건너뛴다
@@ -1270,8 +1285,11 @@ export class NcViewerApp implements PanelHost {
     if (!this.busy) {
       this.busyHold = null;
       // 180차: 「취소」(덮개의 초점 칸)에 초점이 있는 채 덮개가 숨으면(취소·다시 읽기 끝·실패) 초점이 문서로 빠진다 — 덮개 안이었을 때만
-      // 열린 문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸으로(153차 차례의 남는 칸). 새 문서는 setDoc이 먼저 3D 보기로 두고, 밖이면 그대로
-      if (this.busyEl.contains(had)) (this.doc && this.viewer ? this.viewer.canvas : this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus({ preventScroll: true });
+      // 열린 문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸으로(153차 차례의 남는 칸). 새 문서는 setDoc이 3D 보기로 두고, 밖이면 그대로
+      // 182차: 뜰 때 덮개 밑에서 옮겨 온 초점이면 그 칸이 붙어 있고 숨지 않았을 때 그리로(취소·Esc·못 읽음은 전처럼 그 자리)
+      const from = this.busyFrom;
+      this.busyFrom = null;
+      if (this.busyEl.contains(had)) (from?.isConnected && !from.closest('[hidden]') ? from : this.doc && this.viewer ? this.viewer.canvas : this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus({ preventScroll: true });
       return;
     }
     // 줄임표는 따로 둔다(단계 글만 번역 사전에서 찾게)
