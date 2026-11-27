@@ -47,14 +47,31 @@ describe('키 고르기', () => {
   const base: KeyContext = { key: '', ctrl: false, meta: false, alt: false, editable: false, onButton: false, onCanvas: false, hasDoc: true, canPlay: true };
   const k = (key: string, more: Partial<KeyContext> = {}) => keyAction({ ...base, key, ...more });
 
-  it('캔버스 밖의 키는 뷰어 규칙(handleKey)으로 넘기고, Esc는 앱이 먼저 본다', () => {
-    expect(k('f')).toEqual({ type: 'viewer' });
-    expect(k('F')).toEqual({ type: 'viewer' });
-    expect(k('1')).toEqual({ type: 'viewer' });
-    expect(k('7')).toEqual({ type: 'viewer' });
+  it('캔버스 밖의 키는 뷰어 규칙(handleKey)으로 넘기고(171차부터 글자·숫자 키는 빼고), Esc는 앱이 먼저 본다', () => {
     // 뷰어가 받지 않는 키도 넘긴다(handleKey가 false를 돌려주면 앱은 아무것도 막지 않는다)
-    expect(k('8')).toEqual({ type: 'viewer' });
+    expect(k('Tab')).toEqual({ type: 'viewer' });
+    expect(k('PageUp')).toEqual({ type: 'viewer' });
     expect(k('Escape')).toEqual({ type: 'escape', canvas: false });
+  });
+
+  it('171차(WCAG 2.1.4 문자 키 단축키): F 전체 보기·1~7 표준 뷰는 3D 보기(캔버스)에 초점이 있을 때만 — 캔버스 밖(body·버튼·패널·코드 목록)에서는 넘기지 않는다', () => {
+    for (const key of ['f', 'F', '1', '4', '7', '8', 'w', '+']) {
+      // body(초점 없음)·버튼·체크 상자·코드 목록·메뉴 — 넘기지 않고 막지도 않는다(null)
+      expect(k(key), key).toBeNull();
+      expect(k(key, { onButton: true }), key).toBeNull();
+      expect(k(key, { inCode: true }), key).toBeNull();
+      expect(k(key, { arrowOwner: true }), key).toBeNull();
+      expect(k(key, { shift: true }), `Shift+${key}`).toBeNull();
+      // 캔버스는 코어가 직접 받는다(앱은 넘기지 않음 — 지금 그대로)
+      expect(k(key, { onCanvas: true }), key).toBeNull();
+    }
+    // 글자가 아닌 키는 지금 그대로: Shift(코어 방향 잠금)·Tab·Space·F7·화살표·Esc
+    expect(k('Shift')).toEqual({ type: 'viewer' });
+    expect(k('Tab', { onButton: true })).toEqual({ type: 'viewer' });
+    expect(k(' ')).toEqual({ type: 'play' });
+    expect(k('F7')).toEqual({ type: 'grid' });
+    expect(k('ArrowUp')).toEqual({ type: 'viewer' });
+    expect(k('Escape', { inCode: true })).toEqual({ type: 'escape', canvas: false });
   });
 
   it('캔버스에 초점이 있으면 뷰어 키는 뷰어가 직접 받는다', () => {

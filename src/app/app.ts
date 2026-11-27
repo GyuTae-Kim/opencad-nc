@@ -2392,7 +2392,7 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     switch (a.type) {
       case 'viewer':
-        // F·1~7(·측정 점이 있을 때 Esc)은 뷰어 규칙대로. 받지 않은 키는 그대로 흘려보낸다
+        // Shift·Tab 등 글자가 아닌 키는 뷰어 규칙대로(171차: F·1~7은 3D 보기에서만 — keyAction이 넘기지 않음). 받지 않은 키는 그대로 흘려보낸다
         if (v.handleKey(ev)) ev.stopPropagation();
         return;
       case 'escape':
