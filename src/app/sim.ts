@@ -1114,7 +1114,14 @@ export class SimView {
   refreshStrip(): void {
     const show = this.canStepOps && this.step !== null && !(this.host.panelOpen?.() ?? false) && !(this.host.measuring?.() ?? false);
     if (!show) {
-      if (this.stepStrip) this.stepStrip.el.hidden = true;
+      // 178차: ✕(하나씩 따라가기 끝내기)를 키보드로 눌러 띠가 숨으면 초점이 문서로 빠진다 — 띠 안이었을 때만 3D 보기로
+      // (연 버튼이 도구 막대에 없다 — ←→로 다시 따라가는 곳). 초점이 띠 밖이면 그대로
+      const s = this.stepStrip;
+      if (s) {
+        const had = document.activeElement;
+        s.el.hidden = true;
+        if (s.el.contains(had)) this.host.viewer?.canvas.focus({ preventScroll: true });
+      }
       return;
     }
     if (!this.stepStrip) {

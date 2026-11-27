@@ -1282,6 +1282,44 @@ describe('판재 가공 하나씩 따라가기', () => {
     expect(document.activeElement).toBe(btn('다음 가공', strip));
     await until(() => settled() && api.state.sim!.at!.move < end);
   });
+
+  it('178차: 3D 보기 아래 띠의 ✕(하나씩 따라가기 끝내기)를 키보드로 눌러 띠가 숨으면 초점을 3D 보기로(연 버튼이 도구 막대에 없다 — ←→가 다시 여는 곳) — 초점이 띠 밖이면 그대로', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'p.mpr', PANEL_MPR);
+    const api = window.opencadApp!;
+    // 코어 캔버스는 키보드 초점을 받는다(tabIndex 0 — 가짜 뷰어는 캔버스만 만든다)
+    const canvas = FakeViewer().canvas;
+    canvas.tabIndex = 0;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await api.setSim(true);
+    await until(settled);
+    await api.setSim(true, { step: 1 });
+    await until(settled);
+    api.togglePanel(false);
+    const strip = root.querySelector<HTMLElement>('.play-strip.sim-steps')!;
+    expect(strip.hidden).toBe(false);
+    const close = strip.querySelector<HTMLButtonElement>('button[aria-label="하나씩 따라가기 끝내기(모든 가공)"]')!;
+    // 키보드로 누른 ✕: 따라가기를 끝내 띠가 숨으면(jsdom은 focus fixup이 없어 숨은 ✕에 초점이 남는다 — 브라우저는 문서로 보낸다) 3D 보기로
+    close.focus();
+    close.click();
+    expect(api.state.sim!.step).toBeNull();
+    expect(strip.hidden).toBe(true);
+    expect(document.activeElement).toBe(canvas);
+    // 3D 보기에서 →: 첫 가공부터 다시 따라가 띠가 다시 열린다
+    canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(api.state.sim!.step).toMatchObject({ at: 1 });
+    expect(strip.hidden).toBe(false);
+    await until(settled);
+    // 초점이 띠 밖(도구 막대 「패널」)이면 ✕로 띠가 숨어도 그대로
+    const out = root.querySelector<HTMLButtonElement>('.toolbar .tbtn[aria-label="패널"]')!;
+    out.focus();
+    expect(document.activeElement).toBe(out);
+    close.click();
+    expect(api.state.sim!.step).toBeNull();
+    expect(strip.hidden).toBe(true);
+    expect(document.activeElement).toBe(out);
+  });
 });
 
 describe('장면 합치기·번역', () => {
