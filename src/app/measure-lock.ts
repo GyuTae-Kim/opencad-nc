@@ -22,6 +22,7 @@
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
  * - 화살표(첫 점을 찍은 뒤, 둘째 점 방향을 잡는 동안): → X · ← Y · ↑ Z축, ↓ 지금 방향(없으면 첫 점 뒤 마지막으로 본 방향 — 코어). 같은 키로 푼다.
+ *   203차: 가상 커서가 켜진 동안(화살표는 커서 옮기기)은 3D 보기가 받은 X·Y·Z가 같은 길로 그 축을 잠그고 푼다(axisKey — 잠근 축·푼 것은 가상 커서 알림 영역에).
  * - 측정 띠 잠금 단추(손가락 기기 — 넓은 화면에서는 띠가 숨는다): 방향을 잡는 동안만 보인다. 정밀 조준 중 다른 손가락으로 누르면 click이
  *   오지 않으므로 손가락·펜은 pointerdown에서 받는다. 잠글 방향이 없으면 띠 위에 알림을 띄우고, 잠금이 걸리면(어느 길로든) 그 알림만 거둔다.
  * - 원호 접선(13차): 첫 점이 원호 이동(G2/G3, 나선 포함)의 시작·끝이고 커서 아래 점이 그 원호 위(다른 끝 포함)면 Shift·↓·잠금 단추가
@@ -155,13 +156,30 @@ const FLASH_EMPTY = 'position:absolute;width:1px;height:1px;margin:-1px;padding:
  * 커서 아래에 Shift로 잠글 방향(hover — 코어 measureHoverLock)이 있으면 "Shift로 그 방향 잠그기", 없으면 화살표 안내
  * (손가락 기기는 측정 띠의 잠금 단추). 상태 줄·측정 띠는 안내 글 다음에 따로 둔다(번역이 안내 글을 한 덩어리로 찾게)
  * 57차: 3D 보기의 가상 커서가 켜진 동안(cursor — 56차 keysnap.ts)은 화살표가 커서를 옮기므로 화살표 안내를 내지 않는다(Shift로 잠글 방향이 있으면 그 안내).
+ * 203차: 그 동안 축은 X·Y·Z로 잠그므로(MeasureLock axisKey) Shift로 잠글 방향이 없으면 그 안내(CURSOR_LOCK_HINT — 57차는 안내 없음).
  * 측정 도구가 있을 때만 쓰므로 이 조각에 둔다(56차까지 measure.ts — 첫 화면 JS를 줄이려고 옮김, 앱은 MeasureLock.hint로 묻는다)
  */
 export function lockHint(points: number, hasResult: boolean, lock: LockName | null, touch = false, hover: LockName | null = null, cursor = false): string | null {
   if (hasResult || points !== 1) return null;
   if (lock) return LOCK_HINTS[lock];
   if (touch) return null;
-  return hover ? SHIFT_LOCK_HINTS[hover] : cursor ? null : ARROW_LOCK_HINT;
+  return hover ? SHIFT_LOCK_HINTS[hover] : cursor ? CURSOR_LOCK_HINT : ARROW_LOCK_HINT;
+}
+
+/** 203차: 가상 커서가 켜진 동안의 축 잠금 안내(화살표 안내 ARROW_LOCK_HINT 꼴 — 측정 조각 글이라 첫 화면 measure.ts가 아닌 이 조각에) */
+export const CURSOR_LOCK_HINT = 'X·Y·Z로 축 방향 잠금';
+
+/** 203차: 가상 커서가 켜진 동안 X·Y·Z로 잠금을 풀었을 때 가상 커서 알림 영역에 넣는 글(잠근 때는 잠금 안내 LOCK_HINTS 그대로) */
+export const UNLOCK_SAID = '방향 잠금을 풀었습니다';
+
+/**
+ * 203차: 가상 커서가 켜진 동안 축을 잠그는 키 → 축(X·Y·Z가 아니면 null). 적힌 글자(key — 대소문자 무시, 독일어 자판의 Y·Z 자리도 적힌 대로)가 먼저이고,
+ * 라틴 글자가 아니면(한글 입력기의 ㅌ·ㅛ·ㅋ, 입력기 처리 중 'Process') 물리 키(code KeyX·KeyY·KeyZ — 코어 걷기 키와 같은 까닭, 다만 축 이름이라 적힌 글자가 먼저)
+ */
+export function axisKeyOf(e: { key: string; code?: string }): 'x' | 'y' | 'z' | null {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : '';
+  const c = /^[a-z]$/.test(k) ? k : /^Key[XYZ]$/.test(e.code ?? '') ? e.code![3]!.toLowerCase() : '';
+  return c === 'x' || c === 'y' || c === 'z' ? c : null;
 }
 
 /** 57차: 3D 보기의 가상 커서가 켜져 있는지(코어 keyboardCursor — 가짜 뷰어는 값이 없거나 객체가 아닐 수 있다) */
@@ -341,6 +359,8 @@ export class MeasureLock {
   private tipPoint: readonly number[] | null = null;
   /** 112차: 마지막으로 맞춘 돌리기 글(이름 + 차례·수 — 칸이 없으면 빈 글. 같은 값으로 다시 맞출 때 또 알리지 않는다) */
   private cycleSaid = '';
+  /** 203차: X·Y·Z 잠금 알림을 건 차례(sayLock — 한 프레임 안에 여러 번 누르면 마지막 것만 알린다) */
+  private lockSays = 0;
   /** 158차: update가 맞춘 툴팁의 글·점(이름 + 차례·수, 잠금, 점 좌표 — 툴팁 글이 없으면 빈 글) */
   private tipSaid = '';
   /** 158차: Esc로 거둔 툴팁의 tipSaid(escTip — 거두지 않았으면 빈 글). 같은 값인 동안 다시 띄우지 않는다 */
@@ -419,6 +439,7 @@ export class MeasureLock {
       (e) => {
         this.escTip(e);
         this.undoKey(e);
+        this.axisKey(e);
       },
       true,
     );
@@ -698,6 +719,44 @@ export class MeasureLock {
     this.tipAvoid = null;
     this.tipPoint = null;
     this.pushAvoid();
+  }
+
+  /**
+   * 203차 창 keydown(capture — attach, 앱 onKey 다음·캔버스의 코어 키 듣기 앞): 가상 커서가 켜진 동안은 화살표가 커서를 옮겨(keys.ts — 캔버스 화살표는 코어 몫)
+   * 축을 골라 잠그는 키가 없었다(Shift는 지금 방향만, Alt+화살표는 브라우저 뒤로 가기와 겹침 — README 남은 일 56차). 3D 보기가 받은 X·Y·Z(axisKeyOf — Ctrl·⌘·Alt·Shift 없음,
+   * 앱이 막지 않음)는 방향을 잡는 동안(첫 점 뒤) 그 축으로 잠근다 — 커서가 꺼졌을 때 → X · ← Y · ↑ Z와 같은 길(arrow — 같은 축이면 풀고 다른 축이면 바꿈).
+   * 받으면 기본 동작을 막는다(Firefox 입력하면 찾기 등). 누른 채 되풀이(repeat)는 막기만 한다(잠갔다 풀었다 하지 않게). 잠근 축·푼 것은 가상 커서 알림 영역에(sayLock)
+   */
+  private axisKey(e: KeyboardEvent): void {
+    const v = this.host.viewer();
+    if (!v || e.target !== v.canvas || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.defaultPrevented || !cursorOn(v) || !this.directing) return;
+    const a = axisKeyOf(e);
+    if (!a) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    this.arrow(a);
+    this.sayLock();
+  }
+
+  /**
+   * 203차: X·Y·Z로 잠근 축(LOCK_HINTS — 상태 줄·측정 띠 안내와 같은 글)·푼 것(UNLOCK_SAID)을 가상 커서 알림 영역(keysnap.ts .key-live — 112차 sayCycle과 같은 영역,
+   * 번역층이 건너뛰어 지금 언어 글을 넣는다)에. 잠금이 바뀌면 코어가 다음 그림에서 그 커서 자리 후보를 다시 구해 같은 영역에 알린다('refresh' — 「잠근 선 위 …」, 어느 축인지는 없음).
+   * 그 알림과 서로 덮지 않게 그 그림 뒤(다음 프레임 — 코어 그리기 요청이 먼저 걸려 먼저 돈다) 잠금 글을 그 알림 앞에 붙인다(다시 구한 알림이 없으면 잠금 글만).
+   * 한 프레임 안에 여러 번 누르면 마지막 것만(lockSays)
+   */
+  private sayLock(): void {
+    const live = this.host.layer.querySelector<HTMLElement>('.key-live');
+    if (!live) return;
+    const was = live.textContent;
+    const n = ++this.lockSays;
+    requestAnimationFrame(() => {
+      if (n !== this.lockSays) return;
+      const l = this.lock;
+      const head = translate(l ? LOCK_HINTS[l] : UNLOCK_SAID, document.documentElement.lang || 'ko');
+      const now = live.textContent;
+      const text = now && now !== was ? `${head} · ${now}` : head;
+      live.textContent = now === text ? text + NBSP : text;
+    });
   }
 
   /** Shift 뗌·창 흐려짐: Shift로 건 접선 잠금이면 푼다(둘째 점을 찍어 코어가 이미 풀었으면 그대로). 116차: 그 누름의 되돌리기·「되돌리기에 씀」도 끝난다 */

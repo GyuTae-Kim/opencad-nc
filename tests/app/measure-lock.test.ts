@@ -11,7 +11,7 @@ import { catalogs, translate } from '../../site/i18n.mjs';
 import { installLocalization } from '../../src/app/i18n';
 import { dictLookup, keySnapMessageFn } from '../../src/app/keysnap';
 import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
-import { MeasureLock, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+import { MeasureLock, axisKeyOf, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 import { NO_TRACK_TOUCH } from '../../src/app/measure-track';
 
 type Dir = [number, number, number];
@@ -119,9 +119,30 @@ describe('잠금 글', () => {
     expect(lockHint(0, false, null, false, 'x')).toBeNull();
     expect(lockHint(2, true, 'x')).toBeNull();
     // 57차: 가상 커서가 켜진 동안은 화살표가 커서를 옮긴다 — 화살표 안내 없음, Shift로 잠글 방향·잠근 방향은 그대로
-    expect(lockHint(1, false, null, false, null, true)).toBeNull();
+    // 203차: 그 동안 축을 잠그는 키는 X·Y·Z — Shift로 잠글 방향이 없으면 그 안내(57차는 안내 없음). 손가락 기기·첫 점 전·결과 뒤는 그대로 없음
+    expect(lockHint(1, false, null, false, null, true)).toBe('X·Y·Z로 축 방향 잠금');
     expect(lockHint(1, false, null, false, 'y', true)).toBe(SHIFT_LOCK_HINTS.y);
     expect(lockHint(1, false, 'z', false, 'x', true)).toBe(LOCK_HINTS.z);
+    expect(lockHint(1, false, null, true, null, true)).toBeNull();
+    expect(lockHint(0, false, null, false, null, true)).toBeNull();
+    expect(lockHint(2, true, null, false, null, true)).toBeNull();
+  });
+
+  it('203차: 축 잠금 키 글자 — 적힌 글자(대소문자 무시, 독일어 자판의 Y·Z도 적힌 대로)가 먼저, 라틴 글자가 아니면(한글 입력기 ㅌ·ㅛ·ㅋ) 물리 키', () => {
+    expect(axisKeyOf({ key: 'x', code: 'KeyX' })).toBe('x');
+    expect(axisKeyOf({ key: 'Y', code: 'KeyY' })).toBe('y');
+    expect(axisKeyOf({ key: 'z', code: '' })).toBe('z');
+    // 독일어 QWERTZ: Z 자리(KeyY)에 적힌 z, Y 자리(KeyZ)에 적힌 y
+    expect(axisKeyOf({ key: 'z', code: 'KeyY' })).toBe('z');
+    expect(axisKeyOf({ key: 'y', code: 'KeyZ' })).toBe('y');
+    // 한글 2벌식(ㅌ·ㅛ·ㅋ)·입력기 처리 중
+    expect(axisKeyOf({ key: 'ㅌ', code: 'KeyX' })).toBe('x');
+    expect(axisKeyOf({ key: 'ㅛ', code: 'KeyY' })).toBe('y');
+    expect(axisKeyOf({ key: 'ㅋ', code: 'KeyZ' })).toBe('z');
+    expect(axisKeyOf({ key: 'Process', code: 'KeyZ' })).toBe('z');
+    // 다른 키
+    for (const [key, code] of [['a', 'KeyA'], ['ㅁ', 'KeyA'], ['w', 'KeyX'], ['ArrowRight', 'ArrowRight'], ['Shift', 'ShiftLeft'], ['1', 'Digit1'], ['', '']])
+      expect(axisKeyOf({ key, code }), `${key} ${code}`).toBeNull();
   });
 
   it('툴팁: 붙잡은 종류 이름(나란한 방향·X축 방향), 잠갔으면 잠금, 붙잡지 않은 점은 없음', () => {
