@@ -17,6 +17,7 @@
  *   같은 글을 가상 커서 알림 영역에 넣는다(sayCycle — 화면 읽기).
  *   158차: 찍은 점·끌어온 점이 없을 때 3D 보기가 받은 Esc는 툴팁을 거둔다(escTip — 같은 점·같은 글인 동안 다시 띄우지 않음, WCAG 1.4.13 닫을 수 있음).
  *   191차: 코어 글상자가 비키는 떠 있는 것(뷰 큐브·측정 띠·해석 판단 띠 — coverRects)도 비킨다(툴팁 z-index가 띠보다 높아 띠 글·버튼을 덮었다, WCAG 1.4.13·2.4.11).
+ *   192차: 측정 띠 위 알림(showFlash — 띠 상자 밖)도 떠 있는 동안 그 목록에 넣어 툴팁·코어 글상자가 비키고, 뜨고 질 때 다시 놓는다(schedule).
  * - Shift: 코어가 누르는 순간 잠글 방향(measureHoverLock — 방향 추론(축·나란함·수직), 첫 점을 지나는 선분 위의 점 붙잡기면 그 선분 방향:
  *   모서리 끝에서 그 모서리를 따라 다른 끝을 가리킬 때)을 잠그고 떼면 푼다. 앱은 Shift를 누르고 뗄 때 툴팁·상태 줄만 다시 맞춘다.
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
@@ -804,6 +805,8 @@ export class MeasureLock {
   private covers(v: LockViewer): MeasureLabelRect[] {
     const els: Element[] = [];
     for (const e of this.host.overlays?.() ?? []) if (!(e as HTMLElement).hidden) els.push(e);
+    // 192차: 측정 띠 위 알림(띠 상자 밖 — 글이 있을 때만: 빈 알림은 1화소라 coverRects가 빼지 못한다. 띠가 숨으면 크기 0)
+    if (this.flash.textContent) els.push(this.flash);
     const cube = v.viewCubeRect;
     if (!cube && !els.length) return [];
     const c = v.canvas.getBoundingClientRect();
@@ -858,6 +861,8 @@ export class MeasureLock {
     this.flashKind = kind;
     if (this.flashTimer) clearTimeout(this.flashTimer);
     this.flashTimer = setTimeout(() => this.dropFlash(null), ms);
+    // 192차: 알림 자리를 툴팁·코어 글상자가 비키게 다시 놓는다(뒤에 맞추기가 없는 끌어온 점 버튼 길도 — 두 프레임 뒤라 번역층이 옮긴 크기)
+    this.schedule();
   }
 
   /** 알림 거두기(kind를 주면 그 종류일 때만). 117차: 요소는 남기고 글을 비워 화면에서만 감춘다(FLASH_EMPTY) */
@@ -868,6 +873,8 @@ export class MeasureLock {
     this.flashKind = null;
     if (this.flashTimer) clearTimeout(this.flashTimer);
     this.flashTimer = null;
+    // 192차: 알림이 지면(시간·잠금이 걸림) 툴팁·코어 글상자를 제자리로
+    this.schedule();
   }
 
   /** 자동 확인용: 툴팁 글(숨었으면 null)·자리, 알림, 잠금, Shift로 잠글 방향, 단추, 첫 점 곡선을 찾은 길(식별자·좌표) */
