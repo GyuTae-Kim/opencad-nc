@@ -265,6 +265,9 @@ export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, bo
  * 오류는 탭을 통째로 다시 그린 새 칸(redrawTab)의 처음 글로만 나오는데, polite 영역은 이미 있던 영역의 글이 바뀌어야 화면 읽기 프로그램이 읽어
  * (117차 측정 띠 위 알림과 같은 까닭) 친 값이 막힌 것을 듣지 못했다. alert는 새로 붙어도 읽는다(알림 상자의 오류 — dom.ts toast와 같다). 진행·끝·꺼짐 글은 polite 그대로.
  * 221차: 앱이 같은 탭을 다시 그린 같은 오류 글은 polite(fillTab — 새로 붙은 alert로 거듭 읽히지 않게)
+ * 231차(WCAG 4.1.3): 오류가 아닌 글은 aria-live=off(패널 재생 상태 칸 꼴). polite였을 때 진행 글은 워커 결과마다(계산하는 중… N%)·재생 따라가기 목표마다(follow — 이동 N / M까지
+ * 깎았습니다) 바뀌어 재생 위치만큼 잦게 읽혔고, 끝 글은 깎기 계산 알림 영역(.sim-live — 197차 새 계산의 시작·끝 한 번)과 같은 글이라 두 칸이 함께 읽혔다.
+ * 시작·끝은 그 영역이 알리고, 꺼짐 글은 사용자가 누른 상자의 상태, 같은 오류를 다시 그린 칸(221차)은 새로 붙은 칸이라 읽히지 않던 것 그대로
  */
 function statusLive(el: HTMLElement, alert: boolean): void {
   if (alert) {
@@ -272,7 +275,7 @@ function statusLive(el: HTMLElement, alert: boolean): void {
     el.removeAttribute('aria-live');
   } else {
     el.removeAttribute('role');
-    el.setAttribute('aria-live', 'polite');
+    el.setAttribute('aria-live', 'off');
   }
 }
 
@@ -974,7 +977,7 @@ export class SimView {
       return [h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label)), hint ? h('p', { class: 'hint coarse-only' }, hint) : null];
     };
     // 221차(WCAG 4.1.3 — 220차 탭 몸통 실패 글과 같은 꼴): 오류 글 칸은 오류 원문을 data-fail에 두고, 새로 난 오류가 아니고(errorNew) 그리기 전 같은 탭 칸과 같은 글이면(was)
-    // role 없이(polite) 그린다 — 앱이 같은 탭을 다시 그릴 때마다(언어 바꿈·같은 탭 다시 보이기·장면 경고·오류와 상관없는 칸 바꿈) 같은 글이 새 alert로 거듭 읽혔다.
+    // role 없이(231차부터 aria-live=off — statusLive) 그린다 — 앱이 같은 탭을 다시 그릴 때마다(언어 바꿈·같은 탭 다시 보이기·장면 경고·오류와 상관없는 칸 바꿈) 같은 글이 새 alert로 거듭 읽혔다.
     // 새로 난 오류·같은 오류를 또 낸 동작·탭을 바꿔 처음 보인 오류는 alert 그대로
     const err = this.on ? this.error : null;
     this.statusEl = h('p', { class: 'hint sim-status', id: 'sim-status', 'data-fail': err }, this.statusText());

@@ -12,7 +12,7 @@ import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
 import { itemName, jobLineOf, jobLineToGlobal, lineLabel, lineNumberText, mprOpAtLine, mprOps, moveState, panelTabs, selectedLineText, unitLabel, type NcDoc } from './doc';
 import { onceImport } from './core';
-import { fileSpan, h, loadFailed, mixSpan } from './dom';
+import { fileSpan, h, loadFailed, mixSpan, putLive } from './dom';
 import { mix } from './filetext';
 import { mixNodes } from './i18n';
 import { fmtInt, fmtNum, fmtPt } from './format';
@@ -725,11 +725,15 @@ export class NcPanel {
 
   // ───────────────────────── 아래 띠: 고른 것·측정 ─────────────────────────
 
+  /**
+   * 231차(WCAG 4.1.3): 아래 띠는 알림 칸 — 고르기·측정·탭 다시 그리기(깎기 계산 사건마다 refreshPanel → render)에 그대로인 고른 줄·결과까지 통째로 새 마디로 넣어
+   * 거듭 읽힐 수 있었다. 바뀐 줄부터만 바꾼다(dom.ts putLive)
+   */
   private renderFoot(): void {
     const d = this.doc;
     const f = this.foot;
-    f.textContent = '';
     if (!d) {
+      putLive(f);
       f.hidden = true;
       return;
     }
@@ -767,6 +771,6 @@ export class NcPanel {
       if (sp) lines.push(h('div', { class: 'dim' }, h('span', {}, sp[0]), ' → ', h('span', {}, sp[1]), ...(sp[2] ? [' · ', h('span', {}, '잠금')] : [])));
     } else if (this.host.measuring) lines.push(h('div', { class: 'dim' }, panelMeasureHint(this.host.touch, !!d.nc || !!d.mpr?.snap)));
     f.hidden = !lines.length;
-    f.append(...lines);
+    putLive(f, ...lines);
   }
 }
