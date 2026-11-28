@@ -70,6 +70,7 @@
   "tests/app/space-key.test.ts": 435,
   "tests/app/state.test.ts": 11,
   "tests/app/tangent.test.ts": 42,
+  "tests/app/target-size222.test.ts": 6900,
   "tests/app/theme-keys.test.ts": 8,
   "tests/app/toast.test.ts": 49,
   "tests/app/view-tools.test.ts": 2869,
