@@ -143,6 +143,26 @@ describe('코어 나눠 받기', () => {
       expect(staticSpecs(readFileSync(join(ROOT, f), 'utf8')).filter((s) => s.startsWith('opencad-viewer3d')), f).toEqual([]);
   });
 
+  it('210차: 코드 탭 밖 패널 탭 몸통(panel-info.ts — 공구·가공·변수·정보)은 첫 화면 그래프 밖, panel.ts의 import() 하나로만 받고 그리는 함수는 panel.ts로 돌아오지 않는다', () => {
+    const { files } = walk(join(ROOT, 'src/app/main.ts'));
+    const rel = [...files].map((f) => relative(ROOT, f));
+    expect(rel).not.toContain('src/app/panel-info.ts');
+    const dyn: string[] = [];
+    for (const f of files) {
+      if (f.startsWith(CORE)) continue;
+      for (const s of dynamicSpecs(readFileSync(f, 'utf8'))) if (s === './panel-info') dyn.push(`${relative(ROOT, f)} ${s}`);
+    }
+    expect(dyn).toEqual(['src/app/panel.ts ./panel-info']);
+    // 탭 몸통 함수가 첫 화면 panel.ts로 돌아오면 첫 화면 JS가 약 10 KB(gzip 약 3.5 kB) 커진다(210차 빌드 — README 개발 210차 문단)
+    const panel = stripComments(readFileSync(join(ROOT, 'src/app/panel.ts'), 'utf8'));
+    const tabs = stripComments(readFileSync(join(ROOT, 'src/app/panel-info.ts'), 'utf8'));
+    for (const name of ['renderTools', 'minZCell', 'renderOps', 'renderVars', 'groupList', 'renderInfo', 'jobGroup', 'optToggle']) {
+      expect(panel, name).not.toMatch(new RegExp(`\\b${name}\\s*\\(`));
+      expect(tabs, name).toMatch(new RegExp(`\\bfunction ${name}\\(`));
+    }
+    expect(tabs).toMatch(/\bexport function renderTab\(/);
+  });
+
   it('훑기는 인라인 type만 쓴 가져오기와 다시 내보내기도 값 가져오기로 잡는다', () => {
     const files: Record<string, string> = {
       '/x/a.ts': "import { b } from './b';\nimport type { Viewer3d } from 'opencad-viewer3d';\n// import { Viewer3d } from 'opencad-viewer3d';\n",

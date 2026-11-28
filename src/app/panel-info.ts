@@ -1,16 +1,23 @@
 /**
- * 패널 정보 탭의 공구 경로 부분(G-code·Heidenhain): 해석 설정(방언·선반 G 코드 체계·기본 단위·최소 단위), 보기 선택(보정 경로·선반 공구 표·선반 모드·회전축),
- * 공구 경로 요약, 기계·읽기 설정, 3D 보기 경고(55차 — 코어 장면 알림). 문서를 열 때 3D 뷰어 코어와 함께 받는 조각이다(54차 — 첫 화면 JS에서 뺐다. 문서가 없으면 쓰지 않는다).
- * panel.ts의 NcPanel이 정보 탭을 그릴 때 부른다(받기 전이면 받은 뒤 다시 그린다).
+ * 패널의 코드 탭 밖 탭 몸통(210차 — panel.ts에서 옮김): 공구 탭(G-code·Heidenhain), 가공·변수 탭(판재 MPR·PGI·XML), 정보 탭 — 문서·작업 파일·절삭 범위·가공 요약·
+ * 묶음 켜고 끄기·해석 경고와 공구 경로 부분(해석 설정(방언·선반 G 코드 체계·기본 단위·최소 단위), 보기 선택(보정 경로·선반 공구 표·선반 모드·회전축),
+ * 공구 경로 요약, 기계·읽기 설정), 3D 보기 경고(55차 — 코어 장면 알림). 문서를 열 때 3D 뷰어 코어와 함께 받는 조각이다(54차 — 첫 화면 JS에서 뺐다. 문서가 없으면 쓰지 않는다).
+ * panel.ts의 NcPanel이 그 탭을 그릴 때 renderTab을 부른다(받기 전이면 받은 뒤 다시 그린다 — 문서는 app.ts ensureViewer가 이 조각을 기다린 뒤 열린다).
+ * 210차: 이 탭들은 시작 화면(문서를 열기 전)에서 그리지 않아 첫 화면 JS에서 뺐다 — 남은 panel.ts는 틀·탭 줄·재생 막대·코드 탭·아래 띠
+ * (tests/app/core-split.test.ts가 이 모듈이 첫 화면 그래프 밖이고 탭 몸통 함수가 panel.ts로 돌아오지 않는지 본다)
  */
 import type { SceneIssue, SceneIssueCode } from 'opencad-viewer3d';
+import { isPanelKind } from '../extensions';
 import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { formatDuration } from '../view/playback';
-import { lineAtLabel, sceneFeatures, unitLabel, type NcDoc } from './doc';
-import { h } from './dom';
-import { mix } from './filetext';
-import { fmtNum } from './format';
-import { group, row, type PanelHost } from './panel';
+import { MPR_KIND, cutRangeText, docLabel, lineAtLabel, lineNumberText, mprOps, mprVars, sceneCounts, sceneFeatures, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { h, mixSpan } from './dom';
+import { fileText, mix, type Mixed } from './filetext';
+import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
+import { mixText } from './i18n';
+import { icon } from './icons';
+import type { PanelHost } from './panel';
+import type { NcJobInfo } from './protocol';
 import { cleanLatheTool, defaultSettings, type NcSettings } from './settings';
 
 const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
@@ -18,11 +25,336 @@ const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'ma
 /** 다시 읽는 켜고 끄기(선택 기능)의 열쇠 */
 export type OptKey = 'comp' | 'lathe' | 'rotary' | 'mprDisabled' | 'integerUnits';
 
-/** 정보 탭을 그리는 패널(panel.ts NcPanel) */
+/** 코드 탭 밖 탭 몸통을 그리는 패널(panel.ts NcPanel) */
 export interface InfoPanel {
   readonly host: PanelHost;
   readonly body: HTMLElement;
-  optToggle(d: NcDoc, key: OptKey, label: string, hint: string): HTMLElement;
+  /** 지금 문서(누른 때 읽는다) */
+  readonly doc: NcDoc | null;
+  /** 탭 줄·몸통을 다시 그린다(d.panelTab을 바꾼 뒤면 그 탭으로) */
+  render(): void;
+  /** 경고의 줄로(다시 누르면 같은 경고가 난 다음 줄로) — 코드 탭을 연다 */
+  gotoWarning(it: { text: string; line: number; lines: number[] }): void;
+}
+
+/** 이름·값 줄(이름이 섞은 글이면 지금 언어로 옮겨 담고, file이면 값은 파일 글 — 번역하지 않는다) */
+const row = (k: string | Mixed, v: string, file = false): HTMLElement =>
+  h('div', { class: 'prop-row' }, typeof k === 'string' ? h('span', { class: 'k' }, k) : mixSpan(k, 'k'), h('span', { class: 'v', title: v, translate: file ? 'no' : null }, v));
+const group = (title: string, ...children: (Node | null)[]): HTMLElement => h('section', { class: 'prop-group' }, h('h3', {}, title), ...children);
+
+/** 코드 탭 밖 탭 몸통(공구·가공·변수·정보 — 깎기 탭은 앱이 그린다). panel.ts render가 몸통을 비운 뒤 부른다 */
+export function renderTab(p: InfoPanel, d: NcDoc): void {
+  if (d.panelTab === 'tools') renderTools(p, d);
+  else if (d.panelTab === 'ops') renderOps(p, d);
+  else if (d.panelTab === 'vars') renderVars(p, d);
+  else renderInfo(p, d);
+}
+
+// ───────────────────────── 공구(G-code·Heidenhain) ─────────────────────────
+
+function renderTools(p: InfoPanel, d: NcDoc): void {
+  const nc = d.nc;
+  if (!nc) return;
+  type ToolRow = (typeof nc.tools)[number] & { color?: number[] };
+  const meta = d.scene.meta as { tools?: ToolRow[] } | undefined;
+  const tools: ToolRow[] = meta?.tools ?? nc.tools;
+  if (!tools.length) {
+    p.body.append(h('p', { class: 'empty' }, '공구 정보가 없습니다.'));
+    return;
+  }
+  const u = unitLabel(d.scene.units);
+  const tbody = h('tbody');
+  for (const t of tools) {
+    const g = toolGroup(d.scene, t.number);
+    const visible = g ? !d.hiddenGroups.has(g) : true;
+    // 이름만 있는 공구(Heidenhain TOOL CALL "이름"·Siemens T="이름")는 번호 칸을 비우고 이름 칸에 보인다
+    const label = t.number >= 100000 ? '—' : t.number >= 0 ? `T${t.number}` : '공구 없음';
+    // 단추 이름: 이름만 있는 공구는 그 이름(파일 글 — 자리를 지켜 옮겨 넣고 번역층은 건너뛴다)
+    const who = t.number >= 100000 && t.name !== undefined ? fileText(t.name) : label;
+    // data-key(137차): 이름은 누를 때 「숨기기 ↔ 보이기」로 바뀌어 다시 그린 몸통의 같은 버튼을 공구 번호로 찾는다(render)
+    const eye = h('button', { class: `toggle${visible ? '' : ' off'}`, type: 'button', title: visible ? '숨기기' : '보이기', 'aria-label': mixText(mix`${who} ${visible ? '숨기기' : '보이기'}`), 'data-i18n-keep': 'aria-label', 'data-key': `eye${t.number}`, 'aria-pressed': String(visible), html: icon(visible ? 'eye' : 'eyeOff') });
+    eye.disabled = !g;
+    eye.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (!g) return;
+      p.host.setGroupVisible(g, d.hiddenGroups.has(g));
+      p.render();
+    });
+    const items = toolItems(d.scene, t.number);
+    const cur = items.length > 0 && d.highlight.length === items.length && items.every((id) => d.highlight.includes(id));
+    // 174차(WCAG 4.1.2): 강조한 공구 줄은 바탕으로만 보여 화면 읽기가 몰랐다 — 표 줄의 aria-selected는 격자 안에서만 뜻이 있어 클래스와 같은 자리에서 aria-current(한 표에 하나)
+    const tr = h(
+      'tr',
+      { class: `clickable${cur ? ' current' : ''}${visible ? '' : ' off'}`, 'aria-current': cur ? 'true' : null, title: `처음 나온 줄 ${lineNumberText(d, t.firstLine)}` },
+      h('td', {}, eye),
+      h('td', {}, h('span', { class: 'swatch', style: `background:${rgbCss(t.color ?? [0.5, 0.5, 0.5])}` })),
+      h('td', {}, label),
+      h('td', { class: 'wrap', translate: 'no' }, t.name ?? ''),
+      h('td', { class: 'num' }, t.diameter ? `Ø${fmtNum(t.diameter)}` : ''),
+      minZCell(p, t),
+      h('td', { class: 'num' }, formatDuration(t.time)),
+      h('td', { class: 'num' }, `${fmtNum(t.feedLength, 1)}${u}`),
+    );
+    if (t.cutMin && t.cutMax) tr.title = `${tr.title} · ${cutRangeText(t.cutMin, t.cutMax, u)}`;
+    const selLine = toolSelectLine(nc, t.number, t.firstLine);
+    tr.addEventListener('click', (ev) => {
+      if (ev.detail >= 2) {
+        // 두 번 누르기: 강조를 켠 채 그 공구 경로에 맞춰 보기
+        p.host.setHighlight(items);
+        p.host.selectLine(selLine);
+        p.host.fitItems(items);
+        p.render();
+        return;
+      }
+      p.host.setHighlight(cur ? [] : items);
+      // 코드 보기는 그 공구의 첫 이동 줄로(공구가 처음 나온 줄이 이동을 만들지 않으면 첫 이동 줄)
+      if (!cur) p.host.selectLine(selLine);
+      p.render();
+    });
+    tbody.append(tr);
+  }
+  p.body.append(
+    h(
+      'div',
+      { class: 'table-wrap' },
+      h(
+        'table',
+        { class: 'grid tools' },
+        h('thead', {}, h('tr', {}, h('th', { 'aria-label': '보이기' }, ''), h('th', {}, '색'), h('th', {}, '번호'), h('th', {}, '이름'), h('th', { class: 'num' }, '지름'), h('th', { class: 'num', title: '이 공구의 절삭(이송·호·드릴) 가운데 가장 낮은 Z' }, 'Z 최저'), h('th', { class: 'num' }, '시간'), h('th', { class: 'num' }, '이송 길이'))),
+        tbody,
+      ),
+    ),
+    h('p', { class: 'hint' }, '줄을 누르면 그 공구의 경로를 강조하고 첫 이동 줄로 갑니다. 두 번 누르면 그 경로에 맞춰 봅니다. 눈 버튼으로 켜고 끕니다. Z 최저를 누르면 가장 깊은 절삭 줄로 갑니다(줄에 마우스를 올리면 절삭 범위).'),
+  );
+}
+
+/** 공구 표의 "Z 최저" 칸: 누르면 그 줄로 */
+function minZCell(p: InfoPanel, t: { cutMin?: number[]; minZLine?: number }): HTMLElement {
+  if (!t.cutMin) return h('td', { class: 'num faint' }, '');
+  const b = h('button', { class: 'linkish', type: 'button', title: '가장 깊은 절삭 줄로' }, fmtNum(t.cutMin[2]!));
+  b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (t.minZLine !== undefined && t.minZLine >= 0) {
+      p.host.selectLine(t.minZLine);
+      const d = p.doc;
+      if (d) {
+        d.panelTab = 'code';
+        p.render();
+      }
+    }
+  });
+  return h('td', { class: 'num' }, b);
+}
+
+// ───────────────────────── 판재 가공(MPR·PGI·XML) ─────────────────────────
+
+function renderOps(p: InfoPanel, d: NcDoc): void {
+  const meta = (d.scene.meta ?? {}) as { workpiece?: { length: number; width: number; thickness: number } };
+  const u = unitLabel(d.scene.units);
+  const wp = meta.workpiece;
+  if (wp) p.body.append(group('공작물', row('크기(L × W × T)', `${fmtNum(wp.length)} × ${fmtNum(wp.width)} × ${fmtNum(wp.thickness)} ${u}`)));
+  const ops = mprOps(d.scene);
+  if (!ops.length) {
+    p.body.append(h('p', { class: 'empty' }, '가공이 없습니다.'));
+    return;
+  }
+  const tbody = h('tbody');
+  for (const o of ops) {
+    const sel = d.selKey === String(o.index);
+    const detail = [
+      o.diameter ? `Ø${fmtNum(o.diameter)}` : '',
+      o.depth !== undefined ? `깊이 ${fmtNum(o.depth)}` : '',
+      o.thickness !== undefined ? `두께 ${fmtNum(o.thickness)}` : '',
+      o.holeCount ? `${o.holeCount}개` : '',
+      o.tool !== undefined ? `T${o.tool}` : '',
+    ].filter(Boolean);
+    // 값 조각("깊이 13")은 한 덩어리로 두고 " · "에서만 줄을 바꾼다(긴 가공 이름 옆에서 글자 하나 폭으로 접히지 않게)
+    const detailCell = h('td', { class: 'wrap' }, ...detail.flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nb' }, t)]));
+    // 174차: 고른 가공 줄도 공구 표와 같은 규칙(aria-current — 한 표에 하나)
+    const tr = h(
+      'tr',
+      { class: `clickable${sel ? ' current' : ''}${o.enabled ? '' : ' off'}`, 'aria-current': sel ? 'true' : null, title: o.line != null ? `줄 ${o.line + 1}` : '' },
+      h('td', { class: 'num faint' }, String(o.index + 1)),
+      // MPR 가공 이름(MNM·주석·매크로 이름)은 파일 글, PGI·XML은 앱이 지은 이름(옮긴다)
+      h('td', { class: 'wrap', translate: o.label && d.kind === 'mpr' ? 'no' : null }, o.label || MPR_KIND[o.kind] || o.kind),
+      h('td', {}, MPR_KIND[o.kind] ?? o.kind),
+      detailCell,
+      h('td', {}, o.enabled ? h('span', { class: 'chip' }, '켜짐') : h('span', { class: 'chip warn' }, '꺼짐')),
+    );
+    tr.addEventListener('click', () => p.host.selectMprOp(o.index));
+    tbody.append(tr);
+  }
+  p.body.append(h('div', { class: 'table-wrap' }, h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', { class: 'num' }, '#'), h('th', {}, '가공'), h('th', {}, '종류'), h('th', {}, '값'), h('th', {}, '상태'))), tbody)));
+}
+
+function renderVars(p: InfoPanel, d: NcDoc): void {
+  const vars = mprVars(d.scene);
+  if (!vars.length) {
+    p.body.append(h('p', { class: 'empty' }, '변수가 없습니다.'));
+    return;
+  }
+  const tbody = h('tbody');
+  for (const v of vars)
+    tbody.append(
+      h(
+        'tr',
+        {},
+        h('td', { class: 'mono', translate: 'no' }, v.name),
+        h('td', { class: 'num mono' }, v.value !== undefined ? fmtNum(v.value) : '—'),
+        h('td', { class: 'mono dim wrap', translate: 'no' }, v.expr !== String(v.value) ? v.expr : ''),
+        h('td', { class: 'dim wrap', translate: 'no' }, v.comment ?? ''),
+      ),
+    );
+  p.body.append(h('div', { class: 'table-wrap' }, h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, '이름'), h('th', { class: 'num' }, '값'), h('th', {}, '식'), h('th', {}, '설명'))), tbody)));
+}
+
+// ───────────────────────── 정보 ─────────────────────────
+
+function groupList(p: InfoPanel, d: NcDoc): HTMLElement {
+  const groups = p.host.groups();
+  if (!groups.length) return group('묶음', h('p', { class: 'hint' }, '묶음이 없습니다.'));
+  // 164차: 상자 이름은 「급속 이송 120」뿐이라 Tab으로 상자에 가면 켜고 끄는(보이기) 상자인지 몰랐다 — 목록을 role=group으로 묶고 이름은 보이는 묶음 제목(h3)을 잇는다
+  // (WCAG 1.3.1·4.1.2, 새 글 없음 — 제목 글을 번역층이 옮기면 이름도 따름). 패널은 앱에 하나이고 정보 탭은 몸통을 비운 뒤 한 번 그려 id도 하나
+  const list = h('div', { class: 'groups', role: 'group', 'aria-labelledby': 'panel-groups-title' });
+  // 묶음 이름은 앱 낱말(급속 이송·구멍·공구 없음 등 — 다른 언어로 옮긴다). 이름 붙은 공구(Siemens T="…")의 묶음은 파일 자료라 그대로 둔다
+  const toolNames = new Set((d.nc?.tools ?? []).map((t) => t.name).filter((n): n is string => !!n));
+  for (const g of groups) {
+    const cb = h('input', { type: 'checkbox' });
+    cb.checked = !d.hiddenGroups.has(g.name);
+    cb.addEventListener('change', () => p.host.setGroupVisible(g.name, cb.checked));
+    list.append(h('label', { class: 'group-item' }, cb, h('span', { class: 'name', translate: toolNames.has(g.name) ? 'no' : null }, g.name), h('span', { class: 'chip' }, String(g.count))));
+  }
+  const sec = group('묶음(켜고 끄기)', list);
+  sec.firstElementChild!.id = 'panel-groups-title';
+  return sec;
+}
+
+function renderInfo(p: InfoPanel, d: NcDoc): void {
+  const s = d.scene;
+  const u = unitLabel(s.units);
+  const c = sceneCounts(s);
+  const b = s.bounds;
+  const rows: HTMLElement[] = [row('파일', d.name, true), row('형식', docLabel(d)), row('크기', formatBytes(d.size)), row('단위', u || '모름'), row('읽은 시간', formatMs(d.ms))];
+  if (b) {
+    // 장면 범위 = 급속·공작물 포함(기계 좌표 쪽 추정 이동은 뺌). 절삭만의 범위는 아래 "절삭 범위"
+    rows.push(row('범위 크기(급속 포함)', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
+    rows.push(row('최소', fmtPt(b.min)), row('최대', fmtPt(b.max)));
+  }
+  if (c.segments) rows.push(row('선분', c.segments.toLocaleString('ko-KR')));
+  if (c.triangles) rows.push(row('삼각형', c.triangles.toLocaleString('ko-KR')));
+  p.body.append(group('문서', ...rows));
+  if (d.job) p.body.append(jobGroup(p, d, d.job));
+
+  const cb = d.nc?.cutBounds;
+  if (cb)
+    p.body.append(
+      group(
+        '절삭 범위(이송·호·드릴)',
+        row('크기', `${fmtNum(cb.max[0] - cb.min[0])} × ${fmtNum(cb.max[1] - cb.min[1])} × ${fmtNum(cb.max[2] - cb.min[2])} ${u}`),
+        row('최소', fmtPt(cb.min)),
+        row('최대', fmtPt(cb.max)),
+        row('가장 깊은 Z', `${fmtNum(cb.min[2])} ${u}`),
+      ),
+    );
+  // 공구 경로 부분(아래 ncInfo — 54차부터 이 조각)
+  if (d.nc) ncInfo(p, d);
+  if (isPanelKind(d.kind)) {
+    const st = (s.meta as { stats?: Record<string, number> } | undefined)?.stats;
+    if (st)
+      p.body.append(
+        group(
+          '가공 요약',
+          row('구멍', `${st.holes ?? 0}개 (드릴 가공 ${st.drillOps ?? 0})`),
+          row('윤곽 가공', String(st.contourOps ?? 0)),
+          row('홈 · 포켓', `${st.grooves ?? 0} · ${st.pockets ?? 0}`),
+          st.edges ? row('엣지 밴딩', String(st.edges)) : null,
+          row('꺼진 가공', String(st.disabled ?? 0)),
+        ),
+      );
+    if ((st?.disabled ?? 0) > 0 || d.ncOptions.mprDisabled) {
+      // 145차: 풀이는 손가락 기기 안내 줄로도 상자 바로 밑에(127차 withTips와 같은 줄 — 이 묶음은 withTips를 거치지 않는다)
+      const tip = d.kind === 'mpr' ? '조건(??)이 0이거나 EN=0인 가공을 묶음 "꺼진 가공"으로 그립니다.' : 'enable(Enable)이 0인 가공을 묶음 "꺼진 가공"으로 그립니다.';
+      p.body.append(group('보기 선택', optToggle(p, d, 'mprDisabled', '꺼진 가공도 그리기', tip), h('p', { class: 'hint coarse-only' }, tip)));
+    }
+  }
+  p.body.append(groupList(p, d));
+  const warns = s.warnings ?? [];
+  const items = d.nc?.warnItems ?? d.mpr?.warnItems ?? [];
+  // NC·판재 파일(MPR·PGI·XML): 경고마다 단추(줄 번호·글·횟수 따로 — 조각마다 번역되고, 누르면 그 줄로, 다시 누르면 같은 경고가 난 다음 줄로). 그 밖(장면 경고)은 글
+  const lis: HTMLElement[] = items.slice(0, 300).map((it) => {
+    if (it.line < 0) return h('li', {}, it.text);
+    const btn = h(
+      'button',
+      { class: 'warn-item', type: 'button', title: it.lines.length > 1 ? '누르면 그 줄로(다시 누르면 같은 경고가 난 다음 줄로)' : '누르면 그 줄로' },
+      mixSpan(lineAtLabel(d, it.line), 'ln'),
+      h('span', { class: 'msg' }, it.text),
+      it.count > 1 ? h('span', { class: 'cnt' }, `모두 ${it.count}번`) : null,
+    );
+    btn.addEventListener('click', () => p.gotoWarning(it));
+    return h('li', {}, btn);
+  });
+  for (const w of warns.slice(items.length, 300)) lis.push(h('li', {}, w));
+  p.body.append(
+    warns.length
+      ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
+      : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
+  );
+  // 3D 보기 코어가 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0). 있을 때만(아래 sceneIssueGroup)
+  const issues = p.host.sceneIssues?.() ?? [];
+  if (issues.length) p.body.append(sceneIssueGroup(issues));
+}
+
+/**
+ * 작업 파일(여러 파일을 한 작업으로 열었을 때): 주 프로그램 고르기(바꾸면 다시 잇는다), 파일마다 코드 탭의 시작 줄로 가기,
+ * 파일 더하기, 잇지 않은 파일과 찾지 못한 부르기
+ */
+function jobGroup(p: InfoPanel, d: NcDoc, job: NcJobInfo): HTMLElement {
+  // 142차: 풀이는 감싼 label과 고르기 자신에 함께(optToggle과 같은 까닭 — 고르기에 초점을 두면 설명으로 읽힘)
+  const tip = '부르는 쪽(M98·G65 P, CALL PGM, Siemens 이름 부르기)을 처음부터 실행할 파일';
+  const main = h('select', { class: 'select', 'aria-label': '주 프로그램', title: tip });
+  for (const f of job.files) main.append(h('option', { value: f, translate: 'no' }, f));
+  main.value = job.main;
+  main.addEventListener('change', () => p.host.reparse({ ...d.ncOptions, jobMain: main.value }));
+  const list = h('ul', { class: 'warn-list job-files' });
+  job.files.forEach((f, k) => {
+    const line = job.starts[k] ?? -1;
+    const b = h(
+      'button',
+      { class: 'warn-item', type: 'button', title: '누르면 코드 탭에서 이 파일이 시작하는 줄로', disabled: line < 0 },
+      h('span', { class: 'ln' }, k === 0 ? '주 프로그램' : '함께 연 파일'),
+      h('span', { class: 'msg', translate: 'no' }, f),
+    );
+    b.addEventListener('click', () => {
+      d.panelTab = 'code';
+      p.render();
+      p.host.selectLine(line, undefined, true);
+    });
+    list.append(h('li', {}, b));
+  });
+  const add = h('button', { class: 'btn small', type: 'button', title: '부프로그램 파일을 골라 이 작업에 더합니다(같은 이름은 바꿉니다)' }, '파일 더하기');
+  add.addEventListener('click', () => p.host.chooseFile(true));
+  const missing = d.nc?.notices?.find((n) => n.kind === 'missing-program')?.programs ?? [];
+  return group(
+    `작업 파일 ${job.files.length}개`,
+    h('label', { class: 'prop-row edit', title: tip }, h('span', { class: 'k' }, '주 프로그램'), main),
+    // 145차: 손가락 기기 안내 줄(풍선 글은 휴대폰·태블릿에서 볼 수 없다 — 127차 withTips와 같은 줄)
+    h('p', { class: 'hint coarse-only' }, tip),
+    list,
+    // 파일·프로그램 이름은 파일 글
+    job.skipped.length ? h('p', { class: 'hint' }, mixSpan(mix`잇지 않은 파일(형식이 다르거나 NC 프로그램이 아님): ${fileText(job.skipped.join(', '))}`)) : null,
+    missing.length ? h('p', { class: 'hint' }, mixSpan(mix`찾지 못한 프로그램: ${fileText(missing.join(', '))} — 해석 경고에서 그 줄로 갑니다.`)) : null,
+    add,
+  );
+}
+
+/** 다시 읽는 켜고 끄기(선택 기능 — 판재 「꺼진 가공도 그리기」와 아래 공구 경로 부분) */
+function optToggle(p: InfoPanel, d: NcDoc, key: OptKey, label: string, hint: string): HTMLElement {
+  // 142차: 풀이는 감싼 label(마우스 풍선 글)과 상자 자신에 함께 — 화면 읽기의 설명은 상자 자신의 title 차례(HTML-AAM), 감싼 label의 title은 쓰지 않는다
+  const cb = h('input', { type: 'checkbox', title: hint });
+  // 선반 모드는 고르지 않았으면 글로 판별한다 — 실제로 읽은 모드를 보인다
+  cb.checked = key === 'lathe' ? sceneFeatures(d.scene).lathe : !!d.ncOptions[key];
+  cb.addEventListener('change', () => p.host.reparse({ ...d.ncOptions, [key]: cb.checked }));
+  return h('label', { class: 'group-item opt', title: hint }, cb, h('span', { class: 'name' }, label), h('span', { class: 'hint inline' }, '다시 읽음'));
 }
 
 /**
@@ -65,7 +397,7 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
           h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, 'G-code 형식'), dialect),
           f.lathe && nc.latheSystem ? latheSystemRow(p.host, d, nc.latheSystem) : null,
           h('label', { class: 'prop-row edit', title: 'G20/G21이 없을 때 쓰는 단위' }, h('span', { class: 'k' }, '기본 단위'), units),
-          p.optToggle(d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
+          optToggle(p, d, 'integerUnits', '소수점 없는 값 = 최소 단위', 'Fanuc 매개변수 DPI = 0 꼴: X12500을 12.5 mm(inch는 X12500 = 1.25)로 읽습니다. A·B·C는 0.001도.'),
           h('p', { class: 'hint' }, '바꾸면 파일을 다시 읽습니다.'),
         ),
       ),
@@ -75,7 +407,8 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
   const opts: HTMLElement[] = [];
   if (f.compRunCount > 0 || d.ncOptions.comp) {
     opts.push(
-      p.optToggle(
+      optToggle(
+        p,
         d,
         'comp',
         '보정 경로 보기',
@@ -118,8 +451,8 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
     if (f.lathe && f.compRuns) opts.push(...latheToolRows(p.host, f.compRuns));
   }
   if (nc.kind === 'gcode') {
-    opts.push(p.optToggle(d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
-    if (f.rotaryAxes || d.ncOptions.rotary) opts.push(p.optToggle(d, 'rotary', '회전축 감기', 'A·B·C 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로를 그립니다(회전 중심 = 원점, G43.4 동안은 감지 않음).'));
+    opts.push(optToggle(p, d, 'lathe', '선반 모드', 'G18 평면, X를 지름으로(LinuxCNC는 G7부터), U·W 증분, G90/G94·G70~G76 선반 사이클로 읽고 XZ 단면(회전축 Z)으로 그립니다.'));
+    if (f.rotaryAxes || d.ncOptions.rotary) opts.push(optToggle(p, d, 'rotary', '회전축 감기', 'A·B·C 각을 X·Y·Z축 둘레로 감아 공작물 기준 공구 끝 경로를 그립니다(회전 중심 = 원점, G43.4 동안은 감지 않음).'));
   }
   if (opts.length) p.body.append(withTips(group('보기 선택', ...opts)));
   p.body.append(
