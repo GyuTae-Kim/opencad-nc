@@ -684,7 +684,7 @@ export class NcViewerApp implements PanelHost {
           fmt('WangShi PGI · XML', [...PGI_EXTENSIONS, ...XML_EXTENSIONS], '판·외곽선, 여섯 면 구멍, 도어 컵, 톱 홈, 사각·원형 포켓, 경로(bulge 호), 변수'),
         ),
         h('p', { class: 'privacy', html: `${icon('lock')}<span><b>파일은 이 브라우저 밖으로 나가지 않습니다.</b> 서버로 올리지 않고 이 기기 안에서 읽습니다.</span>` }),
-        h('p', { class: 'keys fine-only' }, '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기'),
+        h('p', { class: 'keys fine-only' }, '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Shift 측정 중 방향 잠금 · Ctrl+O 열기'),
         h('p', { class: 'keys coarse-only' }, '한 손가락 끌기 회전 · 두 손가락 이동·확대 · 측정 중 길게 누르면 정밀 조준'),
       ),
     );

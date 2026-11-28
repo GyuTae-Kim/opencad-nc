@@ -9,6 +9,7 @@
  *   (58차 — 코어 0.53.0 pickCycle group: 코어가 묶음마다 한 후보로 세어 한도 16·차례·수가 묶음 단위. 한 줄의 원호 선분이 16개를 넘게 겹쳐도 뒤 줄이 든다)
  * - 111차: 첫 점에서 지나간 모서리에 수직인 방향 위 후보(코어 0.115.0 perpendicularDir)는 측정 알림도 툴팁처럼 「모서리에 수직」(코어 틀은 수직 발과 같은 「수직점」)
  * - 203차: 커서가 켜진 동안(화살표는 커서) 첫 점 뒤 X·Y·Z가 그 축으로 잠그고 같은 키로 푼다(measure-lock.ts axisKey — 화살표 잠금과 같은 arrow 길), 안내·알림
+ * - 204차: 커서가 켜진 동안 첫 점 뒤 L이 지금 방향을 잠그고 같은 키로 푼다(커서가 꺼졌을 때의 ↓ — 같은 arrow(null) 길, Shift는 누르는 동안만), 잠글 것이 없으면 띠 위 알림만
  */
 import type { Pick3d } from 'opencad-viewer3d';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -465,8 +466,8 @@ describe('203차: 가상 커서가 켜진 동안 X·Y·Z로 측정 방향을 축
       const h = app.state().measureLock?.hoverLock;
       return h ? SHIFT[h]! : 'X·Y·Z로 축 방향 잠금';
     };
-    // 3D 보기 설명(aria-description)에 X·Y·Z
-    expect(v.canvas.getAttribute('aria-description')).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기).');
+    // 3D 보기 설명(aria-description)에 X·Y·Z(204차: 같은 문장에 L — 「X·Y·Z로 축 방향을 잠급니다」 → 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」)
+    expect(v.canvas.getAttribute('aria-description')).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다(다시 누르면 풀기).');
     key('Enter');
     expect(v.keyboardCursor).toMatchObject({ mode: 'measure' });
     // 첫 점 전: 잠글 것이 없다(막지 않는다)
@@ -523,6 +524,102 @@ describe('203차: 가상 커서가 켜진 동안 X·Y·Z로 측정 방향을 축
     v.canvas.blur();
     expect(v.keyboardCursor).toBeNull();
     expect(key('x').defaultPrevented).toBe(false);
+    expect(lock()).toBeNull();
+    v.canvas.focus();
+    v.clearMeasure();
+  });
+});
+
+describe('204차: 가상 커서가 켜진 동안 L로 지금 방향을 잠그고 같은 키로 푼다(커서가 꺼졌을 때의 ↓ — Shift는 누르는 동안만이고 그동안 화살표는 큰 걸음, WCAG 2.1.1)', () => {
+  const frames = async (n = 8): Promise<void> => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+  /** 잠근 방향 → 상태 줄 잠금 안내·가상 커서 알림 글(measure.ts LOCK_HINTS) */
+  const LOCKED: Record<string, string> = {
+    x: 'X축 방향으로 잠금',
+    y: 'Y축 방향으로 잠금',
+    z: 'Z축 방향으로 잠금',
+    parallel: '나란한 방향으로 잠금',
+    perpendicular: '수직 방향으로 잠금',
+    tangent: '접선 방향으로 잠금',
+  };
+
+  it('첫 점 뒤 L은 잠글 방향이 없으면 띠 위 알림만(풀었다고 알리지 않음), 커서 아래 방향이 있으면 그 방향으로 잠그고 같은 키로 푼다 — X·Y·Z 잠금도 풀고, 첫 점 전·수정 키·커서가 꺼졌을 때는 받지 않는다', async () => {
+    const { app, v, center, key, live } = await open('a.nc', LINES);
+    app.toggleMeasure(true);
+    await vi.waitFor(() => expect(app.state().measuring).toBe(true));
+    // 문서를 연 뒤 늦게 오는 전체 보기를 먼저 지나 보낸다(111차 꼴)
+    await frames();
+    center([20, 15, 0], 25);
+    const lock = (): string | null | undefined => app.state().measureLock?.lock;
+    const hint = (): string => [...document.querySelectorAll('.st-sel .st-lock')].map((e) => e.textContent).join(' ');
+    // 3D 보기 설명(aria-description)에 L
+    expect(v.canvas.getAttribute('aria-description')).toContain('L로 지금 방향을 잠급니다(다시 누르면 풀기).');
+    key('Enter');
+    expect(v.keyboardCursor).toMatchObject({ mode: 'measure' });
+    // 첫 점 전: 받지 않는다(막지 않는다)
+    expect(key('l').defaultPrevented).toBe(false);
+    expect(lock()).toBeNull();
+    key('Enter');
+    expect(v.measurePoints).toHaveLength(1);
+    await vi.waitFor(() => expect(app.state().measureLock?.button).toBe(true));
+    await frames();
+    // 커서가 첫 점 자리 그대로: 잠글 방향이 없다(코어는 첫 점을 찍으면 마지막으로 본 방향을 잊고, 그 자리 후보는 첫 점과 같은 점 붙잡기라 방향이 없다)
+    expect(app.state().measureLock?.hoverLock).toBeNull();
+    const said = live();
+    expect(key('l').defaultPrevented).toBe(true);
+    expect(lock()).toBeNull();
+    expect(app.state().measureLock?.flash).toMatch(/^잠글 방향이 없습니다: /);
+    await frames();
+    expect(live()).toBe(said);
+    // 커서를 줄 4(X축과 나란한 직선) 위로 오른쪽 30화소 옮기면 잠글 방향이 생긴다
+    for (let i = 0; i < 6; i++) key('ArrowRight');
+    await frames();
+    const h0 = app.state().measureLock?.hoverLock;
+    expect(h0).toBeTruthy();
+    // L: 그 방향으로 잠근다(커서가 꺼졌을 때 ↓와 같은 길) — 상태 줄 안내는 바로, 가상 커서 알림 영역은 그 그림 뒤(코어가 다시 구한 후보 알림이 있으면 그 앞), 띠 위 알림은 거둔다
+    expect(key('l').defaultPrevented).toBe(true);
+    expect(lock()).toBe(h0);
+    expect(hint()).toBe(LOCKED[h0!]);
+    expect(app.state().measureLock?.flash).toBeNull();
+    await frames();
+    expect(live()).toMatch(new RegExp(`^${LOCKED[h0!]}( · .+)?$`));
+    // 같은 키(대문자도): 풂
+    key('L');
+    expect(lock()).toBeNull();
+    await frames();
+    expect(live()).toMatch(/^방향 잠금을 풀었습니다( · .+)?$/);
+    // X·Y·Z로 잠근 축도 L이 푼다(↓와 같다)
+    key('y');
+    expect(lock()).toBe('y');
+    key('l');
+    expect(lock()).toBeNull();
+    await frames();
+    expect(live()).toMatch(/^방향 잠금을 풀었습니다( · .+)?$/);
+    // 다시 잠그고, 누른 채 되풀이(repeat)는 막기만 한다(잠갔다 풀었다 하지 않는다)
+    key('l');
+    expect(lock()).toBe(h0);
+    expect(key('l', { repeat: true }).defaultPrevented).toBe(true);
+    expect(lock()).toBe(h0);
+    // 수정 키가 있으면 받지 않는다(Ctrl/⌘+L 주소창 등 브라우저·OS 몫, Shift는 누르는 동안 지금 방향 잠금)
+    for (const o of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      expect(key('l', o).defaultPrevented, JSON.stringify(o)).toBe(false);
+      expect(lock()).toBe(h0);
+    }
+    // 한글 입력기(L 자리의 ㅣ): 풀고 다시 잠근다
+    key('ㅣ', { code: 'KeyL' });
+    expect(lock()).toBeNull();
+    key('ㅣ', { code: 'KeyL' });
+    expect(lock()).toBe(h0);
+    // 다른 글자는 그대로
+    expect(key('k').defaultPrevented).toBe(false);
+    expect(lock()).toBe(h0);
+    // 커서가 꺼지면(초점이 떠남) L은 받지 않는다(그때는 ↓)
+    key('l');
+    expect(lock()).toBeNull();
+    v.canvas.blur();
+    expect(v.keyboardCursor).toBeNull();
+    expect(key('l').defaultPrevented).toBe(false);
     expect(lock()).toBeNull();
     v.canvas.focus();
     v.clearMeasure();

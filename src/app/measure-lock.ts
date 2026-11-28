@@ -23,6 +23,7 @@
  *   상태 줄·측정 띠는 잠글 방향이 있을 때만 "Shift로 X축 방향 잠그기"처럼 알리고, 없으면 화살표만 알린다(lockHint).
  * - 화살표(첫 점을 찍은 뒤, 둘째 점 방향을 잡는 동안): → X · ← Y · ↑ Z축, ↓ 지금 방향(없으면 첫 점 뒤 마지막으로 본 방향 — 코어). 같은 키로 푼다.
  *   203차: 가상 커서가 켜진 동안(화살표는 커서 옮기기)은 3D 보기가 받은 X·Y·Z가 같은 길로 그 축을 잠그고 푼다(axisKey — 잠근 축·푼 것은 가상 커서 알림 영역에).
+ *   204차: 그 동안 L이 ↓와 같은 길로 지금 방향을 잠그고 푼다(Shift는 누르는 동안만이고 그동안 화살표는 커서 큰 걸음 — 눌러 잠가 두고 화살표로 잘게 옮기는 키).
  * - 측정 띠 잠금 단추(손가락 기기 — 넓은 화면에서는 띠가 숨는다): 방향을 잡는 동안만 보인다. 정밀 조준 중 다른 손가락으로 누르면 click이
  *   오지 않으므로 손가락·펜은 pointerdown에서 받는다. 잠글 방향이 없으면 띠 위에 알림을 띄우고, 잠금이 걸리면(어느 길로든) 그 알림만 거둔다.
  * - 원호 접선(13차): 첫 점이 원호 이동(G2/G3, 나선 포함)의 시작·끝이고 커서 아래 점이 그 원호 위(다른 끝 포함)면 Shift·↓·잠금 단추가
@@ -173,13 +174,22 @@ export const CURSOR_LOCK_HINT = 'X·Y·Z로 축 방향 잠금';
 export const UNLOCK_SAID = '방향 잠금을 풀었습니다';
 
 /**
- * 203차: 가상 커서가 켜진 동안 축을 잠그는 키 → 축(X·Y·Z가 아니면 null). 적힌 글자(key — 대소문자 무시, 독일어 자판의 Y·Z 자리도 적힌 대로)가 먼저이고,
+ * 203차: 가상 커서가 켜진 동안 축을 잠그는 키 → 축(X·Y·Z가 아니면 null — 204차 L은 lockKeyOf). 적힌 글자(key — 대소문자 무시, 독일어 자판의 Y·Z 자리도 적힌 대로)가 먼저이고,
  * 라틴 글자가 아니면(한글 입력기의 ㅌ·ㅛ·ㅋ, 입력기 처리 중 'Process') 물리 키(code KeyX·KeyY·KeyZ — 코어 걷기 키와 같은 까닭, 다만 축 이름이라 적힌 글자가 먼저)
  */
 export function axisKeyOf(e: { key: string; code?: string }): 'x' | 'y' | 'z' | null {
+  const c = lockKeyOf(e);
+  return c === 'l' ? null : c;
+}
+
+/**
+ * 204차: 가상 커서가 켜진 동안 측정 방향을 잠그는 키 → X·Y·Z(그 축)·L(지금 방향 — 커서가 꺼졌을 때의 ↓), 아니면 null.
+ * 글자 읽기는 203차 axisKeyOf와 같다(적힌 글자 먼저, 라틴 글자가 아니면 물리 키 — 한글 입력기 L 자리의 ㅣ는 code KeyL)
+ */
+export function lockKeyOf(e: { key: string; code?: string }): 'x' | 'y' | 'z' | 'l' | null {
   const k = e.key.length === 1 ? e.key.toLowerCase() : '';
-  const c = /^[a-z]$/.test(k) ? k : /^Key[XYZ]$/.test(e.code ?? '') ? e.code![3]!.toLowerCase() : '';
-  return c === 'x' || c === 'y' || c === 'z' ? c : null;
+  const c = /^[a-z]$/.test(k) ? k : /^Key[XYZL]$/.test(e.code ?? '') ? e.code![3]!.toLowerCase() : '';
+  return c === 'x' || c === 'y' || c === 'z' || c === 'l' ? c : null;
 }
 
 /** 57차: 3D 보기의 가상 커서가 켜져 있는지(코어 keyboardCursor — 가짜 뷰어는 값이 없거나 객체가 아닐 수 있다) */
@@ -726,16 +736,20 @@ export class MeasureLock {
    * 축을 골라 잠그는 키가 없었다(Shift는 지금 방향만, Alt+화살표는 브라우저 뒤로 가기와 겹침 — README 남은 일 56차). 3D 보기가 받은 X·Y·Z(axisKeyOf — Ctrl·⌘·Alt·Shift 없음,
    * 앱이 막지 않음)는 방향을 잡는 동안(첫 점 뒤) 그 축으로 잠근다 — 커서가 꺼졌을 때 → X · ← Y · ↑ Z와 같은 길(arrow — 같은 축이면 풀고 다른 축이면 바꿈).
    * 받으면 기본 동작을 막는다(Firefox 입력하면 찾기 등). 누른 채 되풀이(repeat)는 막기만 한다(잠갔다 풀었다 하지 않게). 잠근 축·푼 것은 가상 커서 알림 영역에(sayLock)
+   * 204차: L(lockKeyOf)은 지금 방향 — 커서가 꺼졌을 때의 ↓와 같은 길(arrow(null) — 잠겼으면 어느 잠금이든 풀고, 아니면 커서 아래 접선·코어 방향·첫 점 뒤 마지막으로 본 방향을 잠그며,
+   * 잠글 것이 없으면 띠 위 알림). Shift는 누르는 동안만이고 그동안 화살표는 커서 큰 걸음(코어 keySnapAction)이라, 눌러 잠가 두고 화살표로 잘게 옮기는 키가 없었다.
+   * 잠글 것이 없어 앞뒤 모두 잠금이 없으면 가상 커서 알림 영역에는 내지 않는다(「풀었습니다」가 틀린 알림 — 띠 위 알림만)
    */
   private axisKey(e: KeyboardEvent): void {
     const v = this.host.viewer();
     if (!v || e.target !== v.canvas || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.defaultPrevented || !cursorOn(v) || !this.directing) return;
-    const a = axisKeyOf(e);
+    const a = lockKeyOf(e);
     if (!a) return;
     e.preventDefault();
     if (e.repeat) return;
-    this.arrow(a);
-    this.sayLock();
+    const was = this.lock;
+    this.arrow(a === 'l' ? null : a);
+    if (was || this.lock) this.sayLock();
   }
 
   /**

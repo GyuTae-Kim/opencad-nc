@@ -14,7 +14,8 @@ const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
 const dict = (lang: string): Record<string, string> => catalogs[lang] as Record<string, string>;
 /** 품음(대소문자 무시 — 184차 꼴) */
 const has = (whole: string, part: string): boolean => whole.toLowerCase().includes(part.toLowerCase());
-const KEYS_LINE = '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기';
+/** 시작 화면 키 안내 줄(app.ts). 204차: 「Esc 고른 것 지우기」 뒤에 「Shift 측정 중 방향 잠금」을 더했다(i18n-toolbar195 — 재생·멈춤·격자 낱말 기대는 그대로) */
+const KEYS_LINE = '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Shift 측정 중 방향 잠금 · Ctrl+O 열기';
 
 describe('재생·깎기 묶음 번역(194차)', () => {
   it('한 기능의 보이는 글·풍선 글·이름·바로 가기 줄이 한 낱말을 쓴다', () => {
