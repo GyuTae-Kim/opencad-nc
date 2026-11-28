@@ -142,7 +142,7 @@ const TABLE: readonly Entry[] = [
   { n: 32, sheet: 'styles', sel: '.prop-row .v', text: '정보 탭 값', kind: '다른 길', alt: ['src/app/panel-info.ts', "h('span', { class: 'v', title: v"] },
   { n: 33, sheet: 'styles', sel: FIXED_V, text: '정보 탭 보정 구간 출처 줄·공구 방향 줄(풀이 글 없음)', kind: '고침' },
   { n: 34, sheet: 'styles', sel: '.group-item .name', text: '#33 안 묶음 이름·켜고 끄는 줄 이름(풀이 글은 이름이 아님)', kind: '고침' },
-  { n: 35, sheet: 'styles', sel: '.sec-val', text: '단면 상자 값(뒤집음 표시 — 뒤집기 버튼 눌림은 모양 없음)', kind: '고침' },
+  { n: 35, sheet: 'styles', sel: '.sec-val', text: '단면 상자 값(뒤집음 표시 — 226차부터 뒤집기 버튼 눌림 모양도)', kind: '고침' },
   { n: 36, sheet: 'styles', media: NARROW, sel: '.notice .nt-text', text: '#17 판단 띠 글 두 줄', kind: '펼침', open: ['.notice.open .nt-text', '.notice:has(:focus-visible) .nt-text'] },
   {
     n: 37,
