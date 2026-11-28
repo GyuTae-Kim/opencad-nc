@@ -13,7 +13,7 @@ import { formatDuration } from '../view/playback';
 import { MPR_KIND, docLabel, lineAtLabel, lineMoveList, lineNumberText, mprOps, sceneCounts, sceneFeatures, unitLabel, type NcDoc } from './doc';
 import { h, mixSpan } from './dom';
 import { fileText, mix, type Mixed } from './filetext';
-import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
+import { fmtInt, fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { mixText } from './i18n';
 import { icon } from './icons';
 import type { PanelHost } from './panel';
@@ -290,8 +290,8 @@ function renderInfo(p: InfoPanel, d: NcDoc): void {
     rows.push(row('범위 크기(급속 포함)', `${fmtNum(b.max[0] - b.min[0])} × ${fmtNum(b.max[1] - b.min[1])} × ${fmtNum(b.max[2] - b.min[2])} ${u}`));
     rows.push(row('최소', fmtPt(b.min)), row('최대', fmtPt(b.max)));
   }
-  if (c.segments) rows.push(row('선분', c.segments.toLocaleString('ko-KR')));
-  if (c.triangles) rows.push(row('삼각형', c.triangles.toLocaleString('ko-KR')));
+  if (c.segments) rows.push(row('선분', fmtInt(c.segments)));
+  if (c.triangles) rows.push(row('삼각형', fmtInt(c.triangles)));
   p.body.append(group('문서', ...rows));
   if (d.job) p.body.append(jobGroup(p, d, d.job));
 
@@ -346,7 +346,7 @@ function renderInfo(p: InfoPanel, d: NcDoc): void {
   for (const w of warns.slice(items.length, 300)) lis.push(h('li', {}, w));
   p.body.append(
     warns.length
-      ? group(`해석 경고 ${warns.length.toLocaleString('ko-KR')}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
+      ? group(`해석 경고 ${fmtInt(warns.length)}개`, h('ul', { class: 'warn-list' }, ...lis), warns.length > 300 ? h('p', { class: 'hint' }, `처음 300개만 보입니다.`) : null)
       : group('해석 경고', h('p', { class: 'hint' }, '경고가 없습니다.')),
   );
   // 3D 보기 코어가 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0). 있을 때만(아래 sceneIssueGroup)
@@ -509,14 +509,14 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
     group(
       '공구 경로',
       row('G-code 형식 · 단위', `${nc.kind === 'heidenhain' ? 'Heidenhain 대화식' : NC_DIALECT_NAMES[nc.dialect]}${f.lathe ? ' · 선반' : ''} · ${nc.units}`),
-      row('줄 · 실행 블록', `${nc.source.lineCount.toLocaleString('ko-KR')} · ${st.blocks.toLocaleString('ko-KR')}`),
-      row('이동', st.moveCount.toLocaleString('ko-KR')),
+      row('줄 · 실행 블록', `${fmtInt(nc.source.lineCount)} · ${fmtInt(st.blocks)}`),
+      row('이동', fmtInt(st.moveCount)),
       row('이송 길이', `${fmtNum(st.feedLength, 1)} ${u}`),
       row('급속 길이', `${fmtNum(st.rapidLength, 1)} ${u}`),
       row('예상 시간', formatDuration(st.time)),
       row('이송 · 급속 · 휴지', `${formatDuration(st.feedTime)} · ${formatDuration(st.rapidTime)} · ${formatDuration(st.dwellTime)}`),
       row('급속 속도(계산용)', `${fmtNum(st.rapidFeed, 0)} ${u}/분`),
-      row('공구 교환 · 원호 · 구멍', `${st.toolChanges} · ${st.arcCount.toLocaleString('ko-KR')} · ${st.holeCount.toLocaleString('ko-KR')}`),
+      row('공구 교환 · 원호 · 구멍', `${fmtInt(st.toolChanges)} · ${fmtInt(st.arcCount)} · ${fmtInt(st.holeCount)}`),
       st.toolChangeTime > 0 ? row('공구 교환 시간', formatDuration(st.toolChangeTime)) : null,
     ),
   );
@@ -687,16 +687,16 @@ const POSITIONS_TEXT = {
   edges: '윤곽선 {0}개는 좌표가 수가 아니거나 너무 커서 그리지 않았습니다.',
 } as const;
 
-/** 장면 알림 하나의 앱 글(개수는 ko-KR 꼴 — 다른 경고 글과 같다) */
+/** 장면 알림 하나의 앱 글(개수는 다른 경고 글과 같은 꼴 — 221차: 천 단위는 화면 언어, fmtInt) */
 export function sceneIssueText(i: SceneIssue): string {
   const t = i.code === 'positions' ? (i.kind === 'mesh' ? (i.field === 'edges' ? POSITIONS_TEXT.edges : POSITIONS_TEXT.mesh) : i.kind === 'point' ? POSITIONS_TEXT.point : POSITIONS_TEXT.line) : ISSUE_TEXT[i.code];
-  return t.replace('{0}', i.count.toLocaleString('ko-KR'));
+  return t.replace('{0}', fmtInt(i.count));
 }
 
 /** 정보 탭 "3D 보기 경고" 묶음(해석 경고 다음 — 알림이 있을 때만 부른다) */
 export function sceneIssueGroup(list: readonly SceneIssue[]): HTMLElement {
   return group(
-    `3D 보기 경고 ${list.length.toLocaleString('ko-KR')}개`,
+    `3D 보기 경고 ${fmtInt(list.length)}개`,
     h('ul', { class: 'warn-list' }, ...list.slice(0, 300).map((i) => h('li', {}, sceneIssueText(i)))),
     h('p', { class: 'hint' }, '그릴 수 없는 값은 3D 보기가 빼거나 기본값으로 바꿔 그렸습니다. 해석한 이동과 코드는 그대로입니다.'),
   );

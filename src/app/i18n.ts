@@ -5,6 +5,8 @@ import { currentLanguage, languages, languageUrl, metadataForLanguage, registerC
 // 212차: 사전 조각을 받지 못한 알림(dom.ts — 둘 다 첫 화면 모듈, 서로의 값을 모듈 맨 위에서 쓰지 않아 돌아 가져와도 된다)
 import { loadDone, loadFailed } from './dom';
 import type { Mixed } from './filetext';
+// 221차: 화면 글에 넣는 수 꼴의 언어(format.ts — 셈 수 천 단위·프로그램 값 천 단위 쉼표). active와 함께 정한다
+import { setNumberLanguage } from './format';
 
 const loaders: Record<string, () => Promise<{default: Record<string,string>}>> = {
   en: () => import('../../site/locales/en.json'), ja: () => import('../../site/locales/ja.json'),
@@ -82,7 +84,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   // 끝에 알림(아래 failed — 메뉴에서 다시 고르거나 「다시 시도」)
   const first = language;
   language = await loadLanguage(language).then(() => language, () => 'ko');
-  active = language;
+  setNumberLanguage((active = language));
   const originalViews = Object.entries(VIEW_LABELS);
   function canvasLabels(): void {
     for (const [view,label] of originalViews) VIEW_LABELS[view as keyof typeof VIEW_LABELS] = translate(label,language);
@@ -192,7 +194,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       url.pathname = base + (next === 'ko' ? '' : next + '/');
     }
     language = next;
-    active = next;
+    setNumberLanguage((active = next));
     control.setLanguage(language);
     history.replaceState(history.state,'',url.pathname+url.search+url.hash);
     metadata(); canvasLabels(); update(presentationRoot);
@@ -222,7 +224,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   observer.observe(presentationRoot,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','aria-description','placeholder','alt','href']});
   if (language !== first) failed(first);
   return () => {
-    active = 'ko';
+    setNumberLanguage((active = 'ko'));
     observer.disconnect(); titleObserver.disconnect(); control.dispose();
     for (const [view,label] of originalViews) VIEW_LABELS[view as keyof typeof VIEW_LABELS]=label;
     cubeLabels();

@@ -26,7 +26,7 @@ import { sourceLine } from '../text';
 import type { NcCompRunMeta } from '../scene';
 import { idRange, moveEndTime, playbackAt } from '../view/playback';
 import { filePrefix, fileText, joinMixed, mix, type FileText, type Mixed } from './filetext';
-import { fmtCount, fmtNum, fmtPt, formatBytes, formatMs } from './format';
+import { fmtCount, fmtInt, fmtNum, fmtPt, formatBytes, formatMs } from './format';
 import { statusMeasureHint, type TrackMark } from './measure';
 import type { MprPayload, NcJobInfo, NcKind, NcOpenOptions, NcPayload, ParseResult } from './protocol';
 
@@ -165,7 +165,7 @@ export function lineNumberText(d: Pick<NcDoc, 'job'>, line: number): string {
 /** "줄 N"(여러 파일 작업이면 "파일 · 줄 N" — 원래 파일의 줄, 파일 이름은 파일 글) */
 export function lineLabel(d: Pick<NcDoc, 'job'>, line: number): Mixed {
   const j = jobLineOf(d.job, line);
-  return j ? mix`${fileText(j.file)} · 줄 ${j.local.toLocaleString('ko-KR')}` : [`줄 ${(line + 1).toLocaleString('ko-KR')}`];
+  return j ? mix`${fileText(j.file)} · 줄 ${fmtInt(j.local)}` : [`줄 ${fmtInt(line + 1)}`];
 }
 
 /** "N번 줄"(여러 파일 작업이면 "파일 · N번 줄") */

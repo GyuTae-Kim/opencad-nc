@@ -35,7 +35,7 @@ import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMo
 import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText } from './i18n';
-import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
+import { BINARY_MESSAGE, extensionList, fileAccept, fmtInt, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, isPressTarget, keyAction, readCharKeysPref, tabMove, viewKeyOf, writeCharKeysPref } from './keys';
 import { MEASURE_LOADING, measureHint, measureLines, snapPair, trackMarks } from './measure';
@@ -346,6 +346,8 @@ export class NcViewerApp implements PanelHost {
   private simStrip: HTMLElement | null = null;
   private bandRo: ResizeObserver | null = null;
   private sec!: { btn: HTMLButtonElement; axes: { axis: SectionAxis | null; el: HTMLButtonElement }[]; range: HTMLInputElement; flip: HTMLButtonElement; val: HTMLSpanElement };
+  /** 221차: 코어가 마지막으로 알린 단면 상태(언어를 바꾸면 값 글을 새 언어의 수 꼴로 다시 쓴다) */
+  private secState: SectionState | null = null;
 
   constructor(root: HTMLElement, opts: NcViewerAppOptions = {}) {
     root.addEventListener('languagechange', (e) => {
@@ -365,6 +367,8 @@ export class NcViewerApp implements PanelHost {
       // 코어 측정 거리 글상자(캔버스 글)를 새 언어로 다시 그린다. 키보드 붙잡기 알림 틀도(56차)
       this.labelFormat();
       this.keySnap?.sync();
+      // 221차: 단면 값 글(프로그램 값 수 꼴 — 독일어는 천 단위 없이, format.ts fmtNum)도 새 언어 꼴로. 켜졌을 때만(꺼짐 글은 번역층이 옮긴다)
+      if (this.secState) this.renderSection(this.secState);
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
       // 파일 글이 섞인 글(상태 줄·안내 띠·패널·재생 띠·시작 화면 오류 — 그릴 때 옮겨 넣고 번역층은 건너뛴다)을 새 언어로 다시 그린다(54차)
@@ -1553,9 +1557,9 @@ export class NcViewerApp implements PanelHost {
       this.placeSecHandle();
     };
     attach();
-    v.onSectionChange((st) => this.renderSection(st));
+    v.onSectionChange((st) => this.renderSection((this.secState = st)));
     v.onCameraChange(() => this.placeSecHandle());
-    this.renderSection(null);
+    this.renderSection((this.secState = null));
     // 그래픽 문맥을 잃으면(휴대폰이 앱을 뒤로 보냈다 돌아올 때 등) 되찾을 때까지 3D 보기 가운데에 안내(코어 0.25.0 알림 — 놓기는 쓰지 않아
     // 코어가 장면을 그대로 다시 올린다). 가운데라 위·아래 띠, 왼쪽 위 계산 표시, 오른쪽 위 뷰 큐브와 겹치지 않는다
     // 198차: 안내는 알림 영역이 아니다(role=status로 글과 함께 새로 붙어 첫 글을 읽지 않을 수 있었다) — 같은 글을 미리 붙여 둔 알림 영역에 잃을 때 한 번,
@@ -1686,7 +1690,7 @@ export class NcViewerApp implements PanelHost {
     this.renderNotices(false);
     // 178차: 새 문서는 재생을 멈추고 재생 자리가 없다 — 재생 띠도 맞춘다(패널을 닫고 재생하던 띠가 옛 시간·줄 글로 남았다)
     this.refreshPlayStrip();
-    if (w) toast(`해석 경고 ${w.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
+    if (w) toast(`해석 경고 ${fmtInt(w)}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
     // 코어 0.9.0부터 캔버스는 키보드 초점(:focus-visible)에 테두리를 그린다. 스크립트 초점은 브라우저가 입력 없이 연 경우(?sample·
     // 공유·파일 연결로 연 첫 화면)에도 테두리를 보이므로, 앞서 초점을 가진 것이 키보드 초점이었을 때만(열기 단추·최근 문서를 키보드로) 보인다
     const prev = document.activeElement;
@@ -1823,7 +1827,7 @@ export class NcViewerApp implements PanelHost {
     const fresh = s.doc !== this.doc || !s.key;
     this.sceneIssueState = { doc: this.doc, key };
     if (this.doc?.panelTab === 'info' && (s.key || key)) this.panel.refresh();
-    if (list.length && fresh) toast(`3D 보기 경고 ${list.length.toLocaleString('ko-KR')}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
+    if (list.length && fresh) toast(`3D 보기 경고 ${fmtInt(list.length)}개 — 패널의 "정보" 탭에서 볼 수 있습니다.`, 'info', 4500);
   }
 
   setHighlight(ids: string[]): void {
@@ -2112,8 +2116,8 @@ export class NcViewerApp implements PanelHost {
    * 패널 "깎기" 탭(모듈을 받기 전이면 받은 뒤 다시 그린다 — 정보 탭 조각과 같은 panel.ts waitTab). 211차: 받지 못했으면 실패 글과 「다시 시도」 —
    * 전에는 「불러오는 중…」에 멈췄다(다른 탭에 갔다 와야 다시 받았다)
    */
-  renderSimTab(body: HTMLElement, d: NcDoc): void {
-    if (this.sim) return this.sim.renderTab(body, d);
+  renderSimTab(body: HTMLElement, d: NcDoc, was?: string): void {
+    if (this.sim) return this.sim.renderTab(body, d, was);
     this.panel.waitTab(this.simLoader, '깎기');
   }
 

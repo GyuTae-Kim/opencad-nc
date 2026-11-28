@@ -15,7 +15,7 @@ import { onceImport } from './core';
 import { fileSpan, h, loadFailed, mixSpan } from './dom';
 import { mix } from './filetext';
 import { mixNodes } from './i18n';
-import { fmtNum, fmtPt } from './format';
+import { fmtInt, fmtNum, fmtPt } from './format';
 import { icon } from './icons';
 import { tabMove } from './keys';
 import { panelMeasureHint, snapPair } from './measure';
@@ -74,8 +74,8 @@ export interface PanelHost {
   /** 기계·읽기 설정(앱 전체, 기억된다) */
   readonly settings: NcSettings;
   setSettings(s: NcSettings): void;
-  /** "깎기" 탭(소재 깎기 시뮬레이션 — 앱이 나눠 받은 모듈로 그린다) */
-  renderSimTab(body: HTMLElement, d: NcDoc): void;
+  /** "깎기" 탭(소재 깎기 시뮬레이션 — 앱이 나눠 받은 모듈로 그린다). 221차: was는 같은 탭을 다시 그릴 때 그리기 전 몸통의 오류 글 열쇠(220차 failWas) */
+  renderSimTab(body: HTMLElement, d: NcDoc, was?: string): void;
   /** 3D 보기 코어가 지금 장면 입력에서 빼거나 고친 것(55차 — 코어 0.50.0, 정보 탭 "3D 보기 경고") */
   sceneIssues?(): readonly SceneIssue[];
 }
@@ -342,7 +342,7 @@ export class NcPanel {
       // 220차: 같은 탭을 다시 그리면 그리기 전 몸통의 받기 실패 글 열쇠(dom.ts loadFailed — 같은 글이면 role 없이 그려 다시 읽히지 않게)
       this.failWas = sameTab ? this.body.querySelector<HTMLElement>('[data-fail]')?.dataset.fail : undefined;
       this.body.textContent = '';
-      if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d);
+      if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d, this.failWas);
       // 210차: 공구·가공·변수·정보 탭 몸통은 문서를 열 때 받는 정보 탭 조각(panel-info.ts renderTab — 첫 화면 JS에서 뺐다). 받기 전이면 받은 뒤 다시 그린다(211차 waitTab)
       else if (info) info.renderTab(this, d);
       else this.waitTab(loadPanelInfo, name);
@@ -495,8 +495,8 @@ export class NcPanel {
       // 새 문서: 찾은 줄은 다시 찾는다(찾는 글은 둔다)
       this.findFor = src;
       this.findHits = null;
-      this.findCount.textContent = '';
-    }
+      this.setFind(() => '');
+    } else if (this.findText() !== this.findShown) this.setFind(this.findText);
     requestAnimationFrame(() => {
       if (this.doc !== d) return;
       const row = this.focusRow();
@@ -514,6 +514,16 @@ export class NcPanel {
   /** 찾은 줄(오름차순). null = 아직 안 찾음 */
   private findHits: Int32Array | null = null;
   private findTimer = 0;
+  /**
+   * 221차: 찾기 칸 셈 글(찾은 수·간 차례 — 수는 화면 언어 꼴)을 짓는 함수와 그 글. 찾기 막대는 다시 그려도 그대로라 언어를 바꾸면 앞 언어 수 꼴이 남았다 —
+   * 코드 탭을 다시 그릴 때(renderCode) 지은 글이 바뀌었으면만 다시 쓴다(같으면 두어 알림 영역이 다시 읽지 않게)
+   */
+  private findText = (): string => '';
+  private findShown = '';
+  private setFind(text: () => string): void {
+    this.findText = text;
+    this.findCount.textContent = this.findShown = text();
+  }
 
   /** 코드 위 찾기 칸: 글(대소문자 무시)·N 번호·":줄 번호"(그 줄로 가기). Enter 다음, Shift+Enter 이전, Esc 닫기 */
   private ensureFind(): HTMLElement {
@@ -540,7 +550,7 @@ export class NcPanel {
         ev.stopPropagation();
         input.value = '';
         this.findHits = null;
-        this.findCount.textContent = '';
+        this.setFind(() => '');
         this.code?.refresh();
         this.code?.el.focus();
       }
@@ -595,7 +605,7 @@ export class NcPanel {
       }
     }
     this.findHits = Int32Array.from(out);
-    this.findCount.textContent = q && !/^:/.test(q) ? (out.length ? `${out.length.toLocaleString('ko-KR')}개` : '없음') : '';
+    this.setFind(() => (q && !/^:/.test(q) ? (out.length ? `${fmtInt(out.length)}개` : '없음') : ''));
     this.code?.refresh();
     return this.findHits;
   }
@@ -629,7 +639,7 @@ export class NcPanel {
         }
       if (k < 0) k = hits.length - 1;
     }
-    this.findCount.textContent = `${(k + 1).toLocaleString('ko-KR')}/${hits.length.toLocaleString('ko-KR')}`;
+    this.setFind(() => `${fmtInt(k + 1)}/${fmtInt(hits.length)}`);
     this.selectFound(hits[k]!);
   }
 
@@ -715,7 +725,7 @@ export class NcPanel {
           lines.push(h('div', { class: 'state' }, mixSpan(st.modal)));
           lines.push(h('div', { class: 'dim' }, `끝점 ${st.pos}${picked >= 0 ? ` · 고른 점 ${fmtPt(p!.point)}` : ''}`));
           if (st.arc) lines.push(h('div', { class: 'dim' }, st.arc));
-          if (picked < 0 && d.selMoves.length > 1) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${d.selMoves.length.toLocaleString('ko-KR')}개를 강조했습니다(첫 이동의 상태).`));
+          if (picked < 0 && d.selMoves.length > 1) lines.push(h('div', { class: 'dim' }, `이 줄의 이동 ${fmtInt(d.selMoves.length)}개를 강조했습니다(첫 이동의 상태).`));
         } else lines.push(h('div', { class: 'dim' }, '이 줄은 이동을 만들지 않습니다.'));
       }
     } else if (p) {

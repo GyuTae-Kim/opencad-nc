@@ -17,7 +17,7 @@ import type { Mesh3d, Scene3d, Viewer3d } from 'opencad-viewer3d';
 import { MPR_KIND, lineAtLabel, mprOps, opLabel, playPosition, sceneFeatures, unitLabel, type NcDoc } from './doc';
 import { fileSpan, h, mixSpan, toast } from './dom';
 import type { FileText } from './filetext';
-import { fmtNum } from './format';
+import { fmtInt, fmtNum } from './format';
 import { mixText, uiText } from './i18n';
 import { icon, type IconName } from './icons';
 import { sourceLine, sourceText } from '../text';
@@ -229,7 +229,8 @@ export function composeSimScene(base: Scene3d, sim: Mesh3d[], paths: boolean, bo
 /**
  * 135차: 깎기 탭 상태 글 칸의 알림 꼴 — 계산하지 못했으면(켜져 있고 오류: 소재 상자가 올바르지 않음·워커 실패) role=alert, 아니면 aria-live=polite.
  * 오류는 탭을 통째로 다시 그린 새 칸(redrawTab)의 처음 글로만 나오는데, polite 영역은 이미 있던 영역의 글이 바뀌어야 화면 읽기 프로그램이 읽어
- * (117차 측정 띠 위 알림과 같은 까닭) 친 값이 막힌 것을 듣지 못했다. alert는 새로 붙어도 읽는다(알림 상자의 오류 — dom.ts toast와 같다). 진행·끝·꺼짐 글은 polite 그대로
+ * (117차 측정 띠 위 알림과 같은 까닭) 친 값이 막힌 것을 듣지 못했다. alert는 새로 붙어도 읽는다(알림 상자의 오류 — dom.ts toast와 같다). 진행·끝·꺼짐 글은 polite 그대로.
+ * 221차: 앱이 같은 탭을 다시 그린 같은 오류 글은 polite(fillTab — 새로 붙은 alert로 거듭 읽히지 않게)
  */
 function statusLive(el: HTMLElement, alert: boolean): void {
   if (alert) {
@@ -348,6 +349,8 @@ export class SimView {
   private sent: SimPosition | null = null;
   private last: SimUpdate | null = null;
   private error: string | null = null;
+  /** 221차: 이 차례에 새로 난 오류(showError가 세우고 마이크로태스크에서 거둔다 — fillTab이 같은 글이어도 alert로 그린다) */
+  private errorNew = false;
   private readonly indexCache = new Map<string, Uint32Array>();
   // ── 장면 올리기 ──
   private composed: Scene3d | null = null;
@@ -681,6 +684,9 @@ export class SimView {
    * 진행 칩은 멈추며 거두고 장면은 문서 장면으로 돌아가 그 밖에 알릴 곳이 없었다. 탭이 보이면 탭 글(135차 alert)만 — 두 번 읽지 않게
    */
   private showError(keep = false): void {
+    // 221차: 새로 난 오류 — 이 차례(사용자 동작·워커 알림 하나) 안의 탭 그리기는 같은 글이어도 alert(fillTab). 다음 차례부터는 거둔다(마이크로태스크)
+    this.errorNew = true;
+    queueMicrotask(() => (this.errorNew = false));
     // 197차: 오류는 탭 글·알림 상자(alert)가 읽어 알림 영역은 비운다(두 번 읽지 않게)
     this.hush();
     redrawTab(this.host, this, keep);
@@ -888,29 +894,34 @@ export class SimView {
     if (!u) return '계산하는 중… 0%';
     const secs = `${fmtNum((u.stats.computeMs + u.stats.meshMs) / 1000, 2)}초`;
     const k = this.panel ? this.stepAt() : null;
-    if (k !== null) return `가공 ${k.toLocaleString('ko-KR')} / ${this.opSteps().length.toLocaleString('ko-KR')}개까지 깎았습니다 · ${secs}`;
+    if (k !== null) return `가공 ${fmtInt(k)} / ${fmtInt(this.opSteps().length)}개까지 깎았습니다 · ${secs}`;
     if (u.at.move >= count) return `전체 프로그램을 깎았습니다 · ${secs}`;
-    return `이동 ${(u.at.move + (u.at.frac > 0 ? 1 : 0)).toLocaleString('ko-KR')} / ${count.toLocaleString('ko-KR')}까지 깎았습니다 · ${secs}`;
+    return `이동 ${fmtInt(u.at.move + (u.at.frac > 0 ? 1 : 0))} / ${fmtInt(count)}까지 깎았습니다 · ${secs}`;
   }
 
   private updateStatus(): void {
     this.updateChip();
     const el = this.statusEl;
     if (!el?.isConnected) return;
+    // 221차: 같은 오류 글을 든 칸(data-fail — fillTab이 role 없이 그린 칸도)은 꼴·글을 그대로(같은 글을 다시 써 다시 읽히지 않게)
+    const err = this.on ? this.error : null;
+    if (err && el.dataset.fail === err) return;
     // 135차: 오류였던 칸에 진행 글이 들어가면 alert로 거듭 읽지 않게(또 그 반대) 꼴을 먼저 바꾼다
-    const alert = this.on && !!this.error;
-    if (alert !== (el.getAttribute('role') === 'alert')) statusLive(el, alert);
+    if (!!err !== (el.getAttribute('role') === 'alert')) statusLive(el, !!err);
+    if (err) el.dataset.fail = err;
+    else el.removeAttribute('data-fail');
     el.textContent = this.statusText();
   }
 
   // ───────────────────────── 패널 "깎기" 탭 ─────────────────────────
 
-  renderTab(body: HTMLElement, d: NcDoc): void {
-    this.fillTab(body, d);
+  /** 221차: was = 같은 탭을 다시 그릴 때 그리기 전 몸통의 오류 글 열쇠(panel.ts render 220차 failWas — 탭을 바꿔 그리면 없음) */
+  renderTab(body: HTMLElement, d: NcDoc, was?: string): void {
+    this.fillTab(body, d, was);
     this.tabEls = tabControls(body);
   }
 
-  private fillTab(body: HTMLElement, d: NcDoc): void {
+  private fillTab(body: HTMLElement, d: NcDoc, was?: string): void {
     const key = d.nc ?? d.mpr;
     if (key && this.key !== key) this.prepare(d);
     const panel = !d.nc ? this.panel : null;
@@ -926,8 +937,12 @@ export class SimView {
       cb.addEventListener('change', () => run(cb.checked));
       return [h('label', { class: 'group-item opt', title: hint || null }, cb, h('span', { class: 'name' }, label)), hint ? h('p', { class: 'hint coarse-only' }, hint) : null];
     };
-    this.statusEl = h('p', { class: 'hint sim-status' }, this.statusText());
-    statusLive(this.statusEl, this.on && !!this.error);
+    // 221차(WCAG 4.1.3 — 220차 탭 몸통 실패 글과 같은 꼴): 오류 글 칸은 오류 원문을 data-fail에 두고, 새로 난 오류가 아니고(errorNew) 그리기 전 같은 탭 칸과 같은 글이면(was)
+    // role 없이(polite) 그린다 — 앱이 같은 탭을 다시 그릴 때마다(언어 바꿈·같은 탭 다시 보이기·장면 경고·오류와 상관없는 칸 바꿈) 같은 글이 새 alert로 거듭 읽혔다.
+    // 새로 난 오류·같은 오류를 또 낸 동작·탭을 바꿔 처음 보인 오류는 alert 그대로
+    const err = this.on ? this.error : null;
+    this.statusEl = h('p', { class: 'hint sim-status', 'data-fail': err }, this.statusText());
+    statusLive(this.statusEl, !!err && (this.errorNew || err !== was));
     // 165차: 켜고 끄는 상자는 같은 일을 하는 도구 막대 메뉴 항목(app.ts — 넓은 화면 「그리기」·휴대폰 「보기 설정」)과 같은 이름 「소재 깎기」(WCAG 3.2.4).
     // 예전 「깎인 소재 보이기」는 정보 탭 「깎인 소재」 묶음 상자(SIM_GROUP — 소재 메시 보이기, 다른 일)와도 거의 같았다
     const head: (Node | null)[] = [
@@ -986,10 +1001,10 @@ export class SimView {
       }
       body.append(
         group(
-          `급속 이동이 소재를 지남 ${total.toLocaleString('ko-KR')}곳`,
+          `급속 이동이 소재를 지남 ${fmtInt(total)}곳`,
           rows.length ? list : null,
-          total > rows.length ? h('p', { class: 'hint' }, `그 밖 ${(total - rows.length).toLocaleString('ko-KR')}곳은 목록에 넣지 않았습니다.`) : null,
-          skipped ? h('p', { class: 'hint' }, `해석 경고에 이미 있는 줄 ${skipped.toLocaleString('ko-KR')}곳은 뺐습니다.`) : null,
+          total > rows.length ? h('p', { class: 'hint' }, `그 밖 ${fmtInt(total - rows.length)}곳은 목록에 넣지 않았습니다.`) : null,
+          skipped ? h('p', { class: 'hint' }, `해석 경고에 이미 있는 줄 ${fmtInt(skipped)}곳은 뺐습니다.`) : null,
           h('p', { class: 'hint' }, '급속이 깎은 자리는 빨갛게 그립니다(지금 재생 자리까지).'),
         ),
       );
@@ -1059,7 +1074,7 @@ export class SimView {
       group(
         '격자·색',
         h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '해상도(긴 변 칸)'), res),
-        s ? row('격자', `${(s.nx - 1).toLocaleString('ko-KR')} × ${(s.ny - 1).toLocaleString('ko-KR')}칸 · 칸 ${fmtNum(Math.max(s.dx, s.dy), 3)} ${u}`) : null,
+        s ? row('격자', `${fmtInt(s.nx - 1)} × ${fmtInt(s.ny - 1)}칸 · 칸 ${fmtNum(Math.max(s.dx, s.dy), 3)} ${u}`) : null,
         h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, '색'), color),
         h('p', { class: 'hint' }, '자동은 기기(휴대폰은 낮게)와 프로그램 크기로 정합니다. 칸이 많을수록 또렷하지만 계산과 메모리가 늘어납니다.'),
       ),
@@ -1254,7 +1269,7 @@ export class SimView {
     const list = this.opSteps();
     const n = list.length;
     const k = this.stepAt() ?? n;
-    s.count.textContent = `${k.toLocaleString('ko-KR')} / ${n.toLocaleString('ko-KR')}`;
+    s.count.textContent = `${fmtInt(k)} / ${fmtInt(n)}`;
     const op = k > 0 ? list[k - 1]?.op : undefined;
     const row = op !== undefined ? mprOps(this.host.doc?.scene ?? { name: '', units: 'mm', meshes: [], lines: [] }).find((o) => o.index === op) : undefined;
     if (this.step === null) s.name.replaceChildren(h('span', {}, '모든 가공'));
@@ -1281,14 +1296,14 @@ export class SimView {
   /** 판재: 시뮬레이션하지 않은 가공(까닭별 수와 가공 — 누르면 그 가공을 고른다), 꺼진 가공 수 */
   private renderSkipped(body: HTMLElement, src: PanelSimSource): void {
     if (!src.skipped.length && !src.disabled) return;
-    const sec = h('section', { class: 'prop-group' }, h('h3', {}, `시뮬레이션하지 않은 가공 ${src.skipped.length.toLocaleString('ko-KR')}개`));
+    const sec = h('section', { class: 'prop-group' }, h('h3', {}, `시뮬레이션하지 않은 가공 ${fmtInt(src.skipped.length)}개`));
     const byCode = new Map<PanelSkipCode, PanelSimSkip[]>();
     for (const s of src.skipped) byCode.set(s.code, [...(byCode.get(s.code) ?? []), s]);
     for (const code of Object.keys(PANEL_SKIP_TEXT) as PanelSkipCode[]) {
       const list = byCode.get(code);
       if (!list) continue;
       // 163차: 까닭 머리는 그 밑 가공 목록의 제목 — 굵은 글 모양만이 아니라 제목 요소로(묶음 제목 h3 밑 단계 4 — 화면 읽기의 제목 이동·목록에 든다, WCAG 1.3.1)
-      sec.append(h('h4', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${list.length.toLocaleString('ko-KR')}개`)));
+      sec.append(h('h4', { class: 'sim-skip-head' }, h('b', {}, PANEL_SKIP_TEXT[code]), ' ', h('span', { class: 'dim' }, `${fmtInt(list.length)}개`)));
       const ul = h('ul', { class: 'warn-list' });
       for (const s of list.slice(0, 50)) {
         const b = h('button', { class: 'warn-item', type: 'button', title: '누르면 그 가공을 고릅니다' }, h('span', { class: 'ln' }, `가공 ${s.op + 1}`), this.opName(this.host.doc?.kind === 'mpr' ? { file: s.label } : s.label, 'msg'));
@@ -1296,9 +1311,9 @@ export class SimView {
         ul.append(h('li', {}, b));
       }
       sec.append(ul);
-      if (list.length > 50) sec.append(h('p', { class: 'hint' }, `그 밖 ${(list.length - 50).toLocaleString('ko-KR')}개는 가공 탭에서 보십시오.`));
+      if (list.length > 50) sec.append(h('p', { class: 'hint' }, `그 밖 ${fmtInt(list.length - 50)}개는 가공 탭에서 보십시오.`));
     }
-    if (src.disabled) sec.append(h('p', { class: 'hint' }, `꺼진 가공 ${src.disabled.toLocaleString('ko-KR')}개는 깎지 않습니다.`));
+    if (src.disabled) sec.append(h('p', { class: 'hint' }, `꺼진 가공 ${fmtInt(src.disabled)}개는 깎지 않습니다.`));
     body.append(sec);
   }
 
