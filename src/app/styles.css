@@ -1483,6 +1483,12 @@ table.grid button.linkish {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 225차(WCAG 1.4.12): 풀이 글(title)이 없는 값 칸(보정 구간 출처 — 30차가 title을 뺌, 공구 방향)은 글 간격을 넓히면 「…」로 잘려 끝을 볼 길이 없었다 — 줄을 바꾼다(깎기 탭 .sim-v는 163차 그대로) */
+.prop-row .v:not([title]):not(.sim-v) {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .prop-row.edit .select {
   width: 100%;
 }
@@ -1607,12 +1613,11 @@ tr.off td:not(:first-child) {
 .group-item input {
   accent-color: var(--accent);
 }
+/* 225차(WCAG 1.4.12): 묶음·켜고 끄는 줄 이름은 「…」로 자르면 다시 볼 길이 없다(줄 풀이 글은 이름이 아님) — 글 간격을 넓히거나 긴 번역이면 줄을 바꾼다 */
 .group-item .name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .warn-list {
   margin: 0;
@@ -1840,15 +1845,14 @@ tr.off td:not(:first-child) {
   width: 100%;
   min-height: 28px;
 }
+/* 225차(WCAG 1.4.12): 값(축 = 위치 (뒤집음))은 이 칸에만 보여 「…」로 자르면 뒤집음·위치 끝을 볼 길이 없다 — 글 간격을 넓히거나 긴 번역이면 줄을 바꾼다 */
 .sec-val {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
   color: var(--text-dim, var(--text-faint));
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 @media (pointer: coarse) {
   .seg {
