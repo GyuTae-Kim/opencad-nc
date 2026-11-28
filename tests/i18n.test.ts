@@ -417,3 +417,59 @@ describe('language URLs and UI presentation', () => {
   });
 
 });
+
+/**
+ * 217차: 203~216차에 더한 열쇠(가상 커서 X·Y·Z·L 잠금과 안내·키보드 단축키 창·키 줄·「{0}을(를) 불러오지 못했습니다.」·「다시 시도」 — `git diff 1b319e5 origin/main -- site/locales/`의 25열쇠와
+ * 「새로 고침」)를 네 언어마다 같은 사전의 다수 꼴과 견줘(README 개발 217차 문단) 갈린 값 여섯을 고쳤다(원문·코드 그대로). 같은 꼴이 다시 갈리지 않게 사전 전체에서 센다.
+ */
+describe('203~216차 원문의 네 언어 꼴(217차)', () => {
+  const dict = (code: string): Record<string, string> => catalogs[code] as Record<string, string>;
+  const KEYS_LINE = Object.keys(dict('en')).find((k) => k.startsWith('키: F 전체 보기 · '))!;
+  const KEY_HELP = Object.keys(dict('en')).find((k) => k.startsWith('Enter로 가상 커서를 켭니다.'))!;
+  it('일본어는 키 이름 뒤 「で」를 띄우고(「Shift で」 꼴), 원문 낱말 사이 「·」는 일본어 「・」·영어 붙인 「/」', () => {
+    // 일본어 키 이름 + で: 띄움 35 : 붙임 7 — 붙임 가운데 키 이름은 3D 보기 설명(KEY_HELP 「Enterで…Tabで…X・Y・Zで…、Lで」) 하나였다(같은 문장의 잠금 안내는 「X・Y・Z で軸方向に、L で現在の方向にロック」)
+    for (const [key, value] of Object.entries(dict('ja'))) expect(value, key).not.toMatch(/(?:Enter|Tab|Esc|Shift|Space)で|[A-Z]・[A-Z](?:・[A-Z])*で|、[A-Z]で/);
+    // 원문 한글 사이 「·」(「다음·이전」 꼴): 일본어 「・」 66 : 「/」 2(「次/前の移動」 하나 — 다른 하나는 원문이 G7/G8), 영어 「낱말/낱말」 붙임 27 : 띄움 2(「Next / previous move」 하나)
+    const dotted = Object.keys(dict('en')).filter((k) => /[가-힣]·[가-힣]/.test(k));
+    expect(dotted.length).toBeGreaterThan(80);
+    for (const key of dotted) {
+      expect(dict('ja')[key], key).not.toMatch(/[぀-ヿ一-鿿]\/[぀-ヿ一-鿿]/);
+      expect(dict('en')[key], key).not.toMatch(/[a-z] \/ [a-z]/i);
+    }
+  });
+  it('중국어 키 글 괄호는 반각 + 빈칸(「适合窗口 (F)」 꼴)이고, 키 줄 항목의 기능 글은 그 원문을 홀로 옮긴 값', () => {
+    // 키 글만 든 괄호: 「适合窗口 (F)」·「地板网格 (F7)」·「打开文件 (Ctrl+O)」·「停止读取 (Esc)」 — 전각은 「在 3D 视图外…（F · 1–7 · ?）」 하나였다
+    const KEY = String.raw`(?:F\d*|\d–\d|\?|Esc|Enter|Tab|Shift|Ctrl\+\w+)`;
+    const fullKeys = new RegExp(`（${KEY}(?: · ${KEY})*）`);
+    for (const [key, value] of Object.entries(dict('zh-CN'))) expect(value, key).not.toMatch(fullKeys);
+    // 키 줄(시작 화면): 「키 + 기능」마다 기능은 그 원문을 홀로 옮긴 값 그대로(독일어 「Enter virtueller Cursor」만 단축키 창 묶음 제목 Virtueller Cursor와 갈렸다 —
+    // 나머지 일곱은 Gesamtansicht·…·Öffnen). 영어는 줄 전체가 제목 꼴(Fit to View)이라 대소문자만 무시한다
+    const items = KEYS_LINE.split(' · ').map((p) => p.replace(/^(?:키: )?\S+ /, ''));
+    expect(items).toEqual(['전체 보기', '표준 뷰', '격자', '재생/멈춤', '가상 커서', '고른 것 지우기', '측정 중 방향 잠금', '열기']);
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) {
+      const line = dict(code)[KEYS_LINE]!.split(' · ');
+      expect(line, code).toHaveLength(items.length);
+      items.forEach((ko, i) => {
+        const fold = (s: string): string => (code === 'en' ? s.toLowerCase() : s);
+        expect(fold(line[i]!).endsWith(` ${fold(dict(code)[ko]!)}`), `${code}: ${line[i]} ← ${ko}`).toBe(true);
+      });
+    }
+  });
+  it('고친 값 여섯은 그 값 그대로이고 거꾸로 찾으면 그 열쇠(다른 열쇠와 같은 값이 아님)', () => {
+    // 중국어 「单击 3D 视图后」: 라틴 글자·한자 사이 띄움 363 : 붙임 31, 문장 안 「3D 视图」 5 : 「3D视图」 2 — 사전 전체 규칙은 열쇠 밖 「已由3D视图省略」·이름 「3D视图」에 걸려 값만 고정한다
+    const want: [code: string, key: string, value: string][] = [
+      ['ja', KEY_HELP, 'Enter で仮想カーソルをオンにします。矢印キーで移動、Tab で重なった候補を切り替え、Enter で選ぶか点を打ち、Esc でオフにします。測定の1点目の後は X・Y・Z で軸方向に、L で現在の方向にロックします（もう一度押すと解除）。測定中はマウスポインターの位置で重なった候補も Tab・Shift+Tab で切り替え、Esc で切り替えを解除します'],
+      ['en', '다음·이전 이동(10개씩)', 'Next/previous move (10 at a time)'],
+      ['ja', '다음·이전 이동(10개씩)', '次・前の移動（10個ずつ）'],
+      ['zh-CN', '3D 보기 밖에서도 한 글자 단축키(F·1~7·?)', '在 3D 视图外也使用单字符快捷键 (F · 1–7 · ?)'],
+      ['zh-CN', '가상 커서 키는 3D 보기를 누른 뒤 씁니다.', '单击 3D 视图后即可使用虚拟光标键。'],
+      ['de', KEYS_LINE, 'Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter Virtueller Cursor · Esc Auswahl löschen · Shift Richtungssperre beim Messen · Strg+O Öffnen'],
+    ];
+    for (const [code, key, value] of want) {
+      expect(dict(code)[key], `${code}: ${key}`).toBe(value);
+      expect(sourceMessage(value), `${code}: ${value}`).toBe(key);
+    }
+    // 같은 문장의 잠금 안내(CURSOR_LOCK_HINT)와 3D 보기 설명의 X·Y·Z·L 글이 한 꼴
+    expect(dict('ja')[KEY_HELP]).toContain(dict('ja')['X·Y·Z로 축 방향, L로 지금 방향 잠금']!);
+  });
+});
