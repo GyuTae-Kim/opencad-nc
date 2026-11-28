@@ -62,6 +62,7 @@ import { NcViewerApp } from '../../src/app/app';
 import { loadPanelInfo } from '../../src/app/panel';
 import { RecentStore } from '../../src/app/recent';
 import { openShortcutsDialog } from '../../src/app/shortcuts';
+import { browserFocus } from './focus-rules';
 import { memoryBackend } from './recent-memory';
 
 // Siemens: 다른 파일의 부프로그램(L9001 — 해석 판단 띠 새 줄 → .app-live, i18n-live201.test.ts와 같은 예제)
@@ -88,7 +89,6 @@ const said = (parent: ParentNode): string[] | null => {
   return s ? [...s.childNodes].map((n) => n.textContent ?? '') : null;
 };
 
-const realFocus = HTMLElement.prototype.focus;
 beforeAll(async () => {
   // 앱이 기다리지 않고 받는 조각(3D 보기 위 UI·측정 도구·정보 탭 공구 경로 부분)을 미리 받아 둔다(ci-guard 5번). 창 조각은 위 정적 가져오기
   await import('../../src/app/viewer-ui');
@@ -106,10 +106,8 @@ beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
   vi.stubGlobal('matchMedia', (q: string) => ({ media: q, matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
-  // 브라우저 초점 규칙: inert 안·숨은(hidden) 칸은 초점을 받지 않는다
-  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, o?: FocusOptions) {
-    if (!this.closest('[inert], [hidden]')) realFocus.call(this, o);
-  });
+  // 브라우저 초점 규칙: inert 안·숨은(hidden) 칸은 초점을 받지 않는다(208차 — 도움 모듈 focus-rules.ts로 떼어 208차 시험과 함께 씀)
+  browserFocus();
   localStorage.clear();
 });
 afterEach(() => {

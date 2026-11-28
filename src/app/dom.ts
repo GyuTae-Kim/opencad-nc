@@ -69,20 +69,40 @@ export function toastArea(): HTMLElement {
   return toastHost;
 }
 
+/** 208차: 알림이 버튼 누름으로 빠질 때 남은 알림이 없으면 갈 칸들(앱이 정한다 — 차례대로 초점을 받는 첫 칸) */
+let spare: () => readonly (HTMLElement | null | undefined)[] = () => [];
+export function toastSpare(f: typeof spare): void {
+  spare = f;
+}
+
 /** 잠깐 보이는 알림(오류는 role=alert). 글 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다). action을 주면 단추 하나(누르면 실행하고 닫는다) */
 export function toast(message: string | readonly (string | Node)[], kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
   const host = toastArea();
   const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, ...(typeof message === 'string' ? [message] : message));
+  // 208차(WCAG 2.4.3): ✕·동작 버튼을 키보드로 누르면 알림째 떼어져 초점이 문서로 빠졌다(HTML focus fixup) — 초점이 그 알림 안이었을 때만 남은 알림 가운데 같은 차례(모자라면 마지막)의
+  // 같은 자리 버튼(✕면 ✕, 아니면 첫 버튼 — 176차 판단 띠 꼴), 남은 알림이 없으면 앱이 준 칸 가운데 초점을 받는 첫 칸(207차 꼴 — 숨은·inert 칸은 받지 않는다). 밖이었으면 그대로
+  const drop = (): void => {
+    const box = el.parentElement;
+    const at = box ? [...box.children].indexOf(el) : -1;
+    const had = el.contains(document.activeElement) ? document.activeElement : null;
+    el.remove();
+    if (!had) return;
+    const next = box?.children[Math.min(at, box.childElementCount - 1)];
+    for (const to of next ? [next.querySelector<HTMLElement>(had.matches('.toast-x') ? '.toast-x' : 'button')] : spare()) {
+      to?.focus({ preventScroll: true });
+      if (to && document.activeElement === to) return;
+    }
+  };
   if (action) {
     const act = h('button', { class: 'toast-act', type: 'button' }, action.label);
     act.addEventListener('click', () => {
-      el.remove();
+      drop();
       action.run();
     });
     el.append(act);
   }
   const close = h('button', { class: 'toast-x', type: 'button', 'aria-label': '알림 닫기', title: '닫기' }, '×');
-  close.addEventListener('click', () => el.remove());
+  close.addEventListener('click', drop);
   el.append(close);
   host.append(el);
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
