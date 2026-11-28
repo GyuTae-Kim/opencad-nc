@@ -2,18 +2,20 @@
 /**
  * 228차(WCAG 2.5.3 이름 안의 보이는 글 — Label in Name): 글이 보이는 누를 칸의 접근 이름(aria-label·aria-labelledby·title이 이름이 되는 경우)이 보이는 글을 담는지
  * 다섯 언어 화면에서 본다(.runtime/r228/progress.md 표와 같은 번호). 말로 조작하는 사용자가 화면에 보이는 낱말로 그 칸을 부를 수 있어야 한다.
- * - 222차 그리는 걸음 꼴(처음 화면·단축키 창·알림 상자, 예제 프로그램의 코드·공구·정보·깎기 탭, Siemens 정보 탭, 판재 MPR 가공·변수·깎기 탭)을 넓은 화면에서,
- *   휴대폰 꼴은 CSS로 글이 숨는 칸만 넓은 화면과 갈려(도구·제목 막대 글, 시작 화면 마우스·손가락 글) 처음 화면·단축키 창·알림 상자·예제 열기·코드·정보 탭만 걷는다.
- *   걸음마다 언어 메뉴로 ko·en·ja·zh-CN·de를 돌며(다음 걸음은 거꾸로 — 앱이 상태 줄·패널·띠를 다시 그리고 번역층이 글·속성을 다시 옮김) 같은 화면을 다섯 번 센다.
+ * - 감사(.runtime/r228 — 222차 걸음 넓은 화면 17·휴대폰 6 × 다섯 언어)로 정한 표의 꼴마다 그 꼴이 보이는 상태 셋만 센다(리드 요청 — CI 시간: 처음 실행 21초):
+ *   ① 처음 화면 + 단축키 창(#1·#3·#4), ② 예제 프로그램 코드 탭(#2·#4·#6), ③ 같은 문서 깎기 탭(#7·#8·#9). 앱은 한 번 붙이고 상태마다 언어 메뉴로 ko·en·ja·zh-CN·de를 돌며
+ *   (다음 상태는 거꾸로 — 앱이 패널·띠를 다시 그리고 번역층이 글·속성을 다시 옮김) 같은 DOM을 넓은 화면(1280×800 마우스)·휴대폰(390×844 손가락) CSS 두 꼴로 센다
+ *   (휴대폰 꼴은 CSS로 글이 숨는 칸 — 도구·제목 막대 글, 시작 화면 마우스·손가락 글 — 만 갈림).
  * - 셈 대상: 누를 칸(222차 SEMANTIC) 가운데 보이는 글(CSS로 숨은 마디·그림 빼고 aria-hidden 글은 넣음 — 입력 칸은 감싼 라벨·설정 줄 이름·열 머리·자리 글)이 있고
- *   이름이 그 글 그대로가 아닌 칸(aria-label·aria-labelledby·title, 또는 aria-hidden 글이 빠진 글 이름). 그런 칸은 모두 표(TABLE)의 한 꼴에 들어야 한다(새 칸이면 표에 더해야 통과).
+ *   이름이 그 글 그대로가 아닌 칸(aria-label·aria-labelledby·title, 또는 aria-hidden 글이 빠진 글 이름). 그린 칸은 모두 표(TABLE)의 한 꼴에 들어야 한다.
+ * - 새 칸 막기는 소스 글로: src의 이름 다는 자리(aria-label·aria-labelledby 줄)는 모두 SITES 표(DOM 표 꼴 번호 또는 셈 밖 까닭)에 들어야 한다 — 새 자리면 판정과 함께 표에.
  * - 담는가: 대소문자·문장부호·기호를 빼고 빈칸을 모은 글(한자·가나·한글 옆 빈칸은 뺌)로 견준다. 184차 꼴 — 한 글자 낱말(R)로 끝나면 이름에서 뒤가 글자로 이어지지 않아야,
  *   한 줄 이름이 여러 칸을 부르면 칸 몫 조각(「 · 」·「・」·「 — 」·「 – 」로 가름, 끝 단위 괄호 뺀 낱말도) 하나. 다른 언어에서 한글이 남으면 어긋남.
  * - jsdom은 CSS를 그리지 않아 숨김(display: none)은 vlist·styles·shortcuts.css 규칙을 읽어 그 꼴의 @media만 켜고 특정도·차례로 겹쳐 셈한다(222차 꼴을 display 하나로 줄임).
  * 고친 것: 시작 화면 열기 칸 — 이름(「NC 파일 열기 — 눌러서 고르거나 끌어다 놓기」)이 보이는 제목을 다섯 언어 모두 품지 않았다 → 보이는 제목 둘을 감싼 칸을 aria-labelledby로.
  * 뷰어 코어(WebGL)는 가짜, 해석은 워커와 같은 길(parseForView), 깎기 워커는 같은 실행기를 같은 스레드에서(222차 꼴).
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -70,7 +72,6 @@ vi.mock('../../src/app/client', async () => {
 
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
-import { toast } from '../../src/app/dom';
 import { installLocalization } from '../../src/app/i18n';
 import { loadPanelInfo } from '../../src/app/panel';
 import { RecentStore } from '../../src/app/recent';
@@ -92,48 +93,8 @@ class FakeWorker {
   }
 }
 
-// Siemens: 다른 파일의 부프로그램(L9001 — 해석 판단 띠 동작 버튼·✕)
+// 처음 화면 최근 문서(Siemens 짧은 프로그램 — 여는 것은 아니고 목록 줄만)
 const SIE = ['; PART 1', 'G71 G17 G90', 'T="FLAT_D6" D1', 'M6', 'S1000 M3', 'G0 X0 Y0 Z5', 'G1 Z-1 F200', 'G1 X20', 'G1 Y20', 'L9001', 'M30', ''].join('\n');
-// woodWOP MPR: 판 600 × 400 × 19, 윗면 구멍·포켓, 옆면 구멍, 변수 하나(가공·변수 탭)
-const MPR = [
-  '[H',
-  'VERSION="4.0 Alpha"',
-  '_BSX=600',
-  '_BSY=400',
-  '_BSZ=19',
-  '',
-  '[001',
-  'DM="12"',
-  'KM="DEPTH"',
-  '',
-  '<100 \\WerkStck\\',
-  'LA="600"',
-  'BR="400"',
-  'DI="19"',
-  '',
-  '<102 \\BohrVert\\',
-  'XA="100"',
-  'YA="100"',
-  'TI="DM"',
-  'DU="8"',
-  '',
-  '<112 \\Tasche\\',
-  'XA="300"',
-  'YA="200"',
-  'LA="100"',
-  'BR="50"',
-  'TI="10"',
-  '',
-  '<103 \\BohrHoriz\\',
-  'XA="0"',
-  'YA="100"',
-  'ZA="9.5"',
-  'DU="8"',
-  'TI="30"',
-  'BM="XP"',
-  '!',
-  '',
-].join('\n');
 
 const LANGS = ['ko', 'en', 'ja', 'zh-CN', 'de'] as const;
 
@@ -174,6 +135,83 @@ const TABLE: readonly Entry[] = [
   { n: 8, sel: '.prop-row .xyz-input input, .prop-row .sim-pair input, .prop-row .sim-pair select', what: '설정 줄의 여러 칸(줄 이름의 칸 몫 조각 — 축·최소·최대·노즈 R·방향)', how: '담음', part: 'piece' },
   { n: 9, sel: 'table.sim-tools select, table.sim-tools input', what: '깎기 공구 표 칸(열 머리 — 종류·지름·모서리 R·끝 각)', how: '담음', part: 'piece' },
 ];
+
+/**
+ * 소스 글의 이름 다는 자리(주석 밖 줄 — aria-label·aria-labelledby 속성 글·setAttribute('aria-label')): [파일, 줄 조각, 줄 수, 판정].
+ * 판정은 DOM 표 꼴 번호(#n — 보이는 글이 있는 칸) 또는 셈 밖 까닭(그림·기호만·누를 칸 아님·보이는 이름표 없음·번역층·읽기). 새 자리가 생기면 판정과 함께 여기에(보이는 글이 있으면 DOM 표에도)
+ */
+const SITES: readonly (readonly [string, string, number, string])[] = [
+  ['src/app/i18n.ts', "for (const name of ['title','aria-label'", 1, '번역층 — 이름 속성을 옮기는 자리'],
+  ['src/app/i18n.ts', "el.setAttribute('aria-label', label)", 1, '언어 버튼·목록 이름(그림만 — 셈 밖)'],
+  ['src/app/i18n.ts', "attributeFilter:['title','aria-label'", 1, '번역층 감시'],
+  ['src/app/dom.ts', "class: 'toast-x'", 1, '알림 닫기(기호 ×만)'],
+  ['src/app/panel.ts', "class: 'panel-tabs', role: 'tablist'", 1, '탭 줄 무리(누를 칸 아님)'],
+  ['src/app/panel.ts', "class: 'icon-btn'", 1, '패널 닫기(그림만)'],
+  ['src/app/panel.ts', "'aria-label': '문서 패널'", 1, '영역(누를 칸 아님)'],
+  ['src/app/panel.ts', "this.body.setAttribute('aria-labelledby'", 1, '탭 몸통(이름 = 보이는 탭 글)'],
+  ['src/app/panel.ts', "getAttribute('aria-label') ?? el.closest('label')", 1, '읽기 — 초점 열쇠'],
+  ['src/app/panel.ts', "'aria-label': '재생 속도'", 1, '재생 속도 고르기(보이는 이름표 없음 — 고른 값만)'],
+  ['src/app/panel.ts', "'aria-label': '재생 위치'", 1, '재생 막대(보이는 글 없음)'],
+  ['src/app/panel.ts', "title, 'aria-label': label, html: icon(ic)", 1, '재생 막대 한 이동·여기까지(그림만)'],
+  ['src/app/panel.ts', "this.code.el.setAttribute('aria-label', '프로그램 코드')", 1, '#2'],
+  ['src/app/panel.ts', "placeholder: '찾기 — T5", 1, '#6'],
+  ['src/app/panel.ts', "title: label, 'aria-label': label, html: icon(ic)", 1, '찾기 ↑↓(그림만)'],
+  ['src/app/app.ts', "title, 'aria-label': label, html:", 1, '#4'],
+  ['src/app/app.ts', "'aria-label': 'OpenCAD 도구'", 1, '#4'],
+  ['src/app/app.ts', "'aria-label': 'GitHub'", 1, '#4'],
+  ['src/app/app.ts', "class: 'toolbar', role: 'toolbar'", 1, '도구 막대 무리(누를 칸 아님)'],
+  ['src/app/app.ts', "'aria-label': '측정 끝내기'", 1, '측정 띠 ✕(그림만)'],
+  ['src/app/app.ts', "class: 'measure-bar', role: 'group'", 1, '측정 띠 무리(누를 칸 아님)'],
+  ['src/app/app.ts', "'aria-labelledby': 'dz-name'", 1, '#3'],
+  ['src/app/app.ts', "'aria-label': '지원 형식'", 1, '형식 목록(누를 칸 아님)'],
+  ['src/app/app.ts', "'aria-labelledby': 'recent-title'", 1, '최근 문서 영역(누를 칸 아님)'],
+  ['src/app/app.ts', "class: 'recent-del'", 1, '최근 문서 지우기(그림만)'],
+  ['src/app/app.ts', "'aria-label': '단면 위치'", 1, '단면 위치 막대(보이는 글 없음)'],
+  ['src/app/app.ts', "'aria-label': '단면 보기'", 1, '단면 상자(대화 상자 — 누를 칸 아님)'],
+  ['src/app/app.ts', "'aria-label': '자를 축'", 1, '단면 축 무리(누를 칸 아님 — 축 버튼은 글 이름)'],
+  ['src/app/app.ts', "this.themeBtn.setAttribute('aria-label', '앱 설정')", 1, '#4'],
+  ['src/app/app.ts', "this.projBtn.setAttribute('aria-label'", 1, '#4'],
+  ['src/app/app.ts', "this.playBtn.setAttribute('aria-label'", 1, '#4'],
+  ['src/app/app.ts', "class: 'mb-btn icon', type: 'button', title: label, 'aria-label': label", 1, '재생 띠 버튼(그림만)'],
+  ['src/app/app.ts', "'aria-label': '재생 속도'", 1, '재생 띠 속도 고르기(보이는 이름표 없음)'],
+  ['src/app/app.ts', "'aria-label': '재생 위치'", 1, '재생 띠 막대(보이는 글 없음)'],
+  ['src/app/app.ts', "class: 'play-strip', role: 'group'", 1, '재생 띠 무리(누를 칸 아님)'],
+  ['src/app/app.ts', "s.play.setAttribute('aria-label'", 1, '재생 띠 재생(그림만)'],
+  ['src/app/panel-info.ts', "const eye = h('button'", 1, '공구 표 눈(그림만)'],
+  ['src/app/panel-info.ts', "h('th', { 'aria-label': '보이기' }", 1, '표 머리(누를 칸 아님)'],
+  ['src/app/panel-info.ts', "'aria-labelledby': 'panel-groups-title'", 1, '켜고 끄는 줄 무리(이름 = 보이는 묶음 제목)'],
+  ['src/app/panel-info.ts', "'aria-label': '주 프로그램'", 1, '#7'],
+  ['src/app/panel-info.ts', "'aria-label': 'G-code 형식'", 1, '#7'],
+  ['src/app/panel-info.ts', "'aria-label': '기본 단위'", 1, '#7'],
+  ['src/app/panel-info.ts', "class: 'num-input', 'aria-label': label, placeholder", 1, '#7'],
+  ['src/app/panel-info.ts', "노즈 R(mm)`, placeholder: 'R'", 1, '#8'],
+  ['src/app/panel-info.ts', '공구 방향`', 1, '#8'],
+  ['src/app/panel-info.ts', "'aria-label': '선반 G 코드 체계'", 1, '#7'],
+  ['src/app/notices.ts', "'aria-label': '이 안내 닫기'", 1, '판단 띠 ✕(그림만)'],
+  ['src/app/measure-track.ts', "'aria-label': TRACK_LABEL", 1, '끌어온 점(배지 수 — 사전 it)'],
+  ['src/app/measure-track.ts', "this.button.setAttribute('aria-label', (this.label = label))", 1, '끌어온 점(배지 수 — 사전 it)'],
+  ['src/app/shortcuts.ts', "class: 'sc-body', role: 'region'", 1, '#1'],
+  ['src/app/shortcuts.ts', "class: 'sc-box', role: 'dialog'", 1, '단축키 창 상자(대화 상자 — 이름 = 보이는 제목)'],
+  ['src/app/sim.ts', "getAttribute('aria-label') ?? el.closest('label')", 1, '읽기 — 초점 열쇠'],
+  ['src/app/sim.ts', "class: 'num-input', 'aria-label': label })", 1, '#8'],
+  ['src/app/sim.ts', "'aria-label': '해상도(긴 변 칸)'", 1, '#7'],
+  ['src/app/sim.ts', "'aria-label': '색'", 1, '#7'],
+  ['src/app/sim.ts', "{ 'aria-label': mixText([{ file: named }", 1, '#9'],
+  ['src/app/sim.ts', "'aria-label': label, html: `${icon(ic)}${text", 1, '#5'],
+  ['src/app/sim.ts', "'aria-label': '깎은 가공 수'", 1, '따라가기 막대(보이는 글 없음)'],
+  ['src/app/sim.ts', "'aria-label': '가공 하나씩 따라가기'", 1, '따라가기 무리(누를 칸 아님)'],
+  ['src/app/measure-lock.ts', "class: 'mb-btn icon mb-lock'", 1, '방향 잠금(그림만)'],
+];
+const NAME_SITE = /'aria-label(?:ledby)?'|setAttribute\('aria-label/;
+/** src/app·src/view·src/sim의 주석 밖 이름 다는 줄 */
+function nameSites(): { file: string; line: string }[] {
+  const out: { file: string; line: string }[] = [];
+  for (const dir of ['src/app', 'src/view', 'src/sim'])
+    for (const n of readdirSync(join(ROOT, dir)).filter((x) => x.endsWith('.ts')))
+      for (const line of readFileSync(join(ROOT, dir, n), 'utf8').split('\n'))
+        if (!/^\s*(?:\/\/|\*|\/\*)/.test(line) && NAME_SITE.test(line)) out.push({ file: `${dir}/${n}`, line: line.trim() });
+  return out;
+}
 
 // ───────────────────────── CSS 숨김 읽기(222차 꼴 — display 하나) ─────────────────────────
 
@@ -474,8 +512,9 @@ const enc = new TextEncoder();
 
 interface Report {
   readonly problems: Set<string>;
-  readonly seen: Set<number>;
-  /** 꼴마다 언어별 짝(보이는 글 ⊂ 이름 — 셋까지, progress 표 근거) */
+  /** CSS 꼴 이름마다 본 표 번호 */
+  readonly seen: Map<string, Set<number>>;
+  /** 넓은 화면 꼴의 언어별 짝(보이는 글 ⊂ 이름 — 셋까지, progress 표 근거) */
   readonly pairs: Map<number, Map<string, Set<string>>>;
   named: number;
   looks: number;
@@ -497,8 +536,8 @@ function scan(f: Form, lang: string, active: readonly Rule[], rep: Report, sink 
       sink.add(`${f.name} · ${lang} · 표에 없음 · 「${clip(vis)}」 / 「${clip(nm.text)}」(${nm.src}) · ${desc(el)}`);
       continue;
     }
-    if (record) {
-      rep.seen.add(e.n);
+    if (record) rep.seen.get(f.name)?.add(e.n);
+    if (record && f === WIDE) {
       const by = rep.pairs.get(e.n) ?? new Map<string, Set<string>>();
       rep.pairs.set(e.n, by);
       const set = by.get(lang) ?? new Set<string>();
@@ -517,19 +556,22 @@ function scan(f: Form, lang: string, active: readonly Rule[], rep: Report, sink 
   }
 }
 
-/** 그 꼴의 화면을 만들어 걸음마다 다섯 언어로 센다 */
-async function tour(f: Form): Promise<Report> {
+/**
+ * 넓은 화면 앱 하나를 붙여 상태 셋(① 처음 화면 + 단축키 창 · ② 예제 코드 탭 · ③ 같은 문서 깎기 탭)마다 다섯 언어로 바꿔
+ * 같은 DOM을 넓은 화면·휴대폰 CSS 두 꼴로 센다(휴대폰 꼴은 CSS로 글이 숨는 칸만 갈린다 — 앱을 꼴마다 새로 붙이지 않음)
+ */
+async function tour(): Promise<Report> {
   vi.stubGlobal('matchMedia', (q: string) => {
     let matches = false;
     try {
-      matches = media(q, f);
+      matches = media(q, WIDE);
     } catch {
       /* 앱이 모르는 질의를 물으면 거짓 */
     }
     return { media: q, matches, addEventListener: () => {}, removeEventListener: () => {} };
   });
-  vi.stubGlobal('innerWidth', f.w);
-  vi.stubGlobal('innerHeight', f.h);
+  vi.stubGlobal('innerWidth', WIDE.w);
+  vi.stubGlobal('innerHeight', WIDE.h);
   history.replaceState(null, '', '/opencad-nc/');
   document.body.innerHTML = '<div id="app"></div>';
   const root = document.getElementById('app')!;
@@ -538,8 +580,8 @@ async function tour(f: Form): Promise<Report> {
   const app = new NcViewerApp(root, { recent: new RecentStore(backend) });
   dispose = await installLocalization(root);
   const api = window.opencadApp!;
-  const active = RULES.filter((r) => r.media === null || media(r.media, f));
-  const rep: Report = { problems: new Set(), seen: new Set(), pairs: new Map(), named: 0, looks: 0 };
+  const forms = [WIDE, PHONE].map((f) => [f, RULES.filter((r) => r.media === null || media(r.media, f))] as const);
+  const rep: Report = { problems: new Set(), seen: new Map(forms.map(([f]) => [f.name, new Set<number>()])), pairs: new Map(), named: 0, looks: 0 };
   let lang = 'ko';
   let forward = true;
   const switchTo = async (next: string): Promise<void> => {
@@ -549,50 +591,38 @@ async function tour(f: Form): Promise<Report> {
     lang = next;
     await quiet(20);
   };
-  /** 한 걸음: 화면이 가라앉으면 다섯 언어를 돌며 센다(다음 걸음은 거꾸로 — 언어 바꿈 수를 줄임) */
+  /** 한 상태: 화면이 가라앉으면 다섯 언어를 돌며 두 CSS 꼴로 센다(다음 상태는 거꾸로 — 언어 바꿈 수를 줄임) */
   const look = async (): Promise<void> => {
     await quiet();
     for (const l of forward ? LANGS : [...LANGS].reverse()) {
       await switchTo(l);
-      scan(f, l, active, rep);
+      for (const [f, active] of forms) scan(f, l, active, rep);
     }
     forward = !forward;
   };
   await app.renderRecent();
-  await look();
-  // 키보드 단축키 창(? 키 — 문서 없이도). 열린 동안 다른 칸은 inert(jsdom은 누름을 막지 않아 언어 메뉴로 바꿀 수 있다 — 창 글은 번역층이 옮김), Esc로 닫고 다음 걸음
+  // ① 처음 화면 + 키보드 단축키 창(? 키 — 문서 없이도): 창 본문(#1)·열기 칸(#3 — 창 밖은 inert지만 보임)·제목·도구 막대(#4).
+  // jsdom은 inert로 누름을 막지 않아 창을 연 채 언어 메뉴로 바꿀 수 있다(창 글은 번역층이 옮김)
   window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true, cancelable: true }));
   await until(() => !!document.querySelector('[role="dialog"][aria-modal="true"]'));
   await look();
   // 언어 메뉴를 누르면 초점이 언어 버튼으로 가 창 밖이다 — Esc는 창 안 닫기 버튼에서(창 상자가 받음)
   document.querySelector('.sc-close')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await until(() => !document.querySelector('[role="dialog"][aria-modal="true"]'));
-  // 알림 상자(동작 버튼 「다시 시도」·닫기 ✕)
-  toast('조각을 불러오지 못했습니다.', 'error', 4000, { label: '다시 시도', run: () => {} });
+  // ② 예제 프로그램 코드 탭: 코드 목록(#2)·찾기 칸(#6)·문서가 있는 도구 막대(#4 — 투영·재생)
+  expect(await app.openBuffer('opencad-sample.nc', enc.encode(ncSampleProgram()).buffer as ArrayBuffer)).toBe(true);
+  api.togglePanel(true);
+  const tab = async (k: string): Promise<void> => {
+    api.setPanelTab(k);
+    await until(() => root.querySelector(`.panel-tab[data-tab="${k}"]`)?.getAttribute('aria-selected') === 'true');
+  };
+  await tab('code');
   await look();
-  document.querySelector<HTMLButtonElement>('.toast-x')?.click();
-  const programs: [string, string, string[]][] =
-    f === WIDE
-      ? [
-          ['opencad-sample.nc', ncSampleProgram(), ['code', 'tools', 'info', 'sim']],
-          ['part.MPF', SIE, ['info']],
-          ['panel.mpr', MPR, ['ops', 'vars', 'sim']],
-        ]
-      : [['opencad-sample.nc', ncSampleProgram(), ['code', 'info']]];
-  for (const [name, text, tabs] of programs) {
-    expect(await app.openBuffer(name, enc.encode(text).buffer as ArrayBuffer), name).toBe(true);
-    await look();
-    api.togglePanel(true);
-    for (const tab of tabs) {
-      api.setPanelTab(tab);
-      await until(() => root.querySelector(`.panel-tab[data-tab="${tab}"]`)?.getAttribute('aria-selected') === 'true');
-      if (tab === 'sim') await until(() => !!root.querySelector('.panel-body table.sim-tools'));
-      await look();
-    }
-    api.togglePanel(false);
-    if (f === WIDE) await look();
-  }
-  // 스스로 확인(한국어 화면): 이름을 따로 단 표에 없는 새 버튼은 「표에 없음」, 담음 꼴(설정 줄 고르기 — 두 꼴 모두 보임)에 보이는 글과 다른 이름을 주면 「담지 않음」으로 잡혀야 한다
+  // ③ 같은 문서 깎기 탭: 해상도·색(#7)·소재 범위 최소·최대(#8)·공구 표(#9)
+  await tab('sim');
+  await until(() => !!root.querySelector('.panel-body table.sim-tools'));
+  await look();
+  // 스스로 확인(한국어 화면, 두 꼴): 이름을 따로 단 표에 없는 새 버튼은 「표에 없음」, 담음 꼴(설정 줄 고르기 — 두 꼴 모두 보임)에 보이는 글과 다른 이름을 주면 「담지 않음」으로 잡혀야 한다
   await switchTo('ko');
   const fresh = document.createElement('button');
   fresh.type = 'button';
@@ -604,12 +634,14 @@ async function tour(f: Form): Promise<Report> {
   bad.innerHTML = '<span class="k">격자</span><select aria-label="엉뚱한 이름"></select>';
   document.body.append(fresh, bad);
   await quiet(20);
-  const self = new Set<string>();
-  scan(f, 'ko', active, rep, self, false);
+  for (const [f, active] of forms) {
+    const self = new Set<string>();
+    scan(f, 'ko', active, rep, self, false);
+    expect([...self].filter((m) => m.includes('표에 없음') && m.includes('button.r228-new')), f.name).toHaveLength(1);
+    expect([...self].filter((m) => m.includes('담지 않음') && m.includes('「격자」 ⊄ 「엉뚱한 이름」')), f.name).toHaveLength(1);
+  }
   fresh.remove();
   bad.remove();
-  expect([...self].filter((m) => m.includes('표에 없음') && m.includes('button.r228-new'))).toHaveLength(1);
-  expect([...self].filter((m) => m.includes('담지 않음') && m.includes('「격자」 ⊄ 「엉뚱한 이름」'))).toHaveLength(1);
   return rep;
 }
 
@@ -644,24 +676,30 @@ afterEach(() => {
 });
 
 describe('228차 이름 안의 보이는 글(WCAG 2.5.3) — 다섯 언어 화면', () => {
-  for (const [f, must] of [
-    [WIDE, [1, 3, 4, 6, 7, 8, 9]],
-    [PHONE, [1, 3, 6, 7, 8]],
-  ] as const) {
-    it(`${f.name}: 보이는 글이 있고 이름을 따로 단 누를 칸은 모두 표에 들고, 「담음」·「고침」 꼴은 다섯 언어 모두 이름이 보이는 글을 담는다`, async () => {
-      const t0 = Date.now();
-      const rep = await tour(f);
-      const unseen = TABLE.filter((e) => !rep.seen.has(e.n)).map((e) => `#${e.n}`);
-      console.info(
-        `228차 ${f.name}: 셈 ${rep.looks}번(걸음 × 다섯 언어) · 이름을 따로 단 칸 ${rep.named}개 · 표 ${rep.seen.size}/${TABLE.length}꼴 · 못 본 꼴 ${unseen.join('·') || '없음'} · ${Date.now() - t0} ms`,
-      );
-      for (const [n, by] of [...rep.pairs].sort((a, b) => a[0] - b[0])) console.info(`  #${n} ${[...by].map(([l, s]) => `${l} ${[...s].join(' ')}`).join(' | ')}`);
-      expect([...rep.problems]).toEqual([]);
-      expect(must.filter((n) => !rep.seen.has(n))).toEqual([]);
-      // 표시 규칙(display)을 jsdom이 못 읽은 선택자는 글 칸을 숨기지 않는 것뿐(띠·알림 자리 :has — 판단 띠 글 펼침은 누를 칸이 아님)
-      expect(RULES.filter((r) => threw.has(r.sel) && !/\.nt-text|\.notice-bar|\.toasts?\b/.test(r.sel)).map((r) => r.sel)).toEqual([]);
-    });
-  }
+  it('다섯 언어 화면(앱 하나 — 넓은 화면·휴대폰 CSS 두 꼴): 그린 칸 가운데 보이는 글이 있고 이름을 따로 단 칸은 모두 표에 들고, 「담음」·「고침」 꼴은 다섯 언어 모두 이름이 보이는 글을 담는다', async () => {
+    const t0 = Date.now();
+    const rep = await tour();
+    const must: Record<string, readonly number[]> = { [WIDE.name]: [1, 2, 3, 4, 6, 7, 8, 9], [PHONE.name]: [1, 2, 3, 6, 7, 8, 9] };
+    for (const [form, seen] of rep.seen)
+      console.info(`228차 ${form}: 표 ${seen.size}/${TABLE.length}꼴 · 못 본 꼴 ${TABLE.filter((e) => !seen.has(e.n)).map((e) => `#${e.n}`).join('·') || '없음'}`);
+    console.info(`228차: 셈 ${rep.looks}번(상태 셋 × 다섯 언어 × 두 꼴) · 이름을 따로 단 칸 ${rep.named}개 · ${Date.now() - t0} ms`);
+    for (const [n, by] of [...rep.pairs].sort((a, b) => a[0] - b[0])) console.info(`  #${n} ${[...by].map(([l, s]) => `${l} ${[...s].join(' ')}`).join(' | ')}`);
+    expect([...rep.problems]).toEqual([]);
+    expect(Object.entries(must).flatMap(([form, ns]) => ns.filter((n) => !rep.seen.get(form)?.has(n)).map((n) => `${form} #${n}`))).toEqual([]);
+    // 표시 규칙(display)을 jsdom이 못 읽은 선택자는 글 칸을 숨기지 않는 것뿐(띠·알림 자리 :has — 판단 띠 글 펼침은 누를 칸이 아님)
+    expect(RULES.filter((r) => threw.has(r.sel) && !/\.nt-text|\.notice-bar|\.toasts?\b/.test(r.sel)).map((r) => r.sel)).toEqual([]);
+  });
+
+  it('소스 글: 이름 다는 자리(aria-label·aria-labelledby 줄)는 모두 SITES 표에 들고 줄 수가 같다 — 새 자리는 판정(DOM 표 꼴 번호 또는 셈 밖 까닭)과 함께 표에', () => {
+    const found = nameSites();
+    const stray = found.filter((s) => !SITES.some(([f, snip]) => f === s.file && s.line.includes(snip)));
+    expect(stray.map((s) => `${s.file}: ${s.line.slice(0, 120)}`)).toEqual([]);
+    const off = SITES.map(([f, snip, n]) => [f, snip, found.filter((s) => s.file === f && s.line.includes(snip)).length, n] as const).filter(([, , got, n]) => got !== n);
+    expect(off).toEqual([]);
+    // 판정 #n은 DOM 표에 있는 꼴
+    expect(SITES.filter(([, , , v]) => /^#\d+$/.test(v) && !TABLE.some((e) => `#${e.n}` === v)).map(([f, s]) => `${f}: ${s}`)).toEqual([]);
+    expect(found.length).toBe(SITES.reduce((a, [, , n]) => a + n, 0));
+  });
 
   it('사전: 측정 중에만 보이는 끌어온 점 버튼 — 보이는 수(배지)를 이름 틀이 네 언어 모두 품고, 열기 칸 보이는 제목 둘은 네 언어에 있다', () => {
     for (const lang of LANGS) {
