@@ -9,6 +9,7 @@
  * - 받지 못하면(오프라인에서 새 판 등) 약속을 비워 다음 부름에서 다시 받는다(onceImport).
  */
 import { localizeCubeFaces } from './i18n';
+import { CHUNK_FAIL } from './protocol';
 
 type Core = typeof import('opencad-viewer3d');
 type MeasureTools = typeof import('./measure-tools');
@@ -31,6 +32,11 @@ export function onceImport<T>(load: () => Promise<T>): () => Promise<T> {
 let ui: typeof import('./viewer-ui') | null = null;
 /** 코어와 함께 받은 3D 보기 위 앱 UI(56차 viewer-ui.ts — 단면 손잡이·키보드 붙잡기). 받기 전이나 받지 못했으면 null(그것만 없이 연다) */
 export const viewerUi = (): typeof ui => ui;
+/**
+ * 3D 보기 위 앱 UI 조각(212차 — 코어와 따로 다시 받을 수 있게): 코어와 함께 받다 이것만 받지 못하면 코어 약속은 받은 채 남아 뷰어가 생긴 뒤 다시 받지 않았다(새로 고침뿐).
+ * 받지 못하면 받는 중 깃발을 비워 다음 부름(앱 알림의 「다시 시도」 — app.ts ensureViewer attach)에서 다시 받는다
+ */
+export const loadViewerUi = onceImport(() => import('./viewer-ui').then((u) => (ui = u)));
 
 /**
  * 코어 입구 모듈(한 번만 받는다). 55차: 뷰 큐브 면 글(viewcube 모듈 CUBE_FACES — 코어 입구가 내보내지 않는다)도 함께 받아 지금 언어로 옮긴다.
@@ -38,19 +44,17 @@ export const viewerUi = (): typeof ui => ui;
  * 56차: 뷰어가 생긴 뒤에만 쓰는 앱 UI(viewer-ui.ts)도 함께 받는다(viewerUi — 첫 화면 조각을 55차 이하로)
  */
 export const loadViewerCore: () => Promise<Core> = onceImport(async () => {
-  const [core, cube, u] = await Promise.all([import('opencad-viewer3d'), import('opencad-viewer3d/viewcube'), import('./viewer-ui').catch(() => null)]);
+  const [core, cube] = await Promise.all([import('opencad-viewer3d'), import('opencad-viewer3d/viewcube'), loadViewerUi().catch(() => null)]);
   localizeCubeFaces(cube.CUBE_FACES);
-  ui = u;
   return core;
 });
 
 /** 측정 도구 조각(한 번만 받는다) */
 export const loadMeasureTools: () => Promise<MeasureTools> = onceImport(() => import('./measure-tools'));
 
-/** 나눠 받는 조각을 받지 못한 오류인지(브라우저마다 글이 다르다: Chrome·Edge, Firefox, Safari) */
+/** 나눠 받는 조각을 받지 못한 오류인지(브라우저마다 글이 다르다: Chrome·Edge, Firefox, Safari — 정규식은 errorText와 함께 쓰는 protocol.ts CHUNK_FAIL, 212차) */
 export function isChunkLoadError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e ?? '');
-  return /dynamically imported module|Importing a module script failed|error loading dynamically imported module|Unable to preload/i.test(msg);
+  return CHUNK_FAIL.test(e instanceof Error ? e.message : String(e ?? ''));
 }
 
 /**

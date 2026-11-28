@@ -25,7 +25,7 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, NC_EXTENSIONS,
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 // 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
 import type { TouchAim } from './aim';
-import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, measureFailText, viewerUi } from './core';
+import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, loadViewerUi, measureFailText, viewerUi } from './core';
 import type { KeySnap } from './keysnap';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
@@ -1463,12 +1463,17 @@ export class NcViewerApp implements PanelHost {
     // 아니면 가장 앞 면(예전 그대로). 판 너머 고르기는 포켓·홈 뚜껑을 지나간다(applyDoc — 코어 0.27.0 setItemPickThrough)
     v.onPick((p, e) => this.onPick(this.pickThrough ? p : (e.front ?? null)), { throughTranslucent: true, front: true });
     v.onMeasure((m) => this.onMeasure(m));
-    // 단면 손잡이·키보드 붙잡기(56차 viewer-ui.ts — 코어와 함께 받았다. 받지 못했으면 그것만 없이)
-    const ui = viewerUi();
-    if (ui) {
+    // 단면 손잡이·키보드 붙잡기(56차 viewer-ui.ts — 코어와 함께 받았다. 받지 못했으면 그것만 없이).
+    // 212차: 받지 못했으면 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 「다시 시도」(그 조각만 다시 받아 붙인다 — core.ts loadViewerUi; 전에는 글 없이 빠지고
+    // 뷰어가 생긴 뒤 다시 받지 않았다). 늦게 붙여도 단면이 켜져 있으면 손잡이가 보이게 자리를 맞춘다
+    const attach = (): void => {
+      const ui = viewerUi();
+      if (!ui) return loadFailed('가상 커서', () => void loadViewerUi().then(attach, attach));
       this.viewEl.append((this.secHandle = ui.makeSecHandle(() => this.viewer)));
       this.keySnap = new ui.KeySnap(this, core);
-    }
+      this.placeSecHandle();
+    };
+    attach();
     v.onSectionChange((st) => this.renderSection(st));
     v.onCameraChange(() => this.placeSecHandle());
     this.renderSection(null);

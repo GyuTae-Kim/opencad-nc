@@ -96,7 +96,8 @@ function dropToast(el: Element): void {
 /** 잠깐 보이는 알림(오류는 role=alert). 글 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다). action을 주면 단추 하나(누르면 실행하고 닫는다) */
 export function toast(message: string | readonly (string | Node)[], kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
   const host = toastArea();
-  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, ...(typeof message === 'string' ? [message] : message));
+  const parts = [message].flat();
+  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, ...parts);
   const drop = (): void => dropToast(el);
   if (action) {
     const act = h('button', { class: 'toast-act', type: 'button' }, action.label);
@@ -111,7 +112,9 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   el.append(close);
   // 211차: 같은 글의 알림이 떠 있으면 그것을 빼고 새 알림을 붙인다 — 같은 실패를 거듭해도(받지 못한 조각의 다시 시도·같은 버튼 다시 누름) 쌓이지 않고 하나(가장 새 알림으로
   // 새로 읽히고 시간도 새로). 초점이 그 안이었으면 dropToast(208·209차 — 남은 알림의 같은 자리·남는 칸). 붙이기 전 글로 견준다(번역층은 붙인 뒤에 옮긴다)
-  const key = (el.dataset.k = kind + el.textContent);
+  // 212차: 원문으로 견준다 — mixSpan 조각은 그때 언어로 옮겨 넣은 글이라(언어를 바꾸면 relangToasts가 다시 옮김) 211차의 글 견주기는 언어를 바꾼 사이의 같은 실패를 둘로 두었다.
+  // 조각마다 mixSpan이면 든 원문, 아니면 글(문자열은 원문 — 번역층이 붙인 뒤 옮긴다)
+  const key = (el.dataset.k = kind + JSON.stringify(parts.map((p) => mixSource.get(p as Element) ?? (p as Node).textContent ?? p)));
   for (const c of [...host.children]) if ((c as HTMLElement).dataset.k === key) dropToast(c);
   host.append(el);
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
