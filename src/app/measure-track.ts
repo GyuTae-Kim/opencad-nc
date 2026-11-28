@@ -7,7 +7,7 @@
  * 길게 누르기는 정밀 조준이 쓰므로 단추로 준다.
  *
  * - 자리: 측정 띠(좁은 화면·손가락 기기에서만 보이는 3D 보기 아래 가운데 띠 — 한 손 엄지가 닿는 아래쪽)의 잠금 단추 옆.
- *   잠금 단추처럼 정밀 조준 중 다른 손가락으로 누르면 click이 오지 않으므로 손가락·펜은 pointerdown에서 받는다.
+ *   잠금 단추처럼 정밀 조준 중 다른 손가락으로 누르면 click이 오지 않으므로 손가락·펜은 그 누름의 pointerup에서 받는다(232차 — 단추 안에서 뗄 때만, 전에는 pointerdown).
  *   넓은 화면(마우스)은 측정 띠가 숨으므로 이 단추도 보이지 않고 머무르기 그대로다.
  * - 정밀 조준 중이거나 기억한 점이 있을 때만 보인다. 손가락은 커서가 없어 조준하지 않으면 붙잡은 점이 없으므로(누를 일이 없다) 평소 측정 띠는
  *   예전과 같고(휴대폰 폭에서 안내 글 칸이 좁아지지 않게), 길게 눌러 조준하면 나타나 다른 손가락으로 누른다. 기억한 점이 있으면 수를 보이려고 남는다.
@@ -83,13 +83,25 @@ export class TrackPick {
     this.badge = h('span', { class: 'mb-badge', 'aria-hidden': 'true', hidden: true });
     this.button = h('button', { class: 'mb-btn icon mb-track', type: 'button', title: TRACK_TITLE, 'aria-label': TRACK_LABEL, hidden: true, html: ICON }, this.badge);
     let pressedAt = -Infinity;
-    // 정밀 조준 중 다른 손가락으로 누르면 click이 오지 않는다(잠금 단추와 같다) — 손가락·펜은 누르는 순간에
+    /** 232차: 손가락·펜으로 누른 포인터(뗄 때까지) */
+    let held: number | null = null;
+    // 정밀 조준 중 다른 손가락으로 누르면 click이 오지 않는다(잠금 단추와 같다) — 손가락·펜은 그 누름의 pointerup에서.
+    // 232차(WCAG 2.5.2): 누르는 순간에 기억하던 것을 떼는 순간으로 — 기억한 점 하나를 무를 길이 없어(다시 재기는 측정 점까지 지움), 떼기 전에 단추 밖으로 빼면 기억하지 않는다.
+    // 손가락은 암시적 포인터 잡기로 밖에서 떼도 단추가 pointerup을 받으므로 떼는 자리로 가른다. 누름의 preventDefault(초점·마우스 흉내 사건 막기)는 그대로
     this.button.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse') return;
       e.preventDefault();
       pressedAt = performance.now();
-      this.pick();
+      held = e.pointerId;
     });
+    this.button.addEventListener('pointerup', (e) => {
+      if (held === null || e.pointerId !== held) return;
+      held = null;
+      pressedAt = performance.now();
+      const r = this.button.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) this.pick();
+    });
+    this.button.addEventListener('pointercancel', () => (held = null));
     this.button.addEventListener('click', () => {
       if (performance.now() - pressedAt < 1000) return;
       this.pick();

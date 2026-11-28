@@ -347,10 +347,13 @@ describe('측정 띠(휴대폰·터치)', () => {
     while (!app.state().aiming && performance.now() - t0 < AIM_HOLD_MS + 2000) await new Promise((r) => setTimeout(r, 50));
     expect(app.state().aiming).toBe(true);
     expect(track.hidden).toBe(false);
+    // 232차: 끌어온 점 단추는 누르는 순간이 아니라 그 누름의 pointerup이 단추 안일 때 기억한다(pointer-cancel232) — 누름·떼기를 함께(jsdom 자리 0은 0×0 상자 안)
     const press = (): void => {
-      const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
-      Object.defineProperty(down, 'pointerType', { value: 'touch' });
-      track.dispatchEvent(down);
+      for (const type of ['pointerdown', 'pointerup']) {
+        const e = new MouseEvent(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(e, 'pointerType', { value: 'touch' });
+        track.dispatchEvent(e);
+      }
     };
     // 점 붙잡기가 없으면 기억하지 않고 띠 위에 알린다
     press();
