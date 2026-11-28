@@ -98,6 +98,8 @@ const TS_TABLE: readonly TsEntry[] = [
   { row: 7, file: 'src/app/app.ts', ev: 'focusin', n: 1, what: '바깥 초점에 펼친 메뉴·단면 상자 닫기(띄우지 않음)', judge: '대상 밖' },
   { row: 8, file: 'src/app/app.ts', ev: 'dragenter', n: 1, what: '파일을 끌어 올림 → 끌어 놓기 덮개(Esc·창 밖·놓기에 거둠, 시간 닫힘 없음)', judge: '지킴' },
   { row: 8, file: 'src/app/app.ts', ev: 'dragover', n: 1, what: '같은 덮개(끄는 동안 놓기 꼴)', judge: '지킴' },
+  // 227차(표 1 밖 새 줄 — .runtime/r227/progress.md 표 #1): 알림 상자 비키기는 띄우지 않고 옮기기만 한다(WCAG 2.4.11 — focus-obscured227)
+  { row: 9, file: 'src/app/dom.ts', ev: 'focusin', n: 1, what: '초점 든 칸을 통째로 덮은 알림 상자를 그 칸 위로 비켜 올림(띄우는 것 없음)', judge: '대상 밖' },
 ];
 
 function tsFiles(dir: string): string[] {
