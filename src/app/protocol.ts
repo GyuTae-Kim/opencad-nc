@@ -204,12 +204,19 @@ export function sceneHasGeometry(s: Scene3d): boolean {
   );
 }
 
+/**
+ * 나눠 받는 조각을 받지 못한 오류 글(브라우저마다 다르다: Chrome·Edge 「Failed to fetch dynamically imported module」, Firefox 「error loading dynamically imported module」,
+ * Safari 「Importing a module script failed」, vite 미리 받기 「Unable to preload CSS」). core.ts isChunkLoadError와 errorText가 함께 쓴다(212차 — 정규식 하나)
+ */
+export const CHUNK_FAIL = /dynamically imported module|Importing a module script failed|Unable to preload/i;
+
 /** 오류 값 → 사람이 읽는 글(메모리 부족처럼 알기 어려운 것은 풀어 쓴다) */
 export function errorText(e: unknown): string {
   const raw = e instanceof Error ? e.message || e.name : String(e ?? '');
   const name = e instanceof Error ? e.name : '';
   if (name === 'RangeError' && /array buffer|allocation|memory|invalid (typed )?array length/i.test(raw)) return '메모리가 모자라 파일을 끝까지 읽지 못했습니다. 더 작은 파일로 나누거나 다른 브라우저에서 열어 보십시오.';
   if (/out of memory/i.test(raw)) return '메모리가 모자라 파일을 끝까지 읽지 못했습니다.';
-  if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) return '파일을 받지 못했습니다(네트워크 오류).';
+  // 212차: 조각 받기 실패도(Firefox·Safari 글이 영어 그대로 알림 — 예제 열기·3D 보기·시뮬레이션 — 에 섞였다; Chrome 글은 Failed to fetch로 이미 여기)
+  if (/Failed to fetch|NetworkError|Load failed/i.test(raw) || CHUNK_FAIL.test(raw)) return '파일을 받지 못했습니다(네트워크 오류).';
   return raw || '알 수 없는 오류가 났습니다.';
 }

@@ -2,6 +2,8 @@ import { createLanguageMenu } from 'opencad-site-kit/i18n/language-menu';
 import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */
 import { currentLanguage, languages, languageUrl, metadataForLanguage, registerCatalog, sourceMessage, translate } from '../../site/i18n-core.mjs';
+// 212차: 사전 조각을 받지 못한 알림(dom.ts — 둘 다 첫 화면 모듈, 서로의 값을 모듈 맨 위에서 쓰지 않아 돌아 가져와도 된다)
+import { loadFailed } from './dom';
 import type { Mixed } from './filetext';
 
 const loaders: Record<string, () => Promise<{default: Record<string,string>}>> = {
@@ -76,7 +78,10 @@ const ATTR_SELF = 'input, textarea, canvas, [contenteditable], .code-list';
 const ATTR_INSIDE = '.code-list .ln';
 export async function installLocalization(root: HTMLElement): Promise<() => void> {
   let language = currentLanguage(location.href);
-  await loadLanguage(language);
+  // 212차: 그 언어 주소로 연 첫 사전을 받지 못하면(오프라인에서 새 판과 옛 캐시가 엇갈림 등) 한국어로 세운다 — 전에는 거부로 설치가 멈춰 언어 메뉴 없이 한국어 화면이었다(새로 고침뿐).
+  // 끝에 알림(아래 failed — 메뉴에서 다시 고르거나 「다시 시도」)
+  const first = language;
+  language = await loadLanguage(language).then(() => language, () => 'ko');
   active = language;
   const originalViews = Object.entries(VIEW_LABELS);
   function canvasLabels(): void {
@@ -168,8 +173,14 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       graph.textContent=JSON.stringify(existing).replace(/</g,'\\u003c');
     }
   }
+  /**
+   * 212차: 언어 next의 사전을 받지 못했다 — 알림 상자에 「{언어 이름}을(를) 불러오지 못했습니다.」와 「다시 시도」(그 언어로 바꾸기). 이름은 언어 메뉴 글(한글 없음).
+   * 글은 지금 화면 언어(받지 못한 언어가 아니라 바꾸기 전 언어 — loadFailed의 mixSpan이 active로 옮긴다)
+   */
+  const failed = (next: string): void => loadFailed(languages.find((l) => l.code === next)!.label, () => void changeLanguage(next));
   async function changeLanguage(next: string): Promise<void> {
-    try { await loadLanguage(next); } catch { return; }
+    // 212차: 메뉴에서 고른 언어의 사전을 받지 못하면 알림(전에는 글 없이 그대로)
+    try { await loadLanguage(next); } catch { return failed(next); }
     const url = new URL(languageUrl(location.href,next));
     // Dev servers use /en/; published apps use /opencad-<format>/en/.
     if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
@@ -205,6 +216,7 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
   });
   if (title) titleObserver.observe(title,{childList:true,subtree:true,characterData:true});
   observer.observe(presentationRoot,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','aria-description','placeholder','alt','href']});
+  if (language !== first) failed(first);
   return () => {
     active = 'ko';
     observer.disconnect(); titleObserver.disconnect(); control.dispose();
