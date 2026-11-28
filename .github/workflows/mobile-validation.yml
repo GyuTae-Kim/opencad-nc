@@ -25,7 +25,9 @@ jobs:
       - name: Start installing mobile audit tools in the background
         run: |
           mkdir -p "$RUNNER_TEMP/bg"
-          nohup sh -c 'sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk; echo $? > "$RUNNER_TEMP/bg/fonts.rc"' > "$RUNNER_TEMP/bg/fonts.log" 2>&1 &
+          # CI 12차: apt 미러가 잠깐 비면 글꼴 설치가 실패해 휴대폰 검사가 멈췄다(2026-11-28 STEP #256 「E: Unable to locate package fonts-noto-cjk」 —
+          # 같은 러너 이미지의 앞뒤 실행은 통과). 목록 받기·설치를 세 번까지(사이 5초, apt 받기도 세 번까지) 다시 하고, 셋 다 실패해야 실패로 적는다
+          nohup sh -c 'rc=1; for i in 1 2 3; do if sudo apt-get update -qq -o Acquire::Retries=3 && sudo apt-get install --no-install-recommends -y -o Acquire::Retries=3 fonts-noto-cjk; then rc=0; break; fi; echo "fonts install attempt $i failed"; sleep 5; done; echo $rc > "$RUNNER_TEMP/bg/fonts.rc"' > "$RUNNER_TEMP/bg/fonts.log" 2>&1 &
           nohup sh -c 'npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli; echo $? > "$RUNNER_TEMP/bg/audit.rc"' > "$RUNNER_TEMP/bg/audit.log" 2>&1 &
           # CI 7차: 비교와 같은 플래그의 headless Chrome을 빈 쪽으로 한 번 띄웠다 꺼서 데운다(글꼴·도구 설치·빌드와 겹침 — 비교 첫 번 baseline-1이
           # Chrome 찬 시작(CI 6차가 찍은 값 1~22초)을 혼자 물던 것). 따로 된 프로필·60초 끊기, 실패해도 비교를 막지 않는다. 비교는 그대로 번마다 새 프로필이다
