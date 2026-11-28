@@ -15,6 +15,7 @@
   "tests/app/job.test.ts": 1271,
   "tests/app/keysnap-core.test.ts": 931,
   "tests/app/keysnap.test.ts": 285,
+  "tests/app/label-in-name228.test.ts": 31665,
   "tests/app/lathe-tools.test.ts": 959,
   "tests/app/measure-apex-core.test.ts": 374,
   "tests/app/measure-axis-core.test.ts": 902,

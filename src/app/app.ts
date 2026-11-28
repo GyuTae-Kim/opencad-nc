@@ -669,13 +669,18 @@ export class NcViewerApp implements PanelHost {
     });
     const zone = h(
       'div',
-      { class: 'dropzone', role: 'button', tabindex: 0, 'aria-label': 'NC 파일 열기 — 눌러서 고르거나 끌어다 놓기' },
+      // 228차(WCAG 2.5.3): 이름은 보이는 제목, 풀이 줄은 설명 — 제목·풀이 둘씩(마우스·손가락)을 한 칸씩 감싸 가리키면 그 안 CSS로 숨은 마디는 이름 계산이 건너뛰어
+      // 지금 보이는 하나만 든다. 전 이름(aria-label)은 보이는 제목을 다섯 언어 모두 품지 않아 보이는 글로 부를 수 없었다(183차 설계 결정 — 새 글·JS 없이 비킴)
+      { class: 'dropzone', role: 'button', tabindex: 0, 'aria-labelledby': 'dz-name', 'aria-describedby': 'dz-desc' },
       h('div', { class: 'dz-icon', html: icon('drop') }),
-      // 손가락 기기에는 끌어다 놓기가 없으니 고르기 안내로(styles.css fine-only·coarse-only)
-      h('p', { class: 'dz-title fine-only' }, 'NC 파일을 여기에 끌어다 놓으십시오'),
-      h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.'),
-      h('p', { class: 'dz-title coarse-only' }, 'NC 파일을 골라 여십시오'),
-      h('p', { class: 'dz-sub coarse-only' }, '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.'),
+      // 손가락 기기에는 끌어다 놓기가 없으니 고르기 안내로(styles.css fine-only·coarse-only). 감싼 칸은 여백·테두리 없는 블록이라 보이는 꼴은 같다
+      h('div', { id: 'dz-name' }, h('p', { class: 'dz-title fine-only' }, 'NC 파일을 여기에 끌어다 놓으십시오'), h('p', { class: 'dz-title coarse-only' }, 'NC 파일을 골라 여십시오')),
+      h(
+        'div',
+        { id: 'dz-desc' },
+        h('p', { class: 'dz-sub fine-only' }, '창 어디에 놓아도 열립니다. 주 프로그램과 부프로그램 파일을 함께 놓으면 한 작업으로 읽습니다.'),
+        h('p', { class: 'dz-sub coarse-only' }, '주 프로그램과 부프로그램 파일을 함께 고르면 한 작업으로 읽습니다.'),
+      ),
       h('div', { class: 'dz-actions' }, open, sample),
     );
     zone.addEventListener('click', () => this.chooseFile());
