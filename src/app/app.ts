@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, mixSpan, pieces, relangToasts, toast, toastArea } from './dom';
+import { h, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -563,6 +563,9 @@ export class NcViewerApp implements PanelHost {
     root.append(titlebar, toolbar, this.workspace, status, this.fileInput, this.dropMask, (this.said = h('div', { class: 'app-live', role: 'status', 'aria-live': 'polite', style: LIVE_HIDDEN })));
     // 156차: 알림 상자(aria-live)는 빈 채로 지금 붙여 둔다 — 첫 알림 때 상자째 붙이면 그 첫 안내를 화면 읽기 프로그램이 읽지 않을 수 있다(dom.ts toastArea)
     toastArea();
+    // 208차: 알림 ✕·동작 버튼으로 마지막 알림이 빠지면 180·182차 덮개 「취소」 차례의 남는 칸으로 — 받는 첫 칸이라 읽는 중이면 「취소」(작업 영역은 inert),
+    // 문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸(dom.ts toast)
+    toastSpare(() => [this.busyCancel, this.viewer?.canvas, this.startEl.querySelector<HTMLElement>('.dropzone')]);
 
     this.bindDrop();
     window.addEventListener('keydown', (ev) => this.onKey(ev), true);
@@ -1048,7 +1051,7 @@ export class NcViewerApp implements PanelHost {
       if (r.kind === 'missing') {
         this.showError(mix`${fileText(e.name)}: 이 브라우저에 저장된 내용을 찾지 못해 최근 문서에서 지웠습니다.`);
         await this.recent.remove(e.id);
-        await this.renderRecent();
+        await this.redrawRecent('.recent-open');
       } else this.showError(mix`${fileText(e.name)}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`);
       return false;
     }
@@ -1062,13 +1065,20 @@ export class NcViewerApp implements PanelHost {
 
   /** 최근 문서 한 항목 지우기(원래 파일은 그대로). 초점은 다음 항목(없으면 열기 상자)으로 */
   private async removeRecent(id: string): Promise<void> {
-    const rows = [...this.recentList.children];
-    const at = rows.findIndex((li) => li.contains(document.activeElement));
     if (!(await this.recent.remove(id))) toast('최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.', 'error', 5000);
+    await this.redrawRecent('.recent-del');
+  }
+
+  /**
+   * 최근 문서 목록을 다시 그린다 — 초점이 있던 줄이 떼어지므로 그 안이었을 때만 다음 항목(모자라면 마지막)의 같은 버튼(sel), 줄이 없으면 열기 상자로.
+   * 208차: 이 브라우저에 내용이 없는 줄의 「열기」(openRecent — 그 줄을 지움)도 이 길(전에는 연 버튼째 떼어져 초점이 문서로 빠졌다, WCAG 2.4.3)
+   */
+  private async redrawRecent(sel: string): Promise<void> {
+    const at = [...this.recentList.children].findIndex((li) => li.contains(document.activeElement));
     await this.renderRecent();
     if (at < 0) return;
     const next = this.recentList.children[Math.min(at, this.recentList.children.length - 1)];
-    (next?.querySelector<HTMLElement>('.recent-del') ?? this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus();
+    (next?.querySelector<HTMLElement>(sel) ?? this.startEl.querySelector<HTMLElement>('.dropzone'))?.focus();
   }
 
   private async clearRecent(): Promise<void> {
