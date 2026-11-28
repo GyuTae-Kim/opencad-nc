@@ -108,6 +108,14 @@ const until = async (ok: () => boolean): Promise<void> => {
     await tick();
   }
 };
+/**
+ * CI 14차(ci-guard 13번): 일어나지 않아야 할 것을 볼 때 — 지금 조건이 마감 시간까지 그대로인지 시간으로 기다린다(횟수 고리는 조각 부하에서 늦게 오는 잘못을 놓친다).
+ * 어긋나면 곧바로 끝나 뒤 단언이 실패한다
+ */
+const stays = async (ok: () => boolean, ms = 200): Promise<void> => {
+  const end = Date.now() + ms;
+  while (ok() && Date.now() < end) await tick();
+};
 const keydown = (el: EventTarget, key: string, o: KeyboardEventInit = {}): KeyboardEvent => {
   const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...o });
   el.dispatchEvent(ev);
@@ -376,7 +384,7 @@ describe('205차: 앱에서 키보드 단축키 창 열기(? 키·설정 메뉴)
     items()[at]!.click();
     expect(items()[at]!.getAttribute('aria-checked')).toBe('false');
     expect(keydown(document.body, '?', { shiftKey: true }).defaultPrevented).toBe(false);
-    for (let i = 0; i < 10; i++) await tick();
+    await stays(() => dialogs().length === 0);
     expect(dialogs()).toHaveLength(0);
     settings.click();
     items()[at + 1]!.click();

@@ -800,9 +800,16 @@ export class NcViewerApp implements PanelHost {
     return wrap;
   }
 
-  private closeMenu(): void {
+  /**
+   * 열린 메뉴·단면 상자를 닫는다. 209차(WCAG 2.4.3): back이면 초점이 닫는 메뉴·상자(그 버튼 포함) 안이었을 때만 그 버튼으로(Esc·206차와 같은 곳) — 열기 길(openBuffer·openRecent)이 닫으면
+   * 메뉴 항목에서 Ctrl+O로 고른 파일·상자 안에서 끌어 놓은 파일이 열리지 않거나 취소될 때 숨은 칸의 초점이 문서로 빠졌다. 열리면 새 문서가 3D 보기로 옮긴다(setDoc)
+   */
+  private closeMenu(back = false): void {
+    const w = this.openMenu?.wrap;
+    const btn = back && w?.contains(document.activeElement) ? w.querySelector('button') : null;
     this.openMenu?.close();
     this.openMenu = null;
+    btn?.focus();
   }
 
   /** 좁은 화면의 "보기 설정" 메뉴: 넓은 화면 도구 막대에만 있는 투영·그리기 모드·격자·뷰 큐브·좌표축·PNG 저장 */
@@ -1041,7 +1048,7 @@ export class NcViewerApp implements PanelHost {
   async openRecent(e: RecentEntry): Promise<boolean> {
     const attempt = beginOpen('local', e.name.split('.').pop() ?? 'other');
     const seq = ++this.loadSeq;
-    this.closeMenu();
+    this.closeMenu(true);
     this.setBusy('최근 문서 읽는 중', 0.02, e.name);
     const r = await this.recent.read(e.id);
     if (seq !== this.loadSeq) return false;
@@ -1142,7 +1149,7 @@ export class NcViewerApp implements PanelHost {
   ): Promise<boolean> {
     const seq = ++this.loadSeq;
     const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
-    this.closeMenu();
+    this.closeMenu(true);
     this.setBusy('여는 중', 0.02, name);
     // 첫 문서면 3D 뷰어 코어를 해석과 함께 받기 시작한다(실패는 ensureViewer가 알린다)
     if (!this.viewer) void loadViewerCore().catch(() => undefined);

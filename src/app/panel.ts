@@ -255,7 +255,19 @@ export class NcPanel {
       if (reveal && d.selLine >= 0) this.code?.reveal(d.selLine, true);
     } else if (d.panelTab === 'ops' || d.panelTab === 'tools') this.render();
     this.renderFoot();
-    if (this.playEls) this.playEls.toHere.disabled = d.selLine < 0;
+    this.syncToHere();
+  }
+
+  /**
+   * 「여기까지 그리기」는 고른 줄이 있을 때만. 209차(WCAG 2.4.3): 초점이 그 버튼에 있는 채 막히면(Esc로 고른 것을 지움 등) HTML focus fixup이 초점을 문서로 보냈다 —
+   * 같은 줄의 앞 칸(「전체」 — 늘 됨, 121차 깎기 탭 막힘 꼴)으로. 초점이 밖이면 그대로
+   */
+  private syncToHere(): void {
+    const b = this.playEls?.toHere;
+    if (!b) return;
+    const had = document.activeElement === b;
+    b.disabled = !this.doc || this.doc.selLine < 0;
+    if (had && b.disabled) (b.previousElementSibling as HTMLElement | null)?.focus();
   }
 
   onMeasure(): void {
@@ -285,7 +297,7 @@ export class NcPanel {
     p.state.hidden = !st;
     if (st) p.state.replaceChildren(...mixNodes(mix`${st.motion} · ${st.modal}\n${st.pos}`));
     p.speed.value = String(this.host.speed);
-    p.toHere.disabled = !this.doc || this.doc.selLine < 0;
+    this.syncToHere();
     if (info.line !== this.lastPlayLine) {
       this.lastPlayLine = info.line;
       if (this.doc?.panelTab === 'code' && this.code) {
