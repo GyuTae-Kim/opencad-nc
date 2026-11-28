@@ -767,7 +767,7 @@ t.compRuns; // [{ …, radius: 0.4, tool: 1, orientation: 3, orientationSource: 
 | `site/manifest.webmanifest`, `public/icon-*.png`, `public/apple-touch-icon.png` | 홈 화면에 추가(웹 앱 매니페스트 원본·아이콘 — `favicon.svg` 그림을 Chrome으로 그려 만듦). 언어별 매니페스트와 파일 연결(`share_target`·`file_handlers`)은 `tools/site.mjs` 설정으로 공용 사이트 도구가 만든다 |
 | `tools/site.mjs`, `tools/sw-source.mjs` | 이 앱의 사이트 설정(앱 정보 원본·파일 연결·서비스 워커 판 이름 짓기 — `vite.config.ts`와 시험이 같이 씀)과 오프라인 서비스 워커 본문(미리 담은 것 쓰기·공유 받기). 언어 페이지·검색 정보·사이트맵·`dist/sw.js`는 [공용 사이트 도구](https://github.com/GyuTae-Kim/opencad-site-kit)의 Vite 플러그인이 이 설정으로 만든다 |
 | `site/i18n-core.mjs`, `site/i18n.mjs`, `site/locales/` | 공용 번역기에 이 앱의 사이트 정보(`site/metadata.json`)를 넘기고 사전을 넣는다 |
-| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(패널 틀·탭 줄·재생 막대·코드 탭·아래 띠 — 첫 화면), `panel-info.ts`(공구·가공·변수·정보 탭 몸통 — 정보 탭의 해석 설정·보기 선택·공구 경로·기계 설정·3D 보기 경고까지, 문서를 열 때 받는 조각 — 210차), `doc.ts`(문서 상태·요약 글), `filetext.ts`(파일에서 온 글과 앱 글을 섞는 꼴 — 번역이 파일 글 자리를 건드리지 않게, `i18n.ts`의 `mixText`·`mixNodes`가 옮긴다), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `measure.ts`(측정 안내 글·붙잡은 종류 이름 — 첫 화면), `measure-tools.ts`(문서를 열 때 받는 측정 도구 조각 입구: `measure-lock.ts` 측정 방향 잠금·잠금 버튼·붙잡기 툴팁·코어 거리 글상자 비키기, `measure-track.ts` 측정 띠의 끌어온 점 버튼, `measure-label.ts` 코어 측정 거리 글상자의 글(화면 언어), `snap.ts` 원호 중심·이동 가운데 점·판재 윤곽 붙잡기, `aim.ts` 정밀 조준, `tangent.ts` 원호(G2/G3·판재 윤곽 호)·스플라인 위 점의 접선 잠금, `refine.ts` 코어 수직 발·선분 위 점·교차점을 곡선 위로 다듬기와 코어에 주는 붙잡기 선택, `intersect.ts` 두 요소(원호·스플라인·직선)의 교차점(식·두 매개변수 뉴턴), `curve.ts` 곡선 위 점 찾기(구간 나눔 + 뉴턴), `spline.ts` 스플라인 계산), `core.ts`(3D 뷰어 코어·뷰 큐브 글·측정 도구를 문서를 열 때 받기, 받기 전에 측정을 켰을 때 받은 뒤 켜기), `viewer-ui.ts`(코어와 함께 받는 3D 보기 위 앱 UI: 단면 손잡이 끌기, `keysnap.ts` 키보드 붙잡기·고르기 — 가상 커서 켜기·고르기 후보를 코드 줄·가공으로 묶는 열쇠·화면 언어 알림 글 함수), `styles.css` |
+| `src/app/` | 뷰어 앱 화면: `app.ts`(틀·열기·보기·재생·키), `panel.ts`(패널 틀·탭 줄·재생 막대·코드 탭·아래 띠 — 첫 화면), `panel-info.ts`(공구·가공·변수·정보 탭 몸통 — 정보 탭의 해석 설정·보기 선택·공구 경로·기계 설정·3D 보기 경고까지, 문서를 열 때 받는 조각 — 210차), `doc.ts`(문서 상태·요약 글), `notices.ts`(해석 판단 띠의 글과 줄 그리기 — 문서 첫 그림에 꼭 있어 코어와 함께 받는 조각, 216차), `filetext.ts`(파일에서 온 글과 앱 글을 섞는 꼴 — 번역이 파일 글 자리를 건드리지 않게, `i18n.ts`의 `mixText`·`mixNodes`가 옮긴다), `protocol.ts`·`payload.ts`·`client.ts`(워커 메시지·이전 목록), `format.ts`·`keys.ts`·`theme.ts`(글·키·테마), `settings.ts`(기계·읽기 설정, localStorage), `recent.ts`(최근 문서·공유 받은 파일, IndexedDB), `measure.ts`(측정 안내 글·붙잡은 종류 이름 — 첫 화면), `measure-tools.ts`(문서를 열 때 받는 측정 도구 조각 입구: `measure-lock.ts` 측정 방향 잠금·잠금 버튼·붙잡기 툴팁·코어 거리 글상자 비키기, `measure-track.ts` 측정 띠의 끌어온 점 버튼, `measure-label.ts` 코어 측정 거리 글상자의 글(화면 언어), `snap.ts` 원호 중심·이동 가운데 점·판재 윤곽 붙잡기, `aim.ts` 정밀 조준, `tangent.ts` 원호(G2/G3·판재 윤곽 호)·스플라인 위 점의 접선 잠금, `refine.ts` 코어 수직 발·선분 위 점·교차점을 곡선 위로 다듬기와 코어에 주는 붙잡기 선택, `intersect.ts` 두 요소(원호·스플라인·직선)의 교차점(식·두 매개변수 뉴턴), `curve.ts` 곡선 위 점 찾기(구간 나눔 + 뉴턴), `spline.ts` 스플라인 계산), `core.ts`(3D 뷰어 코어·뷰 큐브 글·해석 판단 띠·측정 도구를 문서를 열 때 받기, 받기 전에 측정을 켰을 때 받은 뒤 켜기), `viewer-ui.ts`(코어와 함께 받는 3D 보기 위 앱 UI: 단면 손잡이 끌기, `keysnap.ts` 키보드 붙잡기·고르기 — 가상 커서 켜기·고르기 후보를 코드 줄·가공으로 묶는 열쇠·화면 언어 알림 글 함수), `styles.css` |
 | `src/worker/parse.worker.ts` | 해석 워커: 파일 확인 → 해석 → 장면·패널 자료를 이전 가능한 버퍼로 돌려줌 |
 | `src/index.ts` | 공개 입구: 형식 판별, `parseNcFile`, `ncParsedToScene`, `loadNcFile`, `combineNcFiles` |
 | `src/job.ts` | 여러 파일을 한 작업으로 잇기·나누기(표지 줄, 주 프로그램 고르기) |
@@ -3325,6 +3325,26 @@ Safari(「Importing a module script failed.」)·vite 미리 받기(「Unable to
 크기는 이번 수정일 갱신의 vite 빌드로 첫 화면 JS 조각이 146,963 → 147,866바이트(+903, vite gzip 52.65 → 52.99 kB, `gzip -9` 52,523 → 52,860 +337 — 그 가운데 시작 화면 오류 칸 보완 몫이 raw +441 · `gzip -9` +117이라 한 차수 소폭 허용 +300 B를 약 40 B 넘음: 215차가 만든 뒷걸음을 고친 몫이라 리드가 받아들임,
 내보내기 이름 65개·JS 조각 18개·`import(` 12곳 그대로)이고, 3D 보기 띠·단축키 창·정보 탭·깎기·측정 도구·예제·코어·언어 사전 넷(열쇠 1,466개)·첫 화면 CSS는 그대로입니다.
 크기 기준: 첫 화면 JS 예산 `jsBytes` 61,440바이트에 로컬 gzip으로 약 8.4 kB, CI 값(로컬보다 약 1.2 kB 큼)으로 약 7.2 kB 남습니다(214차 약 8.8 · 7.6 kB).
+
+216차는 첫 화면 JS 조각을 다시 줄였습니다(성능 — 동작·글·사전·CSS 그대로, 코어 판은 0.121.0 그대로). 211~215차가 조각 받기 실패 알림으로 210차 뒤 첫 화면을 vite gzip 52.06 → 52.99 kB로 늘렸기 때문입니다.
+210차처럼 첫 화면 조각의 모듈마다 소스 맵을 jq로 풀어 크기를 세고(원본 줄까지 — 옮길 묶음을 뺀 `gzip -9`로 먼저 어림), 문서를 열기 전에 부르는지 코드로 보았습니다.
+옮긴 것은 셋입니다. `doc.ts`에서 정보 탭 조각만 쓰는 여섯(`cutRangeText`·`mprVars`·`toolFirstMoveLine`·`toolSelectLine`·`toolGroup`·`toolItems`)은 `panel-info.ts`로,
+`measure.ts`에서 측정 도구 조각만 쓰는 잠금 글(`LOCK_HINTS`·`SHIFT_LOCK_HINTS`·`ARROW_LOCK_HINT`·`NO_LOCK_TOUCH`·`NO_LOCK_MOUSE`·`lockName`)은 `measure-lock.ts`로, 측정 추론 스냅 선택 `MEASURE_INFERENCE`는 `refine.ts`로 옮겼습니다(이미 있는 조각).
+해석 판단 띠(선반 자동·소수점 없는 좌표·판별한 방언 등 — `app.ts` `renderNotices`의 줄 그리기와 `doc.ts` `noticeViews`·판별 글)는 새 조각 `notices.ts`로 옮겼습니다.
+문서를 열 때 받는 이미 있는 조각 둘(정보 탭 조각 — 3초까지만 기다림, 3D 보기 띠 — 받지 못해도 엶)은 받지 못해도 문서를 여는데, 판단 띠는 문서 첫 그림에서 동기로 그리는 칸(행동 버튼·닫기·알림 영역)이라
+그 둘에 넣으면 그 조각이 늦거나 받지 못할 때 띠가 빠집니다. 그래서 코어처럼 꼭 있어야 하는 조각으로 코어와 함께 받습니다(`core.ts` `loadViewerCore` — 받지 못하면 코어를 받지 못한 것과 같은 길:
+「3D 보기를 만들지 못했습니다: …」, 다시 열 길이 있는 열기는 215차 「3D 보기을(를) 불러오지 못했습니다.」·다시 시도·「새로 고침」 — 새 열쇠 없음). 문서는 그 약속 뒤에만 생겨 띠를 그릴 때는 늘 받아 있으므로
+받는 중 깃발·받은 뒤 다시 그리기가 없고, 그리는 차례·초점 되살림(176차)·새 줄 알림(198차)이 전과 같습니다(문서가 없을 때 전 몸통은 빈 채 숨은 띠에 아무것도 하지 않았음 — `app.ts`는 문서가 있을 때만 부름).
+오프라인 앱은 서비스 워커가 새 조각도 미리 담습니다(`dist/sw.js` 목록 JS 19개에 듦). 바꾼 src 여덟의 한글 원문 496개가 옮기기 전과 같습니다.
+남긴 것(다음 후보): `app.ts`의 나머지 문서 뒤 메서드(다시 읽기 1.3 kB·측정 띠·재생 띠·단면 — 시작 때 만드는 칸이거나 받지 못해도 여는 조각으로 옮기면 실패 길·차례가 바뀜), `panel.ts` 코드 찾기(`findScan`·`findGo` — 어림 gzip 0.4 kB, 받기 실패 길을 새로 짜야 함),
+`doc.ts`의 둘 이상 조각이 함께 쓰는 함수(`lineAtLabel`·`MPR_KIND`·`opLabel`).
+시험: 옮기기 전 닿는 시험 51파일(문서를 여는 앱 시험 전부 — 모두 `loadViewerCore`·판단 띠를 지남 — 과 옮긴 이름을 가져오는 시험) 472개가 통과했고, 옮긴 뒤 같은 51파일(가져오기 경로를 옮긴 모듈로 — 근거 주석)이
+`tests/app/core-split.test.ts`의 216차 시험 둘(옮긴 이름 17개가 첫 화면 그래프의 모듈에서 정의되지 않고 옮긴 곳에 있음·`notices.ts`는 첫 화면 그래프 밖이고 `core.ts`의 `import()` 하나로만 받음·`app.ts`가 판단 띠 줄을 그리지 않음,
+코어를 받으면 판단 띠 조각도 받아 있음)까지 474개 통과했으며 `tsc --noEmit`도 통과했습니다.
+크기는 이번 수정일 갱신의 vite 빌드로 첫 화면 JS 조각이 147,866 → 142,512바이트(−5,354, vite gzip 52.99 → 51.18 kB, `gzip -9` 52,860 → 51,067 −1,793 — 그 안의 몫 `app.ts` 58,687 → 57,564·`doc.ts` 12,111 → 8,847·`measure.ts` 4,437 → 3,453·`core.ts` 1,415 → 1,531바이트),
+내보내기 이름 65 → 54개, `import(` 12 → 13곳, JS 조각 18 → 19개(새 `notices` 3,897바이트·vite gzip 1.95 kB)입니다. 정보 탭 조각 21,723 → 22,442바이트(vite gzip 8.23 → 8.52 kB), 측정 도구 56,180 → 57,110바이트(21.34 → 21.52 kB)이고
+문서를 열 때 받는 넷(첫 화면·정보 탭·측정 도구·판단 띠)의 합은 225,769 → 225,961바이트(+192)입니다. 3D 보기 띠 4,924·깎기 50,390·단축키 창 4,102·예제 1,899·코어 473,079·첫 화면 CSS 32,048바이트와 언어 사전 넷(열쇠 1,466개)은 그대로입니다(몇 조각은 이름의 해시만 바뀜).
+크기 기준: 첫 화면 JS 예산 `jsBytes` 61,440바이트에 로컬 gzip으로 약 10.3 kB, CI 값(로컬보다 약 1.2 kB 큼)으로 약 9.1 kB 남습니다(215차 약 8.4 · 7.2 kB).
 
 키보드 알림의 `formatNumber`는 측정 모드 알림의 좌표·거리를 위치 표시처럼 고정 소수 셋째 자리(인치 넷째)로 씁니다(`keysnap.ts`의 `keySnapNumber` — 고르기 모드는 앱 글 그대로).
 0.48.0·0.49.0의 밝은 테마 Y축·고른 것 강조색 대비는 코어만 올려 바뀝니다. 0.41.0 앱 점 우선, 0.42.0 인스턴싱(공구 경로는 선분 묶음이라 모으지 않음), 0.43.0 PBR,
