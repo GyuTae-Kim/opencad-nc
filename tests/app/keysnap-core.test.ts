@@ -241,7 +241,8 @@ describe('키보드 붙잡기 키(56차 — 앱 화살표와 가상 커서)', ()
     const want: Record<string, [RegExp, RegExp, string]> = {
       en: [new RegExp(`^Virtual cursor on\\. Midpoint: ${P}\\. Move ←→↑↓ · Next candidate Tab · Pick point Enter · Turn off Esc$`), new RegExp(`^First point picked\\. Midpoint: ${P}$`), 'Virtual cursor off'],
       ja: [new RegExp(`^仮想カーソルをオンにしました。中点: ${P}。移動 ←→↑↓ · 次の候補 Tab · 点を打つ Enter · オフ Esc$`), new RegExp(`^1点目を打ちました。中点: ${P}$`), '仮想カーソルをオフにしました'],
-      'zh-CN': [new RegExp(`^已打开虚拟光标。中点: ${P}。移动 ←→↑↓ · 下一个候选 Tab · 选点 Enter · 关闭 Esc$`), new RegExp(`^已选第一个点。中点：${P}$`), '已关闭虚拟光标'],
+      // 224차: 켤 때 후보 글(코어 기본 틀 「{0}: {1}」)도 같은 글 열쇠로 「：」 — 첫 점 글(사전 틀)과 같은 쌍점(전에는 「中点: …」·「中点：…」가 한 화면에 갈림)
+      'zh-CN': [new RegExp(`^已打开虚拟光标。中点：${P}。移动 ←→↑↓ · 下一个候选 Tab · 选点 Enter · 关闭 Esc$`), new RegExp(`^已选第一个点。中点：${P}$`), '已关闭虚拟光标'],
       de: [new RegExp(`^Virtueller Cursor eingeschaltet\\. Mitte: ${P}\\. Bewegen ←→↑↓ · Nächster Kandidat Tab · Punkt setzen Enter · Ausschalten Esc$`), new RegExp(`^Erster Punkt gesetzt\\. Mitte: ${P}$`), 'Virtueller Cursor ausgeschaltet'],
     };
     try {

@@ -264,7 +264,8 @@ afterEach(() => {
 /** 손에 바이트가 없는 열기(파일 고르기)가 뷰어를 만들지 못한 까닭의 원문(app.ts ensureViewer — 코어 Error 글 「WebGL2 없음」, 107차) */
 const VIEWER_FAIL = `3D 보기를 만들지 못했습니다: ${errorText(new Error('이 브라우저는 WebGL2를 지원하지 않아 3D 보기를 열 수 없습니다'))}`;
 /** 시작 화면 오류 칸의 까닭(파일 이름 조각 뒤) */
-const reason = (el: Element): string => (el.textContent ?? '').replace(/^pick\.MPF: /, '');
+// 224차: 「이름: 까닭」 사이 글은 틀 열쇠 「{0}: {1}」 — 중국어는 사전 다수 꼴 「：」(i18n-joins224.test.ts)
+const reason = (el: Element): string => (el.textContent ?? '').replace(/^pick\.MPF(?:: |：)/, '');
 
 describe('218차: 199·201차 시험이 그리지 않는 203~217차 화면·상태에 한국어가 남지 않는다', () => {
   it('(1) 시작 화면: 받기 실패 오류 칸(예제·주소의 코어 — 다시 시도·새로 고침)·고른 파일의 코어 받기 실패·언어 사전 실패 알림 — 그 언어로 그린 것과 언어를 바꾼 뒤', async () => {
@@ -292,7 +293,8 @@ describe('218차: 199·201차 시험이 그리지 않는 203~217차 화면·상�
         // 손에 바이트가 없는 열기: 다시 시도 없이 「이름: 3D 보기를 만들지 못했습니다: 까닭」(215차 — 지금처럼. 이 시험 틀의 까닭은 vitest가 감싼 공장 오류 글 —
         // 브라우저의 받기 실패 글은 errorText가 「파일을 받지 못했습니다(네트워크 오류).」로 바꾼다: 한국어 까닭이 끼는 같은 길은 (1b)의 뷰어 만들기 실패가 본다)
         expect(await app.openBuffer('pick.MPF', enc(SIE))).toBe(false);
-        expect([err.querySelector('button'), err.textContent!.startsWith(`pick.MPF: ${translate('3D 보기를 만들지 못했습니다: {0}', lang).replace('{0}', '')}`)]).toEqual([null, true]);
+        // 224차: 사이 글은 「{0}: {1}」 틀 값(중국어 「：」)
+        expect([err.querySelector('button'), err.textContent!.startsWith(`pick.MPF${translate('{0}: {1}', lang).slice(3, -3)}${translate('3D 보기를 만들지 못했습니다: {0}', lang).replace('{0}', '')}`)]).toEqual([null, true]);
         await look(seen, '고른 파일의 코어 받기 실패');
         if (lang === 'en') {
           // 언어 메뉴로 고른 독일어 사전을 받지 못함: 지금 화면 언어 글에 언어 메뉴 이름(212차) — 그 뒤 독일어 사전은 받는다(받으면 캐시)

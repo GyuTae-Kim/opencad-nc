@@ -5,8 +5,9 @@
  * 끌기 판정은 코어와 같은 문턱(마우스·펜 4px, 손가락 10px)이다. 손잡이 풍선 글은 「끌거나 눌러 크기 바꾸기」(네 언어).
  * jsdom은 그리지 않으므로 패널·작업 영역의 크기(getBoundingClientRect)를 고정해 둔다.
  * 223차(WCAG 2.1.1): 손잡이는 초점을 받는 분리자(role=separator — 넓은 화면 세로·시트 가로, 값은 폭 px·높이 %)이고 화살표·Home·End·Enter로 크기를 바꾼다.
+ * 224차(WCAG 4.1.2): 창 폭만 바뀌면 방향·값이 다음 초점까지 앞 값이었다 — 작업 영역 크기 감시(ResizeObserver)가 맞춘다.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NcPanel, type PanelHost } from '../../src/app/panel';
 import { touchPointerEvent } from '../../src/app/aim';
 import { catalogs } from '../../site/i18n.mjs';
@@ -159,6 +160,31 @@ describe('패널 크기 손잡이의 한 점 대안(172차 — WCAG 2.5.7)', () 
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
     grip.focus();
     expect(['aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))).toEqual(['vertical', '100']);
+  });
+
+  it('224차: 창 폭만 바뀌어도(초점 없이 — 화면 읽기 탐색 모드) 작업 영역 크기 감시가 방향·값을 맞춘다(223차는 초점을 받을 때까지 앞 값)', () => {
+    const seen: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: ResizeObserverCallback) {
+          seen.push(cb);
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    try {
+      make(500, rect(0, 432, 500, 368));
+      expect(['aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))).toEqual(['horizontal', '46']);
+      // 창을 넓은 화면으로(작업 영역 1200 — 패널 그린 폭 500 = 42%), 초점은 손잡이 밖 그대로
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+      workspace.getBoundingClientRect = () => rect(0, 0, 1200, 800);
+      for (const cb of seen) cb([], {} as ResizeObserver);
+      expect([seen.length, document.activeElement === grip, ...['aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))]).toEqual([1, false, 'vertical', '42']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('손잡이 풍선 글은 누르기도 알리고 네 언어로 옮긴다', () => {

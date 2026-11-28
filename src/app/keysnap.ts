@@ -55,13 +55,15 @@ export function dictLookup(lang: string): DictLookup {
 
 /**
  * 알림 글 함수(코어 0.53.0 setKeyboardSnap messages): 열쇠의 코어 기본 틀로 지금 언어 사전(lookup)의 글을 찾아 값을 끼운다.
- * 한글이 없는 틀·고르기 종류(pick.*)·사전에 없는 열쇠(한국어 화면 포함)는 undefined(코어가 기본 틀로 만든다)
+ * 고르기 종류(pick.*)·사전에 없는 열쇠(한국어 화면 포함)는 undefined(코어가 기본 틀로 만든다).
+ * 224차: 한글이 없는 틀은 같은 글 열쇠로 찾는다 — 사전에는 후보 글 틀 「{0}: {1}」(화면 글과 같은 틀 열쇠 — 중국어 「：」, 같은 알림의 거리 있는 후보·첫 점 글과 같은 쌍점)만 있고
+ * 차례·점·고르기·키 안내 나눔 틀은 없어 코어 기본(영어·일본어·독일어의 「{0}: {1}」도 같은 글이라 lookup이 undefined)
  */
 export function keySnapMessageFn(core: Pick<Core, 'KEY_SNAP_MESSAGES' | 'formatKeySnapMessage'>, lookup: DictLookup): KeySnapMessageFn {
   return (key, values) => {
     const ko: string | undefined = core.KEY_SNAP_MESSAGES[key];
-    if (!ko || key.startsWith('pick.') || !/[가-힣]/.test(ko)) return undefined;
-    const t = lookup(keySnapDictKey(ko));
+    if (!ko || key.startsWith('pick.')) return undefined;
+    const t = lookup(/[가-힣]/.test(ko) ? keySnapDictKey(ko) : ko);
     return t === undefined ? undefined : core.formatKeySnapMessage(t, values);
   };
 }

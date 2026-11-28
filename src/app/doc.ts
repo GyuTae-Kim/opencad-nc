@@ -175,14 +175,16 @@ export function lineAtLabel(d: Pick<NcDoc, 'job'>, line: number): Mixed {
 }
 
 /**
- * 그릴 것이 없는 프로그램 알림의 글 조각(app.ts openBuffer — 조각마다 글 마디 하나라 번역층이 따로 옮긴다, 파일 글 조각은 옮기지 않는다): 안내 글, 첫 해석 경고가 있으면
- * ' (' · '해석 경고' · ': ' · 줄 · ': ' · 경고 글 · ')'. 경고는 정보 탭 목록처럼 줄과 글을 나눠(warnItems — 같은 사전 열쇠로 옮겨진다) 두고, 여러 번 났으면 '모두 N번'.
- * 31차: 한 글로 끼우면 사전 틀({0})이 잡은 경고가 다른 언어에서도 한국어로 남았다. 경고 조각이 없으면 장면 경고 글 그대로
+ * 그릴 것이 없는 프로그램 알림의 글(app.ts openBuffer가 「이름: 」 뒤에 잇는다 — 섞은 글 한 칸을 그릴 때 언어로 옮기고 파일 글은 옮기지 않는다): 안내 글, 첫 해석 경고가 있으면
+ * 「 (해석 경고: 줄: 경고 글 · 모두 N번)」(경고는 정보 탭 목록처럼 warnItems의 줄과 글), 경고 조각이 없으면 장면 경고 글 그대로.
+ * 31차: 사전 틀이 잡은 값을 옮기지 않던 번역층에 한 글로 끼우면 경고가 다른 언어에서도 한국어로 남아 글 마디마다 나눴다(사이 글 「: 」·「 (」·「)」는 옮기지 않아 중국어에서도 반각).
+ * 224차: 잡은 앱 글도 옮기는 칸(199차)이라 한 글로 — 층마다 틀 열쇠(「{0}: {1}」·「{0} (해석 경고: {1})」·「{0}번 줄: {1}」·「{0} · {1}번 줄: {2}」·「{0} · 모두 {1}번」)가
+ * 사이 글을 그 언어 사전 다수 꼴로 정한다(중국어 「：」·「（…）」, 다른 언어는 같은 글). 경고 글에 나눔 글자가 들면 번역기는 미룬 틀을 채운 글(다 옮겨짐)을 고른다. 한국어 글은 같다
  */
-export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' | 'mpr'>): (string | FileText)[] {
+export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' | 'mpr'>): Mixed {
   const it = res.nc?.warnItems?.[0] ?? res.mpr?.warnItems?.[0];
-  const w = it ? [...(it.line >= 0 ? [...lineAtLabel({ job: res.job ?? null }, it.line), ': '] : []), it.text, ...(it.count > 1 ? [' · ', `모두 ${it.count}번`] : [])] : res.scene.warnings?.slice(0, 1) ?? [];
-  return ['그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.', ...(w.length ? [' (', '해석 경고', ': ', ...w, ')'] : [])];
+  const w = it ? mix`${it.line >= 0 ? mix`${lineAtLabel({ job: res.job ?? null }, it.line)}: ` : ''}${it.text}${it.count > 1 ? ` · 모두 ${it.count}번` : ''}` : (res.scene.warnings?.slice(0, 1) ?? []);
+  return mix`그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.${w.length ? mix` (해석 경고: ${w})` : ''}`;
 }
 
 /** 문서 종류별 패널 탭 */
