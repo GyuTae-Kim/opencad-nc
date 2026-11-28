@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { failParts, h, loadDone, loadFailed, mixSpan, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { failParts, h, loadDone, loadFailed, mixSpan, putLive, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtInt, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -2361,19 +2361,23 @@ export class NcViewerApp implements PanelHost {
     this.playBtn.setAttribute('aria-label', this.playing ? '재생 멈춤' : '재생');
   }
 
+  /**
+   * 상태 막대(footer 통째 알림 칸). 231차(WCAG 4.1.3): 칸마다 putLive — 고르기·측정·포인터가 바꾼 잠금 안내 때마다 그대로인 문서 요약·경고 수까지 새 마디로 다시 넣어
+   * 화면 읽기 프로그램이 거듭 읽을 수 있었다(측정 중 MeasureLock 열쇠 — 끌어온 점 수·Shift로 잠글 방향 — 는 포인터로 바뀐다). 바뀐 마디만 바꾼다
+   */
   private renderStatus(): void {
     const d = this.doc;
     if (!d) {
-      this.stMain.textContent = '파일을 열면 형식·단위·크기·이동 수·읽은 시간이 여기에 보입니다.';
-      this.stSel.textContent = '';
+      putLive(this.stMain, '파일을 열면 형식·단위·크기·이동 수·읽은 시간이 여기에 보입니다.');
+      putLive(this.stSel);
       this.stWarn.hidden = true;
       this.refreshBar();
       return;
     }
-    this.stMain.textContent = statusParts(d).join(' · ');
+    putLive(this.stMain, statusParts(d).join(' · '));
     const wl = warningLabel(d);
     this.stWarn.hidden = !wl;
-    this.stWarn.textContent = wl;
+    putLive(this.stWarn, wl);
     // 측정 도구 조각을 받는 동안(받은 뒤 측정을 켠다)
     const sel: Mixed = this.measureFirstUse.wanted && !this.measuring ? [MEASURE_LOADING] : selectionSummary(d, this.measuring, this.touch);
     // 측정 결과의 붙잡은 종류(예: 중심 → 끝점)는 이름마다 따로 번역되게 조각으로 붙인다(잠근 선 위에 찍었으면 "잠금")
@@ -2381,7 +2385,8 @@ export class NcViewerApp implements PanelHost {
     // 방향 잠금 안내(첫 점을 찍은 뒤): 잠근 방향이나 Shift·화살표 — 안내 글과 따로 둔다(번역이 안내 글 전체를 찾게)
     const lock = this.measuring ? this.lockHintNow() : null;
     // 고른 것 요약에는 파일 글(작업 파일·이름 붙은 공구·MPR 가공 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
-    this.stSel.replaceChildren(
+    putLive(
+      this.stSel,
       mixSpan(sel),
       ...(sp ? [' · ', h('span', {}, sp[0]), ' → ', h('span', {}, sp[1]), ...(sp[2] ? [' · ', h('span', { class: 'st-lock' }, '잠금')] : [])] : []),
       ...(lock ? [' · ', h('span', { class: 'st-lock' }, lock)] : []),
@@ -2509,8 +2514,8 @@ export class NcViewerApp implements PanelHost {
     const on = !!d && !!v && v.measureMode && !this.busy;
     this.measureBar.hidden = !on;
     if (!on || !d || !v) return;
-    const t = this.measureText;
-    t.replaceChildren();
+    // 231차: 조각에 모아 알림 칸(mb-text)에는 바뀐 마디만(putLive — 포인터가 바꾼 MeasureLock 열쇠마다 같은 안내를 다시 넣었다)
+    const t = document.createDocumentFragment();
     if (d.measure) {
       const m = measureLines(d.measure, unitLabel(d.scene.units));
       t.append(h('b', { class: 'mb-value' }, m.value), h('span', { class: 'mb-sub' }, m.axes));
@@ -2522,6 +2527,7 @@ export class NcViewerApp implements PanelHost {
       const lock = this.lockHintNow();
       if (lock) t.append(h('span', { class: 'mb-sub mb-lock-hint' }, lock));
     }
+    putLive(this.measureText, ...t.childNodes);
     // 다시 재기는 끌어온 점만 있어도(첫 점 전) 지운다 — 코어 clearMeasure가 끌어온 점도 지운다
     const had = document.activeElement as HTMLButtonElement | null;
     this.measureClear.disabled = !d.measure && !v.measurePointCount && !v.measureTrackPoints.length;

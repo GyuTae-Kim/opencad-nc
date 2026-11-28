@@ -39,6 +39,28 @@ export function mixSpan(m: Mixed, cls?: string, ui?: boolean): HTMLSpanElement {
   return el;
 }
 
+/** 231차: 알림 칸마다 마지막으로 넣은 마디의 열쇠(화면 언어와 넣기 전 HTML·글) */
+const liveKeys = new WeakMap<Element, string[]>();
+
+/**
+ * 231차(WCAG 4.1.3 상태 메시지): 알림 칸(aria-live) 안을 다시 그린다 — 앞에서부터 같은 마디(넣기 전 HTML·글, 같은 화면 언어)는 그대로 두고 처음 달라진 마디부터 바꾼다(모두 같으면 손대지 않는다).
+ * 상태 줄(footer 통째 live)·측정 띠 글·패널 아래 띠는 고르기·패널 다시 그리기(깎기 계산 사건)마다, 측정 중에는 포인터가 점에 머물러 코어가 끌어온 점을 기억하거나
+ * 커서 아래 Shift로 잠글 방향이 바뀔 때마다 통째로 새 마디를 넣어, 그대로인 문서 요약·고른 줄·안내를 화면 읽기 프로그램이 거듭 읽을 수 있었다(220·221차 꼴 — 같은 글을 새 알림 마디로).
+ * 번역층은 글 마디를 제자리에서 옮겨(nodeValue) 마디 차례가 그대로이고, 언어가 바뀌면 열쇠가 달라 통째로 다시 그린다(54·201차 그대로)
+ */
+export function putLive(el: Element, ...nodes: (Node | string)[]): void {
+  const lang = document.documentElement.lang;
+  const keys = nodes.map((n) => `${lang} ${typeof n === 'string' ? n : n instanceof Element ? n.outerHTML : n.textContent}`);
+  const was = liveKeys.get(el);
+  const same = was?.length === el.childNodes.length;
+  let i = 0;
+  if (same) while (i < keys.length && keys[i] === was![i]) i++;
+  if (same && i === keys.length && i === was!.length) return;
+  while (el.childNodes.length > i) el.lastChild!.remove();
+  el.append(...nodes.slice(i));
+  liveKeys.set(el, keys);
+}
+
 let toastHost: HTMLElement | null = null;
 /** 227차: 알림 상자 비키기(unhide)를 문서에 달았는가(한 번만 — 몸을 간 시험이 새 상자를 붙여도 듣는 쪽은 지금 상자를 본다) */
 let watching = false;
