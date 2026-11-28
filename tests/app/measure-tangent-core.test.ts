@@ -14,8 +14,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d } from 'opencad-viewer3d';
 import { parseNcFile, ncParsedToScene } from '../../src/index';
 import { MOVE_ARC, type NcProgram } from '../../src/model';
-import { LOCK_HINTS, SHIFT_LOCK_HINTS } from '../../src/app/measure';
-import { MeasureLock, lockHint } from '../../src/app/measure-lock';
+// 216차: 잠금 글은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { LOCK_HINTS, MeasureLock, SHIFT_LOCK_HINTS, lockHint } from '../../src/app/measure-lock';
 import { parseForView } from '../../src/app/payload';
 import { arcCenters, movePointAt, snapPair } from '../../src/app/snap';
 import { ncSnapOptions, panelSnapOptions } from '../../src/app/refine';

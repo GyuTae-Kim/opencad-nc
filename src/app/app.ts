@@ -25,13 +25,13 @@ import { GCODE_EXTENSIONS, HEIDENHAIN_EXTENSIONS, MPR_EXTENSIONS, NC_EXTENSIONS,
 import { PLAY_SPEEDS, advance, formatDuration, lastMoveOfLine, moveEndTime, pointAlong, stepTarget, totalTime, type PlaySpeed } from '../view/playback';
 // 측정 도구 자체(aim·measure-lock·snap·tangent)는 문서를 열 때 나눠 받는다(core.ts loadMeasureTools) — 여기서는 형만
 import type { TouchAim } from './aim';
-import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, loadViewerUi, measureFailText, viewerUi } from './core';
+import { FirstUse, isChunkLoadError, loadMeasureTools, loadViewerCore, loadViewerUi, measureFailText, noticeUi, viewerUi } from './core';
 import type { KeySnap } from './keysnap';
 import { ParseWorkerClient } from './client';
 import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 'opencad-site-kit/analytics';
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
-import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
+import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
@@ -330,13 +330,14 @@ export class NcViewerApp implements PanelHost {
   /** 측정 띠의 끌어온 점 단추(measure-track.ts — 측정 도구 조각을 받으면 잠금 단추 다음에 넣는다) */
   private mtrack: TrackPick | null = null;
   private readonly aimLayer: HTMLDivElement;
-  private readonly noticeBar: HTMLDivElement;
+  /** 판단 띠(216차: 줄은 코어와 함께 받은 notices.ts가 그린다 — 그래서 셋은 공개) */
+  readonly noticeBar: HTMLDivElement;
   /**
    * 198차: 판단 띠 글·그래픽 잃음 안내를 알리는 영역 — 앱을 만들 때 #app에 빈 채로 붙여 둔다(작업 영역 밖이라 덮개 동안 inert가 되지 않음).
    * saidKeys는 지난번 그린 판단 띠 줄의 열쇠(같은 줄은 다시 그려도 알리지 않는다)
    */
-  private readonly said: HTMLDivElement;
-  private saidKeys: string[] = [];
+  readonly said: HTMLDivElement;
+  saidKeys: string[] = [];
   /** 201차: 알림 영역에 글을 넣은 화면 언어(languagechange — 언어가 바뀌면 앞 언어 글을 비운다; 번역층을 받기 전 앱은 한국어) */
   private saidLang = 'ko';
   /** 패널을 닫은 채(휴대폰 등) 재생할 때 3D 보기 아래 재생 띠 */
@@ -2451,56 +2452,12 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 해석 판단 띠: 선반 자동·소수점 없는 좌표·판별한 방언. 단추는 다른 설정으로 다시 읽거나 패널 탭을 연다, ✕는 이 문서에서 닫는다 */
-  private renderNotices(keep = true): void {
-    const d = this.doc;
-    const bar = this.noticeBar;
-    // 176차: 줄을 모두 새로 만들어 띠 안 초점(✕·다시 읽은 뒤의 동작 버튼)이 문서로 빠진다 — 그 안이었으면 같은 차례(모자라면 마지막) 줄의 같은 자리 버튼(✕면 ✕, 아니면 첫 버튼),
-    // 띠가 숨으면 3D 보기로. 밖이었으면 그대로. keep = false(새 문서 — setDoc이 곧 3D 보기로 둔다)는 되살리지 않는다
-    const had = document.activeElement;
-    const at = keep && had && bar.contains(had) ? [...bar.children].findIndex((r) => r.contains(had)) : -1;
-    bar.replaceChildren();
-    const list = d ? noticeViews(d) : [];
-    bar.hidden = !list.length;
-    // 198차: 띠가 알림 영역(role=status)이면 숨김을 줄과 함께 풀어(열기·다시 읽기는 덮개가 inert를 거둔 같은 차례) 첫 줄을 읽지 않을 수 있었고, 그릴 때마다
-    // 줄을 새로 붙여 언어 바꿈·✕에도 남은 줄을 동작 버튼·「이 안내 닫기」 이름까지 다시 읽었다 — 새로 나온 줄(새 문서면 모든 줄)의 글만 미리 붙여 둔 알림 영역에
-    const old = keep ? this.saidKeys : [];
-    const fresh: (string | Node)[] = [];
-    this.saidKeys = list.map((n) => n.key);
-    for (const n of list) {
-      if (!old.includes(n.key)) fresh.push(mixSpan(n.text), ' ');
-      // 좁은 화면은 글을 한두 줄로 줄여 보이고(3D 보기를 덜 가리게), 글을 누르면 펼친다
-      // 글에 파일 글(주 프로그램·찾지 못한 프로그램 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
-      const text = mixSpan(n.text, 'nt-text');
-      text.title = mixText(n.text);
-      const row = h('div', { class: 'notice', 'data-notice': n.key }, text);
-      text.addEventListener('click', () => row.classList.toggle('open'));
-      if (n.action) {
-        const act = n.action;
-        const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
-        b.addEventListener('click', () => {
-          if (act.add) this.chooseFile(true);
-          else if (act.opts) void this.reparse(act.opts);
-          else if (act.tab && d) {
-            d.panelTab = act.tab;
-            this.panel.show(d);
-            this.togglePanel(true);
-          }
-        });
-        row.append(b);
-      }
-      const x = h('button', { class: 'mb-btn icon', type: 'button', title: '이 안내 닫기', 'aria-label': '이 안내 닫기', html: icon('close') });
-      x.addEventListener('click', () => {
-        d?.dismissedNotices.add(n.key);
-        this.renderNotices();
-      });
-      row.append(x);
-      bar.append(row);
-    }
-    if (fresh.length) this.said.replaceChildren(...fresh);
-    if (at >= 0) {
-      const row = bar.children[Math.min(at, bar.children.length - 1)];
-      (row ? row.querySelector<HTMLElement>(had!.matches('.icon') ? '.icon' : 'button') : this.viewer?.canvas)?.focus({ preventScroll: true });
-    }
+  /**
+   * 해석 판단 띠를 그린다. 216차: 줄 그리기(176차 초점 되살림·198차 새 줄 알림 그대로)는 코어와 함께 받는 notices.ts로 옮겼다 — 문서는 그 조각을 받은 뒤에만
+   * 생기고(loadViewerCore → setDoc), 문서가 없으면 띠는 만든 그대로 빈 채 숨어 있어(saidKeys도 빔) 할 일이 없다
+   */
+  renderNotices(keep = true): void {
+    if (this.doc) noticeUi()?.renderNotices(this, this.doc, keep);
   }
 
   /**

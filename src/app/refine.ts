@@ -31,13 +31,31 @@
 import type { MeasureSnapOptions, SnapRefineFaceInput, SnapRefineInput, SnapSegment } from 'opencad-viewer3d';
 import { MOVE_ARC, ncPathSetId } from '../model';
 import type { PanelSnapTable } from '../scene';
-import { MEASURE_INFERENCE } from './measure';
 import { closestToRay, footsFrom, nearestOn, type Curve, type V3 } from './curve';
 import { dist3, intersectSides, lineSide, type Side } from './intersect';
 import { g1CurvePieces } from './g1curve';
 import { arcCurve, arcShape, compArcs, compPiecesOf, panelArcsOf, pointTol, shapeChords, shapeNearest, shapeOf, type ArcShape } from './tangent';
 import { splineCurve, splineNearest, splineOfMove } from './spline';
 import { moveSnapPoints, panelCenters, panelSnapPoints, type ArcCenters, type SnapMoves } from './snap';
+
+/**
+ * 측정 추론 붙잡기(코어 setMeasureSnap({ inference })): 교차점·수직 발·축 방향(0.9.0), 나란함·Shift 잠금(0.10.0).
+ * 216차: 이 조각(측정 도구)만 써 measure.ts(첫 화면 조각)에서 옮겼다 — 시험은 이 모듈에서 가져온다.
+ * Shift는 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점 붙잡기도 그 모서리 방향으로 잠근다.
+ * 0.16.0 끌어온 축(track): 마우스·펜이 점 붙잡기 위에 0.5초 머문 점(최근 셋)을 지나는 X·Y·Z축과, 첫 점 축 위에서 그 점과 나란한 자리에도 붙는다.
+ * 손가락은 머무르지 않는다 — 길게 누르기는 정밀 조준(aim.ts)이 쓰므로 따로 주지 않고, 조준 십자선(펜 포인터)을 점 위에 멈추면 마우스처럼 기억한다.
+ * 0.18.0 axisEdges: 첫 점 X·Y·Z축이 공구 경로·판재 윤곽·모서리선과 만나는 점(원호·스플라인이면 refine.ts가 곡선 위로 — 'axisEdge').
+ * axisFaces: 첫 점 축·끌어온 축이 소재(Heidenhain BLK FORM 공작물·판·포켓·홈·구멍·깎기 시뮬레이션 소재) 그물 면을 뚫는 점
+ * (판재 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리 같은 원기둥 벽은 refine.ts가 원기둥 위로 — refineFace 'axisFace', 그 밖의 곡면은 나눈 삼각형 위 점).
+ * 0.19.0 lockEdges·lockFaces: 잠근 동안(Shift·화살표·잠금 단추) 잠근 선이 공구 경로·윤곽선과 만나는 점·소재 면을 뚫는 점(잠근 축이면 같은 다듬기로 곡선·원기둥 위).
+ * 0.20.0: 나란함·수직·접선으로 잠근 선도 같은 다듬기로 곡선·원기둥 위, 축·잠근 선이 꺾은선 토막과 만나지 않고 그 활꼴만 지나면(다른 깊이의 원호·나선·스플라인을
+ * 뚫는 축 등) 열린 후보로 곡선 위 교차(refine.ts — 새 선택 없이 refine을 준 앱이면 코어가 부른다)
+ * 0.21.0 lockTracks: 잠근 동안 잠근 선이 끌어온 점(track — 머문 점)의 X·Y·Z축과 만나는 점, 축으로 잠갔으면 잠근 축 위 끌어온 점과 나란한 자리에도 붙는다
+ * (잠근 동안 끌어온 축은 이 선택으로만 온다 — 끄면 22차까지처럼 잠근 선 위 커서 자리).
+ * 0.22.0: 축·잠근 선이 원기둥 벽 삼각형을 비켜 가며 원기둥만 뚫는 자리도 refineFace('axisFace', open)로 곡면 위 교차(새 선택 없음).
+ * 0.21.0 refineFace 'onFace'(붙잡지 않은 면 위 점 — 커서 광선)와 0.23.0 반투명 판 너머 고르기(throughTranslucent)는 refine.ts의 붙잡기 선택이 켠다
+ */
+export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true } as const;
 
 /** 장면의 기본 호 나누기 각(scene.ts — 판재 장면은 늘 이것, NC 장면은 meta.arcAngle) */
 const ARC_ANGLE = Math.PI / 36;
@@ -638,7 +656,7 @@ export function ncSnapOptions(nc: SnapMoves, centers: ArcCenters, limit: number 
  * 이름은 0.29.0 만나는 점의 면과 같다('… · 면 위')
  * 109차(코어 0.115.0 perpendicularDirs): 첫 점에서 지나간 곧은 모서리(첫 점 나란함과 같은 기준 — 같은 거르기)에 수직인 방향에도 붙는다(SketchUp 「모서리에 수직」).
  * 코어 값은 수직 발과 같은 'perpendicular'에 perpendicularDir이 실리고, 툴팁·결과 이름은 「모서리에 수직」으로 가른다(measure-lock.ts PERPENDICULAR_DIR_LABEL).
- * Shift·화살표 ↓·잠금 단추는 그 방향으로 잠근다(잠금 이름은 수직 발과 같은 「수직 방향으로 잠금」). MEASURE_INFERENCE(첫 화면 measure.ts)가 아니라 여기서 켠다
+ * Shift·화살표 ↓·잠금 단추는 그 방향으로 잠근다(잠금 이름은 수직 발과 같은 「수직 방향으로 잠금」). MEASURE_INFERENCE(앱 전체 기본 — 이 모듈 위, 216차에 measure.ts에서 옮김)가 아니라 여기서 켠다
  */
 const trackInference = (edge: (s: SnapSegment) => boolean, faces = false): MeasureSnapOptions['inference'] => ({
   ...MEASURE_INFERENCE,

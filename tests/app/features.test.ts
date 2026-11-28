@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { loadNcFile } from '../../src/index';
 import { ncPayload } from '../../src/app/payload';
 import type { ParseResult } from '../../src/app/protocol';
-import { createDoc, moveSegments, sceneFeatures, toolFirstMoveLine, toolSelectLine, warningLabel } from '../../src/app/doc';
+import { createDoc, moveSegments, sceneFeatures, warningLabel } from '../../src/app/doc';
+// 216차: 공구 줄 고르기는 정보 탭 조각(공구 탭)만 써 doc.ts(첫 화면)에서 panel-info.ts로 옮겼다
+import { toolFirstMoveLine, toolSelectLine } from '../../src/app/panel-info';
 
 const enc = new TextEncoder();
 function parse(name: string, text: string, scene = {}): ParseResult {

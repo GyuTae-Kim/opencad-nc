@@ -62,7 +62,8 @@ vi.mock('../../src/app/client', async () => {
 
 import { translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
-import { NO_LOCK_TOUCH } from '../../src/app/measure';
+// 216차: 잠글 방향이 없을 때 글은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { NO_LOCK_TOUCH } from '../../src/app/measure-lock';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -1203,7 +1204,7 @@ describe('해석 판단 띠', () => {
   it('185차: 폭 320px(WCAG 1.4.10 — 1280 화면 400% 확대)에서 동작 버튼은 줄을 바꾸지 않아 긴 버튼 글(독일어 「Als kleinstes Inkrement lesen」 등)이면 글 칸만 몇 글자 폭으로 줄던 것을 — 좁은 화면 규칙에서만 줄을 감싸 글 칸이 8em보다 좁아지면 버튼을 다음 줄로(✕도 정한 32px), 넓은 화면 규칙은 그대로', async () => {
     const { app, root } = makeApp();
     await open(app, 'od.nc', LATHE);
-    // 띠 한 줄(app.ts renderNotices): 글(.nt-text)·동작 버튼(.mb-btn)·✕(.mb-btn.icon) — 아래에서 읽는 규칙의 선택자가 실제 칸에 맞는다
+    // 띠 한 줄(notices.ts renderNotices — 216차에 app.ts에서 옮김): 글(.nt-text)·동작 버튼(.mb-btn)·✕(.mb-btn.icon) — 아래에서 읽는 규칙의 선택자가 실제 칸에 맞는다
     const row = root.querySelector<HTMLElement>('.notice-bar .notice')!;
     const [text, act, close] = [...row.children] as HTMLElement[];
     expect([row.children.length, text!.matches('.notice .nt-text'), act!.matches('.notice .mb-btn:not(.icon)'), close!.matches('.notice .mb-btn.icon')]).toEqual([3, true, true, true]);
@@ -1295,8 +1296,8 @@ describe('해석 판단 띠', () => {
       const fits = lines.every((l) => l.reduce((a, it) => a + sizes.get(it)!, 0) + gap * (l.length - 1) <= inner + 1e-9);
       return { text: sizes.get(items[0]!)!, x: sizes.get(items[2]!)!, lines: lines.length, fits };
     };
-    // 동작 버튼 글 여섯(doc.ts noticeViews)과 판단 글 둘: 이 띠의 선반 판단(긴 글)·Siemens 판별(짧은 글 — 그래도 8em의 두 배 넘음)
-    const labels = [...readFileSync(join(ROOT, 'src/app/doc.ts'), 'utf8').matchAll(/action: \{ label: '([^']+)'/g)].map((m) => m[1]!);
+    // 동작 버튼 글 여섯(notices.ts noticeViews — 216차에 doc.ts에서 판단 띠 조각으로 옮김)과 판단 글 둘: 이 띠의 선반 판단(긴 글)·Siemens 판별(짧은 글 — 그래도 8em의 두 배 넘음)
+    const labels = [...readFileSync(join(ROOT, 'src/app/notices.ts'), 'utf8').matchAll(/action: \{ label: '([^']+)'/g)].map((m) => m[1]!);
     expect(labels).toEqual(['작업 파일', '밀링으로 읽기', '최소 단위로 읽기', 'G-code 형식 바꾸기', '체계 바꾸기', '파일 더하기']);
     const notes = [text!.textContent!, 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).'];
     const least = 8 * em;

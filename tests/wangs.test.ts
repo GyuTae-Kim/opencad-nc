@@ -4,7 +4,9 @@ import { earClip } from '../src/mesh';
 import { mprToScene } from '../src/scene';
 import { decodeXmlBytes, parseXml, xmlRootName } from '../src/xml';
 import { MPRX_MESSAGE, OTHER_XML_MESSAGE, checkNcInput, parseForView } from '../src/app/payload';
-import { createDoc, docLabel, mprOps, noticeViews, panelTabs, selectionSummary, statusParts } from '../src/app/doc';
+import { createDoc, docLabel, mprOps, panelTabs, selectionSummary, statusParts } from '../src/app/doc';
+// 216차: 판단 띠 글은 문서가 있을 때만 써 doc.ts(첫 화면)에서 코어와 함께 받는 notices.ts로 옮겼다
+import { noticeViews } from '../src/app/notices';
 import { plainText } from '../src/app/filetext';
 import { translate } from '../site/i18n.mjs';
 import type { ParseResult } from '../src/app/protocol';

@@ -140,63 +140,11 @@ export function snapPair(m: { snapA?: SnapKind | null; snapB?: SnapKind | null; 
   return [m.nameA ?? snapLabel(m.snapA, m.axisA, m.trackA), b, !!m.lockedB && !meet];
 }
 
-/**
- * 잠근 방향(코어 0.10.0 추론 잠금): 축 셋, 선분과 나란히, 첫 점에서 선분에 내린 수직,
- * 첫 점이 원호 끝일 때 그 원호의 접선(앱이 코어에 방향으로 주는 나란함 잠금 — tangent.ts·measure-lock.ts)
+/*
+ * 216차: 측정 도구 조각만 쓰는 글·값은 그 조각 모듈로 옮겼다(첫 화면 조각에서 뺌 — 시험은 그 모듈에서 가져온다):
+ * 잠근 방향 이름(LockName)·잠금 안내 셋(LOCK_HINTS·SHIFT_LOCK_HINTS·ARROW_LOCK_HINT)·잠글 방향이 없을 때 글(NO_LOCK_TOUCH·NO_LOCK_MOUSE)·lockName은 measure-lock.ts,
+ * 측정 추론 붙잡기 선택(MEASURE_INFERENCE)은 refine.ts
  */
-export type LockName = 'x' | 'y' | 'z' | 'parallel' | 'perpendicular' | 'tangent';
-
-/** 잠갔을 때 상태 줄·측정 띠에 적는 글 */
-export const LOCK_HINTS: Record<LockName, string> = {
-  x: 'X축 방향으로 잠금',
-  y: 'Y축 방향으로 잠금',
-  z: 'Z축 방향으로 잠금',
-  parallel: '나란한 방향으로 잠금',
-  perpendicular: '수직 방향으로 잠금',
-  tangent: '접선 방향으로 잠금',
-};
-
-/** 잠그지 않았을 때(키보드 기기) 커서 아래에 Shift로 잠글 방향이 있으면(코어 0.12.0 measureHoverLock): 그 방향 */
-export const SHIFT_LOCK_HINTS: Record<LockName, string> = {
-  x: 'Shift로 X축 방향 잠그기',
-  y: 'Shift로 Y축 방향 잠그기',
-  z: 'Shift로 Z축 방향 잠그기',
-  parallel: 'Shift로 나란한 방향 잠그기',
-  perpendicular: 'Shift로 수직 방향 잠그기',
-  tangent: 'Shift로 접선 방향 잠그기',
-};
-
-/** 잠그지 않았고 Shift로 잠글 방향도 없을 때(키보드 기기): 화살표(→ X · ← Y · ↑ Z, ↓ 지금 방향) */
-export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
-
-/**
- * 측정 추론 붙잡기(코어 setMeasureSnap({ inference })): 교차점·수직 발·축 방향(0.9.0), 나란함·Shift 잠금(0.10.0).
- * Shift는 0.12.0부터 모서리 끝에서 그 모서리를 따라 가리킨 점 붙잡기도 그 모서리 방향으로 잠근다.
- * 0.16.0 끌어온 축(track): 마우스·펜이 점 붙잡기 위에 0.5초 머문 점(최근 셋)을 지나는 X·Y·Z축과, 첫 점 축 위에서 그 점과 나란한 자리에도 붙는다.
- * 손가락은 머무르지 않는다 — 길게 누르기는 정밀 조준(aim.ts)이 쓰므로 따로 주지 않고, 조준 십자선(펜 포인터)을 점 위에 멈추면 마우스처럼 기억한다.
- * 0.18.0 axisEdges: 첫 점 X·Y·Z축이 공구 경로·판재 윤곽·모서리선과 만나는 점(원호·스플라인이면 refine.ts가 곡선 위로 — 'axisEdge').
- * axisFaces: 첫 점 축·끌어온 축이 소재(Heidenhain BLK FORM 공작물·판·포켓·홈·구멍·깎기 시뮬레이션 소재) 그물 면을 뚫는 점
- * (판재 구멍 벽·둥근 포켓 벽·판 외곽선 둥근 모서리 같은 원기둥 벽은 refine.ts가 원기둥 위로 — refineFace 'axisFace', 그 밖의 곡면은 나눈 삼각형 위 점).
- * 0.19.0 lockEdges·lockFaces: 잠근 동안(Shift·화살표·잠금 단추) 잠근 선이 공구 경로·윤곽선과 만나는 점·소재 면을 뚫는 점(잠근 축이면 같은 다듬기로 곡선·원기둥 위).
- * 0.20.0: 나란함·수직·접선으로 잠근 선도 같은 다듬기로 곡선·원기둥 위, 축·잠근 선이 꺾은선 토막과 만나지 않고 그 활꼴만 지나면(다른 깊이의 원호·나선·스플라인을
- * 뚫는 축 등) 열린 후보로 곡선 위 교차(refine.ts — 새 선택 없이 refine을 준 앱이면 코어가 부른다)
- * 0.21.0 lockTracks: 잠근 동안 잠근 선이 끌어온 점(track — 머문 점)의 X·Y·Z축과 만나는 점, 축으로 잠갔으면 잠근 축 위 끌어온 점과 나란한 자리에도 붙는다
- * (잠근 동안 끌어온 축은 이 선택으로만 온다 — 끄면 22차까지처럼 잠근 선 위 커서 자리).
- * 0.22.0: 축·잠근 선이 원기둥 벽 삼각형을 비켜 가며 원기둥만 뚫는 자리도 refineFace('axisFace', open)로 곡면 위 교차(새 선택 없음).
- * 0.21.0 refineFace 'onFace'(붙잡지 않은 면 위 점 — 커서 광선)와 0.23.0 반투명 판 너머 고르기(throughTranslucent)는 refine.ts의 붙잡기 선택이 켠다
- */
-export const MEASURE_INFERENCE = { intersections: true, perpendicular: true, axes: true, parallel: true, lock: true, track: true, axisEdges: true, axisFaces: true, lockEdges: true, lockFaces: true, lockTracks: true } as const;
-
-/** 잠금 단추를 눌렀는데 잠글 방향이 없을 때(손가락 기기·마우스) */
-export const NO_LOCK_TOUCH = '잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요';
-export const NO_LOCK_MOUSE = '잠글 방향이 없습니다: 커서를 축·나란한 방향에 맞춘 뒤 누르세요';
-
-/** 코어 잠금 상태(measureInferenceLock) → 잠근 방향 이름 */
-export function lockName(l: { kind: string; axis?: 'x' | 'y' | 'z' } | null | undefined): LockName | null {
-  if (!l) return null;
-  if (l.kind === 'axis') return l.axis ?? null;
-  return l.kind === 'parallel' ? 'parallel' : l.kind === 'perpendicular' ? 'perpendicular' : null;
-}
 
 /** 측정 띠 안내(찍은 점 수 0~2, 결과가 있는지) */
 export function measureHint(points: number, hasResult: boolean, touch = false): string {

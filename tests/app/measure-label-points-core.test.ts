@@ -11,8 +11,9 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type MeasureLabelAvoid, type MeasureLabelRect, type Scene3d } from 'opencad-viewer3d';
-import { MEASURE_INFERENCE } from '../../src/app/measure';
 import { MeasureLock, type LockViewer } from '../../src/app/measure-lock';
+// 216차: 측정 추론 선택은 측정 도구 조각만 써 measure.ts(첫 화면)에서 refine.ts로 옮겼다
+import { MEASURE_INFERENCE } from '../../src/app/refine';
 import { installCanvasFakes } from './fake-webgl';
 
 const W = 375;
