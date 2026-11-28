@@ -130,7 +130,6 @@
   "M98에 P(프로그램 번호)가 없음": "M98 hat kein P (Programmnummer)",
   "MCALL {0}(…)은 지원하지 않음": "MCALL {0}(…) wird nicht unterstützt",
   "NC 뷰어": "NC-Viewer",
-  "NC 파일 열기 — 눌러서 고르거나 끌어다 놓기": "Öffnen Sie NC-Dateien – tippen Sie zum Auswählen oder ziehen Sie sie per Drag & Drop",
   "NC 파일을 골라 여십시오": "Wählen Sie eine NC-Datei zum Öffnen",
   "NC 파일을 여기에 끌어다 놓으십시오": "Ziehen Sie Ihre NC-Dateien hierher und legen Sie sie dort ab",
   "NC 프로그램으로 보이지 않습니다. G-code·Heidenhain 대화식(.h)·woodWOP MPR(.mpr)·WangShi PGI(.pgi)·XML(.xml) 파일을 여십시오.": "Dies sieht nicht nach einem NC-Programm aus. Öffnen Sie eine G-Code-, Heidenhain-Klartext- (.h), woodWOP-MPR- (.mpr), WangShi-PGI- (.pgi) oder XML-Datei (.xml).",
