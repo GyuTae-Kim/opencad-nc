@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -367,7 +367,11 @@ export class NcViewerApp implements PanelHost {
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
       // 파일 글이 섞인 글(상태 줄·안내 띠·패널·재생 띠·시작 화면 오류 — 그릴 때 옮겨 넣고 번역층은 건너뛴다)을 새 언어로 다시 그린다(54차)
-      if (this.startError && !this.startError.hidden) this.startError.replaceChildren(...this.errorNodes());
+      // 215차: 받기 실패 글(openFailed)이면 그 글과 버튼을 다시 그린다(오류 글로 바꾸지 않는다 — 버튼 초점도 같은 자리)
+      if (this.startError && !this.startError.hidden) {
+        if (this.startFail) this.renderStartFail();
+        else this.startError.replaceChildren(...this.errorNodes());
+      }
       if (this.doc) {
         this.renderStatus();
         this.renderNotices();
@@ -1070,7 +1074,8 @@ export class NcViewerApp implements PanelHost {
       } else this.showError(mix`${fileText(e.name)}: 이 브라우저에 저장된 내용을 읽지 못했습니다. 잠시 뒤 다시 눌러 보십시오.`);
       return false;
     }
-    const ok = await this.openBuffer(e.name, r.data, {}, attempt);
+    // 215차: 3D 보기 코어 조각을 받지 못하면 다시 시도는 이 열기를 처음부터(이 브라우저에 둔 내용을 다시 읽는다)
+    const ok = await this.openBuffer(e.name, r.data, {}, attempt, [], () => this.openRecent(e));
     if (ok) {
       await this.recent.touch(e.id);
       await this.renderRecent();
@@ -1109,17 +1114,20 @@ export class NcViewerApp implements PanelHost {
 
   async openSample(): Promise<boolean> {
     const attempt = beginOpen('sample', 'nc');
+    const again = (): Promise<boolean> => this.openSample();
     // 예제 글을 만드는 코드는 누를 때 받는다(첫 화면 JS에서 뺀다 — 54차, 오프라인 앱은 서비스 워커가 미리 담아 둔다)
     let sample: typeof import('../view/sample');
     try {
       sample = await import('../view/sample');
     } catch (e) {
-      this.showError(errorText(e));
+      // 215차: 받지 못했다(이 조각은 맨 위 곁효과 없이 받기만 해 받기 실패와 가르지 않는다) — 이름은 그 버튼 글, 다시 시도는 예제 열기를 처음부터
+      this.openFailed(e, '예제 열기', again);
       attempt.error('fetch_error');
       return false;
     }
+    loadDone('예제 열기');
     const bytes = new TextEncoder().encode(sample.ncSampleProgram());
-    return this.openBuffer(sample.NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer, {}, attempt);
+    return this.openBuffer(sample.NC_SAMPLE_NAME, bytes.buffer as ArrayBuffer, {}, attempt, [], again);
   }
 
   /** 같은 출처 주소에서 받아 연다(?open=) */
@@ -1135,7 +1143,8 @@ export class NcViewerApp implements PanelHost {
       if (/text\/html/i.test(r.headers.get('content-type') ?? '')) throw new Error('파일 대신 웹 페이지가 왔습니다. 주소가 맞는지 확인하십시오.');
       const buf = await r.arrayBuffer();
       if (seq !== this.loadSeq) return false;
-      return await this.openBuffer(label, buf, {}, attempt);
+      // 215차: 3D 보기 코어 조각을 받지 못하면 다시 시도는 이 열기를 처음부터(주소에서 다시 받는다)
+      return await this.openBuffer(label, buf, {}, attempt, [], () => this.openUrl(url, name));
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
@@ -1147,13 +1156,17 @@ export class NcViewerApp implements PanelHost {
     }
   }
 
-  /** 파일 열기(data는 워커로 이전되어 비워진다). 열었으면 true */
+  /**
+   * 파일 열기(data는 워커로 이전되어 비워진다). 열었으면 true.
+   * again(215차): 그 열기를 처음부터 다시 하는 길(예제·최근 문서·?open= 주소 — 손에 바이트가 없는 파일 고르기·끌어 놓기·내장 open은 주지 않는다) — 3D 보기 코어 조각을 받지 못했을 때만 쓴다
+   */
   async openBuffer(
     name: string,
     data: ArrayBuffer,
     opts: NcOpenOptions = {},
     attempt: OpenAttempt = beginOpen('local', name.split('.').pop() ?? 'other'),
     extra: { name: string; bytes: ArrayBuffer }[] = [],
+    again?: () => unknown,
   ): Promise<boolean> {
     const seq = ++this.loadSeq;
     const size = data.byteLength + extra.reduce((n, f) => n + f.bytes.byteLength, 0);
@@ -1190,8 +1203,10 @@ export class NcViewerApp implements PanelHost {
       return true;
     } catch (e) {
       if (seq === this.loadSeq) {
+        // 215차: 3D 보기 코어 조각을 받지 못했고(ensureViewer가 감싼 오류의 까닭 — 해석 워커·뷰어를 만들지 못함은 까닭이 받기 실패가 아니다) 다시 열 길이 있으면 openFailed
+        if (again && isChunkLoadError((e as Error | undefined)?.cause)) this.openFailed(e, '3D 보기', again);
         // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등 까닭은 따로 옮겨지게 글 마디마다(199차 — 위 openUrl과 같음)
-        this.showError([fileText(name), ': ', errorText(e)], true);
+        else this.showError([fileText(name), ': ', errorText(e)], true);
         attempt.error('parse_error');
       }
       return false;
@@ -1376,6 +1391,8 @@ export class NcViewerApp implements PanelHost {
 
   /** 마지막 오류 알림의 글과 조각 여부(시작 화면 — 언어를 바꾸면 다시 그린다) */
   private errorMsg: [Mixed, boolean] = [[], false];
+  /** 215차: 시작 화면 오류 칸의 받기 실패(openFailed — 조각 이름과 그 열기를 처음부터 하는 길). 다른 오류(showError)가 비운다(문서가 열리면 오류 칸이 숨어 쓰지 않는다) */
+  private startFail: [string, () => void] | null = null;
 
   /**
    * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다(199차),
@@ -1385,6 +1402,7 @@ export class NcViewerApp implements PanelHost {
     const m = typeof msg === 'string' ? [msg] : msg;
     this.error = plainText(m);
     this.errorMsg = [m, split];
+    this.startFail = null;
     if (this.doc) {
       toast(this.errorNodes(), 'error', 8000);
       return;
@@ -1396,6 +1414,34 @@ export class NcViewerApp implements PanelHost {
   private errorNodes(): (string | Node)[] {
     const [m, split] = this.errorMsg;
     return split ? pieces(m) : [mixSpan(m, undefined, true)];
+  }
+
+  /**
+   * 215차: 다시 열 길이 있는 열기(예제·최근 문서·?open= 주소)가 열 때 받는 조각(예제·3D 보기 코어)을 받지 못했다 — 211차 꼴 「{이름}을(를) 불러오지 못했습니다.」와
+   * 「다시 시도」(그 열기를 처음부터 — 214차: 누른 다시 시도도 받지 못하면 「새로 고침」). 전에는 오류 칸·알림 상자에 까닭만(「파일을 받지 못했습니다(네트워크 오류).」 —
+   * 다시 시도 없음, 예제·주소는 다시 누르거나 새로 고침뿐). 까닭(브라우저 글)은 콘솔에만. 자리는 showError와 같다 — 문서가 열려 있으면 알림 상자(211차 단축키 창과 같은 자리),
+   * 없으면 시작 화면 오류 칸(알림 상자는 8초 뒤 사라져 시작 화면에 실패 글이 남지 않았다 — 앞 오류 글을 이 글과 버튼으로 바꾼다, 마지막 오류 — state().error — 도 이 글)
+   */
+  private openFailed(e: unknown, name: string, again: () => unknown): void {
+    console.error(e);
+    this.error = `${name}을(를) 불러오지 못했습니다.`;
+    if (this.doc) return loadFailed(name, again);
+    this.startFail = [name, again];
+    this.renderStartFail();
+  }
+
+  /**
+   * 215차: 시작 화면 오류 칸에 받기 실패 글과 그 버튼(dom.ts failParts — 알림 상자와 같은 셈: 누른 다시 시도도 받지 못하면 「새로 고침」, 셈 열쇠는 조각 이름이라 받으면 loadDone이 뺀다).
+   * 오류 칸이 role=alert라 글·버튼을 바로 넣는다(탭 몸통 꼴 p[role=alert]는 겹친 알림 — 흐린 작은 글 .hint도 오류 칸에 맞지 않는다).
+   * 초점: 옛 버튼이 초점을 가졌거나(예제 조각 다시 시도) 덮개(여는 중)를 띄운 것이 옛 버튼이면 새 버튼으로 — 덮개 동안은 오류 칸이 inert라 덮개가 걷힐 때(setBusy의 busyFrom
+   * — 떼어진 옛 버튼이면 열기 칸으로 갔다). 덮개 밖에서 busyFrom을 바꿔도 다음 덮개가 새로 정한다
+   */
+  private renderStartFail(): void {
+    const parts = failParts(...this.startFail!);
+    const keep = this.startError.contains(document.activeElement) || this.startError.contains(this.busyFrom);
+    this.startError.replaceChildren(...parts);
+    this.startError.hidden = false;
+    if (keep) (this.busyFrom = parts[2]).focus({ preventScroll: true });
   }
 
   private bindDrop(): void {
@@ -1448,8 +1494,11 @@ export class NcViewerApp implements PanelHost {
     try {
       core = await loadViewerCore();
     } catch (e) {
-      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`));
+      // 215차: 받기 실패를 까닭(cause)으로 넘긴다 — 다시 열 길이 있는 열기(openBuffer again)만 그것을 보고 「3D 보기을(를) 불러오지 못했습니다.」와 다시 시도(글은 그대로)
+      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`), { cause: e });
     }
+    // 215차: 받으면 떠 있는 그 실패 알림을 닫는다(214차 꼴 — 다른 길로 열어 받아도)
+    loadDone('3D 보기');
     if (measure) await settleWithin(measure, MEASURE_WAIT_MS);
     await settleWithin(info, MEASURE_WAIT_MS);
     if (this.viewer) return;
@@ -2018,7 +2067,8 @@ export class NcViewerApp implements PanelHost {
         },
         renderToolbar: () => this.renderToolbar(),
       };
-      const p = import('./sim').then((m) => (this.sim = new m.SimView(host)));
+      // 215차: 받으면 소재 깎기 메뉴 길의 실패 알림을 닫는다(214차 꼴 — 깎기 탭 몸통의 다시 시도로 받아도)
+      const p = import('./sim').then((m) => (loadDone('소재 깎기'), (this.sim = new m.SimView(host))));
       this.simLoad = p;
       p.catch(() => {
         if (this.simLoad === p) this.simLoad = null;
@@ -2033,7 +2083,13 @@ export class NcViewerApp implements PanelHost {
     try {
       s = await this.ensureSim();
     } catch (e) {
-      // 108차: 조각을 받지 못한 까닭(errorText가 앱 글로 바꾼 네트워크 오류 등)까지 화면 언어로(202차: 원문을 든 mixSpan — 언어를 바꾸면 따라감)
+      // 215차: 조각을 받지 못했으면(isChunkLoadError — 측정 도구 measureArrived와 같은 가름) 까닭(브라우저 글)은 콘솔에만, 211차 틀(이름은 메뉴 항목 글)과
+      // 「다시 시도」(그 깎기를 처음부터 — 214차: 누른 다시 시도도 받지 못하면 「새로 고침」). 전에는 까닭을 낀 글 4초에 다시 시도가 없었다
+      if (isChunkLoadError(e)) {
+        console.error(e);
+        return loadFailed('소재 깎기', () => void this.setSim(on, opts));
+      }
+      // 108차: 받기 실패가 아닌 오류(조각은 왔는데 만들지 못함 등)는 까닭(errorText)까지 화면 언어로(202차: 원문을 든 mixSpan — 언어를 바꾸면 따라감)
       toast([mixSpan([`시뮬레이션을 불러오지 못했습니다: ${errorText(e)}`], undefined, true)], 'error');
       return;
     }

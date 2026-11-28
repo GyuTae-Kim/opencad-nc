@@ -149,10 +149,26 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   later();
 }
 
-/** 214차: 알림의 「다시 시도」를 누른 조각 이름(loadFailed — 또 받지 못하면 「새로 고침」, 받으면 loadDone이 뺀다) */
-const tried = new Set<string>();
+/**
+ * 214차: 알림의 「다시 시도」를 누른 조각 이름(loadFailed — 또 받지 못하면 「새로 고침」, 받으면 loadDone이 뺀다).
+ * 215차: 셈 열쇠는 이름, 탭 몸통은 받기 함수(panel.ts waitTab — 한 조각을 탭 이름 여럿이 함께 쓴다)
+ */
+const tried = new Set<unknown>();
 /** 211차 실패 글 하나(이름은 그 기능을 여는 탭·메뉴 항목의 글) */
 const failText = (name: string): HTMLSpanElement => mixSpan([`${name}을(를) 불러오지 못했습니다.`], undefined, true);
+
+/** 214차 셈(tried)으로 고른 실패 글의 동작: 누른 다시 시도도 받지 못했으면 「새로 고침」, 아니면 누를 때 셈에 넣고 다시 받는 「다시 시도」 */
+function failAction(retry: () => void, key: unknown): { label: string; run: () => void } {
+  return tried.has(key)
+    ? { label: '새로 고침', run: () => location.reload() }
+    : {
+        label: '다시 시도',
+        run: () => {
+          tried.add(key);
+          retry();
+        },
+      };
+}
 
 /**
  * 211차: 열 때 받는 조각(동적 가져오기)을 받지 못했다(오프라인에서 새 판과 옛 캐시가 엇갈림·연결 끊김 등) — 글은 「{이름}을(를) 불러오지 못했습니다.」 하나(이름은 그 기능을 여는
@@ -160,28 +176,25 @@ const failText = (name: string): HTMLSpanElement => mixSpan([`${name}을(를) �
  * 멈춘 탭·열리지 않는 창으로 까닭 없이 보였다(WCAG 3.3.1·4.1.3). body(탭 몸통 — panel.ts waitTab)를 주면 거기에 글(role=alert)과 버튼, 없으면(창 — 단축키 창) 알림 상자의 동작 버튼.
  * 214차: 알림의 「다시 시도」를 누른 뒤 또 받지 못하면 그 알림의 버튼은 「새로 고침」(같은 문서에서 받지 못한 모듈 받기는 브라우저가 실패로 기억할 수 있어 — HTML module map — 다시 시도가
  * 또 곧바로 실패한다. 새로 고치면 서비스 워커가 HTML을 네트워크 먼저로 받아 새 판과 그 조각을, 오프라인이면 담아 둔 같은 판을 준다). 글은 그대로라 같은 글 알림 하나(버튼만 바뀜).
- * 세는 것은 알림의 다시 시도 누름뿐(tried — 조용한 다시 받기·메뉴·? 키로 다시 연 실패는 넣지 않는다), 받으면 loadDone이 뺀다. 탭 몸통은 그대로(214차 보고 둠)
+ * 세는 것은 알림의 다시 시도 누름뿐(tried — 조용한 다시 받기·메뉴·? 키로 다시 연 실패는 넣지 않는다), 받으면 loadDone이 뺀다.
+ * 215차: 탭 몸통의 「다시 시도」도 같은 셈과 같은 버튼(214차는 몸통을 그대로 두어 또 눌러도 또 실패했다). 셈 열쇠는 key — 탭 몸통은 받기 함수를 준다(정보 탭 조각 하나를
+ * 공구·가공·변수·정보 이름 넷이 함께 써 이름으로 세면 한 탭의 누름이 같은 조각의 다른 탭에 닿지 않는다), 탭을 바꿔 다시 그린 실패 글은 세지 않는다. 몸통 버튼의 data-key는
+ * 137차 몸통 열쇠(panel.ts render)라 글이 「새로 고침」으로 바뀌어도 다시 그린 몸통에서 초점은 같은 자리 버튼(211차 — 글이 열쇠면 탭 버튼으로 갔다)
  */
-export function loadFailed(name: string, retry: () => void, body?: HTMLElement): void {
-  const text = failText(name);
-  if (!body)
-    return toast(
-      [text],
-      'error',
-      8000,
-      tried.has(name)
-        ? { label: '새로 고침', run: () => location.reload() }
-        : {
-            label: '다시 시도',
-            run: () => {
-              tried.add(name);
-              retry();
-            },
-          },
-    );
-  const b = h('button', { class: 'btn small', type: 'button' }, '다시 시도');
-  b.addEventListener('click', retry);
-  body.append(h('p', { class: 'hint', role: 'alert' }, text, ' ', b));
+export function loadFailed(name: string, retry: () => void, body?: HTMLElement, key: unknown = name): void {
+  if (!body) return toast([failText(name)], 'error', 8000, failAction(retry, key));
+  body.append(h('p', { class: 'hint', role: 'alert' }, ...failParts(name, retry, key)));
+}
+
+/**
+ * 215차: 실패 글과 그 동작 버튼 — 탭 몸통(loadFailed)과 시작 화면 오류 칸(app.ts openFailed — 오류 칸이 role=alert라 바로 넣는다)이 같은 셈.
+ * 버튼의 data-key는 137차 몸통 열쇠(글이 「새로 고침」으로 바뀌어도 다시 그린 몸통에서 같은 자리)
+ */
+export function failParts(name: string, retry: () => void, key: unknown = name): [HTMLSpanElement, string, HTMLButtonElement] {
+  const act = failAction(retry, key);
+  const b = h('button', { class: 'btn small', type: 'button', 'data-key': 'load' }, act.label);
+  b.addEventListener('click', act.run);
+  return [failText(name), ' ', b];
 }
 
 /**

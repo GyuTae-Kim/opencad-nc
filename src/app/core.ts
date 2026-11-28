@@ -52,9 +52,12 @@ export const loadViewerCore: () => Promise<Core> = onceImport(async () => {
 /** 측정 도구 조각(한 번만 받는다) */
 export const loadMeasureTools: () => Promise<MeasureTools> = onceImport(() => import('./measure-tools'));
 
-/** 나눠 받는 조각을 받지 못한 오류인지(브라우저마다 글이 다르다: Chrome·Edge, Firefox, Safari — 정규식은 errorText와 함께 쓰는 protocol.ts CHUNK_FAIL, 212차) */
+/**
+ * 나눠 받는 조각을 받지 못한 오류인지(브라우저마다 글이 다르다: Chrome·Edge, Firefox, Safari — 정규식은 errorText와 함께 쓰는 protocol.ts CHUNK_FAIL, 212차).
+ * 215차: 감싼 오류는 그 까닭(cause)도 본다 — 앱이 감싼 코어 받기 실패(app.ts ensureViewer)·받는 쪽 틀이 감싼 오류(브라우저의 import() 거부는 감싸지 않은 TypeError라 그대로)
+ */
 export function isChunkLoadError(e: unknown): boolean {
-  return CHUNK_FAIL.test(e instanceof Error ? e.message : String(e ?? ''));
+  return e instanceof Error ? CHUNK_FAIL.test(e.message) || isChunkLoadError(e.cause) : CHUNK_FAIL.test(String(e ?? ''));
 }
 
 /**
