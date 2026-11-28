@@ -216,44 +216,68 @@ const pick = (lang: string): void => document.querySelector<HTMLButtonElement>(`
 
 // 215차 묶음이 맨 앞: 3D 보기 코어 조각은 코어 약속이 이 파일에서 처음 받는 때만 실패시킬 수 있다(받으면 남는다). 3D 보기 띠·정보 탭 조각은 아래 시험 몫이라 받지 못하게 둔다
 describe('215차: 다시 열 길이 있는 열기(예제·?open= 주소)가 예제·3D 보기 코어 조각을 받지 못할 때', () => {
-  it('예제 조각·코어 조각: 까닭 없는 「{이름}을(를) 불러오지 못했습니다.」와 다시 시도(그 열기를 처음부터 — 예제는 예제를, 주소는 받기부터), 누른 다시 시도도 받지 못하면 「새로 고침」, 받으면 닫는다 — 손에 바이트가 없는 열기는 지금처럼', async () => {
+  it('까닭 없는 「{이름}을(를) 불러오지 못했습니다.」와 다시 시도(그 열기를 처음부터 — 주소는 받기부터), 누른 다시 시도도 받지 못하면 「새로 고침」 — 자리는 showError와 같다(시작 화면은 오류 칸에 남고 문서가 있으면 알림 상자), 손에 바이트가 없는 열기는 지금처럼', async () => {
     ctl.fail.add('sample');
     ctl.fail.add('core');
     ctl.fail.add('ui');
     ctl.fail.add('info');
     const { app, root } = mount();
+    const lang0 = document.documentElement.lang;
+    const dispose = await installLocalization(root);
     const startError = root.querySelector<HTMLElement>('.start-error')!;
+    const btn = (): HTMLButtonElement | null => startError.querySelector('button');
     const SAMPLE = '예제 열기을(를) 불러오지 못했습니다.';
     const CORE = '3D 보기을(를) 불러오지 못했습니다.';
-    // 예제 조각: 전에는 시작 화면 오류 칸에 까닭(브라우저 글을 바꾼 앱 글 — 이 시험 틀에서는 가짜 모듈 오류 글)만, 다시 시도 없음
-    expect(await app.openSample()).toBe(false);
-    const a = only(SAMPLE);
-    expect([a.getAttribute('role'), act(a), a.textContent, startError.hidden, app.state().error]).toEqual(['alert', '다시 시도', `${SAMPLE}다시 시도×`, true, SAMPLE]);
-    expect(console.error).toHaveBeenCalled();
-    // 다시 시도 = 그 열기를 처음부터: 예제를 받아 해석하고 3D 보기 코어를 받는다 — 받지 못하면 그 이름으로 같은 꼴(전에는 「…: 3D 보기를 만들지 못했습니다: …」 오류 칸·다시 시도 없음)
-    ctl.fail.delete('sample');
-    a.querySelector<HTMLButtonElement>('.toast-act')!.click();
-    const b = await vi.waitFor(() => only(CORE), WAIT);
-    expect([act(b), toastsWith(SAMPLE).length, startError.hidden, app.state().error]).toEqual(['다시 시도', 0, true, CORE]);
-    // 손에 바이트가 없는 열기(파일 고르기·끌어 놓기 — 바이트는 워커로 넘겨 비워진다, 같은 openBuffer 길에 다시 열 길을 주지 않음)는 지금처럼 오류 칸·다시 시도 없음
-    expect(await app.openBuffer('pick.MPF', enc(SIE))).toBe(false);
-    expect(startError.hidden).toBe(false);
-    expect(startError.textContent).toMatch(/^pick\.MPF: 3D 보기를 만들지 못했습니다: /);
-    expect(only(CORE)).toBe(b);
-    // ?open= 주소: 같은 글 하나(새 알림), 남은 오류 칸은 감춘다(마지막 오류는 알림 — state().error도)
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => 'text/plain' }, arrayBuffer: async () => enc(SIE) }));
-    vi.stubGlobal('fetch', fetchMock);
-    expect(await app.openUrl('/files/url.MPF')).toBe(false);
-    const c = only(CORE);
-    expect([c === b, act(c), startError.hidden, app.state().error]).toEqual([false, '다시 시도', true, CORE]);
-    // 그 다시 시도는 주소에서 다시 받는다 — 또 받지 못하면 214차 꼴로 「새로 고침」(같은 글 하나)
-    c.querySelector<HTMLButtonElement>('.toast-act')!.click();
-    await vi.waitFor(() => expect(act(only(CORE))).toBe('새로 고침'), WAIT);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    // 받을 수 있게 되면(다른 길 — 예제 열기 버튼과 같은 openSample) 열고 남은 실패 알림을 닫는다(214차 꼴)
-    ctl.fail.delete('core');
-    expect(await app.openSample()).toBe(true);
-    expect([toastsWith(CORE).length, toastsWith(SAMPLE).length, app.state().error, root.querySelector<HTMLElement>('.view')!.hidden]).toEqual([0, 0, null, false]);
+    try {
+      // 예제 조각(시작 화면): 전에는 오류 칸에 까닭만(이 시험 틀에서는 가짜 모듈 오류 글) — 다시 시도 없음. 215차 첫 판은 8초 알림 상자뿐이라 사라지면 시작 화면에 실패 글이 없었다.
+      // 이제 오류 칸(role=alert — 겹친 알림 없이 글과 버튼을 바로)에 남고 알림 상자는 띄우지 않는다
+      expect(await app.openSample()).toBe(false);
+      expect([startError.hidden, startError.getAttribute('role'), startError.textContent, startError.querySelectorAll('[role]').length, toastsWith(SAMPLE).length, app.state().error]).toEqual([
+        false,
+        'alert',
+        `${SAMPLE} 다시 시도`,
+        0,
+        0,
+        SAMPLE,
+      ]);
+      expect(console.error).toHaveBeenCalled();
+      // ?open= 주소: 예제를 받기 전이라 코어 조각을 받지 못한다 — 같은 칸을 그 이름의 글로 바꾼다(앞 실패 글은 남지 않는다)
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => 'text/plain' }, arrayBuffer: async () => enc(SIE) }));
+      vi.stubGlobal('fetch', fetchMock);
+      expect(await app.openUrl('/files/url.MPF')).toBe(false);
+      expect([startError.hidden, startError.textContent, toastsWith(CORE).length, app.state().error]).toEqual([false, `${CORE} 다시 시도`, 0, CORE]);
+      // 그 다시 시도는 주소에서 다시 받는다(덮개를 띄운 버튼이 새로 그려져도 덮개가 걷히면 초점은 새 버튼 — 떼어진 옛 버튼이면 열기 칸으로 갔다),
+      // 또 받지 못하면 214차 꼴로 「새로 고침」(같은 칸 하나)
+      btn()!.focus();
+      btn()!.click();
+      await vi.waitFor(() => expect(startError.textContent).toBe(`${CORE} 새로 고침`), WAIT);
+      expect([fetchMock.mock.calls.length, focused() === btn(), toastsWith(CORE).length]).toEqual([2, true, 0]);
+      // 화면 언어를 바꾸면 같은 글·버튼을 그 언어로 다시 그린다(앞 오류 글로 되돌아가지 않는다 — 버튼도 그대로 「새로 고침」)
+      pick('en');
+      await vi.waitFor(() => expect(startError.textContent).toBe('Could not load "3D view". Refresh'), WAIT);
+      pick('ko');
+      await vi.waitFor(() => expect(startError.textContent).toBe(`${CORE} 새로 고침`), WAIT);
+      // 손에 바이트가 없는 열기(파일 고르기·끌어 놓기 — 바이트는 워커로 넘겨 비워진다, 같은 openBuffer 길에 다시 열 길을 주지 않음)는 지금처럼 오류 칸에 까닭·다시 시도 없음
+      expect(await app.openBuffer('pick.MPF', enc(SIE))).toBe(false);
+      expect([startError.hidden, btn()]).toEqual([false, null]);
+      expect(startError.textContent).toMatch(/^pick\.MPF: 3D 보기를 만들지 못했습니다: /);
+      // 코어를 받으면(다른 길 — 파일 열기) 열고 오류 칸을 감춘다
+      ctl.fail.delete('core');
+      expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
+      expect([startError.hidden, app.state().error, root.querySelector<HTMLElement>('.view')!.hidden]).toEqual([true, null, false]);
+      // 문서가 열려 있으면(showError와 같은 갈래) 알림 상자에 같은 글과 다시 시도 — 열린 문서는 그대로, 오류 칸은 감춘 채
+      expect(await app.openSample()).toBe(false);
+      const a = only(SAMPLE);
+      expect([a.getAttribute('role'), act(a), a.textContent, startError.hidden, app.state().error, app.state().docName]).toEqual(['alert', '다시 시도', `${SAMPLE}다시 시도×`, true, SAMPLE, 'part.MPF']);
+      // 그 다시 시도 = 예제 열기를 처음부터: 받으면 예제를 열고 그 실패 알림을 닫는다(214차 꼴)
+      ctl.fail.delete('sample');
+      a.querySelector<HTMLButtonElement>('.toast-act')!.click();
+      await vi.waitFor(() => expect(toastsWith(SAMPLE)).toHaveLength(0), WAIT);
+      await vi.waitFor(() => expect(app.state().error).toBeNull(), WAIT);
+    } finally {
+      dispose();
+      document.documentElement.lang = lang0;
+    }
   });
 });
 

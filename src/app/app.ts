@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -367,7 +367,11 @@ export class NcViewerApp implements PanelHost {
       // 최근 문서의 시각 글을 화면 언어 형식으로
       void this.renderRecent();
       // 파일 글이 섞인 글(상태 줄·안내 띠·패널·재생 띠·시작 화면 오류 — 그릴 때 옮겨 넣고 번역층은 건너뛴다)을 새 언어로 다시 그린다(54차)
-      if (this.startError && !this.startError.hidden) this.startError.replaceChildren(...this.errorNodes());
+      // 215차: 받기 실패 글(openFailed)이면 그 글과 버튼을 다시 그린다(오류 글로 바꾸지 않는다 — 버튼 초점도 같은 자리)
+      if (this.startError && !this.startError.hidden) {
+        if (this.startFail) this.renderStartFail();
+        else this.startError.replaceChildren(...this.errorNodes());
+      }
       if (this.doc) {
         this.renderStatus();
         this.renderNotices();
@@ -1387,6 +1391,8 @@ export class NcViewerApp implements PanelHost {
 
   /** 마지막 오류 알림의 글과 조각 여부(시작 화면 — 언어를 바꾸면 다시 그린다) */
   private errorMsg: [Mixed, boolean] = [[], false];
+  /** 215차: 시작 화면 오류 칸의 받기 실패(openFailed — 조각 이름과 그 열기를 처음부터 하는 길). 다른 오류(showError)가 비운다(문서가 열리면 오류 칸이 숨어 쓰지 않는다) */
+  private startFail: [string, () => void] | null = null;
 
   /**
    * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다(199차),
@@ -1396,6 +1402,7 @@ export class NcViewerApp implements PanelHost {
     const m = typeof msg === 'string' ? [msg] : msg;
     this.error = plainText(m);
     this.errorMsg = [m, split];
+    this.startFail = null;
     if (this.doc) {
       toast(this.errorNodes(), 'error', 8000);
       return;
@@ -1412,14 +1419,29 @@ export class NcViewerApp implements PanelHost {
   /**
    * 215차: 다시 열 길이 있는 열기(예제·최근 문서·?open= 주소)가 열 때 받는 조각(예제·3D 보기 코어)을 받지 못했다 — 211차 꼴 「{이름}을(를) 불러오지 못했습니다.」와
    * 「다시 시도」(그 열기를 처음부터 — 214차: 누른 다시 시도도 받지 못하면 「새로 고침」). 전에는 오류 칸·알림 상자에 까닭만(「파일을 받지 못했습니다(네트워크 오류).」 —
-   * 다시 시도 없음, 예제·주소는 다시 누르거나 새로 고침뿐). 까닭(브라우저 글)은 콘솔에만. 알림 상자라 시작 화면에서도 보이고(211차 단축키 창과 같은 자리),
-   * 앞 열기의 다른 오류가 시작 화면 오류 칸에 남지 않게 감춘다(마지막 오류 — state().error — 는 이 글)
+   * 다시 시도 없음, 예제·주소는 다시 누르거나 새로 고침뿐). 까닭(브라우저 글)은 콘솔에만. 자리는 showError와 같다 — 문서가 열려 있으면 알림 상자(211차 단축키 창과 같은 자리),
+   * 없으면 시작 화면 오류 칸(알림 상자는 8초 뒤 사라져 시작 화면에 실패 글이 남지 않았다 — 앞 오류 글을 이 글과 버튼으로 바꾼다, 마지막 오류 — state().error — 도 이 글)
    */
   private openFailed(e: unknown, name: string, again: () => unknown): void {
     console.error(e);
     this.error = `${name}을(를) 불러오지 못했습니다.`;
-    this.startError.hidden = true;
-    loadFailed(name, again);
+    if (this.doc) return loadFailed(name, again);
+    this.startFail = [name, again];
+    this.renderStartFail();
+  }
+
+  /**
+   * 215차: 시작 화면 오류 칸에 받기 실패 글과 그 버튼(dom.ts failParts — 알림 상자와 같은 셈: 누른 다시 시도도 받지 못하면 「새로 고침」, 셈 열쇠는 조각 이름이라 받으면 loadDone이 뺀다).
+   * 오류 칸이 role=alert라 글·버튼을 바로 넣는다(탭 몸통 꼴 p[role=alert]는 겹친 알림 — 흐린 작은 글 .hint도 오류 칸에 맞지 않는다).
+   * 초점: 옛 버튼이 초점을 가졌거나(예제 조각 다시 시도) 덮개(여는 중)를 띄운 것이 옛 버튼이면 새 버튼으로 — 덮개 동안은 오류 칸이 inert라 덮개가 걷힐 때(setBusy의 busyFrom
+   * — 떼어진 옛 버튼이면 열기 칸으로 갔다). 덮개 밖에서 busyFrom을 바꿔도 다음 덮개가 새로 정한다
+   */
+  private renderStartFail(): void {
+    const parts = failParts(...this.startFail!);
+    const keep = this.startError.contains(document.activeElement) || this.startError.contains(this.busyFrom);
+    this.startError.replaceChildren(...parts);
+    this.startError.hidden = false;
+    if (keep) (this.busyFrom = parts[2]).focus({ preventScroll: true });
   }
 
   private bindDrop(): void {

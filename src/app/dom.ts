@@ -157,6 +157,19 @@ const tried = new Set<unknown>();
 /** 211차 실패 글 하나(이름은 그 기능을 여는 탭·메뉴 항목의 글) */
 const failText = (name: string): HTMLSpanElement => mixSpan([`${name}을(를) 불러오지 못했습니다.`], undefined, true);
 
+/** 214차 셈(tried)으로 고른 실패 글의 동작: 누른 다시 시도도 받지 못했으면 「새로 고침」, 아니면 누를 때 셈에 넣고 다시 받는 「다시 시도」 */
+function failAction(retry: () => void, key: unknown): { label: string; run: () => void } {
+  return tried.has(key)
+    ? { label: '새로 고침', run: () => location.reload() }
+    : {
+        label: '다시 시도',
+        run: () => {
+          tried.add(key);
+          retry();
+        },
+      };
+}
+
 /**
  * 211차: 열 때 받는 조각(동적 가져오기)을 받지 못했다(오프라인에서 새 판과 옛 캐시가 엇갈림·연결 끊김 등) — 글은 「{이름}을(를) 불러오지 못했습니다.」 하나(이름은 그 기능을 여는
  * 탭·메뉴 항목의 글 — 한 기능 한 낱말, 틀이 잡은 이름도 옮긴다)와 「다시 시도」(같은 받기를 다시 — 받지 못한 약속은 비워 둔다). 전에는 console.error만 남아 빈 탭·「불러오는 중…」에
@@ -169,20 +182,19 @@ const failText = (name: string): HTMLSpanElement => mixSpan([`${name}을(를) �
  * 137차 몸통 열쇠(panel.ts render)라 글이 「새로 고침」으로 바뀌어도 다시 그린 몸통에서 초점은 같은 자리 버튼(211차 — 글이 열쇠면 탭 버튼으로 갔다)
  */
 export function loadFailed(name: string, retry: () => void, body?: HTMLElement, key: unknown = name): void {
-  const text = failText(name);
-  const act = tried.has(key)
-    ? { label: '새로 고침', run: () => location.reload() }
-    : {
-        label: '다시 시도',
-        run: () => {
-          tried.add(key);
-          retry();
-        },
-      };
-  if (!body) return toast([text], 'error', 8000, act);
+  if (!body) return toast([failText(name)], 'error', 8000, failAction(retry, key));
+  body.append(h('p', { class: 'hint', role: 'alert' }, ...failParts(name, retry, key)));
+}
+
+/**
+ * 215차: 실패 글과 그 동작 버튼 — 탭 몸통(loadFailed)과 시작 화면 오류 칸(app.ts openFailed — 오류 칸이 role=alert라 바로 넣는다)이 같은 셈.
+ * 버튼의 data-key는 137차 몸통 열쇠(글이 「새로 고침」으로 바뀌어도 다시 그린 몸통에서 같은 자리)
+ */
+export function failParts(name: string, retry: () => void, key: unknown = name): [HTMLSpanElement, string, HTMLButtonElement] {
+  const act = failAction(retry, key);
   const b = h('button', { class: 'btn small', type: 'button', 'data-key': 'load' }, act.label);
   b.addEventListener('click', act.run);
-  body.append(h('p', { class: 'hint', role: 'alert' }, text, ' ', b));
+  return [failText(name), ' ', b];
 }
 
 /**
