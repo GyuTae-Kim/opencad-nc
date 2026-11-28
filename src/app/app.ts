@@ -2558,8 +2558,17 @@ export class NcViewerApp implements PanelHost {
     }
     if (this.keysHelp) return;
     this.keysHelp = true;
+    // 207차: 열린 동안 연 곳이 숨거나 떼어지면(읽는 중 「취소」·시작 화면·다시 그린 패널 칸) 닫을 때 남는 칸으로 — 패널에서 열었으면 지금 탭 버튼,
+    // 아니면 180차 덮개 「취소」와 같은 차례(문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸)
+    const inPanel = this.panel.el.contains(document.activeElement);
     void import('./shortcuts')
-      .then((m) => m.openShortcutsDialog(this.root, () => (this.keysHelp = false)))
+      .then((m) =>
+        m.openShortcutsDialog(
+          this.root,
+          () => (this.keysHelp = false),
+          () => [inPanel ? this.panel.el.querySelector<HTMLElement>('.panel-tab.active') : null, this.doc && this.viewer ? this.viewer.canvas : this.startEl.querySelector<HTMLElement>('.dropzone')],
+        ),
+      )
       .catch((e: unknown) => {
         this.keysHelp = false;
         console.error(e);
