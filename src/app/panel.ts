@@ -132,7 +132,8 @@ export class NcPanel {
     // 141차: 몸통 하나를 모든 탭 버튼이 aria-controls로 가리키고, 몸통 이름은 render가 지금 탭 버튼으로(aria-labelledby — APG Tabs). 패널은 앱에 하나라 id도 하나
     this.body = h('div', { class: 'panel-body', role: 'tabpanel', id: 'panel-body' });
     this.foot = h('div', { class: 'panel-foot', hidden: true, 'aria-live': 'polite' });
-    const grip = h('div', { class: 'panel-grip', title: '끌거나 눌러 크기 바꾸기', 'aria-hidden': 'true' });
+    // 223차(WCAG 2.1.1): 초점을 받는 분리자(이름은 풍선 글 — 키·값은 bindResize)
+    const grip = h('div', { class: 'panel-grip', role: 'separator', tabindex: 0, title: '끌거나 눌러 크기 바꾸기' });
     this.el = h('aside', { class: 'panel', hidden: true, 'aria-label': '문서 패널' }, grip, h('div', { class: 'panel-head' }, this.tabsEl, close), this.play, this.body, this.foot);
     workspace.append(this.el);
     const w = Number(safeGet(WIDTH_KEY));
@@ -146,8 +147,35 @@ export class NcPanel {
    * 넓으면 폭, 좁으면(아래 시트) 높이를 끌어서 바꾼다. 172차(WCAG 2.5.7 끄는 동작의 한 점 대안): 끌지 않고 떼면 다음 정해진 크기로 —
    * 작게(끌기 최소)·보통(CSS 기본 380px·46%)·크게(끌기 최대)를 돈다. 끌기 판정은 코어 문턱과 같다(마우스·펜 4px, 손가락 10px).
    * 지금 크기는 둔 변수를 먼저 읽는다(넓은 화면 패널은 CSS 최대 60%라 그린 폭이 변수보다 작을 수 있다)
+   * 223차(WCAG 2.1.1·4.1.2): 손잡이는 초점을 받는 분리자(APG Window Splitter) — 넓은 화면 ←(넓게)·→ 20px, 시트 ↑(높게)·↓ 5%, Enter는 누르기와 같은 다음 크기.
+   * 값(aria-valuenow — 기본 범위 0~100)은 패널이 작업 영역의 몇 %인가(넓은 화면 폭·시트 높이), 방향은 그때 화면 폭으로(바꿀 때·초점을 받을 때 — sync).
+   * 창 키(app.ts onKey)는 분리자의 화살표에서 돌아선다(재생할 수 있는 문서의 ←→ 한 이동 걷기보다 먼저). Home·End(가장 작게·크게)는 첫 화면 크기 허용 안에 들지 않아 두지 않았다
    */
   private bindResize(grip: HTMLElement): void {
+    const area = (): DOMRect => this.workspace.getBoundingClientRect();
+    const fitW = (w: number, a = area()): number => Math.max(260, Math.min(900, a.width - 200, w));
+    /** 지금 크기(시트는 높이 비율): 둔 변수, 없으면 그린 크기, 그리기 전이면 CSS 기본 */
+    const now = (sheet: boolean): number => {
+      const r = this.el.getBoundingClientRect();
+      return sheet
+        ? parseFloat(this.workspace.style.getPropertyValue('--sheet-h')) / 100 || (r.height ? sheetFraction(r.height / Math.max(1, area().height)) : 0.46)
+        : parseFloat(this.el.style.getPropertyValue('--panel-w')) || r.width || 380;
+    };
+    const put = (sheet: boolean, v: number): number => {
+      if (sheet) this.workspace.style.setProperty('--sheet-h', `${Math.round(v * 100)}%`);
+      else this.el.style.setProperty('--panel-w', `${Math.round(v)}px`);
+      return v;
+    };
+    const next = (sheet: boolean): number => nextSize(now(sheet), sheet ? [0.22, 0.46, 0.85] : [260, 380, 900].map((w) => fitW(w)));
+    const sync = (): void => {
+      const sheet = window.innerWidth < NARROW_WIDTH;
+      grip.setAttribute('aria-orientation', sheet ? 'horizontal' : 'vertical');
+      grip.setAttribute('aria-valuenow', String(Math.round((sheet ? now(true) : now(false) / Math.max(1, area().width)) * 100)));
+    };
+    const save = (sheet: boolean, v: number): void => {
+      safeSet(sheet ? SHEET_KEY : WIDTH_KEY, sheet ? v.toFixed(3) : String(Math.round(v)));
+      sync();
+    };
     grip.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
       grip.setPointerCapture(ev.pointerId);
@@ -156,42 +184,36 @@ export class NcPanel {
       const y0 = ev.clientY;
       const slop = ev.pointerType === 'touch' ? 10 : 4;
       let moved = false;
-      const w0 = this.el.getBoundingClientRect().width;
-      const area = this.workspace.getBoundingClientRect();
-      const maxW = Math.min(900, area.width - 200);
-      const fitW = (w: number): number => Math.max(260, Math.min(maxW, w));
-      let width = w0;
-      let sheet = sheetFraction(this.el.getBoundingClientRect().height / Math.max(1, area.height));
+      const r = this.el.getBoundingClientRect();
+      const box = area();
+      // 지금 크기(시트는 높이 비율) — 끌면 끈 만큼, 끌지 않고 떼면 다음 정해진 크기
+      let v = asSheet ? sheetFraction(r.height / Math.max(1, box.height)) : r.width;
       const move = (e: PointerEvent) => {
         if (Math.hypot(e.clientX - x0, e.clientY - y0) >= slop) moved = true;
-        if (asSheet) {
-          sheet = sheetFraction((area.bottom - e.clientY) / Math.max(1, area.height));
-          this.workspace.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
-          return;
-        }
-        width = fitW(w0 + (x0 - e.clientX));
-        this.el.style.setProperty('--panel-w', `${Math.round(width)}px`);
+        v = put(asSheet, asSheet ? sheetFraction((box.bottom - e.clientY) / Math.max(1, box.height)) : fitW(r.width + (x0 - e.clientX), box));
       };
       const up = (e: PointerEvent) => {
         grip.removeEventListener('pointermove', move);
         grip.removeEventListener('pointerup', up);
         grip.removeEventListener('pointercancel', up);
-        if (!moved && e.type === 'pointerup') {
-          if (asSheet) {
-            sheet = nextSize(parseFloat(this.workspace.style.getPropertyValue('--sheet-h')) / 100 || sheet, [0.22, 0.46, 0.85]);
-            this.workspace.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
-          } else {
-            width = nextSize(parseFloat(this.el.style.getPropertyValue('--panel-w')) || w0, [260, 380, maxW].map(fitW));
-            this.el.style.setProperty('--panel-w', `${Math.round(width)}px`);
-          }
-        }
-        if (asSheet) safeSet(SHEET_KEY, sheet.toFixed(3));
-        else safeSet(WIDTH_KEY, String(Math.round(width)));
+        if (!moved && e.type === 'pointerup') v = put(asSheet, next(asSheet));
+        save(asSheet, v);
       };
       grip.addEventListener('pointermove', move);
       grip.addEventListener('pointerup', up);
       grip.addEventListener('pointercancel', up);
     });
+    grip.addEventListener('keydown', (e) => {
+      const sheet = window.innerWidth < NARROW_WIDTH;
+      const k = e.key;
+      const d = k === (sheet ? 'ArrowUp' : 'ArrowLeft') ? 1 : k === (sheet ? 'ArrowDown' : 'ArrowRight') ? -1 : 0;
+      const v = d ? (sheet ? sheetFraction(now(true) + d * 0.05) : fitW(now(false) + d * 20)) : k === 'Enter' ? next(sheet) : 0;
+      if (!v || e.ctrlKey || e.metaKey || e.altKey) return;
+      e.preventDefault();
+      save(sheet, put(sheet, v));
+    });
+    grip.addEventListener('focus', sync);
+    sync();
   }
 
   // ───────────────────────── 바깥에서 부르는 것 ─────────────────────────

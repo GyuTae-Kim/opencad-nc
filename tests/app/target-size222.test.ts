@@ -9,6 +9,10 @@
  *   폭(width·min-width 또는 안 글·그림 폭 — 채우는 칸은 「채움」)을 어림한다. 숨김 상태([hidden])는 셈 밖(보일 때의 크기), @media로 안 보이는 꼴은 건너뛴다.
  * - 판정 대조: 「24 넘음」 꼴은 셈한 폭·높이 24 이상, 예외(간격·동등·글줄 안·브라우저 기본)·「고르지 않음」 꼴은 그 꼴에서 24 미만(24 이상이 되면 표를 고쳐야 — 낡은 예외 막기).
  * 뷰어 코어(WebGL)는 가짜, 해석은 워커와 같은 길(parseForView), 깎기 워커는 같은 실행기를 같은 스레드에서(i18n-screens199 꼴).
+ * 223차(WCAG 2.1.1 키보드·2.4.7 초점 보임 — .runtime/r223/progress.md 표): 같은 표의 꼴마다 키보드 길(kb)을 적고 걸음마다 그 꼴의 마디가 판정대로인지 본다 —
+ *   Tab(tabIndex ≥ 0)·무리(화살표로 도는 메뉴·탭 줄 안, 무리에 keydown)·안 칸(감싼 라벨의 컨트롤)·담은 칸(자기·조상·아이 가운데 Tab)·다른 길(같은 일의 다른 칸 alt가 Tab)·없음(설계 — 고르지 않음).
+ *   역할을 준 칸(role=button·separator 등 — button·a·input이 아닌 것)은 자기·조상의 keydown, 초점을 받는 칸은 초점일 때 outline이 남는지(:focus·:focus-visible 규칙을 그 칸에 맞는 것으로 겹침).
+ *   새 누를 칸이 생기면 크기와 함께 키보드 판정도 표에 적어야 통과한다(kb는 꼭 적는 칸). 고친 둘: 패널 크기 손잡이(분리자 — 키로 크기)·좁은 화면 판단 띠 글(키보드 초점이 줄에 들면 펼침).
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,6 +26,8 @@ const fake = vi.hoisted(() => {
       const wrap = document.createElement('div');
       wrap.className = 'v3d';
       this.canvas = document.createElement('canvas');
+      // 223차: 코어 캔버스는 키보드 초점을 받는다(코어 viewer.ts tabIndex 0 — focus-audit208 가짜와 같게)
+      this.canvas.tabIndex = 0;
       wrap.append(this.canvas);
       host.append(wrap);
       return new Proxy(this, { get: (t, p, r) => (p in t ? Reflect.get(t, p, r) : () => null) });
@@ -135,53 +141,61 @@ const MPR = [
 type Verdict = '24 넘음' | '간격' | '동등' | '글줄 안' | '브라우저 기본' | '고르지 않음' | '대상 아님' | '큼';
 /** 24 미만으로 두는 판정(예외·디자인 결정) — 셈이 24 이상이면 표가 낡음 */
 const SMALL: readonly Verdict[] = ['간격', '동등', '글줄 안', '브라우저 기본', '고르지 않음'];
+/**
+ * 223차 키보드 길(가): Tab = 그 칸이 Tab 차례 · 무리 = 화살표로 도는 무리(메뉴·탭 줄) 안 · 안 칸 = 감싼 컨트롤 · 담은 칸 = 자기·조상·아이 가운데 Tab 칸의 키 ·
+ * 다른 길 = 같은 일의 다른 칸·단축키(alt가 있으면 그 칸이 Tab) · 없음 = 키보드 길 없음(설계 결정 — 고르지 않음) · 대상 아님
+ */
+type Kb = 'Tab' | '무리' | '안 칸' | '담은 칸' | '다른 길' | '없음' | '대상 아님';
 interface Entry {
   readonly n: number;
   readonly sel: string;
   readonly name: string;
   readonly wide: Verdict;
   readonly phone: Verdict;
+  readonly kb: Kb;
+  /** 다른 길: 같은 일을 하는 칸(그 걸음 문서에 Tab 차례로 있어야) */
+  readonly alt?: string;
 }
 /** 위에서 처음 맞는 꼴이 그 마디의 꼴(progress.md 표 번호 그대로 — 99는 시험 걸음 밖) */
 const TABLE: readonly Entry[] = [
-  { n: 1, sel: 'input[type="file"]', name: '파일 고르기 칸(숨김 — 열기 버튼이 엶)', wide: '대상 아님', phone: '대상 아님' },
-  { n: 2, sel: '.v3d, .v3d canvas', name: '3D 보기(캔버스와 감싼 칸 — 정밀 조준이 캡처 단계에서 받음)', wide: '큼', phone: '큼' },
-  { n: 3, sel: '.dropzone', name: '시작 화면 열기 칸', wide: '큼', phone: '큼' },
-  { n: 4, sel: '.sc-back', name: '단축키 창 덮개(바깥 누르기)', wide: '큼', phone: '큼' },
-  { n: 5, sel: '.sc-body', name: '단축키 창 본문(키보드 굴림 영역)', wide: '큼', phone: '큼' },
-  { n: 6, sel: '.vlist', name: '코드 목록 상자(줄 누르기 위임)', wide: '큼', phone: '큼' },
-  { n: 7, sel: '.menu', name: '메뉴 상자(항목 누르기 뒤 닫기만 — 위임)', wide: '대상 아님', phone: '대상 아님' },
-  { n: 8, sel: '.language-list button', name: '언어 목록 항목', wide: '24 넘음', phone: '24 넘음' },
-  { n: 9, sel: '.language-trigger', name: '언어 버튼', wide: '24 넘음', phone: '24 넘음' },
-  { n: 10, sel: '.menu button', name: '메뉴 항목', wide: '24 넘음', phone: '24 넘음' },
-  { n: 11, sel: '.tbtn', name: '제목·도구 막대 버튼·링크', wide: '24 넘음', phone: '24 넘음' },
-  { n: 12, sel: '.icon-btn', name: '패널 ✕', wide: '24 넘음', phone: '24 넘음' },
-  { n: 13, sel: '.panel-tab', name: '패널 탭', wide: '24 넘음', phone: '24 넘음' },
-  { n: 14, sel: '.panel-grip', name: '패널 크기 손잡이(넓히면 3D 보기·탭 줄 누르기를 가로챔)', wide: '고르지 않음', phone: '고르지 않음' },
-  { n: 15, sel: '.code-search input', name: '코드 찾기 칸', wide: '24 넘음', phone: '24 넘음' },
-  { n: 16, sel: '.st-warn', name: '상태 막대 경고(원이 막대 글 줄 안)', wide: '간격', phone: '간격' },
-  { n: 17, sel: '.notice .nt-text', name: '해석 판단 띠 글(좁은 화면에서 펼침)', wide: '대상 아님', phone: '간격' },
-  { n: 18, sel: '.mb-btn', name: '측정·재생·따라가기·판단 띠 버튼', wide: '24 넘음', phone: '24 넘음' },
-  { n: 19, sel: '.toast-act, .toast-x', name: '알림 상자 동작·닫기', wide: '24 넘음', phone: '24 넘음' },
-  { n: 20, sel: '.vlist-row', name: '코드 목록 줄(같은 일을 찾기 칸 :줄 번호·↑↓·재생 걷기로)', wide: '동등', phone: '24 넘음' },
-  { n: 21, sel: '.recent-open, .recent-del', name: '최근 문서 줄·지우기', wide: '24 넘음', phone: '24 넘음' },
-  { n: 22, sel: '.btn.small', name: '작은 버튼', wide: '24 넘음', phone: '24 넘음' },
-  { n: 23, sel: 'select.select', name: '고르기', wide: '24 넘음', phone: '24 넘음' },
-  { n: 24, sel: '.seg', name: '단면 축', wide: '24 넘음', phone: '24 넘음' },
-  { n: 25, sel: '.sec-row input[type="range"]', name: '단면 위치 막대', wide: '24 넘음', phone: '24 넘음' },
-  { n: 26, sel: 'input[type="range"]', name: '재생·따라가기 막대(브라우저 기본 높이 — 위아래 틈)', wide: '간격', phone: '간격' },
-  { n: 27, sel: '.sec-handle', name: '화면 위 단면 손잡이(같은 일을 단면 위치 막대로)', wide: '동등', phone: '24 넘음' },
-  { n: 28, sel: 'table.grid button.linkish', name: '공구 표 Z 최저', wide: '24 넘음', phone: '24 넘음' },
-  { n: 29, sel: 'button.linkish', name: '깎기 탭 문장 안 줄 버튼', wide: '글줄 안', phone: '글줄 안' },
-  { n: 30, sel: 'tr.clickable', name: '줄을 누르는 표', wide: '24 넘음', phone: '24 넘음' },
-  { n: 31, sel: '.toggle', name: '공구 표 눈', wide: '24 넘음', phone: '24 넘음' },
-  { n: 32, sel: '.warn-item', name: '경고·파일·급속·가공 목록 줄', wide: '24 넘음', phone: '24 넘음' },
-  { n: 33, sel: 'label.group-item', name: '켜고 끄는 줄(체크 상자를 감싼 라벨)', wide: '24 넘음', phone: '24 넘음' },
-  { n: 34, sel: 'input[type="checkbox"]', name: '체크 상자(감싼 라벨이 누름 자리)', wide: '브라우저 기본', phone: '브라우저 기본' },
-  { n: 35, sel: 'label.prop-row', name: '설정 줄(고르기·숫자 칸을 감싼 라벨)', wide: '24 넘음', phone: '24 넘음' },
-  { n: 36, sel: 'input.num-input', name: '숫자 칸', wide: '24 넘음', phone: '24 넘음' },
-  { n: 37, sel: '.site-intro a', name: '앱이 서기 전 안내 링크(index.html — 앱이 서면 지움)', wide: '글줄 안', phone: '글줄 안' },
-  { n: 99, sel: '#opencad-analytics-choice button', name: '방문 통계 동의 상자 버튼(사이트 도구 — 인라인 크기)', wide: '24 넘음', phone: '24 넘음' },
+  { n: 1, sel: 'input[type="file"]', name: '파일 고르기 칸(숨김 — 열기 버튼이 엶)', wide: '대상 아님', phone: '대상 아님', kb: '다른 길' },
+  { n: 2, sel: '.v3d, .v3d canvas', name: '3D 보기(캔버스와 감싼 칸 — 정밀 조준이 캡처 단계에서 받음)', wide: '큼', phone: '큼', kb: '담은 칸' },
+  { n: 3, sel: '.dropzone', name: '시작 화면 열기 칸', wide: '큼', phone: '큼', kb: 'Tab' },
+  { n: 4, sel: '.sc-back', name: '단축키 창 덮개(바깥 누르기 — 키보드는 Esc·닫기)', wide: '큼', phone: '큼', kb: '다른 길', alt: '.sc-close' },
+  { n: 5, sel: '.sc-body', name: '단축키 창 본문(키보드 굴림 영역)', wide: '큼', phone: '큼', kb: 'Tab' },
+  { n: 6, sel: '.vlist', name: '코드 목록 상자(줄 누르기 위임)', wide: '큼', phone: '큼', kb: 'Tab' },
+  { n: 7, sel: '.menu', name: '메뉴 상자(항목 누르기 뒤 닫기만 — 위임)', wide: '대상 아님', phone: '대상 아님', kb: '대상 아님' },
+  { n: 8, sel: '.language-list button', name: '언어 목록 항목', wide: '24 넘음', phone: '24 넘음', kb: '무리' },
+  { n: 9, sel: '.language-trigger', name: '언어 버튼', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 10, sel: '.menu button', name: '메뉴 항목', wide: '24 넘음', phone: '24 넘음', kb: '무리' },
+  { n: 11, sel: '.tbtn', name: '제목·도구 막대 버튼·링크', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 12, sel: '.icon-btn', name: '패널 ✕', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 13, sel: '.panel-tab', name: '패널 탭', wide: '24 넘음', phone: '24 넘음', kb: '무리' },
+  { n: 14, sel: '.panel-grip', name: '패널 크기 손잡이(넓히면 3D 보기·탭 줄 누르기를 가로챔 — 223차 분리자: 키로 크기)', wide: '고르지 않음', phone: '고르지 않음', kb: 'Tab' },
+  { n: 15, sel: '.code-search input', name: '코드 찾기 칸', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 16, sel: '.st-warn', name: '상태 막대 경고(원이 막대 글 줄 안)', wide: '간격', phone: '간격', kb: 'Tab' },
+  { n: 17, sel: '.notice .nt-text', name: '해석 판단 띠 글(좁은 화면에서 펼침 — 223차: 키보드 초점이 그 줄 버튼에 들면 펼침)', wide: '대상 아님', phone: '간격', kb: '다른 길', alt: '.notice .mb-btn' },
+  { n: 18, sel: '.mb-btn', name: '측정·재생·따라가기·판단 띠 버튼', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 19, sel: '.toast-act, .toast-x', name: '알림 상자 동작·닫기', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 20, sel: '.vlist-row', name: '코드 목록 줄(같은 일을 찾기 칸 :줄 번호·↑↓·재생 걷기로)', wide: '동등', phone: '24 넘음', kb: '담은 칸' },
+  { n: 21, sel: '.recent-open, .recent-del', name: '최근 문서 줄·지우기', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 22, sel: '.btn.small', name: '작은 버튼', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 23, sel: 'select.select', name: '고르기', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 24, sel: '.seg', name: '단면 축', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 25, sel: '.sec-row input[type="range"]', name: '단면 위치 막대', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 26, sel: 'input[type="range"]', name: '재생·따라가기 막대(브라우저 기본 높이 — 위아래 틈)', wide: '간격', phone: '간격', kb: 'Tab' },
+  { n: 27, sel: '.sec-handle', name: '화면 위 단면 손잡이(같은 일을 단면 위치 막대로)', wide: '동등', phone: '24 넘음', kb: '다른 길', alt: '.sec-row input[type="range"]' },
+  { n: 28, sel: 'table.grid button.linkish', name: '공구 표 Z 최저', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 29, sel: 'button.linkish', name: '깎기 탭 문장 안 줄 버튼', wide: '글줄 안', phone: '글줄 안', kb: 'Tab' },
+  { n: 30, sel: 'tr.clickable', name: '줄을 누르는 표(키보드로 줄 고르기는 격자·줄 버튼이 드는 설계 — 174차)', wide: '24 넘음', phone: '24 넘음', kb: '없음' },
+  { n: 31, sel: '.toggle', name: '공구 표 눈', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 32, sel: '.warn-item', name: '경고·파일·급속·가공 목록 줄', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 33, sel: 'label.group-item', name: '켜고 끄는 줄(체크 상자를 감싼 라벨)', wide: '24 넘음', phone: '24 넘음', kb: '안 칸' },
+  { n: 34, sel: 'input[type="checkbox"]', name: '체크 상자(감싼 라벨이 누름 자리)', wide: '브라우저 기본', phone: '브라우저 기본', kb: 'Tab' },
+  { n: 35, sel: 'label.prop-row', name: '설정 줄(고르기·숫자 칸을 감싼 라벨)', wide: '24 넘음', phone: '24 넘음', kb: '안 칸' },
+  { n: 36, sel: 'input.num-input', name: '숫자 칸', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
+  { n: 37, sel: '.site-intro a', name: '앱이 서기 전 안내 링크(index.html — 앱이 서면 지움)', wide: '글줄 안', phone: '글줄 안', kb: 'Tab' },
+  { n: 99, sel: '#opencad-analytics-choice button', name: '방문 통계 동의 상자 버튼(사이트 도구 — 인라인 크기)', wide: '24 넘음', phone: '24 넘음', kb: 'Tab' },
 ];
 
 // ───────────────────────── CSS 규칙 읽기 ─────────────────────────
@@ -584,6 +598,70 @@ const desc = (el: Element): string =>
   `${el.localName}${[...el.classList].map((k) => `.${k}`).join('')}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}${el.getAttribute('type') ? `[type=${el.getAttribute('type')}]` : ''} (안: ${el.parentElement?.className || el.parentElement?.localName || '-'})`;
 const fmt = (b: Box): string => [b.w, b.h].map((v) => (Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '채움')).join('×');
 
+// ───────────────────────── 223차 키보드 길 ─────────────────────────
+
+/** keydown을 듣는 칸(앱이 붙인 것 — beforeEach가 addEventListener를 엿본다) */
+const keyed = new Set<Element>();
+const NATIVE = /^(button|a|input|select|textarea|summary)$/;
+const WIDGET = /^(button|separator|tab|slider|switch|checkbox|radio|link|option|menuitem(radio|checkbox)?)$/;
+const tabbable = (el: Element | null | undefined): el is HTMLElement => !!el && (el as HTMLElement).tabIndex >= 0 && !(el as HTMLButtonElement).disabled;
+const FOCUS = /:focus(?:-visible)?(?![\w-])/;
+/**
+ * 키보드 초점이 그 칸에 있을 때 outline이 남는가(WCAG 2.4.7): :focus·:focus-visible 규칙은 그 칸에 맞는 것으로 보고(맨 오른쪽 겹 선택자에만 있다 — 아니면 던져 이 시험을 고치게)
+ * outline·outline-style·outline-width를 특정도·차례로 겹친다. 아무 규칙도 없으면 브라우저 기본(auto — 남음)
+ */
+function ring(el: Element, c: Ctx): boolean {
+  let best = -1;
+  let shows = true;
+  for (const r of c.active) {
+    const own = r.decls.filter(([p]) => /^outline(-style|-width)?$/.test(p));
+    if (!own.length) continue;
+    let sel = r.sel;
+    if (FOCUS.test(sel)) {
+      if (FOCUS.test(sel.slice(0, sel.length - lastCompound(sel).length))) throw new Error(`초점 꼴이 맨 오른쪽 밖에 있는 규칙: ${sel}`);
+      sel = sel.replace(new RegExp(FOCUS.source, 'g'), '');
+      if (/(^|[\s>+~])$/.test(sel)) sel += '*';
+    }
+    if (!hit(el, sel)) continue;
+    for (const [p, v] of own) {
+      const w = r.spec * 1e4 + r.order;
+      if (w < best) continue;
+      best = w;
+      shows = p === 'outline-width' ? lenOf(v, 16) !== 0 : !/(^|\s)(none|0)(\s|$)/.test(v);
+    }
+  }
+  return shows;
+}
+/** 그 꼴의 키보드 길이 판정대로인가 — 어긋난 까닭 목록(꺼진 칸은 누구도 누르지 못해 셈 밖) */
+function keyProblems(el: Element, e: Entry, c: Ctx): string[] {
+  if ((el as HTMLButtonElement).disabled) return [];
+  const out: string[] = [];
+  let at: Element | undefined;
+  if (e.kb === 'Tab') {
+    if (tabbable(el)) at = el;
+    else out.push('키보드: Tab 차례에 들지 않음');
+  } else if (e.kb === '무리') {
+    const g = el.closest('[role="menu"], [role="tablist"]');
+    if (g && keyed.has(g)) at = el;
+    else out.push('키보드: 화살표로 도는 무리(keydown) 밖');
+  } else if (e.kb === '안 칸') {
+    const ctl = [...el.querySelectorAll<HTMLInputElement>('input, select, textarea')];
+    at = ctl.find(tabbable);
+    // 감싼 컨트롤이 모두 꺼졌으면 꺼진 칸
+    if (!at && !ctl.every((x) => x.disabled)) out.push('키보드: 감싼 컨트롤이 Tab 차례에 없음');
+  } else if (e.kb === '담은 칸') {
+    at = [el, el.parentElement?.closest('[tabindex]'), ...el.querySelectorAll('[tabindex]')].find(tabbable);
+    if (!at) out.push('키보드: 자기·조상·아이 가운데 Tab 칸 없음');
+  } else if (e.kb === '다른 길' && e.alt && ![...document.querySelectorAll(e.alt)].some(tabbable)) out.push(`키보드: 같은 일의 다른 칸(${e.alt})이 Tab 차례에 없음`);
+  if (at && !NATIVE.test(at.localName) && WIDGET.test(at.getAttribute('role') ?? '')) {
+    let n: Element | null = at;
+    while (n && !keyed.has(n)) n = n.parentElement;
+    if (!n) out.push(`키보드: 역할(${at.getAttribute('role')})을 준 칸에 keydown 없음`);
+  }
+  if (at && !ring(at, c)) out.push('초점 보임: 초점일 때 outline 없음');
+  return out;
+}
+
 // ───────────────────────── 걸음 ─────────────────────────
 
 const until = async (ok: () => boolean, ms = 8000): Promise<void> => {
@@ -659,6 +737,9 @@ async function tour(f: Form): Promise<Report> {
         continue;
       }
       if (record) rep.seen.add(e);
+      // 223차: 보이는 마디는 크기 판정과 따로 키보드 길·초점 보임을 본다 — 크기 셈은 숨김(hidden)을 보일 때로 치지만 키보드는 숨은 칸에 닿지 않으므로
+      // 지금 숨은 마디는 뺀다(단면 손잡이는 단면이 켜져야 보이고 그때 단면 상자가 생긴다 — 고치기 전 실행에서 숨은 손잡이의 다른 길을 찾다 잡힘)
+      if (shown(el, c) && !el.closest('[hidden]')) for (const m of keyProblems(el, e, c)) sink.add(`${f.name} · ${step} · #${e.n} ${e.name} · ${m} · ${desc(el)}`);
       const v = f === WIDE ? e.wide : e.phone;
       if (v === '대상 아님' || v === '큼' || !shown(el, c)) continue;
       const b = boxOf(el, c);
@@ -689,6 +770,25 @@ async function tour(f: Form): Promise<Report> {
     expect(await app.openBuffer(name, enc.encode(text).buffer as ArrayBuffer), name).toBe(true);
     await look(`${name} 열기`);
     api.togglePanel(true);
+    if (name === 'opencad-sample.nc') {
+      // 223차(WCAG 2.1.1): 패널 크기 손잡이는 초점을 받는 분리자 — 재생할 수 있는 문서에서도 넓은 화면 ←·시트 ↑는 창 키(한 이동 걷기)가 아니라 손잡이 몫.
+      // jsdom은 배치가 없어 작업 영역 폭 0(끌기 최대가 최소 260에 붙음) — 넓은 화면은 260px(값은 260 ÷ 1 × 100 — 작업 영역 폭을 1로), 시트는 CSS 기본 46% + 5%
+      const grip = root.querySelector<HTMLElement>('.panel-grip')!;
+      const sheet = f === PHONE;
+      const now = (): string => (sheet ? grip.parentElement!.parentElement!.style.getPropertyValue('--sheet-h') : grip.parentElement!.style.getPropertyValue('--panel-w'));
+      grip.focus();
+      const before = now();
+      grip.dispatchEvent(new KeyboardEvent('keydown', { key: sheet ? 'ArrowUp' : 'ArrowLeft', bubbles: true, cancelable: true }));
+      expect.soft([document.activeElement === grip, grip.getAttribute('aria-orientation'), before, now(), grip.getAttribute('aria-valuenow')], `${f.name} 패널 크기 손잡이 키`).toEqual([true, sheet ? 'horizontal' : 'vertical', '', sheet ? '51%' : '260px', sheet ? '51' : '26000']);
+      grip.blur();
+    }
+    if (name === 'part.MPF' && f === PHONE) {
+      // 223차(WCAG 2.1.1): 좁은 화면 판단 띠 글은 누르면 펼친다 — 키보드는 그 줄 버튼에 초점이 들면(:focus-visible — 손가락·마우스 누르기는 그대로) 펼친다
+      const row = root.querySelector<HTMLElement>('.notice-bar .notice')!;
+      row.querySelector<HTMLElement>('.mb-btn')!.focus();
+      expect.soft(st(row.querySelector('.nt-text')!, { f, memo: new Map(), active }).display, '좁은 화면 판단 띠 글 — 줄에 키보드 초점').toBe('block');
+      (document.activeElement as HTMLElement).blur();
+    }
     for (const tab of tabs) {
       api.setPanelTab(tab);
       await until(() => root.querySelector(`.panel-tab[data-tab="${tab}"]`)?.getAttribute('aria-selected') === 'true');
@@ -708,13 +808,25 @@ async function tour(f: Form): Promise<Report> {
   tiny.className = 'btn small';
   tiny.setAttribute('style', 'height: 20px');
   tiny.textContent = '작게';
-  document.body.append(fresh, tiny);
+  // 223차: keydown 없이 role=button을 준 칸과, Tab 차례 밖 컨트롤을 감싼 라벨도 잡혀야 한다
+  const role = document.createElement('div');
+  role.className = 'dropzone';
+  role.setAttribute('role', 'button');
+  role.tabIndex = 0;
+  const lab = document.createElement('label');
+  lab.className = 'group-item';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.tabIndex = -1;
+  lab.append(box, '빠진 칸');
+  document.body.append(fresh, tiny, role, lab);
   const self = new Set<string>();
   await look('스스로 확인', self, false);
-  fresh.remove();
-  tiny.remove();
+  for (const el of [fresh, tiny, role, lab]) el.remove();
   expect([...self].filter((m) => m.includes('표에 없음') && m.includes('r222-new'))).toHaveLength(1);
   expect([...self].filter((m) => m.includes('24 미만') && m.includes('×20 ') && m.includes('button.btn.small'))).toHaveLength(1);
+  expect([...self].filter((m) => m.includes('역할(button)을 준 칸에 keydown 없음') && m.includes('div.dropzone[role=button] (안: '))).toHaveLength(1);
+  expect([...self].filter((m) => m.includes('감싼 컨트롤이 Tab 차례에 없음') && m.includes('label.group-item (안: '))).toHaveLength(1);
   return rep;
 }
 
@@ -730,8 +842,10 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   heard.clear();
+  keyed.clear();
   EventTarget.prototype.addEventListener = function (this: EventTarget, type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void {
     if (POINTER.has(type) && this instanceof Element) heard.add(this);
+    if (type === 'keydown' && this instanceof Element) keyed.add(this);
     realAdd.call(this, type, listener, options);
   };
   vi.stubGlobal(
@@ -763,14 +877,18 @@ describe('222차 포인터 대상 크기(WCAG 2.5.8) 감사 표', () => {
     for (const r of RULES) hit(document.documentElement, r.sel);
     expect(RULES.filter((r) => threw.has(r.sel) && r.decls.some(([p]) => box.test(p))).map((r) => r.sel)).toEqual([]);
     expect(new Set(TABLE.map((e) => e.n)).size).toBe(TABLE.length);
+    // 223차: 키보드 길이 없는 꼴은 설계로 고르지 않은 표 줄 하나(174차)뿐 — 늘면 progress 표·README 남은 일과 함께
+    expect(TABLE.filter((e) => e.kb === '없음').map((e) => e.n)).toEqual([30]);
+    expect(TABLE.filter((e) => e.alt).every((e) => e.kb === '다른 길')).toBe(true);
   });
 
   for (const f of [WIDE, PHONE]) {
-    it(`${f.name}: 그린 화면의 누를 마디는 모두 표에 들고, 「24 넘음」은 셈이 24×24 이상·예외로 둔 꼴은 24 미만`, async () => {
+    it(`${f.name}: 그린 화면의 누를 마디는 모두 표에 들고, 「24 넘음」은 셈이 24×24 이상·예외로 둔 꼴은 24 미만, 223차: 키보드 길·초점 보임도 표대로`, async () => {
       const rep = await tour(f);
       const unseen = TABLE.filter((e) => !rep.seen.has(e)).map((e) => `#${e.n}`);
+      const kb = [...rep.seen].reduce<Record<string, number>>((a, e) => ((a[e.kb] = (a[e.kb] ?? 0) + 1), a), {});
       console.info(
-        `222차 ${f.name}: 걸음 ${rep.steps} · 누를 마디 ${rep.nodes}개 · 표 ${rep.seen.size}/${TABLE.length}꼴 · 24 미만 ${[...rep.under].map((e) => `#${e.n}`).join('·') || '없음'} · 못 본 꼴 ${unseen.join('·') || '없음'}`,
+        `222·223차 ${f.name}: 걸음 ${rep.steps} · 누를 마디 ${rep.nodes}개 · 표 ${rep.seen.size}/${TABLE.length}꼴 · 24 미만 ${[...rep.under].map((e) => `#${e.n}`).join('·') || '없음'} · 못 본 꼴 ${unseen.join('·') || '없음'} · 본 꼴의 키보드 길 ${JSON.stringify(kb)}`,
       );
       expect([...rep.problems]).toEqual([]);
       expect(rep.seen.size).toBeGreaterThanOrEqual(25);
