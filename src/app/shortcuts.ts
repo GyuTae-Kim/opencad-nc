@@ -108,8 +108,20 @@ export const SHORTCUT_NOTES: readonly (readonly [text: string, cls: string])[] =
 
 let seq = 0;
 
-/** 키보드 단축키 창을 parent 끝에 열고 닫기 함수를 돌려준다(닫으면 onClose 한 번 — 두 번 닫아도 한 번) */
-export function openShortcutsDialog(parent: HTMLElement, onClose?: () => void): () => void {
+/** 207차: 알림 영역(aria-live — off는 빼고 — ·role=status·alert) */
+const LIVE = '[aria-live]:not([aria-live="off"]), [role="status"], [role="alert"]';
+/** 207차: 창을 닫은 뒤 한 번 알리는 영역(parent 끝 — 처음 열 때 빈 채로 붙여 둔다)과 창 차례(닫은 뒤 다시 열면 앞 차례 글은 넣지 않는다) */
+let said: HTMLElement | undefined;
+let turn = 0;
+
+/**
+ * 키보드 단축키 창을 parent 끝에 열고 닫기 함수를 돌려준다(닫으면 onClose 한 번 — 두 번 닫아도 한 번).
+ * 207차: (가) 열린 동안 parent의 다른 자식(inert) 안 알림 영역에 들어온 글은 보이지도 화면 읽기에 읽히지도 않고, 닫아 inert를 풀어도 다시 읽히지 않았다(WCAG 4.1.3) —
+ * 열 때 있던 글을 적어 두고, 닫은 뒤 숨지 않고 다른 inert(읽는 중 덮개 등) 밖인 영역의 글 가운데 열 때 없던 글(같은 글 한 번 — 198차 새로 나온 글만)을 한 프레임 뒤 said에 한 번 넣는다.
+ * 열 때와 닫을 때 언어가 다르면 넣지 않는다(앱이 앞 언어 글을 비우고 번역층이 남은 글을 새 언어로 다시 옮겨 바뀐 글처럼 보임 — 201·202차). 앱의 영역은 건드리지 않는다.
+ * (나) 열린 동안 연 곳이 숨거나 떼어지면(읽는 중 「취소」·시작 화면·다시 그린 깎기 탭 칸) 초점이 문서로 빠졌다(WCAG 2.4.3) — spare(앱이 주는 남는 칸 차례)에서 초점을 받는 첫 칸으로
+ */
+export function openShortcutsDialog(parent: HTMLElement, onClose?: () => void, spare?: () => readonly (HTMLElement | null | undefined)[]): () => void {
   const opener = document.activeElement as HTMLElement | null;
   const id = `sc-title-${++seq}`;
   const shut = h('button', { class: 'btn small sc-close', type: 'button' }, '닫기');
@@ -123,7 +135,21 @@ export function openShortcutsDialog(parent: HTMLElement, onClose?: () => void): 
   // 상자 자신도 초점을 받을 수 있게(-1): 본문 글을 눌러도 초점이 상자 밖(문서)으로 빠지지 않는다
   const box = h('div', { class: 'sc-box', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id, tabindex: -1 }, h('div', { class: 'sc-head' }, h('h2', { id }, SHORTCUTS_TITLE), shut), body);
   const back = h('div', { class: 'sc-back' }, box);
+  // 207차: 알리는 영역은 parent의 자식(열린 동안은 다른 자식과 함께 inert·빈 채). 언어가 바뀌면 앞 언어 글을 비운다(201차 꼴)
+  if (said?.parentNode !== parent) {
+    const s = (said = h('div', { class: 'sc-live', role: 'status', 'aria-live': 'polite', 'data-i18n-skip': true }));
+    parent.append(s);
+    parent.addEventListener('languagechange', () => s.replaceChildren());
+  }
+  const say = said;
+  say.replaceChildren();
+  const me = ++turn;
   const made = [...parent.children].filter((el) => !el.hasAttribute('inert'));
+  /** made 안 알림 영역의 글(skip에 드는 칸은 뺀다) */
+  const heard = (skip: string): string[] =>
+    made.flatMap((el) => [el, ...el.querySelectorAll(LIVE)]).filter((r) => r.matches(LIVE) && !r.closest(skip)).map((r) => r.textContent ?? '');
+  const lang = document.documentElement.lang;
+  const before = new Set(heard('[hidden]'));
   for (const el of made) el.setAttribute('inert', '');
   parent.append(back);
   let open = true;
@@ -132,7 +158,22 @@ export function openShortcutsDialog(parent: HTMLElement, onClose?: () => void): 
     open = false;
     back.remove();
     for (const el of made) el.removeAttribute('inert');
-    if (opener?.isConnected) opener.focus({ preventScroll: true });
+    // 연 곳이 초점을 받으면 그대로(초점 없음 body도), 아니면 남는 칸 차례 — 숨은·inert·떼어진 칸은 브라우저가 초점을 주지 않는다
+    for (const el of [opener, ...(spare?.() ?? [])]) {
+      if (!el?.isConnected) continue;
+      el.focus({ preventScroll: true });
+      if (document.activeElement === el) break;
+    }
+    const news = [...new Set(heard('[hidden], [inert]'))].filter((t) => t.trim() && !before.has(t));
+    // 글은 inert를 푼 영역이 그려진 뒤(156·198차 — 영역이 먼저) 옮긴 초점 글 다음에 읽히게 한 프레임 뒤, 5초 뒤 비운다(읽기 모드에 겹친 글이 남지 않게)
+    if (news.length && document.documentElement.lang === lang)
+      requestAnimationFrame(() =>
+        setTimeout(() => {
+          if (me !== turn) return;
+          say.replaceChildren(...news.map((t) => h('p', {}, t)));
+          setTimeout(() => me === turn && say.replaceChildren(), 5000);
+        }),
+      );
     onClose?.();
   };
   shut.addEventListener('click', close);

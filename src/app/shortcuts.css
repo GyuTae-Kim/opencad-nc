@@ -16,6 +16,18 @@
 body:has(.sc-back) .toast {
   pointer-events: none;
 }
+/* 207차: 창을 닫은 뒤 한 번 알리는 영역(shortcuts.ts said) — 화면에서만 1화소로 잘라 감춘다(hidden 아님 — 198차 첫 화면 알림 영역과 같은 값) */
+.sc-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .sc-box {
   display: flex;
   flex-direction: column;
