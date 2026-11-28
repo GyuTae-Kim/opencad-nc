@@ -60,7 +60,7 @@
 import type { MeasureHoverSnap, MeasureLabelAvoid, MeasureLabelRect, Viewer3d } from 'opencad-viewer3d';
 import { translate } from '../../site/i18n-core.mjs';
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
-import { h, toast } from './dom';
+import { h, holdOpen, toast } from './dom';
 import { icon } from './icons';
 import { TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, snapLabel, trackMark } from './measure';
 import type { FirstPoint } from './tangent';
@@ -380,7 +380,6 @@ export class MeasureLock {
   private raf = 0;
   /** schedule을 부른 횟수(기다리는 동안 또 불렸는지) */
   private want = 0;
-  private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private flashKind: string | null = null;
   /** 134차: 띠 위 알림에 마지막으로 넣은 원문(같은 글을 잇달아 띄우면 NBSP를 번갈아 붙인다 — showFlash) */
   private flashSaid = '';
@@ -971,14 +970,15 @@ export class MeasureLock {
    * 측정 띠 위 알림(kind를 붙이면 그 종류로 거둘 수 있다). 117차: 늘 있는 같은 요소에 글을 넣고 인라인 모습을 지워 클래스 모습(알림 상자)으로 보인다.
    * 134차: 보이는 알림과 같은 원문을 다시 띄우면(잠글 방향 없이 잠금 단추를 두 번 등) 끝에 NBSP를 붙였다 떼어 글을 바꾼다 — 같은 글이면 화면 읽기 프로그램이
    * 다시 읽지 않을 수 있다(sayCycle과 같은 꼴). 화면 번역층이 옮긴 글은 원문과 달라 마지막에 넣은 원문(flashSaid)과 견주고, 번역층은 앞뒤 빈칸을 남기고 옮긴다
+   * 230차(WCAG 2.2.1): 잠글 방향·기억할 점이 없다는 경고는 같은 글이 남는 다른 자리가 없는데 포인터를 올려도 ms에 사라졌다 — 알림 상자와 같은 멈춤(dom.ts holdOpen)으로
+   * 포인터가 위에 있는 동안은 거두지 않고 떠나면 그때부터 다시 ms(올리지 않으면 전과 같은 시간). 잠금이 걸림·측정 끄기 같은 다른 길(dropFlash)은 그대로 바로 거둔다
    */
   showFlash(text: string, ms = 1600, kind: string | null = null): void {
     this.flashSaid = this.flash.textContent && this.flashSaid === text ? text + NBSP : text;
     this.flash.textContent = this.flashSaid;
     this.flash.removeAttribute('style');
     this.flashKind = kind;
-    if (this.flashTimer) clearTimeout(this.flashTimer);
-    this.flashTimer = setTimeout(() => this.dropFlash(null), ms);
+    holdOpen(this.flash, ms, () => this.dropFlash(null));
     // 192차: 알림 자리를 툴팁·코어 글상자가 비키게 다시 놓는다(뒤에 맞추기가 없는 끌어온 점 버튼 길도 — 두 프레임 뒤라 번역층이 옮긴 크기)
     this.schedule();
   }
@@ -989,8 +989,7 @@ export class MeasureLock {
     this.flash.textContent = '';
     this.flash.style.cssText = FLASH_EMPTY;
     this.flashKind = null;
-    if (this.flashTimer) clearTimeout(this.flashTimer);
-    this.flashTimer = null;
+    holdOpen(this.flash, 0, null);
     // 192차: 알림이 지면(시간·잠금이 걸림) 툴팁·코어 글상자를 제자리로
     this.schedule();
   }

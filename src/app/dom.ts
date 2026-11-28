@@ -154,23 +154,56 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
   // 모두 오류면 가장 오래된 것(한도는 늘 지킨다). 오류가 없으면 전과 같다. 209차: 초점이 빼는 알림 안이면 남은 알림의 같은 자리로(dropToast)
   while (host.childElementCount > 4) dropToast((host.querySelector(':scope>.info') ?? host.firstElementChild)!);
-  // 157차: 마우스(손가락)가 알림 위에 있거나 초점이 알림 안(동작·닫기 버튼)에 있으면 시간이 되어도 닫지 않고, 떠나면(pointerleave·focusout) 그때부터 다시 ms를 잰다
-  // (WCAG 2.2.1 시간 조절 — 연장). 다시 볼 곳이 없는 오류·새 버전 안내를 읽거나 버튼을 누르려는 동안 사라져 초점이 문서로 빠지지 않게. 한도(넷)·✕·동작 버튼은 그대로
-  let over = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const later = (): void => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (!over && !el.contains(document.activeElement)) el.remove();
-    }, ms);
-  };
-  el.addEventListener('pointerenter', () => (over = true));
-  el.addEventListener('pointerleave', () => {
-    over = false;
-    later();
-  });
-  el.addEventListener('focusout', later);
-  later();
+  // 157차: 마우스(손가락)가 알림 위에 있거나 초점이 알림 안(동작·닫기 버튼)에 있으면 시간이 되어도 닫지 않고, 떠나면 그때부터 다시 ms(230차 — 그 길을 holdOpen으로 꺼냄).
+  // 한도(넷)·✕·동작 버튼은 그대로
+  holdOpen(el, ms, () => el.remove());
+}
+
+/** 230차: 시간으로 닫는 칸(holdOpen)마다 포인터가 올라 있는가·걸린 닫기와 그 시간·타이머·다시 재기 */
+interface Hold {
+  over: boolean;
+  ms: number;
+  done: (() => void) | null;
+  timer?: ReturnType<typeof setTimeout>;
+  later: () => void;
+}
+const holds = new WeakMap<HTMLElement, Hold>();
+
+/**
+ * 시간으로 닫는 내용(WCAG 2.2.1 시간 조절 — 연장): ms 뒤 done을 부른다. 다만 포인터(손가락)가 el 위에 있거나 키보드 초점이 el 안(동작·닫기 버튼)에 있으면 시간이 되어도
+ * 부르지 않고, 떠나면(pointerleave·focusout) 그때부터 다시 ms를 잰다 — 다시 볼 곳이 없는 오류·경고·새 버전 안내를 읽거나 버튼을 누르려는 동안 사라져 초점이 문서로 빠지지 않게(157차 알림 상자).
+ * 230차: 157차가 toast 안에 둔 길을 꺼내 측정 띠 위 알림(measure-lock.ts showFlash — 잠글 방향·기억할 점이 없다는 경고, 같은 글이 남는 다른 자리 없음)도 함께 쓴다(전에는 올려도 3.2초에 사라짐).
+ * 듣기는 칸마다 한 번(띠 위 알림은 늘 있는 같은 칸에 글을 바꿔 넣는다 — 올린 채 새 글이 와도 올림이 이어짐). 같은 칸에 다시 걸면 앞 닫기를 바꾸고, done이 null이면 걸린 닫기를 거둔다
+ */
+export function holdOpen(el: HTMLElement, ms: number, done: (() => void) | null): void {
+  let s = holds.get(el);
+  if (!s) {
+    const t: Hold = {
+      over: false,
+      ms,
+      done: null,
+      later: () => {
+        clearTimeout(t.timer);
+        if (t.done)
+          t.timer = setTimeout(() => {
+            if (t.over || el.contains(document.activeElement)) return;
+            const d = t.done;
+            t.done = null;
+            d?.();
+          }, t.ms);
+      },
+    };
+    holds.set(el, (s = t));
+    el.addEventListener('pointerenter', () => (t.over = true));
+    el.addEventListener('pointerleave', () => {
+      t.over = false;
+      t.later();
+    });
+    el.addEventListener('focusout', t.later);
+  }
+  s.ms = ms;
+  s.done = done;
+  s.later();
 }
 
 /**
