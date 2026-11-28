@@ -534,7 +534,7 @@ describe('204차: 가상 커서가 켜진 동안 L로 지금 방향을 잠그고
   const frames = async (n = 8): Promise<void> => {
     for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  /** 잠근 방향 → 상태 줄 잠금 안내·가상 커서 알림 글(measure.ts LOCK_HINTS) */
+  /** 잠근 방향 → 상태 줄 잠금 안내·가상 커서 알림 글(measure-lock.ts LOCK_HINTS — 216차에 measure.ts에서 옮김) */
   const LOCKED: Record<string, string> = {
     x: 'X축 방향으로 잠금',
     y: 'Y축 방향으로 잠금',

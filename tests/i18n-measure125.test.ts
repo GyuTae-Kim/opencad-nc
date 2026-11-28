@@ -12,22 +12,19 @@ import { KEY_SNAP_MESSAGES } from 'opencad-viewer3d';
 import { catalogs, translate } from '../site/i18n.mjs';
 import { measureFailText } from '../src/app/core';
 import { KEY_HELP, keySnapDictKey } from '../src/app/keysnap';
+import { MEASURE_LOADING, TANGENT_LABEL, lockMeetLabel, measureHint, panelMeasureHint, snapLabel, statusMeasureHint, type LockMeet } from '../src/app/measure';
+// 216차: 잠금 글 다섯은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
 import {
   ARROW_LOCK_HINT,
+  CURSOR_LOCK_HINT,
   LOCK_HINTS,
-  MEASURE_LOADING,
   NO_LOCK_MOUSE,
   NO_LOCK_TOUCH,
+  PERPENDICULAR_DIR_LABEL,
   SHIFT_LOCK_HINTS,
-  TANGENT_LABEL,
-  lockMeetLabel,
-  measureHint,
-  panelMeasureHint,
-  snapLabel,
-  statusMeasureHint,
-  type LockMeet,
-} from '../src/app/measure';
-import { CURSOR_LOCK_HINT, PERPENDICULAR_DIR_LABEL, UNLOCK_SAID, trackDirName } from '../src/app/measure-lock';
+  UNLOCK_SAID,
+  trackDirName,
+} from '../src/app/measure-lock';
 import { NO_TRACK_MOUSE, NO_TRACK_TOUCH, TRACKED, TRACK_LABEL, TRACK_TITLE } from '../src/app/measure-track';
 
 const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;

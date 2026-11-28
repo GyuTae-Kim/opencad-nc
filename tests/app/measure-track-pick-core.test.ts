@@ -13,8 +13,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Viewer3d, type Scene3d } from 'opencad-viewer3d';
 import { AIM_HOLD_MS, AIM_OFFSET_PX, TouchAim, touchPointerEvent } from '../../src/app/aim';
-import { MEASURE_INFERENCE } from '../../src/app/measure';
 import { MeasureLock } from '../../src/app/measure-lock';
+// 216차: 측정 추론 선택은 측정 도구 조각만 써 measure.ts(첫 화면)에서 refine.ts로 옮겼다
+import { MEASURE_INFERENCE } from '../../src/app/refine';
 import { NO_TRACK_MOUSE, NO_TRACK_TOUCH, TRACKED, TRACK_LABEL, TRACK_TITLE, TrackPick, trackPointOf } from '../../src/app/measure-track';
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { installCanvasFakes } from './fake-webgl';

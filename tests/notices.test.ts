@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { parseGcode } from '../src/gcode';
 import { MOVE_DRILL, moveEnd, type NcProgram } from '../src/model';
 import { parseForView } from '../src/app/payload';
-import { createDoc, noticeViews } from '../src/app/doc';
+import { createDoc } from '../src/app/doc';
+// 216차: 판단 띠 글은 문서가 있을 때만 써 doc.ts(첫 화면)에서 코어와 함께 받는 notices.ts로 옮겼다
+import { noticeViews } from '../src/app/notices';
 import { plainText } from '../src/app/filetext';
 
 const r3 = (v: number): number => Math.round(v * 10000) / 10000;

@@ -163,6 +163,44 @@ describe('코어 나눠 받기', () => {
     expect(tabs).toMatch(/\bexport function renderTab\(/);
   });
 
+  it('216차: 문서가 있을 때만 쓰는 이름은 첫 화면 그래프 밖 조각 모듈에 있다 — 판단 띠(notices.ts)는 core.ts가 코어와 함께 import() 하나로 받는다', () => {
+    const { files } = walk(join(ROOT, 'src/app/main.ts'));
+    const rel = [...files].map((f) => relative(ROOT, f));
+    expect(rel).not.toContain('src/app/notices.ts');
+    const dyn: string[] = [];
+    for (const f of files) {
+      if (f.startsWith(CORE)) continue;
+      for (const s of dynamicSpecs(readFileSync(f, 'utf8'))) if (s === './notices') dyn.push(`${relative(ROOT, f)} ${s}`);
+    }
+    expect(dyn).toEqual(['src/app/core.ts ./notices']);
+    // 옮긴 이름이 첫 화면 그래프의 앱 모듈에서 다시 정의되면 첫 화면 JS가 216차 빌드만큼 다시 커진다(README 개발 216차 문단)
+    const moved: Record<string, string[]> = {
+      'src/app/notices.ts': ['noticeViews', 'renderNotices', 'DIALECT_NOTICE', 'LATHE_SYSTEM_NOTICE'],
+      'src/app/panel-info.ts': ['cutRangeText', 'mprVars', 'toolFirstMoveLine', 'toolSelectLine', 'toolGroup', 'toolItems'],
+      'src/app/measure-lock.ts': ['LOCK_HINTS', 'SHIFT_LOCK_HINTS', 'ARROW_LOCK_HINT', 'NO_LOCK_TOUCH', 'NO_LOCK_MOUSE', 'lockName'],
+      'src/app/refine.ts': ['MEASURE_INFERENCE'],
+    };
+    const define = (name: string): RegExp => new RegExp(`^(?:export )?(?:const|function) ${name}\\b`, 'm');
+    for (const [home, names] of Object.entries(moved)) {
+      expect(rel, home).not.toContain(home);
+      const text = stripComments(readFileSync(join(ROOT, home), 'utf8'));
+      for (const name of names) {
+        expect(text, `${home} ${name}`).toMatch(define(name));
+        for (const f of rel.filter((x) => x.startsWith('src/'))) expect(stripComments(readFileSync(join(ROOT, f), 'utf8')), `${f} ${name}`).not.toMatch(define(name));
+      }
+    }
+    // 판단 띠 줄은 app.ts가 그리지 않는다(문서가 있을 때 notices.ts renderNotices를 부르기만)
+    expect(stripComments(readFileSync(join(ROOT, 'src/app/app.ts'), 'utf8'))).not.toMatch(/data-notice|noticeViews\(/);
+  });
+
+  it('216차: 코어를 받으면 판단 띠 조각도 받아 있다(문서는 loadViewerCore 뒤에만 생긴다)', async () => {
+    const { loadViewerCore, noticeUi } = await import('../../src/app/core');
+    await loadViewerCore();
+    const m = noticeUi();
+    expect(typeof m?.renderNotices).toBe('function');
+    expect(m?.noticeViews).toBe((await import('../../src/app/notices')).noticeViews);
+  });
+
   it('훑기는 인라인 type만 쓴 가져오기와 다시 내보내기도 값 가져오기로 잡는다', () => {
     const files: Record<string, string> = {
       '/x/a.ts': "import { b } from './b';\nimport type { Viewer3d } from 'opencad-viewer3d';\n// import { Viewer3d } from 'opencad-viewer3d';\n",

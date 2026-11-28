@@ -6,19 +6,69 @@
  * 210차: 이 탭들은 시작 화면(문서를 열기 전)에서 그리지 않아 첫 화면 JS에서 뺐다 — 남은 panel.ts는 틀·탭 줄·재생 막대·코드 탭·아래 띠
  * (tests/app/core-split.test.ts가 이 모듈이 첫 화면 그래프 밖이고 탭 몸통 함수가 panel.ts로 돌아오지 않는지 본다)
  */
-import type { SceneIssue, SceneIssueCode } from 'opencad-viewer3d';
+import type { Scene3d, SceneIssue, SceneIssueCode } from 'opencad-viewer3d';
 import { isPanelKind } from '../extensions';
 import { NC_DIALECT_NAMES, type NcDialect, type NcLatheSystem } from '../model';
 import { formatDuration } from '../view/playback';
-import { MPR_KIND, cutRangeText, docLabel, lineAtLabel, lineNumberText, mprOps, mprVars, sceneCounts, sceneFeatures, toolGroup, toolItems, toolSelectLine, unitLabel, type NcDoc } from './doc';
+import { MPR_KIND, docLabel, lineAtLabel, lineMoveList, lineNumberText, mprOps, sceneCounts, sceneFeatures, unitLabel, type NcDoc } from './doc';
 import { h, mixSpan } from './dom';
 import { fileText, mix, type Mixed } from './filetext';
 import { fmtNum, fmtPt, formatBytes, formatMs, rgbCss } from './format';
 import { mixText } from './i18n';
 import { icon } from './icons';
 import type { PanelHost } from './panel';
-import type { NcJobInfo } from './protocol';
+import type { NcJobInfo, NcPayload } from './protocol';
 import { cleanLatheTool, defaultSettings, type NcSettings } from './settings';
+
+// 216차: 아래 여섯(절삭 범위 글·판재 변수·공구 줄 고르기·공구 묶음·공구 항목)은 이 탭 몸통만 써 doc.ts(첫 화면 조각)에서 옮겼다 — 시험은 이 모듈에서 가져온다
+
+/** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */
+export function cutRangeText(min: readonly number[], max: readonly number[], unit: string): string {
+  return `X ${fmtNum(min[0])} ~ ${fmtNum(max[0])} · Y ${fmtNum(min[1])} ~ ${fmtNum(max[1])} · Z ${fmtNum(min[2])} ~ ${fmtNum(max[2])}${unit ? ` ${unit}` : ''}`;
+}
+
+/** 판재 가공 변수(scene.meta.variables) */
+export interface MprVarRow {
+  name: string;
+  value?: number;
+  expr: string;
+  comment?: string;
+}
+
+export function mprVars(scene: Scene3d): MprVarRow[] {
+  const v = (scene.meta as { variables?: unknown } | undefined)?.variables;
+  return Array.isArray(v) ? (v as MprVarRow[]) : [];
+}
+
+/** 공구가 만든 첫 이동의 줄(이동이 없으면 -1) */
+export function toolFirstMoveLine(nc: Pick<NcPayload, 'moves'>, tool: number): number {
+  const m = nc.moves;
+  for (let i = 0; i < m.count; i++) if (m.tool[i] === tool) return m.line[i]!;
+  return -1;
+}
+
+/**
+ * 공구 줄을 눌렀을 때 고를 코드 줄: 공구가 처음 나온 줄이 그 공구의 이동을 만들면 그 줄,
+ * 아니면(공구 교환 줄 등) 그 공구의 첫 이동 줄.
+ */
+export function toolSelectLine(nc: Pick<NcPayload, 'moves' | 'lineMoves'>, tool: number, firstLine: number): number {
+  if (firstLine >= 0 && lineMoveList(nc, firstLine).some((i) => nc.moves.tool[i] === tool)) return firstLine;
+  const l = toolFirstMoveLine(nc, tool);
+  return l >= 0 ? l : firstLine;
+}
+
+/** 공구 번호 → 장면 묶음 이름(선분 묶음 nc-cut-·nc-drill-에서 찾는다) */
+export function toolGroup(scene: Scene3d, tool: number): string | null {
+  const key = tool < 0 ? 'none' : String(tool);
+  const l = scene.lines.find((x) => x.id === `nc-cut-${key}` || x.id === `nc-drill-${key}`);
+  return l?.group ?? null;
+}
+
+/** 공구 번호 → 장면 항목 id들 */
+export function toolItems(scene: Scene3d, tool: number): string[] {
+  const key = tool < 0 ? 'none' : String(tool);
+  return scene.lines.filter((x) => x.id === `nc-cut-${key}` || x.id === `nc-drill-${key}`).map((x) => x.id);
+}
 
 const G_DIALECTS: NcDialect[] = ['iso', 'fanuc', 'haas', 'linuxcnc', 'grbl', 'mach3'];
 

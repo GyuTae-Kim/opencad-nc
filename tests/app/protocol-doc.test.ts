@@ -13,18 +13,17 @@ import {
   moveSummary as moveSummaryMixed,
   mprOpAtLine,
   mprOps,
-  mprVars,
   panelTabs,
   replaceResult,
   sceneCounts,
   selectedLineText,
   selectionSummary as selectionSummaryMixed,
   statusParts,
-  toolGroup,
-  toolItems,
   unitLabel,
   warningLabel,
 } from '../../src/app/doc';
+// 216차: 판재 변수·공구 묶음·공구 항목은 정보 탭 조각만 써 doc.ts(첫 화면)에서 panel-info.ts로 옮겼다
+import { mprVars, toolGroup, toolItems } from '../../src/app/panel-info';
 import { plainText } from '../../src/app/filetext';
 import { translate } from '../../site/i18n.mjs';
 

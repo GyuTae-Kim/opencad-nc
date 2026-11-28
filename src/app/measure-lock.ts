@@ -62,8 +62,50 @@ import { translate } from '../../site/i18n-core.mjs';
 import { AIM_FINGER_PX, AIM_RETICLE_RADIUS } from './aim';
 import { h, toast } from './dom';
 import { icon } from './icons';
-import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, lockName, snapLabel, trackMark, type LockName } from './measure';
+import { TANGENT_LABEL, TRACK_PARALLEL_LABEL, TRACK_PERPENDICULAR_LABEL, lockMeet, lockMeetLabel, snapLabel, trackMark } from './measure';
 import type { FirstPoint } from './tangent';
+
+// 216차: 잠금 글·잠근 방향 이름(LockName·LOCK_HINTS·SHIFT_LOCK_HINTS·ARROW_LOCK_HINT·NO_LOCK_TOUCH·NO_LOCK_MOUSE·lockName)은 이 조각만 써 measure.ts(첫 화면 조각)에서 옮겼다 — 시험은 이 모듈에서 가져온다
+
+/**
+ * 잠근 방향(코어 0.10.0 추론 잠금): 축 셋, 선분과 나란히, 첫 점에서 선분에 내린 수직,
+ * 첫 점이 원호 끝일 때 그 원호의 접선(앱이 코어에 방향으로 주는 나란함 잠금 — tangent.ts·measure-lock.ts)
+ */
+export type LockName = 'x' | 'y' | 'z' | 'parallel' | 'perpendicular' | 'tangent';
+
+/** 잠갔을 때 상태 줄·측정 띠에 적는 글 */
+export const LOCK_HINTS: Record<LockName, string> = {
+  x: 'X축 방향으로 잠금',
+  y: 'Y축 방향으로 잠금',
+  z: 'Z축 방향으로 잠금',
+  parallel: '나란한 방향으로 잠금',
+  perpendicular: '수직 방향으로 잠금',
+  tangent: '접선 방향으로 잠금',
+};
+
+/** 잠그지 않았을 때(키보드 기기) 커서 아래에 Shift로 잠글 방향이 있으면(코어 0.12.0 measureHoverLock): 그 방향 */
+export const SHIFT_LOCK_HINTS: Record<LockName, string> = {
+  x: 'Shift로 X축 방향 잠그기',
+  y: 'Shift로 Y축 방향 잠그기',
+  z: 'Shift로 Z축 방향 잠그기',
+  parallel: 'Shift로 나란한 방향 잠그기',
+  perpendicular: 'Shift로 수직 방향 잠그기',
+  tangent: 'Shift로 접선 방향 잠그기',
+};
+
+/** 잠그지 않았고 Shift로 잠글 방향도 없을 때(키보드 기기): 화살표(→ X · ← Y · ↑ Z, ↓ 지금 방향) */
+export const ARROW_LOCK_HINT = '화살표로 방향 잠금';
+
+/** 잠금 단추를 눌렀는데 잠글 방향이 없을 때(손가락 기기·마우스) */
+export const NO_LOCK_TOUCH = '잠글 방향이 없습니다: 길게 눌러 조준하며 축·나란한 방향에 맞춘 뒤 누르세요';
+export const NO_LOCK_MOUSE = '잠글 방향이 없습니다: 커서를 축·나란한 방향에 맞춘 뒤 누르세요';
+
+/** 코어 잠금 상태(measureInferenceLock) → 잠근 방향 이름 */
+export function lockName(l: { kind: string; axis?: 'x' | 'y' | 'z' } | null | undefined): LockName | null {
+  if (!l) return null;
+  if (l.kind === 'axis') return l.axis ?? null;
+  return l.kind === 'parallel' ? 'parallel' : l.kind === 'perpendicular' ? 'perpendicular' : null;
+}
 
 type V3 = [number, number, number];
 

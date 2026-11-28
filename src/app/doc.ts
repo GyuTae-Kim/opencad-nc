@@ -185,63 +185,6 @@ export function emptyProgramParts(res: Pick<ParseResult, 'scene' | 'job' | 'nc' 
   return ['그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.', ...(w.length ? [' (', '해석 경고', ': ', ...w, ')'] : [])];
 }
 
-/** 절삭 범위 글 "X 0 ~ 50 · Y -10 ~ 10 · Z -5 ~ 2 mm" */
-export function cutRangeText(min: readonly number[], max: readonly number[], unit: string): string {
-  return `X ${fmtNum(min[0])} ~ ${fmtNum(max[0])} · Y ${fmtNum(min[1])} ~ ${fmtNum(max[1])} · Z ${fmtNum(min[2])} ~ ${fmtNum(max[2])}${unit ? ` ${unit}` : ''}`;
-}
-
-/** 해석 판단 띠 하나: 글과 행동(다른 설정으로 다시 읽기, 또는 패널 탭 열기) */
-export interface NoticeView {
-  key: string;
-  /** 글(주 프로그램·찾지 못한 프로그램 이름은 파일 글) */
-  text: Mixed;
-  /** opts = 그 설정으로 다시 읽기, tab = 패널 탭 열기, add = 이 작업에 파일 더하기 */
-  action?: { label: string; opts?: NcOpenOptions; tab?: PanelTab; add?: boolean };
-}
-
-const DIALECT_NOTICE: Record<string, string> = {
-  siemens: 'Siemens Sinumerik 프로그램으로 읽었습니다(판별).',
-  haas: 'Haas 프로그램으로 읽었습니다(판별) — G73·G83의 K는 최소 절입(반복은 L), G70~G72는 볼트 구멍 패턴, G110~G129는 좌표계로 봅니다.',
-  'heidenhain-iso': 'Heidenhain DIN/ISO 프로그램으로 읽었습니다(판별).',
-  okuma: 'Okuma OSP 프로그램으로 보입니다 — CALL·VC 변수·NLAP는 읽지 않아 경로가 모자랄 수 있습니다(G15 H 좌표계는 읽음).',
-};
-
-const LATHE_SYSTEM_NOTICE: Record<string, string> = {
-  B: 'Fanuc 선반 G 코드 B 체계로 읽었습니다(판별) — G77·G78·G79는 단순 사이클, G90·G91은 절대·증분 지령입니다.',
-  C: 'Fanuc 선반 G 코드 C 체계로 읽었습니다(판별) — G20·G21·G24는 단순 사이클, G70·G71은 inch·mm, G72~G78은 복합 사이클입니다.',
-};
-
-/** 문서의 해석 판단 → 띠(닫은 것은 뺀다) */
-export function noticeViews(d: Pick<NcDoc, 'nc' | 'ncOptions' | 'dismissedNotices'> & Partial<Pick<NcDoc, 'job'>>): NoticeView[] {
-  const out: NoticeView[] = [];
-  const job = d.job;
-  if (job && (job.files.length > 1 || job.skipped.length) && !d.dismissedNotices.has('job')) {
-    const skipped = job.skipped.length ? ` · 잇지 않은 파일 ${job.skipped.length}개` : '';
-    out.push({ key: 'job', text: mix`파일 ${job.files.length}개를 한 작업으로 읽었습니다 — 주 프로그램 ${fileText(job.main)}${skipped}`, action: { label: '작업 파일', tab: 'info' } });
-  }
-  for (const n of d.nc?.notices ?? []) {
-    let v: NoticeView | null = null;
-    if (n.kind === 'lathe-auto') v = { key: 'lathe-auto', text: ['선반 프로그램으로 보여 선반 모드(X 지름·선반 사이클·XZ 단면)로 읽었습니다.'], action: { label: '밀링으로 읽기', opts: { ...d.ncOptions, lathe: false } } };
-    else if (n.kind === 'integer-units')
-      v = { key: 'integer-units', text: ['소수점 없는 큰 좌표가 많습니다 — 최소 입력 단위(0.001 mm·0.0001 inch)로 쓴 Fanuc 프로그램일 수 있습니다.'], action: { label: '최소 단위로 읽기', opts: { ...d.ncOptions, integerUnits: true } } };
-    else if (n.kind === 'dialect' && n.dialect && DIALECT_NOTICE[n.dialect]) v = { key: `dialect-${n.dialect}`, text: [DIALECT_NOTICE[n.dialect]!], action: { label: 'G-code 형식 바꾸기', tab: 'info' } };
-    else if (n.kind === 'lathe-system' && n.system) {
-      const text =
-        n.system === 'A'
-          ? `Fanuc 선반 G 코드 B·C 체계일 수 있습니다(${(n.hints ?? []).join(' · ')}) — A 체계(G90·G92·G94 단순 사이클)로 읽었습니다.`
-          : LATHE_SYSTEM_NOTICE[n.system]!;
-      v = { key: `lathe-system-${n.system}`, text: [text], action: { label: '체계 바꾸기', tab: 'info' } };
-    }
-    else if (n.kind === 'missing-program' && n.programs?.length) {
-      // 프로그램 이름(CALL PGM "…"·부프로그램 이름)은 파일 글
-      const names = fileText(n.programs.length > 6 ? `${n.programs.slice(0, 6).join(', ')}, …` : n.programs.join(', '));
-      v = { key: 'missing-program', text: mix`다른 파일의 프로그램 ${names}을(를) 찾지 못했습니다 — 그 파일을 더하면 이어서 그립니다.`, action: { label: '파일 더하기', add: true } };
-    }
-    if (v && !d.dismissedNotices.has(v.key)) out.push(v);
-  }
-  return out;
-}
-
 /** 문서 종류별 패널 탭 */
 export function panelTabs(d: Pick<NcDoc, 'kind'>): [PanelTab, string][] {
   if (isPanelKind(d.kind))
@@ -344,19 +287,6 @@ export function boardLid(scene: Scene3d, id: string): { start: number; count: nu
   return { start: r.start, count: r.count };
 }
 
-/** 판재 가공 변수(scene.meta.variables) */
-export interface MprVarRow {
-  name: string;
-  value?: number;
-  expr: string;
-  comment?: string;
-}
-
-export function mprVars(scene: Scene3d): MprVarRow[] {
-  const v = (scene.meta as { variables?: unknown } | undefined)?.variables;
-  return Array.isArray(v) ? (v as MprVarRow[]) : [];
-}
-
 /** 줄 i를 품은 판재 가공(시작 줄이 i 이하인 마지막 가공). 없으면 -1 */
 export function mprOpAtLine(ops: readonly MprOpRow[], line: number): number {
   let best = -1;
@@ -418,23 +348,6 @@ export function moveEndPoint(nc: Pick<NcPayload, 'moves'>, i: number): [number, 
   return [p[k]!, p[k + 1]!, p[k + 2]!];
 }
 
-/** 공구가 만든 첫 이동의 줄(이동이 없으면 -1) */
-export function toolFirstMoveLine(nc: Pick<NcPayload, 'moves'>, tool: number): number {
-  const m = nc.moves;
-  for (let i = 0; i < m.count; i++) if (m.tool[i] === tool) return m.line[i]!;
-  return -1;
-}
-
-/**
- * 공구 줄을 눌렀을 때 고를 코드 줄: 공구가 처음 나온 줄이 그 공구의 이동을 만들면 그 줄,
- * 아니면(공구 교환 줄 등) 그 공구의 첫 이동 줄.
- */
-export function toolSelectLine(nc: Pick<NcPayload, 'moves' | 'lineMoves'>, tool: number, firstLine: number): number {
-  if (firstLine >= 0 && lineMoveList(nc, firstLine).some((i) => nc.moves.tool[i] === tool)) return firstLine;
-  const l = toolFirstMoveLine(nc, tool);
-  return l >= 0 ? l : firstLine;
-}
-
 /** 상태 막대 경고 단추 글(경고가 없으면 '') */
 export function warningLabel(d: Pick<NcDoc, 'scene'>): string {
   const n = d.scene.warnings?.length ?? 0;
@@ -457,19 +370,6 @@ export function sceneFeatures(s: Scene3d): {
     rotaryAxes: !!m.rotaryAxes,
     disabledOps: m.stats?.disabled ?? 0,
   };
-}
-
-/** 공구 번호 → 장면 묶음 이름(선분 묶음 nc-cut-·nc-drill-에서 찾는다) */
-export function toolGroup(scene: Scene3d, tool: number): string | null {
-  const key = tool < 0 ? 'none' : String(tool);
-  const l = scene.lines.find((x) => x.id === `nc-cut-${key}` || x.id === `nc-drill-${key}`);
-  return l?.group ?? null;
-}
-
-/** 공구 번호 → 장면 항목 id들 */
-export function toolItems(scene: Scene3d, tool: number): string[] {
-  const key = tool < 0 ? 'none' : String(tool);
-  return scene.lines.filter((x) => x.id === `nc-cut-${key}` || x.id === `nc-drill-${key}`).map((x) => x.id);
 }
 
 /** 상태 막대 왼쪽: 형식·단위·파일 크기·이동(가공)/선분 수·읽은 시간 */

@@ -130,7 +130,9 @@ vi.mock('../../src/app/dom', async (importOriginal) => {
 import { NcViewerApp } from '../../src/app/app';
 import { toast } from '../../src/app/dom';
 import { BINARY_MESSAGE } from '../../src/app/format';
-import { ARROW_LOCK_HINT, LOCK_HINTS, SHIFT_LOCK_HINTS, measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+import { measureHint, panelMeasureHint, statusMeasureHint } from '../../src/app/measure';
+// 216차: 잠금 글은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { ARROW_LOCK_HINT, LOCK_HINTS, SHIFT_LOCK_HINTS } from '../../src/app/measure-lock';
 import { AIM_HOLD_MS, touchPointerEvent } from '../../src/app/aim';
 import { RecentStore, recentId } from '../../src/app/recent';
 import { memoryBackend, type MemoryBackend } from './recent-memory';

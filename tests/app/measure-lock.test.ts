@@ -10,8 +10,8 @@ import { KEY_SNAP_MESSAGES, formatKeySnapMessage, keySnapText, type MeasureHover
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { installLocalization } from '../../src/app/i18n';
 import { dictLookup, keySnapMessageFn } from '../../src/app/keysnap';
-import { ARROW_LOCK_HINT, LOCK_HINTS, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, lockName } from '../../src/app/measure';
-import { MeasureLock, axisKeyOf, coverRects, cycleOrder, lockHint, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
+// 216차: 잠금 글·lockName은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { ARROW_LOCK_HINT, LOCK_HINTS, MeasureLock, NO_LOCK_MOUSE, NO_LOCK_TOUCH, SHIFT_LOCK_HINTS, axisKeyOf, coverRects, cycleOrder, lockHint, lockName, placeTip, snapTip, type LockViewer } from '../../src/app/measure-lock';
 import { NO_TRACK_TOUCH } from '../../src/app/measure-track';
 
 type Dir = [number, number, number];

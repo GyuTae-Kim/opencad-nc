@@ -6,7 +6,8 @@ import { installLocalization, localizeCubeFaces, uiText } from '../src/app/i18n'
 import { catalogs, currentLanguage, languageUrl, languages, sourceMessage, translate } from '../site/i18n.mjs';
 import { NC_DIALECT_NAMES } from '../src/model';
 import { parseGcode } from '../src/gcode';
-import { noticeViews } from '../src/app/doc';
+// 216차: 판단 띠 글은 문서가 있을 때만 써 doc.ts(첫 화면)에서 코어와 함께 받는 notices.ts로 옮겼다
+import { noticeViews } from '../src/app/notices';
 import { fileText, mix, plainText, type Mixed } from '../src/app/filetext';
 import { BINARY_MESSAGE } from '../src/app/format';
 import { errorText } from '../src/app/protocol';

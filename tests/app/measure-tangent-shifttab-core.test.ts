@@ -23,8 +23,8 @@ vi.mock('../../src/app/client', async () => {
 });
 
 import { NcViewerApp } from '../../src/app/app';
-import { LOCK_HINTS, SHIFT_LOCK_HINTS } from '../../src/app/measure';
-import { snapTip, type MeasureLock } from '../../src/app/measure-lock';
+// 216차: 잠금 글은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { LOCK_HINTS, SHIFT_LOCK_HINTS, snapTip, type MeasureLock } from '../../src/app/measure-lock';
 import { installCanvasFakes } from './fake-webgl';
 
 let restore: () => void;

@@ -70,8 +70,8 @@ import { translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
 import { toast, toastArea } from '../../src/app/dom';
 import { installLocalization } from '../../src/app/i18n';
-import { NO_LOCK_MOUSE } from '../../src/app/measure';
-import { MeasureLock } from '../../src/app/measure-lock';
+// 216차: 잠글 방향이 없을 때 글은 측정 도구 조각만 써 measure.ts(첫 화면)에서 measure-lock.ts로 옮겼다
+import { MeasureLock, NO_LOCK_MOUSE } from '../../src/app/measure-lock';
 import { loadPanelInfo } from '../../src/app/panel';
 import { NOT_NC_MESSAGE } from '../../src/app/payload';
 import { RecentStore } from '../../src/app/recent';

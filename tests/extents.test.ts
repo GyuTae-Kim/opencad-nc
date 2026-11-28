@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseGcode } from '../src/gcode';
 import { parseForView } from '../src/app/payload';
-import { cutRangeText } from '../src/app/doc';
+// 216차: 절삭 범위 글은 정보 탭 조각만 써 doc.ts(첫 화면)에서 panel-info.ts로 옮겼다
+import { cutRangeText } from '../src/app/panel-info';
 
 const PROG = `G21 G17 G90 G54
 T1 M6
