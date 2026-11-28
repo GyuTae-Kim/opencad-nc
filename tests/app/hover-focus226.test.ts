@@ -90,7 +90,7 @@ interface TsEntry {
 const TS_TABLE: readonly TsEntry[] = [
   { row: 1, file: 'src/app/measure-lock.ts', ev: 'onMeasureHoverChange()', n: 1, what: '측정 중 포인터 올림 → 붙잡기 툴팁(.snap-tip) — Esc(escTip·측정 지우기·끄기), 따라가는 글, 시간 닫힘 없음', judge: '지킴' },
   { row: 2, file: 'src/app/measure-lock.ts', ev: 'pointermove', n: 1, what: '캔버스 포인터 자리 기록(116차 Shift+Tab 되돌리기) — 띄우는 것 없음', judge: '대상 밖' },
-  { row: 3, file: 'src/app/dom.ts', ev: 'pointerenter', n: 1, what: '알림 상자 위 올림은 닫힘을 미룸(157차 — 알림은 사건이 띄움)', judge: '대상 밖' },
+  { row: 3, file: 'src/app/dom.ts', ev: 'pointerenter', n: 1, what: '알림 상자·측정 띠 위 알림 위 올림은 닫힘을 미룸(157차 — 230차 holdOpen, 알림은 사건이 띄움)', judge: '대상 밖' },
   { row: 4, file: 'src/app/panel.ts', ev: 'pointermove', n: 2, what: '패널 크기 손잡이 끌기(누른 동안)', judge: '대상 밖' },
   { row: 4, file: 'src/app/panel.ts', ev: 'focus', n: 1, what: '손잡이 초점에 값·방향 맞춤(aria — 보이는 내용 없음)', judge: '대상 밖' },
   { row: 5, file: 'src/app/viewer-ui.ts', ev: 'pointermove', n: 1, what: '단면 손잡이 끌기(누른 동안)', judge: '대상 밖' },
@@ -286,9 +286,10 @@ describe('226차 올림·초점으로 뜨는 내용(WCAG 1.4.13) 감사 표', ()
     const outside = [...seen].filter(([k, n]) => want.get(k) !== n).map(([k, n]) => `${k} ×${n}(표 ×${want.get(k) ?? 0})`);
     const stale = [...want].filter(([k]) => !seen.has(k)).map(([k]) => k);
     expect({ outside, stale }).toEqual({ outside: [], stale: [] });
-    // (다) 붙잡기 툴팁(표 1 #1): 측정 조각의 타이머는 띠 위 알림 거두기뿐 — 툴팁 숨김은 update·follow·escTip·reset(사건·Esc·측정 끄기)
+    // (다) 붙잡기 툴팁(표 1 #1): 측정 조각의 시간 닫힘은 띠 위 알림 거두기뿐 — 툴팁 숨김은 update·follow·escTip·reset(사건·Esc·측정 끄기)
+    // 230차: 띠 위 알림 거두기는 알림 상자와 같은 멈춤 도우미(dom.ts holdOpen — 올린 동안 남음, timing230)로 걸고 거둔다 — 측정 조각에 타이머 없음
     const lock = read('src/app/measure-lock.ts');
-    expect([...lock.matchAll(/setTimeout\(\(\) => ([^,]+),/g)].map((m) => m[1])).toEqual(['this.dropFlash(null)']);
+    expect([...lock.matchAll(/(?:setTimeout|holdOpen)\(([^;]+)\);/g)].map((m) => m[1])).toEqual(['this.flash, ms, () => this.dropFlash(null)', 'this.flash, 0, null']);
     expect(/pointer-events: none/.test(RULES.filter((r) => r.sheet === 'styles' && r.sel === '.snap-tip').flatMap((r) => r.d.map(([k, v]) => `${k}: ${v}`)).join(';'))).toBe(true);
   });
 
