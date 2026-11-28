@@ -237,6 +237,8 @@ export class NcViewerApp implements PanelHost {
   private readonly storage = safeStorage();
   /** 171차: 설정 메뉴 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」(기본 켬 — 끄면 그 키는 3D 보기에 초점이 있을 때만, WCAG 2.1.4) */
   private charKeys = readCharKeysPref(this.storage);
+  /** 205차: 키보드 단축키 창을 받는 중이거나 열려 있음(openShortcuts — 두 번 열지 않는다) */
+  private keysHelp = false;
   private panelOpen = !isPhone();
   private playing = false;
   private raf = 0;
@@ -400,13 +402,17 @@ export class NcViewerApp implements PanelHost {
     const analyticsChoice = h('button', { type: 'button', role: 'menuitem' }, '방문 통계 설정');
     analyticsChoice.addEventListener('click', showAnalyticsSettings);
     // 171차(WCAG 2.1.4): 켜고 끄는 항목(격자·뷰 큐브와 같은 menuitemcheckbox) — 끄면 F·1~7은 3D 보기에 초점이 있을 때만(keyAction), 이 브라우저에 기억
-    const charKeysChoice = menuItem('3D 보기 밖에서도 한 글자 단축키(F·1~7)', 'menuitemcheckbox', () => {
+    // 205차: ?도 한 글자 단축키(keys.ts — 끄면 3D 보기에서만)
+    const charKeysChoice = menuItem('3D 보기 밖에서도 한 글자 단축키(F·1~7·?)', 'menuitemcheckbox', () => {
       writeCharKeysPref(this.storage, (this.charKeys = !this.charKeys));
       charKeysChoice.setAttribute('aria-checked', String(this.charKeys));
     });
     charKeysChoice.setAttribute('aria-checked', String(this.charKeys));
+    // 205차: 키보드 단축키 창(? 키와 같음 — 창은 열 때 받는 조각 shortcuts.ts, 글은 그 SHORTCUTS_TITLE과 같다)
+    const keysChoice = menuItem('키보드 단축키', 'menuitem', () => this.openShortcuts());
+    keysChoice.append(h('kbd', { translate: 'no' }, '?'));
     // 다른 웹페이지에 넣은 화면(iframe)에서는 방문 통계를 켜지 않으므로 그 설정 항목도 뺀다
-    const settings = this.menu('settings', this.themeBtn, isFramed() ? [themeChoice, charKeysChoice] : [themeChoice, charKeysChoice, analyticsChoice], false);
+    const settings = this.menu('settings', this.themeBtn, isFramed() ? [themeChoice, charKeysChoice, keysChoice] : [themeChoice, charKeysChoice, keysChoice, analyticsChoice], false);
     const toolsLink = h('a', { class: 'tbtn', href: TOOLS_URL, title: 'OpenCAD 도구 모음', 'aria-label': 'OpenCAD 도구', html: `${icon('apps')}<span class="lbl">OpenCAD 도구</span>` });
     const repoLink = h('a', { class: 'tbtn', href: REPO_URL, target: '_blank', rel: 'noopener', title: 'GitHub 저장소(소스 코드)', 'aria-label': 'GitHub', html: `${icon('code')}<span class="lbl">GitHub</span>` });
     this.docNameEl = h('span', { class: 'docname' });
@@ -2451,7 +2457,8 @@ export class NcViewerApp implements PanelHost {
   private onKey(ev: KeyboardEvent): void {
     const t = ev.target as HTMLElement | null;
     // The language menu owns its keyboard focus, including Escape during loading.
-    if (t?.closest?.('.language-control, .language-list')) return;
+    // 205차: 모달(키보드 단축키 창 — aria-modal) 안의 키도 그 상자 몫(Esc 닫기·Tab 돌기 — 원호 Shift 잠금·읽기 멈추기·메뉴 Esc·앱 키를 고르지 않는다)
+    if (t?.closest?.('.language-control, .language-list, [aria-modal="true"]')) return;
     // 150차: 패널 탭 버튼의 ←→·Home·End(수정 키 없음)는 탭 줄 몫(panel.ts — APG Tabs). 한 이동 걷기로 가져가 전파를 막지 않게 먼저 돌아선다
     if (t?.getAttribute?.('role') === 'tab' && tabMove(ev, 0, 1) >= 0) return;
     // 원호 접선 Shift 잠금은 코어보다 먼저(아래 viewer 갈래·캔버스 키가 코어에 넘기면 코어는 잠금이 있으면 그대로 둔다)
@@ -2496,11 +2503,12 @@ export class NcViewerApp implements PanelHost {
       charKeysOff: !this.charKeys,
     });
     if (!a) return;
-    if (a.type === 'open') {
-      // 열기는 문서·뷰어가 없어도(시작 화면) 된다
+    if (a.type === 'open' || a.type === 'shortcuts') {
+      // 열기·키보드 단축키 창(205차)은 문서·뷰어가 없어도(시작 화면) 된다
       ev.preventDefault();
       ev.stopPropagation();
-      this.chooseFile();
+      if (a.type === 'open') this.chooseFile();
+      else this.openShortcuts();
       return;
     }
     if (!v) return;
@@ -2534,6 +2542,21 @@ export class NcViewerApp implements PanelHost {
     else if (a.type === 'line') this.stepLine(a.delta);
     else if (a.type === 'find') this.openFind(a.next);
     else this.togglePlay();
+  }
+
+  /**
+   * 205차: 키보드 단축키 창(? 키·앱 설정 메뉴). 창 글·그리기는 열 때 받는 조각(shortcuts.ts — 첫 화면 JS 밖, 오프라인은 서비스 워커가 미리 담음).
+   * 받는 동안·열린 동안은 다시 열지 않고(keysHelp), 받지 못하면 console.error(다음 누름에 다시 받는다)
+   */
+  private openShortcuts(): void {
+    if (this.keysHelp) return;
+    this.keysHelp = true;
+    void import('./shortcuts')
+      .then((m) => m.openShortcutsDialog(this.root, () => (this.keysHelp = false)))
+      .catch((e: unknown) => {
+        this.keysHelp = false;
+        console.error(e);
+      });
   }
 
   /** 코드에서 찾기: 패널 코드 탭을 열고 찾기 칸에 초점(next면 다음 찾기) */

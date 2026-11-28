@@ -161,8 +161,8 @@ describe('100차: 카메라만 움직이면 측정 툴팁이 그 점의 새 화�
 
   it('보기 키(7 — 남동 등각, 움직임): 원호 중심 위에 멈춘 채 3D 보기에서 보기를 바꾸면 움직임이 끝난 자리에서 툴팁이 중심을 따른다(171차 설정 끔)', async () => {
     const { app, v } = await measuring();
-    // 171차: 설정 메뉴 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」(menuitemcheckbox — 기본 켬)를 눌러 끈다
-    const item = [...document.querySelectorAll<HTMLButtonElement>('.menu [role="menuitemcheckbox"]')].find((b) => b.textContent === '3D 보기 밖에서도 한 글자 단축키(F·1~7)')!;
+    // 171차: 설정 메뉴 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」(menuitemcheckbox — 기본 켬)를 눌러 끈다(205차: ?도 같은 설정이라 항목 글 「(F·1~7·?)」)
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.menu [role="menuitemcheckbox"]')].find((b) => b.textContent === '3D 보기 밖에서도 한 글자 단축키(F·1~7·?)')!;
     expect(item.getAttribute('aria-checked')).toBe('true');
     item.click();
     expect(item.getAttribute('aria-checked')).toBe('false');

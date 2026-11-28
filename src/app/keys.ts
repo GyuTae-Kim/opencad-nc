@@ -13,6 +13,8 @@
  * - 56차(코어 0.46.0 키보드 붙잡기 — keysnap.ts): 캔버스의 가상 커서가 켜진 동안 화살표·Esc는 코어 것이다(커서 옮기기·끄기 — 위 앱 화살표보다 먼저).
  *   커서는 Enter로만 켠다(커서가 꺼져 있을 때 캔버스 화살표는 keysnap.ts가 기본 동작을 막아 코어가 커서를 켜지 않는다 — 문서 종류마다 화살표 뜻이 갈리지 않게).
  *   203차: 커서가 켜진 동안의 측정 축 잠금은 캔버스의 X·Y·Z(측정 조각 measure-lock.ts axisKey — 여기 키 고르기는 캔버스 글자 키를 코어에 두므로 닿지 않는다). 204차: 지금 방향은 L(같은 자리).
+ * - 205차: ? = 키보드 단축키 창(문서가 없어도 — 시작 화면, 171차 설정을 끄면 다른 한 글자 키처럼 3D 보기에서만). 그 창(shortcuts.ts SHORTCUTS)은 여기서 고르는 키와 같게 둔다
+ *   (tests/app/shortcuts.test.ts — 키를 더하면 창에도). 창(aria-modal) 안의 키는 app.ts onKey가 여기 오기 전에 돌아선다.
  */
 import type { ViewName } from 'opencad-viewer3d';
 // 숫자 키 → 표준 뷰 표는 코어의 작은 모듈에서(0.10.0 — 코어 입구는 문서를 열 때 나눠 받으므로 첫 화면 메뉴 글은 camera 모듈의 표로)
@@ -38,7 +40,9 @@ export type KeyAction =
   /** Ctrl/⌘+F 코드에서 찾기, Ctrl/⌘+G 다음 찾기 */
   | { type: 'find'; next: boolean }
   /** 측정 방향 잠금(화살표): 축, 또는 null = 지금 방향(나란함·수직·축) */
-  | { type: 'lock'; axis: 'x' | 'y' | 'z' | null };
+  | { type: 'lock'; axis: 'x' | 'y' | 'z' | null }
+  /** 205차: ? 키보드 단축키 창 */
+  | { type: 'shortcuts' };
 
 export interface KeyContext {
   key: string;
@@ -84,6 +88,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   if (mod && !c.alt && c.hasDoc && c.hasCode && (c.key === 'f' || c.key === 'F')) return { type: 'find', next: false };
   if (mod && !c.alt && c.hasDoc && c.hasCode && (c.key === 'g' || c.key === 'G')) return { type: 'find', next: true };
   if (mod || c.alt) return null;
+  if (c.key === '?') return c.charKeysOff && !c.onCanvas ? null : { type: 'shortcuts' };
   if (!c.hasDoc) return null;
   if (c.key === 'F7') return { type: 'grid' };
   if (c.key === ' ' || c.key === 'Spacebar') return c.canPlay && !c.onButton ? { type: 'play' } : null;
@@ -98,7 +103,7 @@ export function keyAction(c: KeyContext): KeyAction | null {
   return c.onCanvas || (c.charKeysOff && c.key.length === 1) ? null : { type: 'viewer' };
 }
 
-/** 171차: 설정 「3D 보기 밖에서도 한 글자 단축키(F·1~7)」의 localStorage 열쇠(값 'off'면 끔 — 없거나 못 읽으면 켬) */
+/** 171차: 설정 「3D 보기 밖에서도 한 글자 단축키(F·1~7·?)」(205차 ? 더함)의 localStorage 열쇠(값 'off'면 끔 — 없거나 못 읽으면 켬) */
 export const CHAR_KEYS_KEY = 'opencad-nc.charKeys';
 
 /** 171차: 기억한 「3D 보기 밖에서도 한 글자 단축키」 켬 여부(기본 켬 — 저장소가 없거나 예외를 던지면 켬) */

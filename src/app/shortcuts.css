@@ -1,0 +1,73 @@
+/* 205차: 키보드 단축키 창(shortcuts.ts — 열 때 받는 조각과 함께 받는 스타일, 첫 화면 styles.css 밖). 알림 상자(80)보다 위, 언어 목록(10001)보다 아래.
+   폭 320 CSS px(400% 확대)에서도 가로 굴림 없이 — 키 칸은 반 폭까지(그보다 길면 줄 바꿈), 높이가 모자라면 본문만 굴린다(WCAG 1.4.10) */
+.sc-back {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.sc-box {
+  display: flex;
+  flex-direction: column;
+  width: min(34rem, 100%);
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.sc-box:focus {
+  outline: none;
+}
+.sc-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sc-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.sc-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px 14px;
+}
+.sc-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sc-body h3 {
+  margin: 14px 0 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.sc-body dl {
+  display: grid;
+  grid-template-columns: fit-content(50%) 1fr;
+  gap: 6px 14px;
+  margin: 0;
+}
+.sc-body dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sc-body dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sc-note {
+  margin: 12px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}

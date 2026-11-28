@@ -157,7 +157,7 @@ const FLASH_EMPTY = 'position:absolute;width:1px;height:1px;margin:-1px;padding:
  * 커서 아래에 Shift로 잠글 방향(hover — 코어 measureHoverLock)이 있으면 "Shift로 그 방향 잠그기", 없으면 화살표 안내
  * (손가락 기기는 측정 띠의 잠금 단추). 상태 줄·측정 띠는 안내 글 다음에 따로 둔다(번역이 안내 글을 한 덩어리로 찾게)
  * 57차: 3D 보기의 가상 커서가 켜진 동안(cursor — 56차 keysnap.ts)은 화살표가 커서를 옮기므로 화살표 안내를 내지 않는다(Shift로 잠글 방향이 있으면 그 안내).
- * 203차: 그 동안 축은 X·Y·Z로 잠그므로(MeasureLock axisKey) Shift로 잠글 방향이 없으면 그 안내(CURSOR_LOCK_HINT — 57차는 안내 없음).
+ * 203차: 그 동안 축은 X·Y·Z로 잠그므로(MeasureLock axisKey) Shift로 잠글 방향이 없으면 그 안내(CURSOR_LOCK_HINT — 57차는 안내 없음, 205차: 지금 방향 L도).
  * 측정 도구가 있을 때만 쓰므로 이 조각에 둔다(56차까지 measure.ts — 첫 화면 JS를 줄이려고 옮김, 앱은 MeasureLock.hint로 묻는다)
  */
 export function lockHint(points: number, hasResult: boolean, lock: LockName | null, touch = false, hover: LockName | null = null, cursor = false): string | null {
@@ -167,8 +167,11 @@ export function lockHint(points: number, hasResult: boolean, lock: LockName | nu
   return hover ? SHIFT_LOCK_HINTS[hover] : cursor ? CURSOR_LOCK_HINT : ARROW_LOCK_HINT;
 }
 
-/** 203차: 가상 커서가 켜진 동안의 축 잠금 안내(화살표 안내 ARROW_LOCK_HINT 꼴 — 측정 조각 글이라 첫 화면 measure.ts가 아닌 이 조각에) */
-export const CURSOR_LOCK_HINT = 'X·Y·Z로 축 방향 잠금';
+/**
+ * 203차: 가상 커서가 켜진 동안의 축 잠금 안내(화살표 안내 ARROW_LOCK_HINT 꼴 — 측정 조각 글이라 첫 화면 measure.ts가 아닌 이 조각에).
+ * 205차: 204차 L(지금 방향)도 적는다 — 3D 보기 설명(keysnap.ts KEY_HELP 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」)의 낱말(잠금 글자 lockKeyOf를 모두 — tests/app/shortcuts.test.ts)
+ */
+export const CURSOR_LOCK_HINT = 'X·Y·Z로 축 방향, L로 지금 방향 잠금';
 
 /** 203차: 가상 커서가 켜진 동안 X·Y·Z로 잠금을 풀었을 때 가상 커서 알림 영역에 넣는 글(잠근 때는 잠금 안내 LOCK_HINTS 그대로) */
 export const UNLOCK_SAID = '방향 잠금을 풀었습니다';

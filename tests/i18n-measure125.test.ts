@@ -150,11 +150,12 @@ describe('측정 화면 번역(125차)', () => {
   it('203차: 가상 커서 축 잠금 안내(X·Y·Z)·푼 알림·3D 보기 설명의 더한 문장을 같은 사전의 잠금 낱말로 네 언어에 옮긴다', () => {
     // [언어, 안내, 푼 알림, 3D 보기 설명에 더한 문장, 「Shift로 X축 방향 잠그기」의 잠금 낱말, 「방향 잠금 풀기」의 풂 낱말]
     // 204차: 같은 문장에 L(지금 방향 — 아래 204차 it)을 더했다(「X·Y·Z로 축 방향을 잠급니다」 → 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」) — X·Y·Z 부분 글은 그대로
+    // 205차: 안내도 L을 품는다(「X·Y·Z로 축 방향 잠금」 → 「X·Y·Z로 축 방향, L로 지금 방향 잠금」 — 아래 205차 it). 일본어 잠금 낱말은 「軸方向に、L で現在の方向にロック」로 갈려 「にロック」
     const want: [lang: string, hint: string, off: string, help: string, lockWord: string, offWord: string][] = [
-      ['en', 'X, Y or Z locks to that axis', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis and L locks the current direction (press again to unlock).', 'locks to', 'nlock'],
-      ['ja', 'X・Y・Z で軸方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向に、Lで現在の方向にロックします（もう一度押すと解除）。', '軸方向にロック', '方向ロックを解除'],
-      ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向（再按一次解除）。', '锁定为', '解除方向锁定'],
-      ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
+      ['en', 'X, Y or Z locks to that axis and L locks the current direction', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis and L locks the current direction (press again to unlock).', 'locks to', 'nlock'],
+      ['ja', 'X・Y・Z で軸方向に、L で現在の方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向に、Lで現在の方向にロックします（もう一度押すと解除）。', 'にロック', '方向ロックを解除'],
+      ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向（再按一次解除）。', '锁定为', '解除方向锁定'],
+      ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
     ];
     expect(want.map(([l]) => l)).toEqual([...LANGS]);
     for (const [lang, hint, off, help, lockWord, offWord] of want) {
@@ -187,5 +188,27 @@ describe('측정 화면 번역(125차)', () => {
       expect(translate(KEY_HELP, lang), lang).not.toMatch(/[가-힣]/);
     }
     expect(KEY_HELP).toContain('L로 지금 방향을 잠급니다');
+  });
+
+  it('205차: 가상 커서가 켜진 동안의 잠금 안내에 L(지금 방향) — 3D 보기 설명(KEY_HELP)의 같은 낱말로 네 언어에 옮긴다', () => {
+    // [언어, 안내 안 L 글(KEY_HELP 번역에도 그대로), 203차 안내의 X·Y·Z 글(그대로 남음)]
+    const want: [lang: string, part: string, axes: string][] = [
+      ['en', 'L locks the current direction', 'X, Y or Z locks to that axis'],
+      ['ja', 'L で現在の方向にロック', 'X・Y・Z で軸方向に'],
+      ['zh-CN', '按 L 锁定当前方向', '按 X、Y 或 Z 锁定为该轴方向'],
+      ['de', 'L die aktuelle Richtung', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung'],
+    ];
+    expect(want.map(([l]) => l)).toEqual([...LANGS]);
+    for (const [lang, part, axes] of want) {
+      const hint = translate(CURSOR_LOCK_HINT, lang);
+      expect(hint, lang).toContain(part);
+      expect(hint, lang).toContain(axes);
+      // 같은 사전 근거: 3D 보기 설명의 L 글(일본어는 안내 꼴 「X・Y・Z で」처럼 글자 뒤 빈칸 — 설명은 붙여 씀)
+      expect(translate(KEY_HELP, lang).replace(/([A-Z])で/g, '$1 で'), lang).toContain(part);
+      expect(hint, lang).not.toMatch(/[가-힣]/);
+    }
+    expect(CURSOR_LOCK_HINT).toBe('X·Y·Z로 축 방향, L로 지금 방향 잠금');
+    // 203차 안내 열쇠는 바꿔 남지 않는다(같은 열쇠가 둘이 되지 않게)
+    for (const lang of LANGS) expect(dict(lang)['X·Y·Z로 축 방향 잠금'], lang).toBeUndefined();
   });
 });

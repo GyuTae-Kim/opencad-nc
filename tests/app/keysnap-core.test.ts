@@ -461,10 +461,10 @@ describe('203차: 가상 커서가 켜진 동안 X·Y·Z로 측정 방향을 축
     center([20, 15, 0], 25);
     const lock = (): string | null | undefined => app.state().measureLock?.lock;
     const hint = (): string => [...document.querySelectorAll('.st-sel .st-lock')].map((e) => e.textContent).join(' ');
-    /** 잠그지 않은 동안의 안내: 커서 아래에 Shift로 잠글 방향이 있으면 그것, 없으면 X·Y·Z(57차는 안내 없음) */
+    /** 잠그지 않은 동안의 안내: 커서 아래에 Shift로 잠글 방향이 있으면 그것, 없으면 X·Y·Z(57차는 안내 없음 — 205차: 204차 L도 함께 「X·Y·Z로 축 방향, L로 지금 방향 잠금」) */
     const free = (): string => {
       const h = app.state().measureLock?.hoverLock;
-      return h ? SHIFT[h]! : 'X·Y·Z로 축 방향 잠금';
+      return h ? SHIFT[h]! : 'X·Y·Z로 축 방향, L로 지금 방향 잠금';
     };
     // 3D 보기 설명(aria-description)에 X·Y·Z(204차: 같은 문장에 L — 「X·Y·Z로 축 방향을 잠급니다」 → 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」)
     expect(v.canvas.getAttribute('aria-description')).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다(다시 누르면 풀기).');

@@ -13,6 +13,7 @@
  * 탭 묶음과 3D 보기 아래 띠), 측정 띠(줄자 안내·방향 잠금·끌어온 점·결과 값 칸 — 아래 띠·상태 막대·툴팁·띠 위 알림 함께)와 가상 커서 알림(Enter 가상 커서·고르기·측정 스냅 알림 `.key-live`).
  * 측정·가상 커서는 실제 코어(가짜 WebGL — keysnap-core.test.ts 꼴)로 연 앱 하나를 한국어 → 네 언어로 언어 메뉴로 바꿔 가며 돈다(앱은 창 키 듣기를 떼지 않아 새로 만들면 앞 앱도 같은 키를 받는다).
  * PGI 예제에 옆면 회전 포켓 넷(앞·뒷·왼쪽·오른쪽면 — 「포켓 … (회전 15°) (앞면)」)을 더한다.
+ * 205차: 처음 화면에서 ? 키로 연 키보드 단축키 창(shortcuts.ts — 묶음 제목·줄·끝 줄 안내 마우스·손가락 둘 다, 키 글은 kbd translate="no")도 걷는다.
  */
 import type { Viewer3d } from 'opencad-viewer3d';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -252,6 +253,8 @@ beforeAll(async () => {
   await loadPanelInfo();
   // 200차: 문서를 열 때 기다리지 않고 받는 측정 도구 조각(app.ts ensureMeasureTools — 맨 위 곁효과 없음)
   await import('../../src/app/measure-tools');
+  // 205차: ? 키가 기다리지 않고 받는 키보드 단축키 창 조각(app.ts openShortcuts — 맨 위 곁효과는 스타일 가져오기뿐)
+  await import('../../src/app/shortcuts');
 });
 beforeEach(() => {
   vi.stubGlobal(
@@ -293,6 +296,13 @@ async function tour(lang: string): Promise<Map<string, string>> {
   };
   await app.renderRecent();
   await look('처음 화면');
+  // 205차: 키보드 단축키 창(? 키 — 문서 없이도). 열린 동안 다른 칸은 inert라 Esc로 닫고 다음 걸음
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true, cancelable: true }));
+  await until(() => !!root.querySelector('[role="dialog"][aria-modal="true"]'));
+  await look('키보드 단축키 창');
+  document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  // (단면 상자 .sec-pop도 role=dialog — 모달만 본다)
+  expect(root.querySelector('[role="dialog"][aria-modal="true"]')).toBeNull();
   // 처음 화면 열기 오류: 주소에서 받지 못함(HTTP 404), NC 프로그램이 아닌 글 파일 — 「이름: 까닭」(이름은 파일 글)
   vi.stubGlobal('fetch', async () => ({ ok: false, status: 404, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) }));
   expect(await app.openUrl('/files/part.nc')).toBe(false);
