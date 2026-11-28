@@ -121,9 +121,10 @@ export function pickTarget(d: NcDoc, p: Pick3d): { key: string; label: Mixed } {
  * 3D 보기 캔버스의 설명(aria-description — 화면 읽기 프로그램이 캔버스 이름 '3D 보기' 뒤에 읽는다, 번역층이 옮긴다).
  * 109차: 측정 중 마우스 커서 자리에 겹친 후보를 Tab·Shift+Tab으로 돌리고 Esc로 푼다는 것도 알린다(코어 0.116.0 tabCycle — 캔버스 Tab을 받는 때가 생겨
  * 빠져나가는 키 Esc를 알린다, WCAG 2.1.2). 앱에 aria-keyshortcuts는 없어 이 설명과 README 키 표가 도움말이다.
- * 203차: 커서가 켜진 동안 측정 첫 점 뒤 축을 잠그는 X·Y·Z(measure-lock.ts axisKey — 화살표는 커서 옮기기라 쓰지 못함)도 알린다
+ * 203차: 커서가 켜진 동안 측정 첫 점 뒤 축을 잠그는 X·Y·Z(measure-lock.ts axisKey — 화살표는 커서 옮기기라 쓰지 못함)도 알린다.
+ * 204차: 같은 문장에 지금 방향을 잠그는 L(커서가 꺼졌을 때의 ↓ — 측정 띠 잠금 버튼 풍선 글 「지금 방향 잠그기(다시 누르면 풀기)」의 낱말)
  */
-export const KEY_HELP = 'Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기). 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다';
+export const KEY_HELP = 'Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 첫 점 뒤에는 X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다(다시 누르면 풀기). 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다';
 
 /** 줄 바꿈 없는 빈칸(U+00A0) */
 const NBSP = String.fromCharCode(0xa0);

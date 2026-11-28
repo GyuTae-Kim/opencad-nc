@@ -149,11 +149,12 @@ describe('측정 화면 번역(125차)', () => {
 
   it('203차: 가상 커서 축 잠금 안내(X·Y·Z)·푼 알림·3D 보기 설명의 더한 문장을 같은 사전의 잠금 낱말로 네 언어에 옮긴다', () => {
     // [언어, 안내, 푼 알림, 3D 보기 설명에 더한 문장, 「Shift로 X축 방향 잠그기」의 잠금 낱말, 「방향 잠금 풀기」의 풂 낱말]
+    // 204차: 같은 문장에 L(지금 방향 — 아래 204차 it)을 더했다(「X·Y·Z로 축 방향을 잠급니다」 → 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」) — X·Y·Z 부분 글은 그대로
     const want: [lang: string, hint: string, off: string, help: string, lockWord: string, offWord: string][] = [
-      ['en', 'X, Y or Z locks to that axis', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis (press again to unlock).', 'locks to', 'nlock'],
-      ['ja', 'X・Y・Z で軸方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向にロックします（もう一度押すと解除）。', '軸方向にロック', '方向ロックを解除'],
-      ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向（再按一次解除）。', '锁定为', '解除方向锁定'],
-      ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
+      ['en', 'X, Y or Z locks to that axis', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis and L locks the current direction (press again to unlock).', 'locks to', 'nlock'],
+      ['ja', 'X・Y・Z で軸方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向に、Lで現在の方向にロックします（もう一度押すと解除）。', '軸方向にロック', '方向ロックを解除'],
+      ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向（再按一次解除）。', '锁定为', '解除方向锁定'],
+      ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
     ];
     expect(want.map(([l]) => l)).toEqual([...LANGS]);
     for (const [lang, hint, off, help, lockWord, offWord] of want) {
@@ -167,6 +168,24 @@ describe('측정 화면 번역(125차)', () => {
       expect(off, lang).toContain(offWord);
       expect(help, lang).toContain(/[（(][^（(]+[)）]$/.exec(dict(lang)['지금 방향 잠그기(다시 누르면 풀기)']!)![0]);
     }
-    expect(KEY_HELP).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기).');
+    expect(KEY_HELP).toContain('측정 첫 점 뒤에는 X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다(다시 누르면 풀기).');
+  });
+
+  it('204차: 3D 보기 설명의 L(지금 방향 — 커서가 꺼졌을 때의 ↓)은 같은 사전 「지금 방향 잠그기(다시 누르면 풀기)」의 낱말로 네 언어에 옮긴다', () => {
+    // [언어, 설명 안 L 글, 「지금 방향 잠그기(다시 누르면 풀기)」의 지금 방향 낱말]
+    const want: [lang: string, part: string, now: string][] = [
+      ['en', 'L locks the current direction', 'current direction'],
+      ['ja', 'Lで現在の方向に', '現在の方向'],
+      ['zh-CN', '按 L 锁定当前方向', '锁定当前方向'],
+      ['de', 'L die aktuelle Richtung', 'ktuelle Richtung'],
+    ];
+    expect(want.map(([l]) => l)).toEqual([...LANGS]);
+    for (const [lang, part, now] of want) {
+      expect(translate(KEY_HELP, lang), lang).toContain(part);
+      expect(part, lang).toContain(now);
+      expect(dict(lang)['지금 방향 잠그기(다시 누르면 풀기)'], lang).toContain(now);
+      expect(translate(KEY_HELP, lang), lang).not.toMatch(/[가-힣]/);
+    }
+    expect(KEY_HELP).toContain('L로 지금 방향을 잠급니다');
   });
 });

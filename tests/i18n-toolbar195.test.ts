@@ -15,7 +15,11 @@ const LANGS = ['en', 'ja', 'zh-CN', 'de'] as const;
 const dict = (lang: string): Record<string, string> => catalogs[lang] as Record<string, string>;
 /** 품음(대소문자 무시 — 184·194차 꼴) */
 const has = (whole: string, part: string): boolean => whole.toLowerCase().includes(part.toLowerCase());
-const KEYS_LINE = '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기';
+/**
+ * 시작 화면 키 안내 줄(app.ts 시작 화면 fine-only). 204차: 「Esc 고른 것 지우기」 뒤에 「Shift 측정 중 방향 잠금」을 더했다 — 마우스·가상 커서 어느 쪽에서도 지금 방향을 잠그는 키는 Shift 하나라
+ * 한 줄 요약에 넣고(화살표·X·Y·Z·L은 가상 커서가 켜졌는지에 따라 갈려 그때 맞는 안내가 측정 띠·상태 막대에 뜬다), 낱말은 측정 띠 잠금 버튼 이름 「방향 잠금」(아래 묶음)
+ */
+const KEYS_LINE = '키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Shift 측정 중 방향 잠금 · Ctrl+O 열기';
 const VIEWS_TIP = '표준 뷰 (1 앞 · 2 뒤 · 3 왼쪽 · 4 오른쪽 · 5 위 · 6 아래 · 7 등각)';
 const RENDER_TIP = '그리기 모드: 음영 · 음영+모서리 · 와이어프레임 · X-ray';
 const SECTION_TIP = '단면 보기: 자를 축(X·Y·Z)·위치·뒤집기';
@@ -32,6 +36,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
       [LANGS, '전체 보기', ['전체 보기 (F)', KEYS_LINE]],
       [LANGS, '표준 뷰', [VIEWS_TIP, KEYS_LINE]],
       [LANGS, '격자', ['바닥 격자 (F7)', KEYS_LINE]],
+      // 204차: 측정 띠 잠금 버튼 이름(「방향 잠금」)과 키 안내 줄의 Shift 항목
+      [LANGS, '방향 잠금', [KEYS_LINE]],
       // 투영 버튼(보이는 글 원근·평행) — 누르면 바뀔 쪽 낱말도 같은 말
       [LANGS, '원근', PROJ],
       [LANGS, '평행', PROJ],
@@ -71,6 +77,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
     const want: Record<string, Record<string, string>> = {
       en: {
         '전체 보기 (F)': 'Fit to view (F)',
+        // 204차: 키 안내 줄 통째(영어는 「키 - 기능」 꼴 — 「방향 잠금」 Direction lock, coarse 줄 「측정 중」 While measuring)
+        [KEYS_LINE]: 'Keys: F - Fit to View · 1–7 - Standard Views · F7 - Grid · Space - Play/Pause · Enter - Virtual Cursor · Esc - Deselect · Shift - Direction Lock While Measuring · Ctrl+O - Open',
         [RENDER_TIP]: 'Drawing modes: Shaded · Shaded with edges · Wireframe · X-ray',
         '자를 축': 'Cutting axis',
         '(뒤집음)': '(flipped)',
@@ -80,7 +88,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
       },
       ja: {
         '전체 보기 (F)': '全体を表示 (F)',
-        [KEYS_LINE]: 'キー: F 全体を表示 · 1～7 標準ビュー · F7 グリッド · Space 再生/一時停止 · Enter 仮想カーソル · Esc 選択解除 · Ctrl+O 開く',
+        // 204차: 「Shift 測定中の方向ロック」(「方向 잠금」 方向ロック, coarse 줄 「측정 중」 測定中)
+        [KEYS_LINE]: 'キー: F 全体を表示 · 1～7 標準ビュー · F7 グリッド · Space 再生/一時停止 · Enter 仮想カーソル · Esc 選択解除 · Shift 測定中の方向ロック · Ctrl+O 開く',
         [VIEWS_TIP]: '標準ビュー（1 前 · 2 後 · 3 左 · 4 右 · 5 上 · 6 下 · 7 アイソメ）',
         [RENDER_TIP]: '描画モード：シェーディング · シェーディング + エッジ · ワイヤーフレーム · X-ray',
         '자를 축': '切断軸',
@@ -89,7 +98,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
       },
       'zh-CN': {
         '전체 보기 (F)': '适合窗口 (F)',
-        [KEYS_LINE]: '快捷键：F 适合窗口 · 1–7 标准视图 · F7 网格 · 空格键 播放/暂停 · Enter 虚拟光标 · Esc 清除所选 · Ctrl+O 打开',
+        // 204차: 「Shift 测量时方向锁定」(「방향 잠금」 方向锁定, coarse 줄 「측정 중」 测量时)
+        [KEYS_LINE]: '快捷键：F 适合窗口 · 1–7 标准视图 · F7 网格 · 空格键 播放/暂停 · Enter 虚拟光标 · Esc 清除所选 · Shift 测量时方向锁定 · Ctrl+O 打开',
         [VIEWS_TIP]: '标准视图（1 前视图 · 2 后视图 · 3 左视图 · 4 右视图 · 5 上视图 · 6 下视图 · 7 等轴测图）',
         [RENDER_TIP]: '绘图模式：着色 · 着色 + 边缘 · 线框 · X-ray',
         '자를 축': '剖切轴',
@@ -100,7 +110,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
       },
       de: {
         '전체 보기 (F)': 'Gesamtansicht (F)',
-        [KEYS_LINE]: 'Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Strg+O Öffnen',
+        // 204차: 「Shift Richtungssperre beim Messen」(「방향 잠금」 Richtungssperre, coarse 줄 「측정 중」 Beim Messen, 잠금 안내 「Shift sperrt …」도 Shift)
+        [KEYS_LINE]: 'Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Shift Richtungssperre beim Messen · Strg+O Öffnen',
         [VIEWS_TIP]: 'Standardansichten (1 Vorne · 2 Hinten · 3 Links · 4 Rechts · 5 Oben · 6 Unten · 7 Isometrie)',
         [RENDER_TIP]: 'Zeichenmodi: Schattierung · Schattierung + Kanten · Drahtgittermodell · X-ray',
         '바닥 격자 (F7)': 'Bodenraster (F7)',

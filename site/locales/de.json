@@ -879,7 +879,7 @@
   "크기": "Größe",
   "크기(L × W × T)": "Größe (L × B × T)",
   "크기가 변보다 큼": "Größe ist größer als die Seitenlänge",
-  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Ctrl+O 열기": "Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Strg+O Öffnen",
+  "키: F 전체 보기 · 1~7 표준 뷰 · F7 격자 · Space 재생/멈춤 · Enter 가상 커서 · Esc 고른 것 지우기 · Shift 측정 중 방향 잠금 · Ctrl+O 열기": "Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Shift Richtungssperre beim Messen · Strg+O Öffnen",
   "테마": "Design",
   "테마 바꾸기": "Design ändern",
   "톱 홈 {0} × {1}": "Sägenut {0} × {1}",
@@ -1443,6 +1443,6 @@
   "[가상 커서 알림] 찍기 {0}": "Punkt setzen {0}",
   "[가상 커서 알림] 고르기 {0}": "Auswählen {0}",
   "[가상 커서 알림] 끄기 {0}": "Ausschalten {0}",
-  "Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 첫 점 뒤에는 X·Y·Z로 축 방향을 잠급니다(다시 누르면 풀기). 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다": "Enter schaltet einen virtuellen Cursor ein: Pfeiltasten bewegen ihn, Tab wechselt überlappende Kandidaten, Enter wählt aus oder setzt einen Punkt, Esc schaltet ihn aus. Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung (erneut drücken zum Entsperren). Beim Messen wechseln Tab und Shift+Tab auch die am Mauszeiger überlappenden Kandidaten, Esc beendet das Wechseln",
+  "Enter로 가상 커서를 켭니다. 화살표로 옮기고 Tab으로 겹친 후보를 돌리고 Enter로 고르거나 찍으며 Esc로 끕니다. 측정 첫 점 뒤에는 X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다(다시 누르면 풀기). 측정 중에는 마우스 커서 자리에 겹친 후보도 Tab·Shift+Tab으로 돌리고 Esc로 돌리기를 풉니다": "Enter schaltet einen virtuellen Cursor ein: Pfeiltasten bewegen ihn, Tab wechselt überlappende Kandidaten, Enter wählt aus oder setzt einen Punkt, Esc schaltet ihn aus. Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung (erneut drücken zum Entsperren). Beim Messen wechseln Tab und Shift+Tab auch die am Mauszeiger überlappenden Kandidaten, Esc beendet das Wechseln",
   "모서리에 수직": "Senkrecht zur Kante"
 }
