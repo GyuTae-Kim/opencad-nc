@@ -95,11 +95,16 @@ function setup(touch = true) {
     v.renderNow();
     lock.update();
   };
-  /** 측정 띠 단추를 손가락으로 누른다(정밀 조준 중 다른 손가락 — click이 오지 않는다) */
+  /**
+   * 측정 띠 단추를 손가락으로 누르고 뗀다(정밀 조준 중 다른 손가락 — click이 오지 않는다).
+   * 232차: 단추는 누르는 순간이 아니라 그 누름의 pointerup이 단추 안일 때 기억한다(pointer-cancel232) — 누름·떼기를 함께(자리 0은 가짜 상자 안)
+   */
   const press = (pointerType = 'touch'): void => {
-    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
-    Object.defineProperty(down, 'pointerType', { value: pointerType });
-    track.button.dispatchEvent(down);
+    for (const type of ['pointerdown', 'pointerup']) {
+      const e = new MouseEvent(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(e, 'pointerType', { value: pointerType });
+      track.button.dispatchEvent(e);
+    }
     v.renderNow();
     lock.update();
   };
