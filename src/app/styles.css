@@ -857,6 +857,11 @@ table.grid button.linkish {
     display: block;
     overflow: visible;
   }
+  /* 223차(WCAG 2.1.1): 글 누르기는 포인터뿐 — 키보드 초점이 그 줄(동작·✕ 버튼)에 들면 같게 펼친다. :focus-visible이라 손가락·마우스 누름에는 펼치지 않는다(누르는 사이 줄이 커져 버튼이 밀리지 않게) */
+  .notice:has(:focus-visible) .nt-text {
+    display: block;
+    overflow: visible;
+  }
   /* 187차(WCAG 1.4.10): 측정 띠 버튼 묶음도 줄지 않아 320px에서 버튼이 셋·넷이면 글 칸이 몇 글자 폭이었다 — 판단 띠 꼴로 글 칸이 8em(글이 더 짧으면 글 폭)보다 좁아지면 묶음을 다음 줄 오른쪽으로 */
   .measure-bar {
     flex-wrap: wrap;

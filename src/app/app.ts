@@ -2538,7 +2538,9 @@ export class NcViewerApp implements PanelHost {
     // 205차: 모달(키보드 단축키 창 — aria-modal) 안의 키도 그 상자 몫(Esc 닫기·Tab 돌기 — 원호 Shift 잠금·읽기 멈추기·메뉴 Esc·앱 키를 고르지 않는다)
     if (t?.closest?.('.language-control, .language-list, [aria-modal="true"]')) return;
     // 150차: 패널 탭 버튼의 ←→·Home·End(수정 키 없음)는 탭 줄 몫(panel.ts — APG Tabs). 한 이동 걷기로 가져가 전파를 막지 않게 먼저 돌아선다
-    if (t?.getAttribute?.('role') === 'tab' && tabMove(ev, 0, 1) >= 0) return;
+    // 223차: 패널 크기 손잡이(분리자 — panel.ts)의 화살표도 그 칸 몫(크기 바꾸기) — 같은 까닭으로 먼저 돌아선다
+    const role = t?.getAttribute?.('role');
+    if ((role === 'tab' && tabMove(ev, 0, 1) >= 0) || (role === 'separator' && ev.key.startsWith('Arrow'))) return;
     // 원호 접선 Shift 잠금은 코어보다 먼저(아래 viewer 갈래·캔버스 키가 코어에 넘기면 코어는 잠금이 있으면 그대로 둔다)
     if (ev.key === 'Shift' && !ev.repeat && !isEditableTarget(t as (HTMLElement & { type?: string }) | null)) this.mlock?.shiftDown();
     if (this.busy && ev.key === 'Escape') {

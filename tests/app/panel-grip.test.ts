@@ -4,6 +4,7 @@
  * 이제 끌지 않고 누르면(떼면) 다음 정해진 크기로 — 작게(최소) → 보통(CSS 기본) → 크게(최대) → 작게. 끌기는 그대로이고,
  * 끌기 판정은 코어와 같은 문턱(마우스·펜 4px, 손가락 10px)이다. 손잡이 풍선 글은 「끌거나 눌러 크기 바꾸기」(네 언어).
  * jsdom은 그리지 않으므로 패널·작업 영역의 크기(getBoundingClientRect)를 고정해 둔다.
+ * 223차(WCAG 2.1.1): 손잡이는 초점을 받는 분리자(role=separator — 넓은 화면 세로·시트 가로, 값은 폭 px·높이 %)이고 화살표·Home·End·Enter로 크기를 바꾼다.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NcPanel, type PanelHost } from '../../src/app/panel';
@@ -107,6 +108,57 @@ describe('패널 크기 손잡이의 한 점 대안(172차 — WCAG 2.5.7)', () 
     press('touch', 250, 432, [[250, 232]]);
     expect(sheetH()).toBe('71%');
     expect(localStorage.getItem(SHEET_KEY)).toBe('0.710');
+  });
+
+  it('223차(WCAG 2.1.1): 넓은 화면 손잡이는 초점을 받는 세로 분리자(값 = 패널 폭이 작업 영역의 몇 %) — ← 20px 넓게·→ 좁게, Enter는 누르기와 같은 다음 크기, 바꾼 크기는 기억', () => {
+    make(1200, rect(820, 0, 380, 800));
+    const key = (k: string, init: KeyboardEventInit = {}): boolean => !grip.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }));
+    // 380 / 1200 = 31.7%
+    expect(['role', 'tabindex', 'aria-hidden', 'aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))).toEqual(['separator', '0', null, 'vertical', '32']);
+    grip.focus();
+    expect(document.activeElement).toBe(grip);
+    const seen: [boolean, string, string | null, string | null][] = [];
+    for (const [k, init] of [['ArrowLeft'], ['ArrowRight'], ['Enter'], ['Enter'], ['ArrowUp'], ['Home'], ['ArrowLeft', { ctrlKey: true }], ['ArrowLeft', { altKey: true }]] as [string, KeyboardEventInit?][])
+      seen.push([key(k, init), panelW(), localStorage.getItem(WIDTH_KEY), grip.getAttribute('aria-valuenow')]);
+    expect(seen).toEqual([
+      [true, '400px', '400', '33'],
+      [true, '380px', '380', '32'],
+      // Enter = 누르기(172차): 보통 → 크게(끌기 최대 900) → 작게
+      [true, '900px', '900', '75'],
+      [true, '260px', '260', '22'],
+      // 세로 분리자의 ↑·Home·수정 키(Alt+← 뒤로 가기 등)는 손잡이 몫이 아님(기본 동작 그대로)
+      [false, '260px', '260', '22'],
+      [false, '260px', '260', '22'],
+      [false, '260px', '260', '22'],
+      [false, '260px', '260', '22'],
+    ]);
+    // 누르기·끌기도 값을 맞춘다
+    press('pen', 820, 300);
+    expect([panelW(), grip.getAttribute('aria-valuenow')]).toEqual(['380px', '32']);
+  });
+
+  it('223차: 좁은 화면 시트 손잡이는 가로 분리자(값 = 시트 높이 %) — ↑ 5% 높게·↓ 낮게(22~85%), Enter, 화면 폭이 바뀌면 초점을 받을 때 방향·값을 다시', () => {
+    make(500, rect(0, 432, 500, 368));
+    const key = (k: string): boolean => !grip.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    // 그리기 전(패널 숨김)에는 CSS 기본 46%
+    expect(['aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))).toEqual(['horizontal', '46']);
+    const seen: [boolean, string, string | null, string | null][] = [];
+    for (const k of ['ArrowUp', 'ArrowDown', 'Enter', 'ArrowUp', 'Enter', 'ArrowDown', 'End', 'ArrowLeft']) seen.push([key(k), sheetH(), localStorage.getItem(SHEET_KEY), grip.getAttribute('aria-valuenow')]);
+    expect(seen).toEqual([
+      [true, '51%', '0.510', '51'],
+      [true, '46%', '0.460', '46'],
+      [true, '85%', '0.850', '85'],
+      // 가장 크면·작으면 그대로
+      [true, '85%', '0.850', '85'],
+      [true, '22%', '0.220', '22'],
+      [true, '22%', '0.220', '22'],
+      [false, '22%', '0.220', '22'],
+      [false, '22%', '0.220', '22'],
+    ]);
+    // 화면 폭만 넓은 화면으로(패널 그린 폭 500 = 작업 영역 500)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    grip.focus();
+    expect(['aria-orientation', 'aria-valuenow'].map((a) => grip.getAttribute(a))).toEqual(['vertical', '100']);
   });
 
   it('손잡이 풍선 글은 누르기도 알리고 네 언어로 옮긴다', () => {
