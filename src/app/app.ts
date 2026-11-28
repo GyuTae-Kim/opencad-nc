@@ -2555,6 +2555,16 @@ export class NcViewerApp implements PanelHost {
       (btn as HTMLButtonElement | null)?.focus();
       return;
     }
+    // 226차(WCAG 1.4.13 닫을 수 있음): 좁은 화면 판단 띠 줄에 키보드 초점이 들어 펼친 글(styles.css 223차)은 3D 보기를 더 덮는데 초점을 옮기지 않고 접을 길이 없었다 —
+    // Esc가 먼저 그 줄을 접는다(shut — 초점이 줄을 떠나면 notices.ts가 풀어 다시 들면 다시 펼침). 메뉴 닫기처럼 초점 둘레에 잠깐 뜬 것이 먼저이고 측정·고른 것 지우기는 다음 Esc.
+    // 좁은 화면은 그 규칙과 같은 폭(760 미만 — isPhone의 대체 길과 같은 innerWidth 꼴), 글을 눌러 펼친 줄(open)은 누르기로 닫는다
+    const nt = ev.key === 'Escape' && t && window.innerWidth < NARROW_WIDTH && matchesFocusVisible(t) ? t.closest('.notice:not(.open):not(.shut)') : null;
+    if (nt) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      nt.classList.add('shut');
+      return;
+    }
     const v = this.viewer;
     // 213차: 3D 보기 키(가상 커서를 켜는 Enter 등 — 누르고 있는 반복 키는 빼고)면 받지 못한 3D 보기 띠를 조용히 다시 받는다(uiRetry)
     if (t === v?.canvas && !ev.repeat) this.uiRetry?.(true);

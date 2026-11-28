@@ -862,6 +862,11 @@ table.grid button.linkish {
     display: block;
     overflow: visible;
   }
+  /* 226차(WCAG 1.4.13): 초점으로 펼친 글은 Esc로 접는다(app.ts onKey가 줄에 shut — 초점이 줄을 떠나면 notices.ts가 뗌). 줄 수는 위 자름 규칙 그대로, 글을 눌러 펼친 줄(open)은 그대로 */
+  .notice.shut:not(.open) .nt-text {
+    display: -webkit-box;
+    overflow: hidden;
+  }
   /* 187차(WCAG 1.4.10): 측정 띠 버튼 묶음도 줄지 않아 320px에서 버튼이 셋·넷이면 글 칸이 몇 글자 폭이었다 — 판단 띠 꼴로 글 칸이 8em(글이 더 짧으면 글 폭)보다 좁아지면 묶음을 다음 줄 오른쪽으로 */
   .measure-bar {
     flex-wrap: wrap;
@@ -1409,7 +1414,9 @@ table.grid button.linkish {
 .btn.small:hover {
   background: var(--bg-hover);
 }
-.btn.small.on {
+/* 226차: 단면 상자 뒤집기 버튼(aria-pressed)도 같은 눌림 꼴 — 225차까지 그 눌림은 값 글 「(뒤집음)」으로만 보였다 */
+.btn.small.on,
+.btn.small[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-text);

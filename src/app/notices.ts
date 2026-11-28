@@ -109,6 +109,10 @@ export function renderNotices(host: NoticeHost, d: NcDoc, keep: boolean): void {
     text.title = mixText(n.text);
     const row = h('div', { class: 'notice', role: 'listitem', 'data-notice': n.key }, text);
     text.addEventListener('click', () => row.classList.toggle('open'));
+    // 226차: Esc로 접은 줄(app.ts onKey — shut)은 초점이 줄을 떠나면 푼다 — 다시 들면 다시 펼친다(223차 키보드 길)
+    row.addEventListener('focusout', (e) => {
+      if (!row.contains(e.relatedTarget as Node | null)) row.classList.remove('shut');
+    });
     if (n.action) {
       const act = n.action;
       const b = h('button', { class: 'mb-btn', type: 'button' }, act.label);
