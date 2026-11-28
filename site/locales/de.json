@@ -1462,5 +1462,7 @@
   "가상 커서 끄기": "Virtuellen Cursor ausschalten",
   "고른 것 지우기": "Auswahl löschen",
   "가상 커서 키는 3D 보기를 누른 뒤 씁니다.": "Klicken Sie in die 3D-Ansicht, um die Tasten des virtuellen Cursors zu verwenden.",
-  "입력 칸에 글을 넣는 동안에는 단축키가 듣지 않습니다.": "Während Sie in ein Eingabefeld tippen, wirken die Tastenkürzel nicht."
+  "입력 칸에 글을 넣는 동안에는 단축키가 듣지 않습니다.": "Während Sie in ein Eingabefeld tippen, wirken die Tastenkürzel nicht.",
+  "{0}을(를) 불러오지 못했습니다.": "„{0}“ konnte nicht geladen werden.",
+  "다시 시도": "Noch einmal versuchen"
 }
