@@ -11,6 +11,7 @@ import { noticeViews } from '../src/app/notices';
 import { fileText, mix, plainText, type Mixed } from '../src/app/filetext';
 import { BINARY_MESSAGE } from '../src/app/format';
 import { errorText } from '../src/app/protocol';
+import { measureFailText } from '../src/app/core';
 
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); vi.unstubAllGlobals(); });
@@ -505,5 +506,24 @@ describe('217차가 남긴 사전 갈림(218차)', () => {
     // 단축키 창 묶음 제목(src/app/shortcuts.ts SHORTCUTS — 창 글 전체는 tests/app/shortcuts.test.ts가 본다): Play·Code·Measure·Virtual cursor·Others처럼 View tools
     // (짧은 값 두세 낱말에서 첫 낱말만 대문자 154 : 모든 낱말 대문자 19 — 고유 이름 Heidenhain Klartext 등 포함)
     for (const title of ['보기 도구', '재생', '코드', '측정', '가상 커서', '기타']) expect(dict('en')[title], title).toMatch(/^[A-Z][^A-Z]*$/);
+  });
+});
+
+/**
+ * 219차: 218차가 남긴 일본어 문장 「…새로 고친 뒤…」(측정 도구를 받지 못함 — 앱 새 버전) — 버튼 「새로 고침」만 ページを再読み込み로 갈라(218차) 문장은 再読み込みしてから(파일 다시 읽기와 같은 낱말)였다.
+ * 문장이 가리키는 것은 페이지 새로 고침(en reload the page · zh 刷新页面 · de Laden Sie die Seite neu — 셋 모두 쪽)이라 버튼 값을 그대로 품는 꼴로(한 기능 한 낱말 — WCAG 3.2.4, 원문·새 열쇠 0)
+ */
+describe('218차가 남긴 일본어 「…새로 고친 뒤…」(219차)', () => {
+  const dict = (code: string): Record<string, string> => catalogs[code] as Record<string, string>;
+  it('측정 도구를 받지 못한 문장의 새로 고침은 버튼 「새로 고침」 값을 품고(ページを再読み込みしてから), 거꾸로 찾으면 그 열쇠', () => {
+    const key = measureFailText(true);
+    const ja = dict('ja')[key]!;
+    expect(ja).toContain(`${dict('ja')['새로 고침']}してから`);
+    expect(ja).toBe('測定ツールを読み込めませんでした。アプリの新しいバージョンが公開された可能性があります。ページを再読み込みしてから、最近のドキュメントでファイルを開き直してください。');
+    expect(sourceMessage(ja)).toBe(key);
+    // 再読み込み 든 일본어 값: 쪽을 새로 받는 둘은 「ページを再読み込み」를 품고, 파일을 다시 해석하는 다섯은 품지 않는다(218차 갈림을 문장까지)
+    const page = ['새로 고침', key];
+    for (const [k, v] of Object.entries(dict('ja')).filter(([, v]) => v.includes('再読み込み'))) expect(v.includes('ページを再読み込み'), k).toBe(page.includes(k));
+    expect(Object.values(dict('ja')).filter((v) => v.includes('再読み込み'))).toHaveLength(7);
   });
 });

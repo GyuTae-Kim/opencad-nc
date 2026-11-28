@@ -1142,7 +1142,8 @@ describe('해석 판단 띠', () => {
     expect(await open(app, 'od.nc', LATHE)).toBe(true);
     const bar = root.querySelector<HTMLElement>('.notice-bar')!;
     const regions = '[role=status], [role=alert], [aria-live]';
-    expect([bar.hidden, bar.getAttribute('role'), bar.getAttribute('aria-live'), bar.querySelector(regions)]).toEqual([false, null, null, null]);
+    // 219차: 띠는 알림 영역이 아니라 목록(role=list — 아래 219차 it)
+    expect([bar.hidden, bar.getAttribute('role'), bar.getAttribute('aria-live'), bar.querySelector(regions)]).toEqual([false, 'list', null, null]);
     // 줄마다 글 뒤 빈칸 하나(줄 글이 붙어 읽히지 않게)
     const rows = [...bar.querySelectorAll('.nt-text')].map((t) => `${t.textContent} `).join('');
     expect(rows).toContain('선반 프로그램으로 보여');
@@ -1164,6 +1165,30 @@ describe('해석 판단 띠', () => {
     await tick();
     expect([bar.hidden, take()]).toEqual([true, [rows, rows]]);
     obs.disconnect();
+  });
+
+  /**
+   * 219차(WCAG 1.3.1): 판단 띠의 줄(선반 판단·방언·소수점 등)은 div가 이어질 뿐이라 화면 읽기 프로그램이 몇 줄인지·몇째인지 듣지 못했다. 148차는 띠가 알림 영역(role=status)이고
+   * flex gap이 있어 목록으로 감싸면 간격이 바뀐다고 넘겼는데, 198차부터 띠는 알림 영역이 아니어서 띠 자신에 role=list, 줄마다 role=listitem을 둔다(148차 보정 구간 꼴 —
+   * div의 WAI-ARIA role이라 감쌀 칸·스타일시트가 들지 않는다. 띠의 자식은 줄뿐이라 list의 자식이 listitem만)
+   */
+  it('219차: 판단 띠는 목록이고 줄마다 목록 항목 — 띠 자식은 줄뿐이고, 언어 바꿈·✕ 뒤 다시 열어도 그대로이며 role로 꾸미는 스타일 규칙이 없다', async () => {
+    const { app, root } = makeApp();
+    expect(await open(app, 'od.nc', LATHE)).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.notice-bar')!;
+    const roles = (): (string | null)[] => [bar.getAttribute('role'), ...[...bar.children].map((r) => r.getAttribute('role'))];
+    expect([bar.hidden, bar.children.length, bar.querySelectorAll(':scope > .notice').length]).toEqual([false, 1, 1]);
+    expect(roles()).toEqual(['list', 'listitem']);
+    // 언어 바꿈으로 다시 그려도(renderNotices keep), ✕로 닫고 다시 열어도(새 문서) 같다
+    root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+    expect(roles()).toEqual(['list', 'listitem']);
+    bar.querySelector<HTMLButtonElement>('button[aria-label="이 안내 닫기"]')!.click();
+    expect([bar.hidden, bar.children.length]).toEqual([true, 0]);
+    expect(await open(app, 'od.nc', LATHE)).toBe(true);
+    expect(roles()).toEqual(['list', 'listitem']);
+    // 보이는 모양 그대로: 스타일시트에 role로 꾸미는 목록 규칙이 없다(148차 근거와 같음)
+    const css = readFileSync(join(ROOT, 'src/app/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).not.toMatch(/\[role=['"]?list/);
   });
 
   it('좁은 화면: 띠 글을 누르면 펼치고(다시 누르면 접음), 알림은 아래쪽 띠 맨 위보다 위로(--toast-clear)', async () => {
