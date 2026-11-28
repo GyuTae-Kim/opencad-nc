@@ -12,6 +12,9 @@
  * 214차: 다시 받아 붙으면(조용한 다시 받기·창 다시 열기·메뉴로 고른 언어) 그 조각의 실패 알림을 닫는다(전에는 8초 남고 그 다시 시도는 아무것도 하지 않고 닫혔다).
  * 3D 보기 띠는 캔버스의 첫 손가락 누름(isPrimary pointerdown)·단면 켜기에도 조용히 다시 받는다(213차 뷰어마다 셋까지 그대로).
  * 알림의 다시 시도를 누른 뒤 또 받지 못하면 그 알림의 버튼을 「새로 고침」으로(같은 문서에서 받지 못한 모듈 받기를 브라우저가 기억할 수 있어 — HTML module map; 글·알림 하나는 그대로).
+ * 215차: 탭 몸통의 다시 시도도 — 셈은 받기 함수(한 조각을 이름 넷이 함께 씀)로, 초점은 다시 그린 몸통의 같은 자리 버튼(글이 바뀌어도). 소재 깎기 메뉴 알림(108차)은 받기 실패면
+ * 211차 틀(메뉴 항목 글)과 다시 시도(까닭은 콘솔에만 — 받기 실패가 아닌 오류는 108차 글 그대로), 다시 열 길이 있는 열기(예제·최근 문서·?open= 주소)가 예제·3D 보기 코어 조각을
+ * 받지 못하면 같은 꼴(다시 시도 = 그 열기를 처음부터, 파일 고르기·끌어 놓기는 손에 바이트가 없어 지금처럼).
  * 가짜 실패: vi.mock 공장이 그 조각 이름이 ctl.fail에 있는 동안 던지고, 빼면 원래 모듈을 준다(던진 공장은 캐시되지 않아 다시 받기가 공장을 다시 부른다 —
  * 받은 뒤에는 캐시되어 다시 실패시킬 수 없으니 조각마다 「실패 → 받기」를 한 번씩, 시험 차례가 그것을 따른다 — 코어 약속(core.ts loadViewerCore)도 이 파일에서 한 번 받으면
  * 남아 3D 보기 띠 시험이 맨 앞, 사전 값을 보는 시험(site/i18n.mjs가 네 사전을 정적으로 가져옴)이 사전 시험 뒤).
@@ -98,7 +101,11 @@ const fake = vi.hoisted(() => {
   return { FakeViewer };
 });
 
-vi.mock('opencad-viewer3d', async (importOriginal) => ({ ...(await importOriginal<object>()), Viewer3d: fake.FakeViewer }));
+// 215차: 3D 보기 코어 조각도(이 파일에서 처음 받을 때만 — 받으면 core.ts loadViewerCore 약속이 남는다)
+vi.mock('opencad-viewer3d', async (importOriginal) => {
+  if (ctl.fail.has('core')) throw ctl.error();
+  return { ...(await importOriginal<object>()), Viewer3d: fake.FakeViewer };
+});
 vi.mock('../../src/app/client', async () => {
   const { parseForView } = await import('../../src/app/payload');
   class ParseWorkerClient {
@@ -119,7 +126,14 @@ vi.mock('../../src/app/shortcuts', async (importOriginal) => {
   return importOriginal();
 });
 vi.mock('../../src/app/sim', async (importOriginal) => {
+  // 215차: 받기 실패가 아닌 오류(조각은 왔는데 만들지 못함 꼴 — 받기 실패 글이 아님)
+  if (ctl.fail.has('sim-bad')) throw new Error('SimView를 만들지 못함');
   if (ctl.fail.has('sim')) throw ctl.error();
+  return importOriginal();
+});
+// 215차: 예제 조각(열 때 받는 예제 글)
+vi.mock('../../src/view/sample', async (importOriginal) => {
+  if (ctl.fail.has('sample')) throw ctl.error();
   return importOriginal();
 });
 // 212차: 3D 보기 띠(코어와 함께 받는 viewer-ui)와 언어 사전 둘
@@ -163,7 +177,7 @@ const only = (text: string): HTMLElement => {
 beforeAll(async () => {
   // 원래 조각을 미리 평가해 둔다(ci-guard 5번 — 공장이 받기를 허락할 때 바로 준다). 측정 도구는 가짜로 두지 않는다(앱이 기다리지 않고 받는다).
   // 212차: 3D 보기 띠·사전 둘도 가짜 공장 뒤라 importActual로(import로 받으면 공장이 받기를 허락해 캐시되어 실패시킬 수 없다)
-  const actual = ['../../src/app/panel-info', '../../src/app/shortcuts', '../../src/app/sim', '../../src/app/viewer-ui', '../../site/locales/de.json', '../../site/locales/ja.json'];
+  const actual = ['../../src/app/panel-info', '../../src/app/shortcuts', '../../src/app/sim', '../../src/app/viewer-ui', '../../site/locales/de.json', '../../site/locales/ja.json', '../../src/view/sample'];
   await Promise.all(actual.map((m) => vi.importActual(m)));
   await import('../../src/app/measure-tools');
 });
@@ -200,7 +214,50 @@ const mount = (): { app: NcViewerApp; root: HTMLElement } => {
 /** 언어 메뉴에서 그 언어를 고른다(site-kit 메뉴 항목 — 받기는 메뉴가 기다린다) */
 const pick = (lang: string): void => document.querySelector<HTMLButtonElement>(`.language-list [data-language="${lang}"]`)!.click();
 
-// 이 묶음이 맨 앞: 3D 보기 띠는 코어 약속이 이 파일에서 처음 받는 때만, 사전 둘은 아래 211차 사전 값 시험(site/i18n.mjs가 정적으로 받음)보다 먼저 실패시킬 수 있다
+// 215차 묶음이 맨 앞: 3D 보기 코어 조각은 코어 약속이 이 파일에서 처음 받는 때만 실패시킬 수 있다(받으면 남는다). 3D 보기 띠·정보 탭 조각은 아래 시험 몫이라 받지 못하게 둔다
+describe('215차: 다시 열 길이 있는 열기(예제·?open= 주소)가 예제·3D 보기 코어 조각을 받지 못할 때', () => {
+  it('예제 조각·코어 조각: 까닭 없는 「{이름}을(를) 불러오지 못했습니다.」와 다시 시도(그 열기를 처음부터 — 예제는 예제를, 주소는 받기부터), 누른 다시 시도도 받지 못하면 「새로 고침」, 받으면 닫는다 — 손에 바이트가 없는 열기는 지금처럼', async () => {
+    ctl.fail.add('sample');
+    ctl.fail.add('core');
+    ctl.fail.add('ui');
+    ctl.fail.add('info');
+    const { app, root } = mount();
+    const startError = root.querySelector<HTMLElement>('.start-error')!;
+    const SAMPLE = '예제 열기을(를) 불러오지 못했습니다.';
+    const CORE = '3D 보기을(를) 불러오지 못했습니다.';
+    // 예제 조각: 전에는 시작 화면 오류 칸에 까닭(브라우저 글을 바꾼 앱 글 — 이 시험 틀에서는 가짜 모듈 오류 글)만, 다시 시도 없음
+    expect(await app.openSample()).toBe(false);
+    const a = only(SAMPLE);
+    expect([a.getAttribute('role'), act(a), a.textContent, startError.hidden, app.state().error]).toEqual(['alert', '다시 시도', `${SAMPLE}다시 시도×`, true, SAMPLE]);
+    expect(console.error).toHaveBeenCalled();
+    // 다시 시도 = 그 열기를 처음부터: 예제를 받아 해석하고 3D 보기 코어를 받는다 — 받지 못하면 그 이름으로 같은 꼴(전에는 「…: 3D 보기를 만들지 못했습니다: …」 오류 칸·다시 시도 없음)
+    ctl.fail.delete('sample');
+    a.querySelector<HTMLButtonElement>('.toast-act')!.click();
+    const b = await vi.waitFor(() => only(CORE), WAIT);
+    expect([act(b), toastsWith(SAMPLE).length, startError.hidden, app.state().error]).toEqual(['다시 시도', 0, true, CORE]);
+    // 손에 바이트가 없는 열기(파일 고르기·끌어 놓기 — 바이트는 워커로 넘겨 비워진다, 같은 openBuffer 길에 다시 열 길을 주지 않음)는 지금처럼 오류 칸·다시 시도 없음
+    expect(await app.openBuffer('pick.MPF', enc(SIE))).toBe(false);
+    expect(startError.hidden).toBe(false);
+    expect(startError.textContent).toMatch(/^pick\.MPF: 3D 보기를 만들지 못했습니다: /);
+    expect(only(CORE)).toBe(b);
+    // ?open= 주소: 같은 글 하나(새 알림), 남은 오류 칸은 감춘다(마지막 오류는 알림 — state().error도)
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => 'text/plain' }, arrayBuffer: async () => enc(SIE) }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await app.openUrl('/files/url.MPF')).toBe(false);
+    const c = only(CORE);
+    expect([c === b, act(c), startError.hidden, app.state().error]).toEqual([false, '다시 시도', true, CORE]);
+    // 그 다시 시도는 주소에서 다시 받는다 — 또 받지 못하면 214차 꼴로 「새로 고침」(같은 글 하나)
+    c.querySelector<HTMLButtonElement>('.toast-act')!.click();
+    await vi.waitFor(() => expect(act(only(CORE))).toBe('새로 고침'), WAIT);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 받을 수 있게 되면(다른 길 — 예제 열기 버튼과 같은 openSample) 열고 남은 실패 알림을 닫는다(214차 꼴)
+    ctl.fail.delete('core');
+    expect(await app.openSample()).toBe(true);
+    expect([toastsWith(CORE).length, toastsWith(SAMPLE).length, app.state().error, root.querySelector<HTMLElement>('.view')!.hidden]).toEqual([0, 0, null, false]);
+  });
+});
+
+// 212차 묶음: 3D 보기 띠는 띠 조각이 이 파일에서 처음 받는 때만(215차 시험은 코어를 받되 띠는 받지 못하게 둔다), 사전 둘은 아래 211차 사전 값 시험(site/i18n.mjs가 정적으로 받음)보다 먼저 실패시킬 수 있다
 describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언어를 바꾼 사이의 같은 실패, 받기 실패 까닭 글', () => {
   it('3D 보기 띠 조각: 받지 못해도 문서는 열고 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 다시 시도 — 213차: 알림이 닫힌 뒤에도 다음 문서 열기·3D 보기 키에 조용히 다시 받는다(다시 받지 못하면 같은 알림 하나), 214차: 다시 시도도 받지 못하면 버튼은 「새로 고침」', async () => {
     // 정보 탭 조각도 받지 못하게 둔다(여기서 받으면 캐시되어 아래 211차 정보 탭 시험이 실패시킬 수 없다 — 받지 못한 약속은 비워진다)
@@ -314,7 +371,7 @@ describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언�
 });
 
 describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「…을(를) 불러오지 못했습니다.」와 다시 시도', () => {
-  it('정보 탭 조각: 탭 몸통에 실패 글과 다시 시도 — 거듭 받지 못하면 초점은 새 다시 시도, 같은 조각의 다른 탭도 실패 글, 받으면 그리고 초점은 지금 탭 버튼', async () => {
+  it('정보 탭 조각: 탭 몸통에 실패 글과 다시 시도, 같은 조각의 다른 탭도 실패 글 — 215차: 누른 다시 시도도 받지 못하면 그 버튼은 「새로 고침」(셈은 받기 함수 — 같은 조각의 다른 탭도), 초점은 다시 그린 몸통의 같은 자리 버튼', async () => {
     ctl.fail.add('info');
     const { app, root } = mount();
     // 첫 문서는 정보 탭 조각을 기다리다(3초 한도) 받지 못해도 연다(ensureViewer — 그대로)
@@ -326,26 +383,24 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     const body = root.querySelector<HTMLElement>('.panel-body')!;
     const alert = (): HTMLElement | null => body.querySelector<HTMLElement>('p[role="alert"]');
     await vi.waitFor(() => expect(alert()).not.toBeNull(), WAIT);
+    expect(alert()!.textContent).toBe('정보을(를) 불러오지 못했습니다. 다시 시도');
+    // 같은 조각의 다른 탭(공구)도 그리기마다 다시 받지 않고 실패 글 — 탭을 바꿔 다시 그린 것은 다시 시도 누름이 아니라 세지 않는다
+    api.setPanelTab('tools');
+    expect(alert()!.textContent).toBe('공구을(를) 불러오지 못했습니다. 다시 시도');
+    api.setPanelTab('info');
     const first = alert()!;
-    expect(first.textContent).toBe('정보을(를) 불러오지 못했습니다. 다시 시도');
-    // 다시 시도해도 받지 못하면 새 실패 글의 다시 시도에 초점(문서로 빠지지 않음)
+    // 다시 시도해도 받지 못하면(214차까지는 새 「다시 시도」 — 같은 문서에서는 또 곧바로 실패할 수 있다, HTML module map) 그 버튼은 「새로 고침」,
+    // 초점은 그 버튼(문서로 빠지지 않음 — 버튼 글이 바뀌어도 137차 몸통 열쇠가 같은 자리, 214차는 글이 열쇠라 탭 버튼으로 갔을 꼴)
     const retry = first.querySelector<HTMLButtonElement>('button')!;
     retry.focus();
     retry.click();
     await vi.waitFor(() => expect(alert()).not.toBe(first), WAIT);
-    expect(alert()!.textContent).toBe('정보을(를) 불러오지 못했습니다. 다시 시도');
+    expect(alert()!.textContent).toBe('정보을(를) 불러오지 못했습니다. 새로 고침');
     expect(focused()).toBe(alert()!.querySelector('button'));
-    // 같은 조각의 다른 탭(공구)도 그리기마다 다시 받지 않고 실패 글
+    // 셈은 받기 함수(조각) 열쇠: 이름이 다른 같은 조각의 탭(공구)도 「새로 고침」(이름으로 세면 정보 탭의 누름이 닿지 않는다).
+    // 받아 그리는 길(초점은 지금 탭 버튼)은 아래 깎기 시험이 본다(여기서는 몸통 버튼이 「새로 고침」뿐이고 jsdom에는 새로 고침이 없다)
     api.setPanelTab('tools');
-    expect(alert()!.textContent).toBe('공구을(를) 불러오지 못했습니다. 다시 시도');
-    api.setPanelTab('info');
-    // 받으면 그린다 — 초점은 지금 탭 버튼(207차 남는 칸)
-    ctl.fail.delete('info');
-    alert()!.querySelector<HTMLButtonElement>('button')!.focus();
-    alert()!.querySelector<HTMLButtonElement>('button')!.click();
-    await vi.waitFor(() => expect(body.querySelector('.prop-group')).not.toBeNull(), WAIT);
-    expect(alert()).toBeNull();
-    expect(focused()).toBe(root.querySelector('.panel-tab.active'));
+    expect(alert()!.textContent).toBe('공구을(를) 불러오지 못했습니다. 새로 고침');
   });
 
   it('키보드 단축키 창: 열리지 않으면 창 대신 알림 상자에 실패 글과 다시 시도 — 거듭 눌러도 알림은 하나, 214차: 다시 시도도 받지 못하면 버튼은 「새로 고침」, 메뉴로 다시 열어 받으면 창이 열리고 실패 알림은 닫힌다', async () => {
@@ -376,7 +431,7 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     expect(toastsWith(TEXT)).toHaveLength(0);
   });
 
-  it('깎기 조각: 깎기 탭 몸통이 「불러오는 중…」에 멈추지 않고 실패 글과 다시 시도, 메뉴 길 알림(이미 있던 글)은 거듭해도 하나, 받으면 탭을 그린다', async () => {
+  it('깎기 조각: 깎기 탭 몸통이 「불러오는 중…」에 멈추지 않고 실패 글과 다시 시도, 받으면 탭을 그린다 — 215차: 소재 깎기 메뉴 길은 받기 실패면 까닭 없는 211차 틀(메뉴 항목 글)과 다시 시도(받기 실패가 아닌 오류는 108차 글 그대로), 거듭해도 하나, 누른 다시 시도도 받지 못하면 「새로 고침」, 받으면 닫는다', async () => {
     ctl.fail.add('sim');
     const { app, root } = mount();
     expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
@@ -387,12 +442,23 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     const alert = (): HTMLElement | null => body.querySelector<HTMLElement>('p[role="alert"]');
     await vi.waitFor(() => expect(alert()?.textContent).toBe('깎기을(를) 불러오지 못했습니다. 다시 시도'), WAIT);
     expect(body.textContent).not.toContain('불러오는 중…');
-    // 메뉴 길(소재 깎기 — 108차 알림): 거듭 받지 못해도 알림 상자는 하나
+    // 받기 실패가 아닌 오류(조각은 왔는데 만들지 못함 꼴): 108차 글 그대로(까닭을 낀 글 — 가름은 core.ts isChunkLoadError)
+    ctl.fail.add('sim-bad');
+    await api.setSim(true);
+    const olds = (): Element[] => [...document.querySelectorAll('.toasts > .toast.error')].filter((t) => t.firstChild?.textContent?.startsWith('시뮬레이션을 불러오지 못했습니다: '));
+    expect(olds()).toHaveLength(1);
+    ctl.fail.delete('sim-bad');
+    // 메뉴 길(소재 깎기 — 108차 알림)의 받기 실패: 전에는 「시뮬레이션을 불러오지 못했습니다: 파일을 받지 못했습니다(네트워크 오류).」 꼴(까닭이 낀 글)에 다시 시도 없이 4초.
+    // 이제 까닭은 콘솔에만, 이름은 메뉴 항목 글 — 거듭 받지 못해도 알림 상자는 하나(메뉴로 다시 연 실패는 세지 않아 다시 시도 그대로)
+    const SIM = '소재 깎기을(를) 불러오지 못했습니다.';
     await api.setSim(true);
     await api.setSim(true);
-    const simToasts = (): Element[] => [...document.querySelectorAll('.toasts > .toast.error')].filter((t) => t.firstChild?.textContent?.startsWith('시뮬레이션을 불러오지 못했습니다: '));
-    expect(simToasts()).toHaveLength(1);
-    // 다시 시도로 받으면 깎기 탭을 그리고 초점은 지금 탭 버튼
+    const m = only(SIM);
+    expect([act(m), m.textContent]).toEqual(['다시 시도', `${SIM}다시 시도×`]);
+    // 알림의 다시 시도(그 깎기를 처음부터)도 받지 못하면 「새로 고침」(214차 꼴 — 같은 글 하나)
+    m.querySelector<HTMLButtonElement>('.toast-act')!.click();
+    await vi.waitFor(() => expect(act(only(SIM))).toBe('새로 고침'), WAIT);
+    // 탭 몸통의 다시 시도로 받으면 깎기 탭을 그리고 초점은 지금 탭 버튼, 메뉴 길의 실패 알림도 닫는다(214차 꼴 — 같은 조각)
     ctl.fail.delete('sim');
     const retry = alert()!.querySelector<HTMLButtonElement>('button')!;
     retry.focus();
@@ -400,6 +466,7 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     await vi.waitFor(() => expect(body.querySelector('.prop-group')).not.toBeNull(), WAIT);
     expect(alert()).toBeNull();
     expect(focused()).toBe(root.querySelector('.panel-tab.active'));
+    expect(toastsWith(SIM)).toHaveLength(0);
   });
 
   it('글은 네 언어 사전의 한 틀 — 틀이 잡은 이름(탭·메뉴 항목 글)도 그 언어 낱말로(앱은 mixSpan ui), 「다시 시도」도', async () => {
@@ -412,6 +479,10 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
       '„Tastenkürzel“ konnte nicht geladen werden.',
     ]);
     expect(LANGS.map((l) => translate('깎기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Simulate".', '「切削」を読み込めませんでした。', '无法加载“切削”。', '„Abtrag“ konnte nicht geladen werden.']);
+    // 215차: 새 이름(메뉴 항목·버튼 글 — 새 열쇠 0)
+    expect(LANGS.map((l) => translate('소재 깎기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Stock removal".', '「素材の切削」を読み込めませんでした。', '无法加载“毛坯切削”。', '„Materialabtrag“ konnte nicht geladen werden.']);
+    expect(LANGS.map((l) => translate('3D 보기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "3D view".', '「3Dビュー」を読み込めませんでした。', '无法加载“3D视图”。', '„3D-Ansicht“ konnte nicht geladen werden.']);
+    expect(LANGS.map((l) => translate('예제 열기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Open sample".', '「サンプルを開く」を読み込めませんでした。', '无法加载“打开示例”。', '„Beispiel öffnen“ konnte nicht geladen werden.']);
     expect(LANGS.map((l) => translate('다시 시도', l))).toEqual(['Try again', 'もう一度試す', '再试一次', 'Noch einmal versuchen']);
   });
 });

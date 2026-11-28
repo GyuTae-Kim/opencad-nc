@@ -370,9 +370,10 @@ export class NcPanel {
    * 받고(받는 중이면 그대로 — 받기는 한 번) 끝나면 다시 그린다(코드 탭이 아니면 — refresh). 문서는 app.ts ensureViewer가 정보 탭 조각을 기다린 뒤(3초 한도) 열려 보통은 이미 받았다.
    * 211차: 받지 못했으면(onceImport는 실패를 비워 다음 받기가 다시 받는다) 그 탭 이름으로 실패 글과 「다시 시도」 — 그리기마다 다시 받지 않는다. 전에는 정보 탭 조각은 빈 몸통,
    * 깎기 조각은 「불러오는 중…」 그대로에 console.error만 남았다. 다시 시도는 실패 글을 둔 채 받고, 받으면 그린 몸통에서 초점은 지금 탭 버튼(render), 또 못 받으면 새 「다시 시도」(137차 열쇠)
+   * 215차: 누른 다시 시도도 받지 못하면 그 버튼은 「새로 고침」(dom.ts loadFailed — 셈 열쇠는 이 받기 함수, 초점은 같은 자리 버튼)
    */
   waitTab(load: () => Promise<unknown>, name: string): void {
-    if (this.loads.get(load) === false) return loadFailed(name, () => this.fetchTab(load), this.body);
+    if (this.loads.get(load) === false) return loadFailed(name, () => this.fetchTab(load), this.body, load);
     this.body.append(h('p', { class: 'hint' }, '불러오는 중…'));
     this.fetchTab(load);
   }
