@@ -91,6 +91,9 @@ export function renderNotices(host: NoticeHost, d: NcDoc, keep: boolean): void {
   const had = document.activeElement;
   const at = keep && had && bar.contains(had) ? [...bar.children].findIndex((r) => r.contains(had)) : -1;
   bar.replaceChildren();
+  // 219차(WCAG 1.3.1): 줄이 div로 이어질 뿐이라 화면 읽기가 몇 줄인지·몇째인지 듣지 못했다 — 띠는 목록, 줄마다 목록 항목(148차 보정 구간 꼴 — div의 WAI-ARIA role이라
+  // 감쌀 칸·CSS가 들지 않는다. 148차는 띠가 role=status라 감싸야 했는데 198차부터 알림 영역이 아니다). 띠의 자식은 아래 줄뿐이다
+  bar.setAttribute('role', 'list');
   const list = noticeViews(d);
   bar.hidden = !list.length;
   // 198차: 띠가 알림 영역(role=status)이면 숨김을 줄과 함께 풀어(열기·다시 읽기는 덮개가 inert를 거둔 같은 차례) 첫 줄을 읽지 않을 수 있었고, 그릴 때마다
@@ -104,7 +107,7 @@ export function renderNotices(host: NoticeHost, d: NcDoc, keep: boolean): void {
     // 글에 파일 글(주 프로그램·찾지 못한 프로그램 이름)이 섞인다 — 지금 언어로 옮겨 담는다(54차)
     const text = mixSpan(n.text, 'nt-text');
     text.title = mixText(n.text);
-    const row = h('div', { class: 'notice', 'data-notice': n.key }, text);
+    const row = h('div', { class: 'notice', role: 'listitem', 'data-notice': n.key }, text);
     text.addEventListener('click', () => row.classList.toggle('open'));
     if (n.action) {
       const act = n.action;
