@@ -605,7 +605,8 @@ describe('깎기 탭', () => {
     xmax.value = '-1000';
     xmax.dispatchEvent(new Event('change'));
     expect(status()).toEqual([bad, 'alert', null]);
-    // 오류인 채 다른 칸을 바꿔 다시 그려도(다시 계산 없음) 오류 글은 alert
+    // 오류인 채 다른 칸을 바꿔 다시 그려도(다시 계산 없음) 오류 글은 alert — 221차: 오류를 낸 동작과 같은 차례(기다림 없이 이어 바꿈)라 새로 난 오류의 alert 그대로.
+    // 다음 차례부터 앱이 같은 탭을 다시 그린 같은 글은 role 없이(아래 221차 시험)
     const color = ctl<HTMLSelectElement>('색');
     color.value = 'stock';
     color.dispatchEvent(new Event('change'));
@@ -621,6 +622,76 @@ describe('깎기 탭', () => {
     expect(status().slice(1)).toEqual([null, 'polite']);
     await until(settled);
     expect(status()).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite']);
+  });
+
+  /**
+   * 221차(WCAG 4.1.3 — 220차 탭 몸통 실패 글과 같은 꼴): 135차 오류 글 칸(role=alert)은 탭을 그릴 때마다 새로 만들어져, 오류가 남은 채 앱이 같은 탭을 다시 그리면
+   * (같은 탭 다시 보이기·언어 바꿈·패널 refresh·오류와 상관없는 칸 바꿈 — panel.ts render) 같은 글이 새 alert 마디로 붙어 사용자가 아무것도 누르지 않았는데 거듭 읽혔다.
+   * 새로 난 오류(그 동작 안의 그리기까지)·같은 오류를 또 낸 사용자 동작·탭을 바꿔 처음 보인 오류는 alert, 같은 탭의 같은 글을 앱이 다시 그린 것은 role 없이(aria-live=polite) 같은 글
+   */
+  it('221차: 깎기 탭 오류 글은 새로 난 오류·또 틀린 소재 상자·탭을 바꿔 처음 보인 오류만 alert, 앱이 같은 탭을 다시 그린 같은 글은 새 alert 마디 0', async () => {
+    const { app, root } = makeApp();
+    await open(app, 'opencad-sample.nc', ncSampleProgram());
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    api.setPanelTab('sim');
+    await until(() => !!root.querySelector('.panel-body .sim-status'));
+    const body = root.querySelector<HTMLElement>('.panel-body')!;
+    // 몸통에 새로 붙은 alert 마디(붙은 마디와 그 안 — 220차 loadfail211 꼴). 셈은 그 자리에서 쌓인 기록까지(takeRecords)
+    let alerts = 0;
+    const add = (rs: MutationRecord[]): void => {
+      for (const r of rs) for (const n of r.addedNodes) if (n instanceof Element) alerts += Number(n.matches('[role="alert"]')) + n.querySelectorAll('[role="alert"]').length;
+    };
+    const mo = new MutationObserver(add);
+    mo.observe(body, { childList: true, subtree: true });
+    const seen = (): number => (add(mo.takeRecords()), alerts);
+    // 상태 글 칸 [글, role, aria-live]과 오류 원문 열쇠(data-fail — panel.ts render가 같은 탭일 때 적어 넘긴다)
+    const status = (): (string | null)[] => {
+      const el = body.querySelector('.sim-status')!;
+      return [el.textContent, el.getAttribute('role'), el.getAttribute('aria-live')];
+    };
+    const failKey = (): string | null => body.querySelector('.sim-status')!.getAttribute('data-fail');
+    const ctl = <T extends HTMLElement>(label: string): T => [...body.querySelectorAll<T>('input, select')].find((el) => el.getAttribute('aria-label') === label)!;
+    const bad = '소재 상자가 올바르지 않습니다(최대가 최소보다 커야 합니다).';
+    try {
+      await api.setSim(true);
+      await until(settled);
+      const base = seen();
+      // 새로 난 오류(소재 X 최대 < 최소): 같은 동작 안의 두 그리기(start 오류 → setOptions 끝) 모두 alert — 마지막 마디가 alert
+      const x1 = ctl<HTMLInputElement>('X 범위 — 최대');
+      x1.value = '-1000';
+      x1.dispatchEvent(new Event('change'));
+      expect([seen() - base, ...status()]).toEqual([2, bad, 'alert', null]);
+      // 다음 차례(마이크로태스크만 비움 — 이벤트 고리를 넘기지 않는다): 앱이 같은 탭을 다시 그림 — 같은 탭 다시 보이기·언어 바꿈·패널 refresh·다른 칸(색 — 다시 계산 없음)
+      await Promise.resolve();
+      api.setPanelTab('sim');
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+      app.panel.refresh();
+      ctl<HTMLSelectElement>('색').value = 'stock';
+      ctl<HTMLSelectElement>('색').dispatchEvent(new Event('change'));
+      expect([seen() - base, ...status(), failKey()]).toEqual([2, bad, null, 'polite', bad]);
+      // 같은 오류를 또 낸 사용자 동작(소재 상자를 또 틀리게 — start가 같은 글을 다시 냄): alert
+      await Promise.resolve();
+      const x2 = ctl<HTMLInputElement>('X 범위 — 최대');
+      x2.value = '-2000';
+      x2.dispatchEvent(new Event('change'));
+      expect([seen() - base, ...status()]).toEqual([4, bad, 'alert', null]);
+      // 다른 탭(코드)에 갔다 돌아오면(탭을 바꿔 처음 보인 오류) alert 하나, 다음 차례에 같은 탭을 다시 보이면 role 없음
+      await Promise.resolve();
+      api.setPanelTab('code');
+      api.setPanelTab('sim');
+      expect([seen() - base, ...status()]).toEqual([5, bad, 'alert', null]);
+      await Promise.resolve();
+      api.setPanelTab('sim');
+      expect([seen() - base, ...status(), failKey()]).toEqual([5, bad, null, 'polite', bad]);
+      // 자동으로: 다시 계산 — 진행·끝 글은 polite, 오류 원문 열쇠 없음
+      [...body.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '자동으로')!.click();
+      await until(settled);
+      expect([...status(), failKey()]).toEqual([expect.stringContaining('전체 프로그램을 깎았습니다'), null, 'polite', null]);
+      expect(seen() - base).toBe(5);
+    } finally {
+      mo.disconnect();
+    }
   });
 
   /**

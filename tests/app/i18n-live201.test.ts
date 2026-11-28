@@ -16,8 +16,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => {
-  /** 앱이 넘긴 그래픽 문맥 잃음·되찾음 알림 함수 */
-  const ctx: { lost: (() => void) | null; restore: (() => void) | null } = { lost: null, restore: null };
+  /** 앱이 넘긴 그래픽 문맥 잃음·되찾음 알림 함수, 단면 알림 함수(221차 — 시험이 단면 상태를 넘긴다) */
+  const ctx: { lost: (() => void) | null; restore: (() => void) | null; section: ((s: unknown) => void) | null } = { lost: null, restore: null, section: null };
   class FakeViewer {
     readonly canvas: HTMLCanvasElement;
     measureMode = false;
@@ -49,6 +49,9 @@ const fake = vi.hoisted(() => {
     }
     onContextRestore(cb: () => void): void {
       ctx.restore = cb;
+    }
+    onSectionChange(cb: (s: unknown) => void): void {
+      ctx.section = cb;
     }
   }
   return { FakeViewer, ctx };
@@ -142,7 +145,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', (q: string) => ({ media: q, matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
   vi.stubGlobal('Worker', FakeWorker);
   localStorage.clear();
-  fake.ctx.lost = fake.ctx.restore = null;
+  fake.ctx.lost = fake.ctx.restore = fake.ctx.section = null;
 });
 afterEach(() => {
   dispose?.();
@@ -275,5 +278,68 @@ describe('201차: 언어를 바꾼 뒤 알림 영역의 앞 언어 글·열기 �
     expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'zh-CN')]);
     await to('en');
     expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'en')]);
+  });
+});
+
+/**
+ * 221차: 화면 글에 넣는 수 꼴(format.ts — 셈 수 fmtInt·fmtCount의 천 단위는 화면 언어, 프로그램 값 fmtNum·fmtPt는 소수점 「.」에 천 단위 쉼표는 소수점이 「.」인 언어만).
+ * 번역층은 틀이 잡은 수 글을 그대로 끼워, 전에는 독일어 화면에도 한국어 꼴 「1,202」(소수로 읽힘)·「X 2,000.5」가 갔다. 언어를 바꾸면 앱이 다시 그리는 칸(상태 줄·패널 아래 띠·정보 탭)은
+ * 새 언어 꼴로, 다시 그리지 않던 코드 탭 찾기 칸 셈·단면 값 칸도 다시 쓴다. 파일 크기(16.5 KB)는 어느 언어든 그대로. 한국어·영어 글은 지금과 같다(ci-guard 6번 — 독일어만 바뀜)
+ */
+describe('221차: 화면 글의 수 꼴 — 셈 수 천 단위는 화면 언어, 프로그램 값은 소수점 「.」(독일어는 천 단위 없이), 언어를 바꾸면 다시 그림', () => {
+  // 이동 1,200개 남짓·X 1000.5~2199.5(1,000 넘는 수라 천 단위가 보인다) — 16,855바이트(16.5 KB)
+  const BIG = ['G21 G90', 'T1 M6', 'S1000 M3', 'G0 X1000 Y0 Z5', 'G1 Z-1 F1200', ...Array.from({ length: 1200 }, (_, i) => `G1 X${1000.5 + i} Y${i % 2}`), 'M30', ''].join('\n');
+  /** 언어 메뉴로 바꾸고 앱이 다시 그린 칸을 번역층이 옮길 때까지(시간과 조건 — ci-guard 13번) */
+  const switchTo = async (lang: string, word: string): Promise<void> => {
+    document.querySelector<HTMLButtonElement>(`.language-list [data-language="${lang}"]`)!.click();
+    await until(() => document.documentElement.lang === lang && text('.st-main').includes(word));
+  };
+  const snap = () => ({ main: text('.st-main'), foot: text('.panel-foot'), find: text('.find-count'), sec: text('.sec-val') });
+
+  it('한국어 → 독일어 → 영어: 상태 줄 이동 수·아래 띠 줄 번호·이송·끝점·찾기 칸 셈·단면 값, 독일어 정보 탭', async () => {
+    const { app, root } = await makeApp('ko');
+    const api = window.opencadApp!;
+    expect(await app.openBuffer('big.nc', enc.encode(BIG).buffer as ArrayBuffer)).toBe(true);
+    api.togglePanel(true);
+    api.setPanelTab('code');
+    // 코드 찾기: G1 줄 1,201개 — Enter로 첫 줄(1/1,201)
+    const find = root.querySelector<HTMLInputElement>('.code-search input')!;
+    find.value = 'G1';
+    find.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    // 1,006번째 줄(G1 X2000.5 Y0)을 고르고 X 단면을 그 자리에(가짜 뷰어 — 코어가 알리는 단면 상태를 넘긴다)
+    api.selectLine(1005);
+    fake.ctx.section!({ axis: 'x', t: 0.5, position: 2000.5, flip: false });
+    const ko = snap();
+    const moves = /이동 (\d),(\d{3})개/.exec(ko.main);
+    expect(moves).not.toBeNull();
+    const [, a, b] = moves!;
+    expect(ko).toEqual({
+      main: expect.stringContaining('16.5 KB'),
+      foot: expect.stringMatching(/^줄 1,006 G1 X2000\.5 Y0.*F1,200.*X 2,000\.5 · Y 0 · Z -1 mm/s),
+      find: '1/1,201',
+      sec: 'X = 2,000.5 mm',
+    });
+    // 독일어: 셈 수는 「Bewegungen 1.201」·「Zeile 1.006」·「1/1.201」, 프로그램 값(이송·끝점·단면)은 소수점 「.」에 천 단위 없이 — 크기는 그대로
+    await switchTo('de', 'Bewegungen');
+    expect(snap()).toEqual({
+      main: expect.stringMatching(new RegExp(`16\\.5 KB · Bewegungen ${a}\\.${b}`)),
+      foot: expect.stringMatching(/^Zeile 1\.006 G1 X2000\.5 Y0.*F1200.*X 2000\.5 · Y 0 · Z -1 mm/s),
+      find: '1/1.201',
+      sec: 'X = 2000.5 mm',
+    });
+    // 독일어 정보 탭(열 때 받는 조각): 이동 수·범위 최대 X(사전의 풀이 글은 독일어 소수 「0,001°」를 쓴다 — 앱이 끼운 수만 본다)
+    api.setPanelTab('info');
+    await until(() => text('.panel-body').includes('Bewegungen'));
+    const info = text('.panel-body');
+    expect([info.includes(`${a}.${b}`), info.includes('2199.5'), info.includes(`${a},${b}`), info.includes('2,199.5')]).toEqual([true, true, false, false]);
+    // 영어: 한국어와 같은 꼴(찾기 칸은 코드 탭을 다시 그릴 때)
+    await switchTo('en', 'Moves');
+    api.setPanelTab('code');
+    expect(snap()).toEqual({
+      main: expect.stringMatching(new RegExp(`16\\.5 KB · Moves ${a},${b}`)),
+      foot: expect.stringMatching(/^Line 1,006 G1 X2000\.5 Y0.*F1,200.*X 2,000\.5 · Y 0 · Z -1 mm/s),
+      find: '1/1,201',
+      sec: 'X = 2,000.5 mm',
+    });
   });
 });

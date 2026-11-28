@@ -30,11 +30,30 @@ export function formatMs(ms: number): string {
   return `${m}분 ${Math.round(s - m * 60)}초`;
 }
 
-/** 숫자 → 글(소수 digits자리까지, 끝 0 없이, 천 단위 쉼표). 값이 없으면 "—" */
+/**
+ * 221차: 화면 언어(i18n.ts가 사전을 받아 언어를 정하거나 바꿀 때 setNumberLanguage — 받기 전과 닫은 뒤는 한국어). 번역층은 사전 틀이 잡은 수 글을 그대로 끼워
+ * 앱이 그릴 때 정한 꼴이 모든 언어에 간다 — 전에는 모두 한국어 꼴이라 독일어 화면에서 「12,345」가 소수로 읽혔다.
+ * dot은 그 언어의 소수점이 「.」인지(ko·en·ja·zh-CN — Intl 꼴이 한국어와 같다. 독일어는 「,」)
+ */
+let numLang = 'ko';
+let dot = true;
+export function setNumberLanguage(lang: string): void {
+  numLang = lang;
+  dot = (0.5).toLocaleString(lang)[1] === '.';
+}
+
+/** 221차: 사람이 읽는 셈 수(개수·줄 번호·차례 — 정수) → 화면 언어의 천 단위 꼴(독일어 「12.345」, 다른 넷은 「12,345」) */
+export const fmtInt = (n: number): string => n.toLocaleString(numLang);
+
+/**
+ * 숫자 → 글(소수 digits자리까지, 끝 0 없이, 천 단위 쉼표). 값이 없으면 "—".
+ * 221차: 프로그램 값(좌표·길이·이송 — 프로그램 글 X·Y·Z·F와 같은 수)이라 소수점은 어느 언어든 「.」(NC 프로그램 글·제어기 위치 표시 꼴, 앱 안 다수 꼴).
+ * 천 단위 쉼표는 소수점이 「.」인 화면 언어에서만 — 독일어는 「,」가 소수점이고 「.」는 소수점과 부딪혀 나누지 않는다(「2000.5」 — 프로그램 글과 같은 수 글)
+ */
 export function fmtNum(v: number | undefined | null, digits = 3): string {
   if (v === undefined || v === null || !Number.isFinite(v)) return '—';
   const r = Number(v.toFixed(digits));
-  return Object.is(r, -0) || r === 0 ? '0' : r.toLocaleString('ko-KR', { maximumFractionDigits: digits });
+  return Object.is(r, -0) || r === 0 ? '0' : r.toLocaleString('ko-KR', { maximumFractionDigits: digits, useGrouping: dot });
 }
 
 /** 점 → "x, y, z" */
@@ -43,9 +62,9 @@ export function fmtPt(p: readonly number[] | undefined | null): string {
   return `${fmtNum(p[0])}, ${fmtNum(p[1])}, ${fmtNum(p[2])}`;
 }
 
-/** 개수 글 "1,234개" */
+/** 개수 글 "1,234개"(221차: 천 단위는 화면 언어 — fmtInt) */
 export function fmtCount(n: number, unit = '개'): string {
-  return `${Math.max(0, Math.round(n)).toLocaleString('ko-KR')}${unit}`;
+  return `${fmtInt(Math.max(0, Math.round(n)))}${unit}`;
 }
 
 /** RGBA(0~1) → CSS rgb() */
