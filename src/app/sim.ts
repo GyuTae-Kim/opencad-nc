@@ -156,15 +156,49 @@ function writeJson(key: string, v: unknown): void {
 /**
  * 169차: 깎기 탭 숫자 칸 값 — 받는 수(유한하고 ok)면 그 수, 빈 칸·읽지 못한 글(validity.badInput — 쉼표 소수 등, 브라우저가 빈 값으로 돌림)·받지 않는 수는 undefined.
  * 전처럼 걸지 않고(계산·기억·탭 다시 그리기는 앞 값 그대로) 칸 글을 친 그대로 둔 채 aria-invalid="true"를 둔다(받는 값이면 거둠 — WCAG 3.3.1, 보이는 표시는 styles.css).
- * 정보 탭 readNum(168차)과 같은 꼴 — 이 칸들은 빈 칸에 기본값이 없어 빈 칸도 받지 않는 값(그 함수를 가져오면 정보 탭 조각을 끌어와 여기 둔다)
+ * 정보 탭 readNum(168차)과 같은 꼴 — 이 칸들은 빈 칸에 기본값이 없어 빈 칸도 받지 않는 값(그 함수를 가져오면 정보 탭 조각을 끌어와 여기 둔다).
+ * 229차(WCAG 3.3.1·3.3.3): 받지 않는 값이면 받는 꼴 글(msg — ok와 같은 말)을 칸에 잇는다(fieldError)
  */
-function readNum(el: HTMLInputElement, ok: (n: number) => boolean = () => true): number | undefined {
+function readNum(el: HTMLInputElement, msg: string, ok: (n: number) => boolean = () => true): number | undefined {
   const t = el.value.trim();
   const n = Number(t);
   const bad = el.validity.badInput || t === '' || !(Number.isFinite(n) && ok(n));
-  if (bad) el.setAttribute('aria-invalid', 'true');
-  else el.removeAttribute('aria-invalid');
+  fieldError(el, bad ? msg : null);
   return bad ? undefined : n;
+}
+
+/** 229차: 받는 꼴 글(readNum ok와 같은 말 — 정보 탭 조각 panel-info.ts에 같은 원문) */
+const NUM_POS = '0보다 큰 수를 넣으십시오.';
+const NUM_ANY = '-12.5처럼 수를 넣으십시오.';
+/** 229차: 오류 글을 단 칸 → 그 원문(196차 keepTyped가 다시 그린 칸에 옮긴다) */
+const errOf = new WeakMap<HTMLInputElement, string>();
+let errN = 0;
+
+/**
+ * 229차: 칸의 오류 글 줄(정보 탭 fieldError와 같은 꼴) — msg면 aria-invalid와 함께 보이는 풀이 줄(원문 — 화면 번역층이 옮긴다)을 소재 범위는 그 줄 바로 밑,
+ * 공구 표는 그 칸 안에 두고 aria-describedby로 잇는다(최소·최대 짝은 한 줄). 받는 값이면 거두고, 줄·칸의 칸이 모두 받는 값이면 글 줄도 거둔다. 알림 역할은 두지 않는다
+ * (원문을 넣은 뒤 번역층이 옮기면 한국어가 먼저 읽히고, 앱 쪽 다시 그리기마다 거듭 읽힌다 — 221차)
+ */
+function fieldError(el: HTMLInputElement, msg: string | null): void {
+  const cell = el.closest('td');
+  const row = cell ?? el.closest('.prop-row')!;
+  const at = cell ? cell.lastElementChild : row.nextElementSibling;
+  let p = at?.classList.contains('num-err') ? at : null;
+  if (msg) {
+    errOf.set(el, msg);
+    el.setAttribute('aria-invalid', 'true');
+    if (!p) {
+      p = h('p', { class: 'hint num-err', id: `sim-err-${++errN}` }, msg);
+      if (cell) cell.append(p);
+      else row.after(p);
+    }
+    el.setAttribute('aria-describedby', p.id);
+    return;
+  }
+  errOf.delete(el);
+  el.removeAttribute('aria-invalid');
+  el.removeAttribute('aria-describedby');
+  if (p && !row.querySelector('[aria-invalid]')) p.remove();
 }
 
 /** 판재 공구 이름: 구멍은 지름, 경로는 공구 번호(MPR TNO)나 공구 폭 */
@@ -297,7 +331,9 @@ function redrawTab(host: Pick<SimHost, 'refreshPanel'>, sim: { tabEls?: Map<stri
 function keepTyped(had: HTMLInputElement, to: HTMLInputElement): void {
   const shown = to.value;
   to.value = had.value;
-  if (had.hasAttribute('aria-invalid')) to.setAttribute('aria-invalid', 'true');
+  // 229차: 받지 않은 값 표시와 그 오류 글 줄도(새 칸 자리에 — 소재 짝 오류 표시는 fillTab이 새 칸에 다시 둔다)
+  const bad = errOf.get(had);
+  if (bad) fieldError(to, bad);
   const s = had.selectionStart;
   if (s !== null) to.setSelectionRange(s, had.selectionEnd, had.selectionDirection ?? undefined);
   let fired = false;
@@ -941,7 +977,7 @@ export class SimView {
     // role 없이(polite) 그린다 — 앱이 같은 탭을 다시 그릴 때마다(언어 바꿈·같은 탭 다시 보이기·장면 경고·오류와 상관없는 칸 바꿈) 같은 글이 새 alert로 거듭 읽혔다.
     // 새로 난 오류·같은 오류를 또 낸 동작·탭을 바꿔 처음 보인 오류는 alert 그대로
     const err = this.on ? this.error : null;
-    this.statusEl = h('p', { class: 'hint sim-status', 'data-fail': err }, this.statusText());
+    this.statusEl = h('p', { class: 'hint sim-status', id: 'sim-status', 'data-fail': err }, this.statusText());
     statusLive(this.statusEl, !!err && (this.errorNew || err !== was));
     // 165차: 켜고 끄는 상자는 같은 일을 하는 도구 막대 메뉴 항목(app.ts — 넓은 화면 「그리기」·휴대폰 「보기 설정」)과 같은 이름 「소재 깎기」(WCAG 3.2.4).
     // 예전 「깎인 소재 보이기」는 정보 탭 「깎인 소재」 묶음 상자(SIM_GROUP — 소재 메시 보이기, 다른 일)와도 거의 같았다
@@ -1018,7 +1054,7 @@ export class SimView {
         const el = h('input', { type: 'number', step: 'any', class: 'num-input', 'aria-label': label });
         el.value = String(Math.round(v * 1e6) / 1e6);
         el.addEventListener('change', () => {
-          const n = readNum(el);
+          const n = readNum(el, NUM_ANY);
           if (n !== undefined) set(n);
         });
         return el;
@@ -1029,8 +1065,16 @@ export class SimView {
         next[which][axis] = n;
         this.setOptions({ stock: next });
       };
-      const axisRow = (label: string, axis: number): HTMLElement =>
-        h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, label), h('span', { class: 'sim-pair' }, num(box.min[axis]!, `${label} — 최소`, (n) => edit(axis, 'min', n)), num(box.max[axis]!, `${label} — 최대`, (n) => edit(axis, 'max', n))));
+      // 229차(WCAG 3.3.1): 소재 상자 오류(그 축 최대 ≤ 최소 — start)는 탭 맨 위 상태 글에만 있어 칸에 이어지지 않았다 — 그 축 최소·최대 칸을 틀림으로, 설명은 상태 글 칸
+      const axisRow = (label: string, axis: number): HTMLElement => {
+        const pair = [num(box.min[axis]!, `${label} — 최소`, (n) => edit(axis, 'min', n)), num(box.max[axis]!, `${label} — 최대`, (n) => edit(axis, 'max', n))];
+        if (err && !(box.max[axis]! > box.min[axis]!))
+          for (const el of pair) {
+            el.setAttribute('aria-invalid', 'true');
+            el.setAttribute('aria-describedby', 'sim-status');
+          }
+        return h('div', { class: 'prop-row edit' }, h('span', { class: 'k' }, label), h('span', { class: 'sim-pair' }, ...pair));
+      };
       const reset = h('button', { class: 'btn small', type: 'button', disabled: !this.userStock }, '자동으로');
       reset.addEventListener('click', () => this.setOptions({ stock: null }));
       const from = this.userStock
@@ -1099,7 +1143,7 @@ export class SimView {
       const dia = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label('지름') });
       dia.value = String(r.tool.diameter);
       dia.addEventListener('change', () => {
-        const n = readNum(dia, (x) => x > 0);
+        const n = readNum(dia, NUM_POS, (x) => x > 0);
         if (n !== undefined) this.setTool(r, { diameter: n });
       });
       let extra: HTMLElement | string = '';
@@ -1108,7 +1152,7 @@ export class SimView {
         const el = h('input', { type: 'number', step: 'any', min: 0, inputmode: 'decimal', class: 'num-input', ...label(isBull ? '모서리 R' : '끝 각(도)') });
         el.value = String(isBull ? r.tool.corner : r.tool.angle);
         el.addEventListener('change', () => {
-          const n = readNum(el, (x) => x > 0);
+          const n = readNum(el, NUM_POS, (x) => x > 0);
           if (n !== undefined) this.setTool(r, isBull ? { corner: n } : { angle: n });
         });
         extra = el;

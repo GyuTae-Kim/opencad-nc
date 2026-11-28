@@ -526,15 +526,42 @@ export function ncInfo(p: InfoPanel, d: NcDoc): void {
 /**
  * 숫자 칸 값: 빈 칸 null, 받는 수(유한하고 ok)면 그 수, 읽지 못한 글(validity.badInput — 쉼표 소수 등, 브라우저가 빈 값으로 돌림)·받지 않는 수는 undefined(걸지 않음).
  * 168차: 전에는 그런 값을 빈 칸처럼 null로 걸어 기억한 값을 말없이 지우고 다시 읽었다(WCAG 3.3.1) — 이제 칸에 aria-invalid="true"(받는 값·빈 칸이면 거둠)를 두고
- * 칸 글은 친 그대로 둔다. 받는 꼴은 142차가 칸 자신의 title로 둔 풀이가 설명이라 aria-describedby는 두지 않는다
+ * 칸 글은 친 그대로 둔다.
+ * 229차(WCAG 3.3.1·3.3.3): 칸 title 풀이(142차)는 받는 꼴을 말하지 않아(「비우면 10000 mm/분」 등) 무엇이 틀렸는지 글이 없었다(눈에는 색·굵기, 화면 읽기에는 「틀림」뿐) —
+ * 받지 않는 값이면 받는 꼴 글(msg — ok와 같은 말)을 그 칸이 든 설정 줄 바로 밑 풀이 줄에 두고 칸의 aria-describedby로 잇는다(fieldError)
  */
-function readNum(el: HTMLInputElement, ok: (n: number) => boolean = () => true): number | null | undefined {
+function readNum(el: HTMLInputElement, msg: string, ok: (n: number) => boolean = () => true): number | null | undefined {
   const t = el.value.trim();
   const n = t === '' ? null : Number(t);
   const bad = el.validity.badInput || (n !== null && !(Number.isFinite(n) && ok(n)));
-  if (bad) el.setAttribute('aria-invalid', 'true');
-  else el.removeAttribute('aria-invalid');
+  fieldError(el, bad ? msg : null);
   return bad ? undefined : n;
+}
+
+/** 229차: 받는 꼴 글(readNum ok와 같은 말 — 깎기 조각 sim.ts에 같은 원문) */
+const NUM_POS = '0보다 큰 수를 넣으십시오.';
+const NUM_NONNEG = '0 이상의 수를 넣으십시오.';
+const NUM_ANY = '-12.5처럼 수를 넣으십시오.';
+let errN = 0;
+
+/**
+ * 229차: 칸의 오류 글 줄 — msg면 aria-invalid와 함께 그 칸이 든 설정 줄(.prop-row) 바로 밑에 보이는 풀이 줄(원문 — 화면 번역층이 옮긴다)을 두고 aria-describedby로 잇는다.
+ * 한 줄의 여러 칸(G54 원점 X·Y·Z)은 한 줄을 함께 쓴다. 받는 값이면 그 칸의 aria-invalid·aria-describedby를 거두고, 줄의 칸이 모두 받는 값이면 줄도 거둔다.
+ * 알림 역할은 두지 않는다 — 원문을 넣은 뒤 번역층이 옮기면 한국어가 먼저 읽힌다(칸으로 돌아오면 이름·틀림·받는 꼴이 읽힘)
+ */
+function fieldError(el: HTMLInputElement, msg: string | null): void {
+  const row = el.closest('.prop-row')!;
+  const next = row.nextElementSibling;
+  let p = next?.classList.contains('num-err') ? next : null;
+  if (msg) {
+    el.setAttribute('aria-invalid', 'true');
+    if (!p) row.after((p = h('p', { class: 'hint num-err', id: `info-err-${++errN}` }, msg)));
+    el.setAttribute('aria-describedby', p.id);
+    return;
+  }
+  el.removeAttribute('aria-invalid');
+  el.removeAttribute('aria-describedby');
+  if (p && !row.querySelector('[aria-invalid]')) p.remove();
 }
 
 /** 기계·읽기 설정(앱 전체, 이 브라우저에 기억): 바꾸면 지금 프로그램을 다시 읽는다 */
@@ -543,17 +570,17 @@ function settingsGroup(host: PanelHost): HTMLElement {
   const set = (patch: Partial<NcSettings>): void => host.setSettings({ ...host.settings, ...patch });
   // signed(119차 — 기계 좌표·허용 범위): 음수를 쳐 넣으므로 소수 자판(inputmode="decimal" — 음수 기호를 약속하지 않음)을 두지 않고
   // type="number"에 맞춰 브라우저가 자판을 고르게 한다. 0보다 큰 값만 쓰는 칸은 소수 자판 그대로. ok = 받는 수(168차 readNum)
-  const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = '', signed = false, ok?: (n: number) => boolean): HTMLInputElement => {
+  const numIn = (v: number | null, label: string, onSet: (n: number | null) => void, placeholder = '', signed = false, ok?: (n: number) => boolean, msg = NUM_ANY): HTMLInputElement => {
     const el = h('input', { type: 'number', step: 'any', inputmode: signed ? null : 'decimal', class: 'num-input', 'aria-label': label, placeholder });
     el.value = v === null ? '' : String(v);
     el.addEventListener('change', () => {
-      const n = readNum(el, ok);
+      const n = readNum(el, msg, ok);
       if (n !== undefined) onSet(n);
     });
     return el;
   };
-  const one = (label: string, hint: string, v: number | null, onSet: (n: number | null) => void, placeholder: string, ok: (n: number) => boolean): HTMLElement =>
-    h('label', { class: 'prop-row edit', title: hint }, h('span', { class: 'k' }, label), numIn(v, label, onSet, placeholder, false, ok));
+  const one = (label: string, hint: string, v: number | null, onSet: (n: number | null) => void, placeholder: string, ok: (n: number) => boolean, msg: string): HTMLElement =>
+    h('label', { class: 'prop-row edit', title: hint }, h('span', { class: 'k' }, label), numIn(v, label, onSet, placeholder, false, ok, msg));
   const tri = (label: string, hint: string, key: 'offsetMm' | 'referenceMm' | 'limitMin' | 'limitMax'): HTMLElement =>
     h(
       'div',
@@ -588,8 +615,8 @@ function settingsGroup(host: PanelHost): HTMLElement {
   return withTips(
     group(
       '기계·읽기 설정',
-      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000', (n) => n > 0),
-      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0', (n) => n >= 0),
+      one('급속 속도(mm/분)', '시간 계산에 쓰는 급속 속도. 비우면 10000 mm/분(inch 프로그램은 400 inch/분).', s.rapidFeedMm, (n) => set({ rapidFeedMm: n && n > 0 ? n : null }), '10000', (n) => n > 0, NUM_POS),
+      one('공구 교환 시간(초)', '공구를 한 번 바꿀 때마다 예상 시간에 더합니다.', s.toolChangeSec, (n) => set({ toolChangeSec: n && n > 0 ? n : null }), '0', (n) => n >= 0, NUM_NONNEG),
       check('블록 건너뛰기(/) 켬', '"/"로 시작하는 블록을 실행하지 않습니다(기계의 블록 건너뛰기 스위치를 켠 것과 같음).', 'blockDelete'),
       check('H·D 번호 확인', '공구 길이 보정 H·반경 보정 D 번호가 공구 번호와 다르면 경고합니다.', 'checkToolNumbers'),
       check('도그레그 급속', '여러 축 급속을 축마다 같은 속도로 함께 가다 짧은 축부터 멈추는 꺾인 길로 그리고, 가장 긴 축 이동으로 시간을 셉니다.', 'dogleg'),
@@ -628,7 +655,7 @@ function latheToolRows(host: PanelHost, runs: readonly { tool?: number }[]): HTM
     q.value = cur?.orientation != null ? String(cur.orientation) : '';
     // 168차: 노즈 R의 0·음수·읽지 못한 글은 기억한 반지름을 지우지 않고 칸에 aria-invalid(readNum). 그런 칸인 채 방향을 고르면 반지름은 기억한 값으로
     const apply = (fromRadius: boolean): void => {
-      const n = readNum(r, (x) => x > 0);
+      const n = readNum(r, NUM_POS, (x) => x > 0);
       if (n === undefined && fromRadius) return;
       save(key, n === undefined ? (host.settings.latheTools[key]?.radiusMm ?? null) : n, q.value ? Number(q.value) : null);
     };
