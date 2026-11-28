@@ -111,7 +111,8 @@ describe('도구 막대 묶음 번역(195차)', () => {
       de: {
         '전체 보기 (F)': 'Gesamtansicht (F)',
         // 204차: 「Shift Richtungssperre beim Messen」(「방향 잠금」 Richtungssperre, coarse 줄 「측정 중」 Beim Messen, 잠금 안내 「Shift sperrt …」도 Shift)
-        [KEYS_LINE]: 'Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter virtueller Cursor · Esc Auswahl löschen · Shift Richtungssperre beim Messen · Strg+O Öffnen',
+        // 217차: 「Enter virtueller Cursor」 → 「Enter Virtueller Cursor」(키 줄 항목의 기능 글은 홀로 쓰는 값 그대로 — 단축키 창 묶음 제목 「가상 커서」 Virtueller Cursor, 나머지 일곱 항목과 같은 꼴 — tests/i18n.test.ts 217차)
+        [KEYS_LINE]: 'Tasten: F Gesamtansicht · 1–7 Standardansichten · F7 Raster · Leertaste Wiedergabe/Pause · Enter Virtueller Cursor · Esc Auswahl löschen · Shift Richtungssperre beim Messen · Strg+O Öffnen',
         [VIEWS_TIP]: 'Standardansichten (1 Vorne · 2 Hinten · 3 Links · 4 Rechts · 5 Oben · 6 Unten · 7 Isometrie)',
         [RENDER_TIP]: 'Zeichenmodi: Schattierung · Schattierung + Kanten · Drahtgittermodell · X-ray',
         '바닥 격자 (F7)': 'Bodenraster (F7)',

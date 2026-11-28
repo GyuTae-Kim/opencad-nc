@@ -148,9 +148,10 @@ describe('측정 화면 번역(125차)', () => {
     // [언어, 안내, 푼 알림, 3D 보기 설명에 더한 문장, 「Shift로 X축 방향 잠그기」의 잠금 낱말, 「방향 잠금 풀기」의 풂 낱말]
     // 204차: 같은 문장에 L(지금 방향 — 아래 204차 it)을 더했다(「X·Y·Z로 축 방향을 잠급니다」 → 「X·Y·Z로 축 방향을, L로 지금 방향을 잠급니다」) — X·Y·Z 부분 글은 그대로
     // 205차: 안내도 L을 품는다(「X·Y·Z로 축 방향 잠금」 → 「X·Y·Z로 축 방향, L로 지금 방향 잠금」 — 아래 205차 it). 일본어 잠금 낱말은 「軸方向に、L で現在の方向にロック」로 갈려 「にロック」
+    // 217차: 일본어 설명도 키 이름 뒤 「で」를 띄운다(「後はX・Y・Zで…、Lで」 → 「後は X・Y・Z で…、L で」 — 같은 사전 키 이름 + で 띄움 35 : 붙임 7, 안내 「X・Y・Z で」와 한 꼴, tests/i18n.test.ts 217차)
     const want: [lang: string, hint: string, off: string, help: string, lockWord: string, offWord: string][] = [
       ['en', 'X, Y or Z locks to that axis and L locks the current direction', 'Direction unlocked', 'After the first point while measuring, X, Y or Z locks to that axis and L locks the current direction (press again to unlock).', 'locks to', 'nlock'],
-      ['ja', 'X・Y・Z で軸方向に、L で現在の方向にロック', '方向ロックを解除しました', '測定の1点目の後はX・Y・Zで軸方向に、Lで現在の方向にロックします（もう一度押すと解除）。', 'にロック', '方向ロックを解除'],
+      ['ja', 'X・Y・Z で軸方向に、L で現在の方向にロック', '方向ロックを解除しました', '測定の1点目の後は X・Y・Z で軸方向に、L で現在の方向にロックします（もう一度押すと解除）。', 'にロック', '方向ロックを解除'],
       ['zh-CN', '按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向', '已解除方向锁定', '测量选好第一个点后，按 X、Y 或 Z 锁定为该轴方向，按 L 锁定当前方向（再按一次解除）。', '锁定为', '解除方向锁定'],
       ['de', 'X, Y, Z sperren in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung', 'Richtungssperre aufgehoben', 'Nach dem ersten Messpunkt sperren X, Y, Z in X-, Y- bzw. Z-Richtung und L die aktuelle Richtung (erneut drücken zum Entsperren).', '-Richtung', 'Richtungssperre auf'],
     ];
@@ -173,7 +174,8 @@ describe('측정 화면 번역(125차)', () => {
     // [언어, 설명 안 L 글, 「지금 방향 잠그기(다시 누르면 풀기)」의 지금 방향 낱말]
     const want: [lang: string, part: string, now: string][] = [
       ['en', 'L locks the current direction', 'current direction'],
-      ['ja', 'Lで現在の方向に', '現在の方向'],
+      // 217차: 「Lで」 → 「L で」(위 203차 it 주석)
+      ['ja', 'L で現在の方向に', '現在の方向'],
       ['zh-CN', '按 L 锁定当前方向', '锁定当前方向'],
       ['de', 'L die aktuelle Richtung', 'ktuelle Richtung'],
     ];
@@ -200,8 +202,8 @@ describe('측정 화면 번역(125차)', () => {
       const hint = translate(CURSOR_LOCK_HINT, lang);
       expect(hint, lang).toContain(part);
       expect(hint, lang).toContain(axes);
-      // 같은 사전 근거: 3D 보기 설명의 L 글(일본어는 안내 꼴 「X・Y・Z で」처럼 글자 뒤 빈칸 — 설명은 붙여 씀)
-      expect(translate(KEY_HELP, lang).replace(/([A-Z])で/g, '$1 で'), lang).toContain(part);
+      // 같은 사전 근거: 3D 보기 설명의 L 글(217차: 일본어 설명도 안내 꼴 「X・Y・Z で」처럼 글자 뒤 빈칸 — 205차는 설명이 붙여 써 빈칸을 넣어 견줬다)
+      expect(translate(KEY_HELP, lang), lang).toContain(part);
       expect(hint, lang).not.toMatch(/[가-힣]/);
     }
     expect(CURSOR_LOCK_HINT).toBe('X·Y·Z로 축 방향, L로 지금 방향 잠금');
