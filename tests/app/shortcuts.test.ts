@@ -11,7 +11,11 @@
  * - 창 글은 이미 있는 원문(시작 화면 키 줄·KEY_HELP·코어 가상 커서 안내·측정 띠 버튼)과 같은 낱말이고, 네 언어 값도 같은 사전의 그 낱말을 쓴다.
  * - (ㄴ) 가상 커서가 켜진 동안의 잠금 안내(CURSOR_LOCK_HINT)는 측정 잠금 글자(lockKeyOf — 204차 L 포함)를 모두 적는다.
  * 창 조각은 정적 가져오기로 미리 받아 둔다(앱의 `void import('./shortcuts')`가 시험이 끝난 뒤 모듈을 평가하지 않게 — ci-guard 5번).
+ * 206차: (ㄱ) 열린 메뉴 항목에서 ?로 열면 창이 받는 초점에 메뉴가 닫혀 연 항목이 숨어, 닫을 때 초점이 문서로 빠졌다(WCAG 2.4.3) — 메뉴 항목 누름과 같게 메뉴 버튼으로.
+ *   (ㄴ) 창이 열린 동안 뜬 알림 상자(body 쪽 — 창의 inert 밖이라 읽힘)가 덮개 밑에 가려 보는 사람만 못 봤다(1.3.2·4.1.3) — 덮개를 알림 상자 밑으로, 열린 동안 알림은 누르기를 덮개로.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { KEY_SNAP_KEYS } from 'opencad-viewer3d';
 import { VIEW_KEYS } from 'opencad-viewer3d/camera';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +39,7 @@ vi.mock('opencad-viewer3d', async (importOriginal) => ({ ...(await importOrigina
 
 import { catalogs, translate } from '../../site/i18n.mjs';
 import { NcViewerApp } from '../../src/app/app';
+import { toast, toastArea } from '../../src/app/dom';
 import { keyAction, type KeyContext } from '../../src/app/keys';
 import { KEY_HELP } from '../../src/app/keysnap';
 import { CURSOR_LOCK_HINT, lockHint, lockKeyOf } from '../../src/app/measure-lock';
@@ -381,5 +386,82 @@ describe('205차: 앱에서 키보드 단축키 창 열기(? 키·설정 메뉴)
     settings.click();
     items()[at]!.click();
     expect(items()[at]!.getAttribute('aria-checked')).toBe('true');
+  });
+});
+
+/** CSS 글의 z-index 규칙(주석 뺌 — @media 안 규칙도): 선택자·값. jsdom은 CSS를 그리지 않아 글로 본다(148차 꼴) */
+const cssRules = (file: string): { sel: string; body: string }[] =>
+  [...readFileSync(join(__dirname, '../..', file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), body: m[2]! }));
+const zRules = (file: string): { sel: string; z: number }[] =>
+  cssRules(file).flatMap((r) => {
+    const z = /z-index:\s*(\d+)/.exec(r.body);
+    return z ? [{ sel: r.sel, z: Number(z[1]) }] : [];
+  });
+
+describe('206차: 키보드 단축키 창을 닫은 뒤 초점·창이 열린 동안의 알림 상자', () => {
+  const mountApp = (): { root: HTMLElement; dialogs: () => HTMLElement[] } => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.getElementById('app')!;
+    new NcViewerApp(root);
+    return { root, dialogs: () => [...root.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')] };
+  };
+
+  it('(ㄱ) 열린 메뉴 항목에서 ?로 열면 메뉴 항목 누름과 같게 메뉴를 닫고 메뉴 버튼에서 열어, 닫으면 메뉴 버튼으로(숨은 항목이 아님) — 시작 화면에서 연 길은 그대로 연 곳으로', async () => {
+    const { root, dialogs } = mountApp();
+    // 시작 화면 열기 칸에서 연 길: 닫으면 그 칸
+    const zone = root.querySelector<HTMLElement>('.start .dropzone')!;
+    zone.focus();
+    expect(keydown(zone, '?', { shiftKey: true }).defaultPrevented).toBe(true);
+    await until(() => dialogs().length > 0);
+    keydown(document.activeElement!, 'Escape');
+    expect(dialogs()).toHaveLength(0);
+    expect(document.activeElement).toBe(zone);
+    // 열린 설정 메뉴: 메뉴를 열면 첫 항목에 초점
+    const settings = root.querySelector<HTMLButtonElement>('.titlebar button[aria-label="앱 설정"]')!;
+    const list = settings.parentElement!.querySelector<HTMLElement>('.menu')!;
+    settings.click();
+    const item = document.activeElement as HTMLElement;
+    expect([list.hidden, list.contains(item)]).toEqual([false, true]);
+    // 메뉴 항목에서 ?: 앱이 받아 막고, 메뉴를 닫고 메뉴 버튼에 초점을 둔 뒤 연다(창 닫기 버튼이 받는 초점에 메뉴가 닫혀 연 항목이 숨지 않게)
+    expect(keydown(item, '?', { shiftKey: true }).defaultPrevented).toBe(true);
+    expect([list.hidden, settings.getAttribute('aria-expanded'), document.activeElement]).toEqual([true, 'false', settings]);
+    await until(() => dialogs().length > 0);
+    expect(document.activeElement).toBe(dialogs()[0]!.querySelector('button'));
+    keydown(document.activeElement!, 'Escape');
+    expect(dialogs()).toHaveLength(0);
+    // 닫으면 메뉴 버튼(연 곳의 주인) — 숨은 칸이 아니다
+    expect(document.activeElement).toBe(settings);
+    expect(document.activeElement!.closest('[hidden]')).toBeNull();
+    expect(list.hidden).toBe(true);
+  });
+
+  it('(ㄴ) 창이 열린 동안 뜬 알림 상자는 창의 inert 밖(body 쪽 — 읽힘)이고 덮개 위에 보이며(z-index), 열린 동안은 누르기를 덮개로 넘긴다', async () => {
+    const { root, dialogs } = mountApp();
+    keydown(document.body, '?', { shiftKey: true });
+    await until(() => dialogs().length > 0);
+    // 창이 열린 동안 뜬 오류(앱의 알림은 모두 dom.ts toast — 같은 알림 상자)
+    toast('최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.', 'error', 30);
+    const area = toastArea();
+    const el = area.lastElementChild as HTMLElement;
+    expect([el.className, el.getAttribute('role'), el.firstChild?.textContent]).toEqual(['toast error', 'alert', '최근 문서를 지우지 못했습니다. 잠시 뒤 다시 해 보십시오.']);
+    // 창 덮개는 #app 안, 알림 상자는 body의 다른 자식 — 창이 inert로 두는 #app 자식 밖이라 화면 읽기 프로그램에 읽힌다(aria-live)
+    const back = dialogs()[0]!.parentElement!;
+    expect([back.className, back.parentElement === root]).toEqual(['sc-back', true]);
+    expect([area.parentElement === document.body, root.contains(area), !!area.closest('[inert]'), area.getAttribute('aria-live')]).toEqual([true, false, false, 'polite']);
+    expect([...root.children].filter((c) => c !== back).every((c) => c.hasAttribute('inert'))).toBe(true);
+    // 보임: 덮개(shortcuts.css .sc-back)는 알림 상자(styles.css .toasts)보다 아래, 앱의 다른 층(끌어 놓기·읽는 중 덮개·메뉴 등)보다 위 — 언어 고르기만 제 층으로 위
+    const dlg = zRules('src/app/shortcuts.css').find((r) => r.sel === '.sc-back')!.z;
+    const app = zRules('src/app/styles.css');
+    const toasts = app.find((r) => r.sel === '.toasts')!.z;
+    expect(dlg).toBeLessThan(toasts);
+    expect(app.filter((r) => r.sel !== '.toasts' && !r.sel.includes('language') && r.z >= dlg)).toEqual([]);
+    // 열린 동안 알림은 누르기를 받지 않는다(누르면 밑의 덮개가 받아 바깥 누르기로 닫음 — 모달 밖 칸은 입력을 받지 않음). 알림 버튼은 따로 두지 않아 물려받는다
+    expect(cssRules('src/app/shortcuts.css').find((r) => r.sel === 'body:has(.sc-back) .toast')?.body).toMatch(/pointer-events:\s*none/);
+    expect(cssRules('src/app/styles.css').filter((r) => /\.toast-(x|act)\b/.test(r.sel) && /pointer-events/.test(r.body))).toEqual([]);
+    expect(cssRules('src/app/styles.css').find((r) => r.sel === '.toast')?.body).toMatch(/pointer-events:\s*auto/);
+    // 알림은 제 시간에 진다(창과 따로)
+    await until(() => !el.isConnected);
+    keydown(dialogs()[0]!.querySelector('button')!, 'Escape');
+    expect(dialogs()).toHaveLength(0);
   });
 });

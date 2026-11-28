@@ -2547,8 +2547,15 @@ export class NcViewerApp implements PanelHost {
   /**
    * 205차: 키보드 단축키 창(? 키·앱 설정 메뉴). 창 글·그리기는 열 때 받는 조각(shortcuts.ts — 첫 화면 JS 밖, 오프라인은 서비스 워커가 미리 담음).
    * 받는 동안·열린 동안은 다시 열지 않고(keysHelp), 받지 못하면 console.error(다음 누름에 다시 받는다)
+   * 206차: 초점이 열린 메뉴(설정·보기 설정 메뉴·단면 상자) 안이면 메뉴 항목 누름(menu — 메뉴를 닫고 메뉴 버튼에 초점)과 같게 메뉴 버튼에서 연다. 메뉴 항목에서 ?로 열면
+   * 창 닫기 버튼이 받는 초점에 메뉴가 닫혀(focusin) 연 항목이 숨어, 닫을 때 돌려줄 곳이 없어 초점이 문서로 빠졌다(WCAG 2.4.3)
    */
   private openShortcuts(): void {
+    const w = this.openMenu?.wrap;
+    if (w?.contains(document.activeElement)) {
+      this.closeMenu();
+      w.querySelector('button')?.focus();
+    }
     if (this.keysHelp) return;
     this.keysHelp = true;
     void import('./shortcuts')
