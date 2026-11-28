@@ -40,6 +40,30 @@ export function mixSpan(m: Mixed, cls?: string, ui?: boolean): HTMLSpanElement {
 }
 
 let toastHost: HTMLElement | null = null;
+/** 227차: 알림 상자 비키기(unhide)를 문서에 달았는가(한 번만 — 몸을 간 시험이 새 상자를 붙여도 듣는 쪽은 지금 상자를 본다) */
+let watching = false;
+
+/**
+ * 227차(WCAG 2.4.11 초점이 가려지지 않음): 알림 상자(.toasts — z 80, 화면 아래 가운데에 고정)는 패널·휴대폰 시트 몸통·시작 화면·화면 아래까지 늘어난 메뉴의 아래쪽 위에 뜬다.
+ * 키보드 초점이 그 밑 칸에 들면 칸이 이미 굴림 칸 안이라 브라우저가 굴리지 않고(몸통 끝 줄은 더 굴릴 수도 없다) 알림 하나에 통째로 가려질 수 있었다.
+ * 초점이 든 칸(알림 상자 밖)이 알림 하나의 자리 안에 다 들면 상자를 그 칸 위 6px로 비켜 올리고(인라인 bottom — CSS 자리보다 앞섬), 알림 밖 다른 칸으로 가면 CSS 자리로 돌린다.
+ * 알림 안 초점(닫기·동작 버튼)은 그대로(상자가 초점 밑에서 튀지 않게), 일부만 가린 칸·알림 사이 틈·좁은 알림 옆·칸 위에 상자가 들 자리가 없을 때는 올리지 않는다(보통 화면은 그대로)
+ */
+function unhide(e: FocusEvent): void {
+  const host = toastHost;
+  const el = e.target;
+  if (!host || !(el instanceof Element) || host.contains(el)) return;
+  if (host.style.bottom) host.style.bottom = '';
+  const r = el.getBoundingClientRect();
+  const high = host.getBoundingClientRect().height;
+  for (const t of host.children) {
+    const b = t.getBoundingClientRect();
+    if (high && r.top >= b.top && r.bottom <= b.bottom && r.left >= b.left && r.right <= b.right && r.top - high - 6 >= 0) {
+      host.style.bottom = `${Math.round(innerHeight - r.top + 6)}px`;
+      return;
+    }
+  }
+}
 
 /**
  * 202차: 언어가 바뀌면(app.ts languagechange) 떠 있는 알림의 그때 언어 조각(mixSpan — 「…: 다시 읽었습니다.」·「읽지 않은 파일: …」·오류 글)을 원문에서 새 언어로 다시 옮긴다.
@@ -57,11 +81,14 @@ export function relangToasts(): void {
  * 알림 상자(aria-live) — 없거나 문서 밖이면(몸을 간 시험 등) 빈 상자를 body에 새로 붙인다.
  * 156차: 앱을 만들 때 한 번 불러 빈 채로 붙여 둔다(app.ts). 첫 알림 때 상자째 새로 붙이면, 알림 영역은 글이 바뀌기 전부터 접근성 트리에
  * 있어야 하므로 화면 읽기 프로그램에 따라 첫 안내(role=status)를 읽지 않을 수 있었다. 빈 상자는 크기·배경·그림자가 없고 누르기를 통과시킨다(styles.css .toasts)
+ * 227차: 처음 붙일 때 문서의 초점 사건에 알림 상자 비키기(unhide)를 한 번 단다
  */
 export function toastArea(): HTMLElement {
   if (!toastHost?.isConnected) {
     toastHost = h('div', { class: 'toasts', 'aria-live': 'polite' });
     document.body.append(toastHost);
+    if (!watching) document.addEventListener('focusin', unhide);
+    watching = true;
   }
   return toastHost;
 }
