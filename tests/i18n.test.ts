@@ -457,6 +457,7 @@ describe('203~216차 원문의 네 언어 꼴(217차)', () => {
   });
   it('고친 값 여섯은 그 값 그대로이고 거꾸로 찾으면 그 열쇠(다른 열쇠와 같은 값이 아님)', () => {
     // 중국어 「单击 3D 视图后」: 라틴 글자·한자 사이 띄움 363 : 붙임 31, 문장 안 「3D 视图」 5 : 「3D视图」 2 — 사전 전체 규칙은 열쇠 밖 「已由3D视图省略」·이름 「3D视图」에 걸려 값만 고정한다
+    // (218차: 그 둘·경고 칩 값도 띄워 사전 전체 규칙을 아래 218차 시험에 둠)
     const want: [code: string, key: string, value: string][] = [
       ['ja', KEY_HELP, 'Enter で仮想カーソルをオンにします。矢印キーで移動、Tab で重なった候補を切り替え、Enter で選ぶか点を打ち、Esc でオフにします。測定の1点目の後は X・Y・Z で軸方向に、L で現在の方向にロックします（もう一度押すと解除）。測定中はマウスポインターの位置で重なった候補も Tab・Shift+Tab で切り替え、Esc で切り替えを解除します'],
       ['en', '다음·이전 이동(10개씩)', 'Next/previous move (10 at a time)'],
@@ -471,5 +472,38 @@ describe('203~216차 원문의 네 언어 꼴(217차)', () => {
     }
     // 같은 문장의 잠금 안내(CURSOR_LOCK_HINT)와 3D 보기 설명의 X·Y·Z·L 글이 한 꼴
     expect(dict('ja')[KEY_HELP]).toContain(dict('ja')['X·Y·Z로 축 방향, L로 지금 방향 잠금']!);
+  });
+});
+
+/**
+ * 218차: 217차가 보고 둔 사전 갈림 넷(README 남은 일 217차 줄)을 같은 사전의 다수 꼴로 맞췄다(원문·코드 그대로, 새 열쇠 0 — README 개발 218차 문단).
+ */
+describe('217차가 남긴 사전 갈림(218차)', () => {
+  const dict = (code: string): Record<string, string> => catalogs[code] as Record<string, string>;
+  it('일본어 「새로 고침」(쪽을 새로 받음)은 「다시 읽음」(파일을 다시 해석)과 다른 값이고, 네 언어 모두 거꾸로 찾으면 그 열쇠', () => {
+    // 再読み込み 든 값 일곱: 파일을 다시 해석하는 다섯(다시 읽음·다시 읽는 중·{0}: 다시 읽었습니다.·{0}: 다시 읽지 못했습니다 — {1}·바꾸면 파일을 다시 읽습니다.)과
+    // 쪽을 새로 받는 둘(새로 고침·…새로 고친 뒤…) — 버튼 「새로 고침」은 같은 사전 「Webページ」의 낱말 + 버튼 「を + 명사」 꼴(짧은 값 29 : 동사 끝 10 — 方向ロックを解除·言語を選択)로 가른다
+    expect([dict('ja')['새로 고침'], dict('ja')['다시 읽음']]).toEqual(['ページを再読み込み', '再読み込み']);
+    for (const code of ['en', 'ja', 'zh-CN', 'de']) {
+      expect(dict(code)['새로 고침'], code).not.toBe(dict(code)['다시 읽음']);
+      expect([sourceMessage(dict(code)['새로 고침']!), sourceMessage(dict(code)['다시 읽음']!)], code).toEqual(['새로 고침', '다시 읽음']);
+    }
+  });
+  it('중국어 「3D 보기」는 라틴 글자·한자 사이를 띄운 「3D 视图」 — 이름과 그 이름을 품은 값, 이름이 끼는 틀까지', () => {
+    // 라틴 글자·한자 사이 띄움 363 : 붙임 31(217차 셈), 「3D 视图」 6 : 「3D视图」 4(이름·경고 칩 둘·해석 판단 글 — 이번에 맞춤)
+    expect(dict('zh-CN')['3D 보기']).toBe('3D 视图');
+    for (const [key, value] of Object.entries(dict('zh-CN'))) expect(value, key).not.toMatch(/3D视图/);
+    // 열 때 받는 조각을 받지 못한 글(211차 틀 — 앱은 mixSpan ui로 이름도 옮긴다)
+    expect(translate('3D 보기을(를) 불러오지 못했습니다.', 'zh-CN', true)).toBe('无法加载“3D 视图”。');
+  });
+  it('중국어 키 이름 괄호(空格键도)는 반각 + 빈칸, 영어 단축키 창 묶음 제목은 첫 낱말만 대문자', () => {
+    // 키 글만 든 괄호: 반각 + 빈칸 5(「适合窗口 (F)」·「打开文件 (Ctrl+O)」 등) : 전각 2(재생 버튼 풍선 글의 「（空格键）」 둘 — 이번에 맞춤, 217차 시험의 키 목록에 空格键을 더함)
+    const KEY = String.raw`(?:F\d*|\d–\d|\?|Esc|Enter|Tab|Shift|Ctrl\+\w+|空格键)`;
+    const fullKeys = new RegExp(`（${KEY}(?: · ${KEY})*）`);
+    for (const [key, value] of Object.entries(dict('zh-CN'))) expect(value, key).not.toMatch(fullKeys);
+    expect([dict('zh-CN')['재생 / 멈춤 (Space)'], dict('zh-CN')['공구 경로 재생 / 멈춤 (Space)']]).toEqual(['播放/暂停 (空格键)', '播放刀具路径/暂停 (空格键)']);
+    // 단축키 창 묶음 제목(src/app/shortcuts.ts SHORTCUTS — 창 글 전체는 tests/app/shortcuts.test.ts가 본다): Play·Code·Measure·Virtual cursor·Others처럼 View tools
+    // (짧은 값 두세 낱말에서 첫 낱말만 대문자 154 : 모든 낱말 대문자 19 — 고유 이름 Heidenhain Klartext 등 포함)
+    for (const title of ['보기 도구', '재생', '코드', '측정', '가상 커서', '기타']) expect(dict('en')[title], title).toMatch(/^[A-Z][^A-Z]*$/);
   });
 });

@@ -34,7 +34,7 @@ import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, t
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
 import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
-import { mixNodes, mixText, uiText } from './i18n';
+import { mixNodes, mixText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
 import { icon, type IconName } from './icons';
 import { isEditableTarget, isPressTarget, keyAction, readCharKeysPref, tabMove, viewKeyOf, writeCharKeysPref } from './keys';
@@ -1149,8 +1149,8 @@ export class NcViewerApp implements PanelHost {
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
-        // 199차: 까닭은 따로 옮겨지게 글 마디마다(31차 꼴) — 「이름: 까닭」을 한 글로 이으면 맞는 사전 틀이 없어 다른 언어에서도 통째 한국어로 남았다
-        this.showError([fileText(label), ': ', errorText(e)], true);
+        // 199차: 까닭은 따로 옮겨지게 글 마디마다(31차 꼴) — 「이름: 까닭」을 한 글로 이으면 맞는 사전 틀이 없어 다른 언어에서도 통째 한국어로 남았다(218차: 까닭은 mixSpan ui)
+        this.showError([fileText(label), ': ', errorText(e)], 'reason');
         attempt.error('fetch_error');
       }
       return false;
@@ -1206,8 +1206,9 @@ export class NcViewerApp implements PanelHost {
       if (seq === this.loadSeq) {
         // 215차: 3D 보기 코어 조각을 받지 못했고(ensureViewer가 감싼 오류의 까닭 — 해석 워커·뷰어를 만들지 못함은 까닭이 받기 실패가 아니다) 다시 열 길이 있으면 openFailed
         if (again && isChunkLoadError((e as Error | undefined)?.cause)) this.openFailed(e, '3D 보기', again);
-        // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등 까닭은 따로 옮겨지게 글 마디마다(199차 — 위 openUrl과 같음)
-        else this.showError([fileText(name), ': ', errorText(e)], true);
+        // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등 까닭은 따로 옮겨지게 글 마디마다(199차 — 위 openUrl과 같음).
+        // 218차: 까닭은 틀이 잡은 앱 글까지 그릴 때 언어로(showError 'reason' — ensureViewer의 「3D 보기를 만들지 못했습니다: {0}」은 원문으로 던진다)
+        else this.showError([fileText(name), ': ', errorText(e)], 'reason');
         attempt.error('parse_error');
       }
       return false;
@@ -1391,15 +1392,18 @@ export class NcViewerApp implements PanelHost {
   }
 
   /** 마지막 오류 알림의 글과 조각 여부(시작 화면 — 언어를 바꾸면 다시 그린다) */
-  private errorMsg: [Mixed, boolean] = [[], false];
+  private errorMsg: [Mixed, boolean | 'reason'] = [[], false];
   /** 215차: 시작 화면 오류 칸의 받기 실패(openFailed — 조각 이름과 그 열기를 처음부터 하는 길). 다른 오류(showError)가 비운다(문서가 열리면 오류 칸이 숨어 쓰지 않는다) */
   private startFail: [string, () => void] | null = null;
 
   /**
    * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다(199차),
-   * split이면 조각마다 글 마디 하나(번역층이 따로 옮기고 파일 글 조각은 옮기지 않는다)
+   * split이면 조각마다 글 마디 하나(번역층이 따로 옮기고 파일 글 조각은 옮기지 않는다).
+   * 218차: 'reason'(「이름: 까닭」 — openUrl·openBuffer의 열기 오류)이면 끝 조각(까닭 하나)은 틀이 잡은 앱 글까지 그릴 때 언어로(mixSpan ui — 언어를 바꾸면 다시 그리고 알림 상자는 relangToasts).
+   * 전에는 까닭도 글 마디라 「3D 보기를 만들지 못했습니다: {코어·앱 글}」(ensureViewer)의 잡은 값을 번역층이 옮기지 않아, 던질 때 언어로 굳힌 글(uiText)이 언어를 바꾸면
+   * 한국어 화면에서 바꾼 다른 언어에 한국어 까닭으로, 다른 언어에서 바꾸면 앞 언어 글로 남았다(WCAG 3.1.2)
    */
-  private showError(msg: string | Mixed, split = false): void {
+  private showError(msg: string | Mixed, split: boolean | 'reason' = false): void {
     const m = typeof msg === 'string' ? [msg] : msg;
     this.error = plainText(m);
     this.errorMsg = [m, split];
@@ -1414,6 +1418,7 @@ export class NcViewerApp implements PanelHost {
 
   private errorNodes(): (string | Node)[] {
     const [m, split] = this.errorMsg;
+    if (split === 'reason') return [...pieces(m.slice(0, -1)), mixSpan(m.slice(-1), undefined, true)];
     return split ? pieces(m) : [mixSpan(m, undefined, true)];
   }
 
@@ -1495,8 +1500,9 @@ export class NcViewerApp implements PanelHost {
     try {
       core = await loadViewerCore();
     } catch (e) {
-      // 215차: 받기 실패를 까닭(cause)으로 넘긴다 — 다시 열 길이 있는 열기(openBuffer again)만 그것을 보고 「3D 보기을(를) 불러오지 못했습니다.」와 다시 시도(글은 그대로)
-      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`), { cause: e });
+      // 215차: 받기 실패를 까닭(cause)으로 넘긴다 — 다시 열 길이 있는 열기(openBuffer again)만 그것을 보고 「3D 보기을(를) 불러오지 못했습니다.」와 다시 시도(글은 그대로).
+      // 218차: 글은 원문으로 — 받는 쪽(openBuffer showError 'reason')이 그릴 때 언어로 옮긴다(던질 때 옮기면 언어를 바꿔도 그 언어 글로 남았다)
+      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`, { cause: e });
     }
     // 215차: 받으면 떠 있는 그 실패 알림을 닫는다(214차 꼴 — 다른 길로 열어 받아도)
     loadDone('3D 보기');
@@ -1511,8 +1517,9 @@ export class NcViewerApp implements PanelHost {
       v = new core.Viewer3d(this.viewEl, { theme: this.theme, viewCubeSize: this.cubeSizeFor(), animate: 'auto' });
     } catch (e) {
       if (!this.doc) this.viewEl.hidden = true;
-      // 107차: 코어 Error 글(WebGL2 없음 등)까지 지금 언어로 옮겨 던진다 — 받는 쪽이 파일 이름과 섞는 "{파일}: …"에는 맞는 틀이 없어 통째로 한국어로 남았다
-      throw new Error(uiText(`3D 보기를 만들지 못했습니다: ${errorText(e)}`));
+      // 107차: 코어 Error 글(WebGL2 없음 등)까지 지금 언어로 — 받는 쪽이 파일 이름과 섞는 "{파일}: …"에는 맞는 틀이 없어 통째로 한국어로 남았다.
+      // 218차: 원문으로 던지고 받는 쪽(openBuffer showError 'reason')이 그릴 때·언어를 바꿀 때마다 그 언어로 옮긴다(107차는 던질 때 옮겨 언어를 바꾸면 굳은 글이 남았다)
+      throw new Error(`3D 보기를 만들지 못했습니다: ${errorText(e)}`);
     }
     this.viewer = v;
     this.applyThemeUi();
