@@ -535,7 +535,7 @@
   "변수 {0} 식 \"{1}\"을 계산할 수 없음": "Variable {0}: expression \"{1}\" cannot be evaluated",
   "변수 번호 없음": "No variable number",
   "변수가 없습니다.": "There is no variable.",
-  "보기 도구": "View Tools",
+  "보기 도구": "View tools",
   "보기 선택": "Select view",
   "보기 설정": "View settings",
   "보링 사이클 시프트 Q는 평면 첫 축 + 방향으로 봄(기계 매개변수에 따라 다름)": "Boring-cycle shift Q is taken in the + direction of the plane's first axis (depends on machine parameters)",

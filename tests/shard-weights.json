@@ -10,6 +10,7 @@
   "tests/app/format.test.ts": 13,
   "tests/app/g1curve.test.ts": 424,
   "tests/app/i18n-screens199.test.ts": 27044,
+  "tests/app/i18n-states218.test.ts": 13437,
   "tests/app/intersect.test.ts": 30,
   "tests/app/job.test.ts": 1271,
   "tests/app/keysnap-core.test.ts": 931,

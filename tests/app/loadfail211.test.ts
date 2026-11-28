@@ -505,7 +505,8 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     expect(LANGS.map((l) => translate('깎기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Simulate".', '「切削」を読み込めませんでした。', '无法加载“切削”。', '„Abtrag“ konnte nicht geladen werden.']);
     // 215차: 새 이름(메뉴 항목·버튼 글 — 새 열쇠 0)
     expect(LANGS.map((l) => translate('소재 깎기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Stock removal".', '「素材の切削」を読み込めませんでした。', '无法加载“毛坯切削”。', '„Materialabtrag“ konnte nicht geladen werden.']);
-    expect(LANGS.map((l) => translate('3D 보기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "3D view".', '「3Dビュー」を読み込めませんでした。', '无法加载“3D视图”。', '„3D-Ansicht“ konnte nicht geladen werden.']);
+    // 218차: 중국어 이름 「3D 보기」는 라틴 글자·한자 사이를 띄운 3D 视图(같은 사전 띄움 363 : 붙임 31 — tests/i18n.test.ts 218차)
+    expect(LANGS.map((l) => translate('3D 보기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "3D view".', '「3Dビュー」を読み込めませんでした。', '无法加载“3D 视图”。', '„3D-Ansicht“ konnte nicht geladen werden.']);
     expect(LANGS.map((l) => translate('예제 열기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Open sample".', '「サンプルを開く」を読み込めませんでした。', '无法加载“打开示例”。', '„Beispiel öffnen“ konnte nicht geladen werden.']);
     expect(LANGS.map((l) => translate('다시 시도', l))).toEqual(['Try again', 'もう一度試す', '再试一次', 'Noch einmal versuchen']);
   });

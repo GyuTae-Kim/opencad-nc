@@ -314,8 +314,9 @@ describe('205차: 키보드 단축키 창(상자)', () => {
       ['X·Y·Z축 방향 잠그기(다시 누르면 풀기)', 'Shift로 X축 방향 잠그기', { en: 'axis', ja: '軸方向にロック', 'zh-CN': '锁定为', de: '-Richtung' }],
       [SHORTCUTS_TITLE, '3D 보기 밖에서도 한 글자 단축키(F·1~7·?)', { en: 'shortcuts', ja: 'ショートカット', 'zh-CN': '快捷键', de: 'Tastenkürzel' }],
       [SHORTCUT_NOTES[2]![0], '3D 보기 밖에서도 한 글자 단축키(F·1~7·?)', { en: 'shortcuts', ja: 'ショートカット', 'zh-CN': '快捷键', de: 'Tastenkürzel' }],
-      // 217차: 중국어 끝 줄은 문장 안 라틴 글자·한자 사이를 띄운다(「单击3D视图后」 → 「单击 3D 视图后」 — 같은 사전 띄움 363 : 붙임 31, 같은 메뉴 「在 3D 视图外」). 이름 「3D 보기」는 3D视图 그대로라 낱말은 「视图」
-      [SHORTCUT_NOTES[0]![0], '3D 보기', { en: '3D view', ja: '3Dビュー', 'zh-CN': '视图', de: '3D-Ansicht' }],
+      // 217차: 중국어 끝 줄은 문장 안 라틴 글자·한자 사이를 띄운다(「单击3D视图后」 → 「单击 3D 视图后」 — 같은 사전 띄움 363 : 붙임 31, 같은 메뉴 「在 3D 视图外」).
+      // 218차: 이름 「3D 보기」도 3D视图 → 3D 视图(같은 꼴)이라 낱말은 「3D 视图」
+      [SHORTCUT_NOTES[0]![0], '3D 보기', { en: '3D view', ja: '3Dビュー', 'zh-CN': '3D 视图', de: '3D-Ansicht' }],
     ];
     for (const lang of LANGS)
       for (const [ko, base, word] of basis) {
