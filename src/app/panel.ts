@@ -339,6 +339,8 @@ export class NcPanel {
     this.body.classList.toggle('code', d.panelTab === 'code');
     if (d.panelTab === 'code') this.renderCode(d);
     else {
+      // 220차: 같은 탭을 다시 그리면 그리기 전 몸통의 받기 실패 글 열쇠(dom.ts loadFailed — 같은 글이면 role 없이 그려 다시 읽히지 않게)
+      this.failWas = sameTab ? this.body.querySelector<HTMLElement>('[data-fail]')?.dataset.fail : undefined;
       this.body.textContent = '';
       if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d);
       // 210차: 공구·가공·변수·정보 탭 몸통은 문서를 열 때 받는 정보 탭 조각(panel-info.ts renderTab — 첫 화면 JS에서 뺐다). 받기 전이면 받은 뒤 다시 그린다(211차 waitTab)
@@ -364,6 +366,8 @@ export class NcPanel {
 
   /** 211차: 받는 중(true)·받지 못함(false)인 조각(그 받기 함수 — 정보 탭 조각 loadPanelInfo, 깎기 조각 app.ts simLoader) */
   private loads = new Map<() => Promise<unknown>, boolean>();
+  /** 220차: 지금 그리는 몸통이 그리기 전에 보이던 받기 실패 글 열쇠(같은 탭일 때만 — render가 적고 waitTab이 loadFailed에 넘긴다) */
+  private failWas: string | undefined;
 
   /**
    * 열 때 받는 조각이 그리는 탭 몸통(정보 탭 조각의 공구·가공·변수·정보 탭 — 210차, 깎기 조각의 깎기 탭 — app.ts renderSimTab)을 받기 전에 그렸다: 「불러오는 중…」을 두고
@@ -373,7 +377,7 @@ export class NcPanel {
    * 215차: 누른 다시 시도도 받지 못하면 그 버튼은 「새로 고침」(dom.ts loadFailed — 셈 열쇠는 이 받기 함수, 초점은 같은 자리 버튼)
    */
   waitTab(load: () => Promise<unknown>, name: string): void {
-    if (this.loads.get(load) === false) return loadFailed(name, () => this.fetchTab(load), this.body, load);
+    if (this.loads.get(load) === false) return loadFailed(name, () => this.fetchTab(load), this.body, load, this.failWas);
     this.body.append(h('p', { class: 'hint' }, '불러오는 중…'));
     this.fetchTab(load);
   }

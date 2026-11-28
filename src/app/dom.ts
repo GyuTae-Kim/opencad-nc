@@ -180,10 +180,16 @@ function failAction(retry: () => void, key: unknown): { label: string; run: () =
  * 215차: 탭 몸통의 「다시 시도」도 같은 셈과 같은 버튼(214차는 몸통을 그대로 두어 또 눌러도 또 실패했다). 셈 열쇠는 key — 탭 몸통은 받기 함수를 준다(정보 탭 조각 하나를
  * 공구·가공·변수·정보 이름 넷이 함께 써 이름으로 세면 한 탭의 누름이 같은 조각의 다른 탭에 닿지 않는다), 탭을 바꿔 다시 그린 실패 글은 세지 않는다. 몸통 버튼의 data-key는
  * 137차 몸통 열쇠(panel.ts render)라 글이 「새로 고침」으로 바뀌어도 다시 그린 몸통에서 초점은 같은 자리 버튼(211차 — 글이 열쇠면 탭 버튼으로 갔다)
+ * 220차(WCAG 4.1.3): 앱이 같은 탭 몸통을 다시 그릴 때마다(언어 바꿈·새 문서·같은 탭 다시 보이기·고르기·한 이동씩·장면 경고 등 — panel.ts render) 같은 실패 글이 새 role=alert 마디로 붙어
+ * 사용자가 이 실패에 아무것도 누르지 않았는데도 화면 읽기 프로그램이 거듭 읽을 수 있었다. 글 열쇠(이름과 버튼 원문 — data-fail)가 그리기 전 몸통의 실패 글과 같으면(was) role 없이 같은 글로 그린다.
+ * 처음 실패·누른 다시 시도의 또 실패(버튼이 「새로 고침」)·탭을 바꿔 처음 보인 실패는 열쇠가 달라(render는 같은 탭일 때만 was를 준다) alert. 같은 마디를 옮겨 붙이지 않는 까닭은 render가 몸통을 비워
+ * 떼었다 붙이면 브라우저에 따라 새로 끼운 alert로 볼 수 있어서다. 버튼 data-key(137·215차 초점 열쇠)는 그대로. 알림 상자 갈래(거듭 누르면 새로 붙여 다시 읽힘 — 211차)는 그대로
  */
-export function loadFailed(name: string, retry: () => void, body?: HTMLElement, key: unknown = name): void {
+export function loadFailed(name: string, retry: () => void, body?: HTMLElement, key: unknown = name, was?: string): void {
   if (!body) return toast([failText(name)], 'error', 8000, failAction(retry, key));
-  body.append(h('p', { class: 'hint', role: 'alert' }, ...failParts(name, retry, key)));
+  const parts = failParts(name, retry, key);
+  const fail = name + parts[2].textContent;
+  body.append(h('p', { class: 'hint', role: fail === was ? null : 'alert', 'data-fail': fail }, ...parts));
 }
 
 /**
