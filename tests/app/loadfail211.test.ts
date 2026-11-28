@@ -7,6 +7,8 @@
  * 212차: 그 둘도 — 3D 보기 띠는 알림 상자에 같은 글(이름 「가상 커서」)과 다시 시도(그 조각만 다시 받아 붙임), 언어 사전은 첫 사전이면 한국어로 세워 언어 메뉴를 두고
  * 메뉴에서 고른 언어와 함께 언어 이름으로 같은 글(지금 화면 언어 — 받지 못한 언어가 아니라 바꾸기 전 언어)과 다시 시도(그 언어로 바꾸기).
  * 같은 글 거르기는 원문으로 견줘 언어를 바꾼 사이의 같은 실패도 하나, 받기 실패 까닭 글(Firefox·Safari·vite)은 앱 원문 하나로.
+ * 213차: 3D 보기 띠는 알림이 닫힌 뒤에도 띠가 필요한 때(뷰어가 있을 때 문서 열기·3D 보기 키 — 받는 중이 아닐 때, 뷰어마다 셋까지) 조용히 다시 받는다(다시 받지 못하면 같은 알림 하나).
+ * 같은 글 거르기에서 mixSpan·문자열 밖 조각은 파일 이름 조각(translate="no")뿐이라 붙일 때의 글이 곧 원문 — 언어를 바꾼 사이의 같은 실패도 하나임을 고정한다.
  * 가짜 실패: vi.mock 공장이 그 조각 이름이 ctl.fail에 있는 동안 던지고, 빼면 원래 모듈을 준다(던진 공장은 캐시되지 않아 다시 받기가 공장을 다시 부른다 —
  * 받은 뒤에는 캐시되어 다시 실패시킬 수 없으니 조각마다 「실패 → 받기」를 한 번씩, 시험 차례가 그것을 따른다 — 코어 약속(core.ts loadViewerCore)도 이 파일에서 한 번 받으면
  * 남아 3D 보기 띠 시험이 맨 앞, 사전 값을 보는 시험(site/i18n.mjs가 네 사전을 정적으로 가져옴)이 사전 시험 뒤).
@@ -184,7 +186,7 @@ const pick = (lang: string): void => document.querySelector<HTMLButtonElement>(`
 
 // 이 묶음이 맨 앞: 3D 보기 띠는 코어 약속이 이 파일에서 처음 받는 때만, 사전 둘은 아래 211차 사전 값 시험(site/i18n.mjs가 정적으로 받음)보다 먼저 실패시킬 수 있다
 describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언어를 바꾼 사이의 같은 실패, 받기 실패 까닭 글', () => {
-  it('3D 보기 띠 조각: 받지 못해도 문서는 열고 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 다시 시도 — 다시 시도로 받으면 단면 손잡이·가상 커서 알림 칸을 붙인다', async () => {
+  it('3D 보기 띠 조각: 받지 못해도 문서는 열고 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 다시 시도 — 213차: 알림이 닫힌 뒤에도 다음 문서 열기·3D 보기 키에 조용히 다시 받아(다시 받지 못하면 같은 알림 하나) 받으면 단면 손잡이·가상 커서 알림 칸을 붙인다', async () => {
     // 정보 탭 조각도 받지 못하게 둔다(여기서 받으면 캐시되어 아래 211차 정보 탭 시험이 실패시킬 수 없다 — 받지 못한 약속은 비워진다)
     ctl.fail.add('ui');
     ctl.fail.add('info');
@@ -200,12 +202,27 @@ describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언�
     // 다시 받지 못하면 알림은 새 알림 하나로 바뀐다(같은 글 하나)
     a.querySelector<HTMLButtonElement>('.toast-act')!.click();
     await vi.waitFor(() => expect(only(TEXT)).not.toBe(a), WAIT);
+    // 213차: 알림을 닫으면(✕ — 8초 뒤 저절로 닫힐 때와 같다) 212차는 다시 받는 길이 없었다(다른 문서를 열어도 뷰어가 이미 있어 그대로 — 새로 고침뿐)
+    only(TEXT).querySelector<HTMLButtonElement>('.toast-x')!.click();
+    expect(toastsWith(TEXT)).toHaveLength(0);
+    // 다음 문서 열기: 조용히 다시 받는다 — 받지 못하면 같은 알림이 다시 하나
+    expect(await app.openBuffer('part2.MPF', enc(SIE))).toBe(true);
+    const b = await vi.waitFor(() => only(TEXT), WAIT);
+    // 3D 보기 키(가상 커서를 켜는 Enter): 한 번 더 — 받지 못하면 그 알림이 새 알림으로 바뀐다(둘이 되지 않음)
+    fake.FakeViewer.last!.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(only(TEXT)).not.toBe(b), WAIT);
+    // 받을 수 있게 되면 다음 문서 열기에 받아 붙인다(조용한 다시 받기 셋째 — 뷰어마다 셋까지)
     ctl.fail.delete('ui');
-    only(TEXT).querySelector<HTMLButtonElement>('.toast-act')!.click();
+    const stale = only(TEXT);
+    expect(await app.openBuffer('part3.MPF', enc(SIE))).toBe(true);
     await vi.waitFor(() => expect(view.querySelector('.key-live')).not.toBeNull(), WAIT);
     // 손잡이는 붙되 단면이 꺼져 있어 숨음(placeSecHandle)
     expect(view.querySelector<HTMLElement>('.sec-handle')?.hidden).toBe(true);
+    // 남은 알림의 다시 시도는 받은 뒤라 아무것도 하지 않고 닫히며, 다음 문서를 열어도 다시 받지 않는다(띠는 하나)
+    stale.querySelector<HTMLButtonElement>('.toast-act')!.click();
     expect(toastsWith(TEXT)).toHaveLength(0);
+    expect(await app.openBuffer('part4.MPF', enc(SIE))).toBe(true);
+    expect([view.querySelectorAll('.key-live').length, view.querySelectorAll('.sec-handle').length]).toEqual([1, 1]);
   });
 
   it('언어 사전 조각: 첫 사전을 받지 못하면 한국어로 세워 언어 메뉴를 두고, 메뉴에서 고른 언어도 — 지금 화면 언어로 「{언어 이름}을(를) 불러오지 못했습니다.」와 다시 시도, 언어를 바꾼 사이의 같은 실패도 하나', async () => {
@@ -353,5 +370,35 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     ]);
     expect(LANGS.map((l) => translate('깎기을(를) 불러오지 못했습니다.', l, true))).toEqual(['Could not load "Simulate".', '「切削」を読み込めませんでした。', '无法加载“切削”。', '„Abtrag“ konnte nicht geladen werden.']);
     expect(LANGS.map((l) => translate('다시 시도', l))).toEqual(['Try again', 'もう一度試す', '再试一次', 'Noch einmal versuchen']);
+  });
+});
+
+// 213차: 맨 끝(앞 묶음이 조각마다 「실패 → 받기」를 마친 뒤 — 이 시험은 받기 실패를 쓰지 않는다)
+describe('213차: 같은 글 알림 견주기 — mixSpan·문자열 밖 조각', () => {
+  it('파일 이름 조각이 섞인 열기 실패 알림(조각마다 글 마디 — showError split)도 언어를 바꾼 사이의 같은 실패는 하나 — 파일 이름 조각(translate="no")은 번역하지 않아 붙일 때의 글이 곧 원문(고치기 전에도 통과 — 재발 막기)', async () => {
+    const lang0 = document.documentElement.lang;
+    const { app, root } = mount();
+    const dispose = await installLocalization(root);
+    // 이 파일 이름 조각으로 시작하는 오류 알림만(앞 시험의 앱 — 깎기 조각을 받은 앱 등 — 이 늦게 띄우는 다른 알림은 같은 상자에 와도 셈 밖)
+    const errs = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.toasts > .toast.error')].filter((t) => t.firstElementChild?.textContent === 'empty.MPF');
+    try {
+      expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
+      // 이동이 없는 프로그램: 문서가 있으면 알림 상자에 [파일 이름 조각, ': ', 까닭 …](app.ts showError split — 조각마다 번역층이 따로 옮긴다)
+      expect(await app.openBuffer('empty.MPF', enc('G90\nM30\n'))).toBe(false);
+      await vi.waitFor(() => expect(errs()).toHaveLength(1), WAIT);
+      const first = errs()[0]!;
+      const name = first.firstElementChild!;
+      expect([name.getAttribute('translate'), name.textContent, name.hasAttribute('data-i18n-skip')]).toEqual(['no', 'empty.MPF', false]);
+      pick('en');
+      await vi.waitFor(() => expect(document.documentElement.lang).toBe('en'), WAIT);
+      // 영어 화면에서 같은 실패: 앞 알림(한국어 화면 때 붙임 — 번역층이 영어로 다시 옮김)과 견줘 새 알림 하나
+      expect(await app.openBuffer('empty.MPF', enc('G90\nM30\n'))).toBe(false);
+      await vi.waitFor(() => expect(errs()[0]).not.toBe(first), WAIT);
+      expect(errs()).toHaveLength(1);
+      expect(errs()[0]!.firstElementChild!.textContent).toBe('empty.MPF');
+    } finally {
+      dispose();
+      document.documentElement.lang = lang0;
+    }
   });
 });

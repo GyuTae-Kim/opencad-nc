@@ -282,6 +282,11 @@ export class NcViewerApp implements PanelHost {
   pickThrough = false;
   /** 3D 보기 키보드 붙잡기·고르기(56차 keysnap.ts — 뷰어와 함께 받는다) */
   private keySnap: KeySnap | null = null;
+  /**
+   * 213차: 3D 보기 띠(viewer-ui)를 받지 못했을 때의 다시 받기(ensureViewer attach가 둔다 — 받는 동안·받은 뒤에는 없다).
+   * auto면 띠가 필요한 때의 조용한 다시 받기(뷰어가 있을 때 문서 열기·3D 보기 키 — 뷰어마다 셋까지), 아니면 알림의 「다시 시도」
+   */
+  private uiRetry?: (auto?: boolean) => void;
 
   // ── 화면 요소 ──
   private readonly root: HTMLElement;
@@ -1429,7 +1434,8 @@ export class NcViewerApp implements PanelHost {
    * 뷰어는 this.viewer로 쓴다(약속의 값으로 돌려주지 않는다 — 시험의 가짜 뷰어처럼 then이 있는 것도 그대로 두게)
    */
   private async ensureViewer(): Promise<void> {
-    if (this.viewer) return;
+    // 213차: 뷰어가 있으면 그대로 — 3D 보기 띠를 받지 못한 채면 이 문서 열기에 조용히 다시 받는다(uiRetry, 기다리지 않음)
+    if (this.viewer) return this.uiRetry?.(true);
     // 측정 도구 조각(코어보다 훨씬 작다)도 함께 기다려 첫 문서가 보일 때 측정이 바로 켜지게 한다. 받지 못하거나 코어 뒤에도 늦으면
     // 기다리지 않고 연다(측정을 켤 때 FirstUse로 받는다)
     const measure = this.mlock ? null : this.ensureMeasureTools().catch(() => undefined);
@@ -1466,9 +1472,20 @@ export class NcViewerApp implements PanelHost {
     // 단면 손잡이·키보드 붙잡기(56차 viewer-ui.ts — 코어와 함께 받았다. 받지 못했으면 그것만 없이).
     // 212차: 받지 못했으면 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 「다시 시도」(그 조각만 다시 받아 붙인다 — core.ts loadViewerUi; 전에는 글 없이 빠지고
     // 뷰어가 생긴 뒤 다시 받지 않았다). 늦게 붙여도 단면이 켜져 있으면 손잡이가 보이게 자리를 맞춘다
+    // 213차: 알림의 「다시 시도」만이 아니라 띠가 필요한 때(다음 문서 열기·3D 보기 키 — uiRetry(true))에도 다시 받는다 — 212차는 알림이 닫히면(8초) 새로 고침뿐이었다.
+    // 받는 동안은 uiRetry를 비워(받는 중 깃발) 두 길이 겹쳐 띠를 둘 붙이지 않고, 다시 받지 못하면 같은 알림(211차 같은 글 하나).
+    // 조용한 다시 받기는 뷰어마다 셋까지(사용자 동작 두 곳에서만 부르고 되풀이가 고리가 되지 않게 — 그 뒤는 알림의 「다시 시도」만)
+    let tries = 0;
     const attach = (): void => {
       const ui = viewerUi();
-      if (!ui) return loadFailed('가상 커서', () => void loadViewerUi().then(attach, attach));
+      if (!ui) {
+        this.uiRetry = (auto) => {
+          if (auto && tries++ > 2) return;
+          this.uiRetry = undefined;
+          void loadViewerUi().then(attach, attach);
+        };
+        return loadFailed('가상 커서', () => this.uiRetry?.());
+      }
       this.viewEl.append((this.secHandle = ui.makeSecHandle(() => this.viewer)));
       this.keySnap = new ui.KeySnap(this, core);
       this.placeSecHandle();
@@ -2505,6 +2522,8 @@ export class NcViewerApp implements PanelHost {
       return;
     }
     const v = this.viewer;
+    // 213차: 3D 보기 키(가상 커서를 켜는 Enter 등 — 누르고 있는 반복 키는 빼고)면 받지 못한 3D 보기 띠를 조용히 다시 받는다(uiRetry)
+    if (t === v?.canvas && !ev.repeat) this.uiRetry?.(true);
     // 56차(keysnap.ts): 커서가 꺼져 있으면 캔버스 화살표로 코어가 커서를 켜지 않게 한다(고르기 Tab의 묶음 단위는 58차부터 코어 pickCycle group — 처리해 막는 키는 없다)
     if (v && this.keySnap?.key(ev, t === v.canvas)) return;
     // 범위 막대(재생 위치)는 화살표를 스스로 쓴다
