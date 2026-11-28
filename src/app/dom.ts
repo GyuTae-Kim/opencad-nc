@@ -109,6 +109,10 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   const close = h('button', { class: 'toast-x', type: 'button', 'aria-label': '알림 닫기', title: '닫기' }, '×');
   close.addEventListener('click', drop);
   el.append(close);
+  // 211차: 같은 글의 알림이 떠 있으면 그것을 빼고 새 알림을 붙인다 — 같은 실패를 거듭해도(받지 못한 조각의 다시 시도·같은 버튼 다시 누름) 쌓이지 않고 하나(가장 새 알림으로
+  // 새로 읽히고 시간도 새로). 초점이 그 안이었으면 dropToast(208·209차 — 남은 알림의 같은 자리·남는 칸). 붙이기 전 글로 견준다(번역층은 붙인 뒤에 옮긴다)
+  const key = (el.dataset.k = kind + el.textContent);
+  for (const c of [...host.children]) if ((c as HTMLElement).dataset.k === key) dropToast(c);
   host.append(el);
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
   // 모두 오류면 가장 오래된 것(한도는 늘 지킨다). 오류가 없으면 전과 같다. 209차: 초점이 빼는 알림 안이면 남은 알림의 같은 자리로(dropToast)
@@ -130,4 +134,17 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   });
   el.addEventListener('focusout', later);
   later();
+}
+
+/**
+ * 211차: 열 때 받는 조각(동적 가져오기)을 받지 못했다(오프라인에서 새 판과 옛 캐시가 엇갈림·연결 끊김 등) — 글은 「{이름}을(를) 불러오지 못했습니다.」 하나(이름은 그 기능을 여는
+ * 탭·메뉴 항목의 글 — 한 기능 한 낱말, 틀이 잡은 이름도 옮긴다)와 「다시 시도」(같은 받기를 다시 — 받지 못한 약속은 비워 둔다). 전에는 console.error만 남아 빈 탭·「불러오는 중…」에
+ * 멈춘 탭·열리지 않는 창으로 까닭 없이 보였다(WCAG 3.3.1·4.1.3). body(탭 몸통 — panel.ts waitTab)를 주면 거기에 글(role=alert)과 버튼, 없으면(창 — 단축키 창) 알림 상자의 동작 버튼
+ */
+export function loadFailed(name: string, retry: () => void, body?: HTMLElement): void {
+  const text = mixSpan([`${name}을(를) 불러오지 못했습니다.`], undefined, true);
+  if (!body) return toast([text], 'error', 8000, { label: '다시 시도', run: retry });
+  const b = h('button', { class: 'btn small', type: 'button' }, '다시 시도');
+  b.addEventListener('click', retry);
+  body.append(h('p', { class: 'hint', role: 'alert' }, text, ' ', b));
 }

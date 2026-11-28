@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { h, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -2009,11 +2009,16 @@ export class NcViewerApp implements PanelHost {
     s.setOn(on ?? !s.on);
   }
 
-  /** 패널 "깎기" 탭(모듈을 받기 전이면 받은 뒤 다시 그린다) */
+  /** 211차: 깎기 조각 받기(패널 waitTab이 받는 중·받지 못함을 이 함수로 센다 — 한 함수) */
+  private readonly simLoader = (): Promise<unknown> => this.ensureSim();
+
+  /**
+   * 패널 "깎기" 탭(모듈을 받기 전이면 받은 뒤 다시 그린다 — 정보 탭 조각과 같은 panel.ts waitTab). 211차: 받지 못했으면 실패 글과 「다시 시도」 —
+   * 전에는 「불러오는 중…」에 멈췄다(다른 탭에 갔다 와야 다시 받았다)
+   */
   renderSimTab(body: HTMLElement, d: NcDoc): void {
     if (this.sim) return this.sim.renderTab(body, d);
-    body.append(h('p', { class: 'hint' }, '불러오는 중…'));
-    void this.ensureSim().then(() => this.panel.refresh(), () => undefined);
+    this.panel.waitTab(this.simLoader, '깎기');
   }
 
   // ───────────────────────── 재생 ─────────────────────────
@@ -2563,7 +2568,7 @@ export class NcViewerApp implements PanelHost {
 
   /**
    * 205차: 키보드 단축키 창(? 키·앱 설정 메뉴). 창 글·그리기는 열 때 받는 조각(shortcuts.ts — 첫 화면 JS 밖, 오프라인은 서비스 워커가 미리 담음).
-   * 받는 동안·열린 동안은 다시 열지 않고(keysHelp), 받지 못하면 console.error(다음 누름에 다시 받는다)
+   * 받는 동안·열린 동안은 다시 열지 않고(keysHelp), 받지 못하면 console.error(다음 누름에 다시 받는다 — 211차: 알림 상자에 실패 글과 「다시 시도」도)
    * 206차: 초점이 열린 메뉴(설정·보기 설정 메뉴·단면 상자) 안이면 메뉴 항목 누름(menu — 메뉴를 닫고 메뉴 버튼에 초점)과 같게 메뉴 버튼에서 연다. 메뉴 항목에서 ?로 열면
    * 창 닫기 버튼이 받는 초점에 메뉴가 닫혀(focusin) 연 항목이 숨어, 닫을 때 돌려줄 곳이 없어 초점이 문서로 빠졌다(WCAG 2.4.3)
    */
@@ -2589,6 +2594,8 @@ export class NcViewerApp implements PanelHost {
       .catch((e: unknown) => {
         this.keysHelp = false;
         console.error(e);
+        // 211차: 창 대신 알림 상자에(전에는 console.error만 — ?·메뉴를 눌러도 아무 일이 없었다). 다시 시도는 같은 열기(import()를 다시 부른다)
+        loadFailed('키보드 단축키', () => this.openShortcuts());
       });
   }
 

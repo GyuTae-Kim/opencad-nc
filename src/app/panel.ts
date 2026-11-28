@@ -12,7 +12,7 @@ import { PLAY_SPEEDS, formatDuration, type PlaySpeed } from '../view/playback';
 import { VirtualList } from '../view/vlist';
 import { itemName, jobLineOf, jobLineToGlobal, lineLabel, lineNumberText, mprOpAtLine, mprOps, moveState, panelTabs, selectedLineText, unitLabel, type NcDoc } from './doc';
 import { onceImport } from './core';
-import { fileSpan, h, mixSpan } from './dom';
+import { fileSpan, h, loadFailed, mixSpan } from './dom';
 import { mix } from './filetext';
 import { mixNodes } from './i18n';
 import { fmtNum, fmtPt } from './format';
@@ -315,8 +315,10 @@ export class NcPanel {
     // 탭 버튼 줄을 새로 만든다 — 초점이 탭 버튼에 있었으면(키보드로 누름 등) 새 줄의 같은 탭 버튼으로(떼어진 버튼에서 문서로 빠지지 않게)
     const focused = this.tabsEl.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.tab : undefined;
     this.tabsEl.textContent = '';
+    let name = '';
     for (const [k, label] of panelTabs(d)) {
       const on = k === d.panelTab;
+      if (on) name = label;
       const b = h('button', { class: `panel-tab${on ? ' active' : ''}`, type: 'button', role: 'tab', id: `panel-tab-${k}`, 'aria-controls': 'panel-body', 'aria-selected': on ? 'true' : 'false', tabindex: on ? '0' : '-1', 'data-tab': k }, label);
       b.addEventListener('click', () => {
         if (d.panelTab === k) return;
@@ -339,9 +341,9 @@ export class NcPanel {
     else {
       this.body.textContent = '';
       if (d.panelTab === 'sim') this.host.renderSimTab(this.body, d);
-      // 210차: 공구·가공·변수·정보 탭 몸통은 문서를 열 때 받는 정보 탭 조각(panel-info.ts renderTab — 첫 화면 JS에서 뺐다). 받기 전이면 받은 뒤 다시 그린다
+      // 210차: 공구·가공·변수·정보 탭 몸통은 문서를 열 때 받는 정보 탭 조각(panel-info.ts renderTab — 첫 화면 JS에서 뺐다). 받기 전이면 받은 뒤 다시 그린다(211차 waitTab)
       else if (info) info.renderTab(this, d);
-      else this.waitInfo();
+      else this.waitTab(loadPanelInfo, name);
       if (sameTab) this.body.scrollTop = scroll;
     }
     // 137차: 몸통 칸마다 열쇠(태그 · data-key, 없으면 aria-label·감싼 label·글 — 121차 깎기 탭 꼴)를 그린 바로 뒤(화면 번역층이 옮기기 전 한국어 원문) 적고,
@@ -354,33 +356,39 @@ export class NcPanel {
     }
     // 175차(WCAG 2.4.3): 코드 탭으로 가는 몸통 버튼(정보 탭 경고·작업 파일, 공구 탭 Z 최저)은 같은 열쇠 칸이 없고 코드 목록(열쇠 칸 밖)은 떼였다 다시 붙어
     // 초점이 문서로 빠졌다 — 초점이 몸통 안이었을 때만 같은 자리의 코드 목록으로(그 줄이 지금 줄, ↑↓로 줄을 옮김 — 찾기 칸 Esc와 같은 곳)
-    if (inBody && d.panelTab === 'code' && !this.body.contains(document.activeElement)) this.code?.el.focus({ preventScroll: true });
+    // 211차: 다른 탭도 같은 열쇠 칸이 없으면(열 때 받는 조각을 받아 실패 글의 「다시 시도」가 사라짐 등) 지금 탭 버튼으로(207차 남는 칸)
+    if (inBody && !this.body.contains(document.activeElement)) (d.panelTab === 'code' ? this.code?.el : this.tabsEl.querySelector<HTMLElement>('.active'))?.focus({ preventScroll: true });
     this.renderFoot();
     this.onPlayback();
   }
 
-  /** 210차: 정보 탭 조각을 받는 중인지(받는 동안 다시 그려도 받기·받은 뒤 다시 그리기는 한 번) */
-  private infoLoading = false;
+  /** 211차: 받는 중(true)·받지 못함(false)인 조각(그 받기 함수 — 정보 탭 조각 loadPanelInfo, 깎기 조각 app.ts simLoader) */
+  private loads = new Map<() => Promise<unknown>, boolean>();
 
   /**
-   * 210차: 정보 탭 조각을 받기 전에 공구·가공·변수·정보 탭을 그렸다 — 받고(받는 중이면 그대로) 받으면 지금 탭이 그 탭들이면 다시 그린다.
-   * 받지 못하면 console.error(다음 그리기에서 다시 받는다 — onceImport, 205차 단축키 창 꼴). 문서는 app.ts ensureViewer가 이 조각을 기다린 뒤(3초 한도) 열려
-   * 보통은 이미 받았다(54차부터 정보 탭의 공구 경로 부분이 같은 꼴)
+   * 열 때 받는 조각이 그리는 탭 몸통(정보 탭 조각의 공구·가공·변수·정보 탭 — 210차, 깎기 조각의 깎기 탭 — app.ts renderSimTab)을 받기 전에 그렸다: 「불러오는 중…」을 두고
+   * 받고(받는 중이면 그대로 — 받기는 한 번) 끝나면 다시 그린다(코드 탭이 아니면 — refresh). 문서는 app.ts ensureViewer가 정보 탭 조각을 기다린 뒤(3초 한도) 열려 보통은 이미 받았다.
+   * 211차: 받지 못했으면(onceImport는 실패를 비워 다음 받기가 다시 받는다) 그 탭 이름으로 실패 글과 「다시 시도」 — 그리기마다 다시 받지 않는다. 전에는 정보 탭 조각은 빈 몸통,
+   * 깎기 조각은 「불러오는 중…」 그대로에 console.error만 남았다. 다시 시도는 실패 글을 둔 채 받고, 받으면 그린 몸통에서 초점은 지금 탭 버튼(render), 또 못 받으면 새 「다시 시도」(137차 열쇠)
    */
-  private waitInfo(): void {
-    if (this.infoLoading) return;
-    this.infoLoading = true;
-    loadPanelInfo().then(
-      () => {
-        this.infoLoading = false;
-        const t = this.doc?.panelTab;
-        if (t && t !== 'code' && t !== 'sim') this.render();
-      },
-      (e: unknown) => {
-        this.infoLoading = false;
-        console.error(e);
-      },
-    );
+  waitTab(load: () => Promise<unknown>, name: string): void {
+    if (this.loads.get(load) === false) return loadFailed(name, () => this.fetchTab(load), this.body);
+    this.body.append(h('p', { class: 'hint' }, '불러오는 중…'));
+    this.fetchTab(load);
+  }
+
+  private fetchTab(load: () => Promise<unknown>): void {
+    if (this.loads.get(load)) return;
+    this.loads.set(load, true);
+    void load()
+      .then(
+        () => this.loads.delete(load),
+        (e: unknown) => {
+          console.error(e);
+          this.loads.set(load, false);
+        },
+      )
+      .then(() => this.refresh());
   }
 
   // ───────────────────────── 재생 막대 ─────────────────────────

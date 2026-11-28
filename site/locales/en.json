@@ -1462,5 +1462,7 @@
   "가상 커서 끄기": "Turn off the virtual cursor",
   "고른 것 지우기": "Deselect",
   "가상 커서 키는 3D 보기를 누른 뒤 씁니다.": "Click the 3D view to use the virtual cursor keys.",
-  "입력 칸에 글을 넣는 동안에는 단축키가 듣지 않습니다.": "Shortcuts do not work while you type in an input field."
+  "입력 칸에 글을 넣는 동안에는 단축키가 듣지 않습니다.": "Shortcuts do not work while you type in an input field.",
+  "{0}을(를) 불러오지 못했습니다.": "Could not load \"{0}\".",
+  "다시 시도": "Try again"
 }
