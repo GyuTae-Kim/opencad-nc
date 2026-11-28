@@ -15,6 +15,8 @@
  * 215차: 탭 몸통의 다시 시도도 — 셈은 받기 함수(한 조각을 이름 넷이 함께 씀)로, 초점은 다시 그린 몸통의 같은 자리 버튼(글이 바뀌어도). 소재 깎기 메뉴 알림(108차)은 받기 실패면
  * 211차 틀(메뉴 항목 글)과 다시 시도(까닭은 콘솔에만 — 받기 실패가 아닌 오류는 108차 글 그대로), 다시 열 길이 있는 열기(예제·최근 문서·?open= 주소)가 예제·3D 보기 코어 조각을
  * 받지 못하면 같은 꼴(다시 시도 = 그 열기를 처음부터, 파일 고르기·끌어 놓기는 손에 바이트가 없어 지금처럼).
+ * 220차: 탭 몸통 실패 글이 떠 있는 채 앱이 같은 탭을 다시 그리면(언어 바꿈·같은 탭 다시 보이기·고르기·한 이동씩 등) 같은 글이 새 role=alert 마디로 붙어 거듭 읽힐 수 있었다 —
+ * 같은 글·같은 버튼이면 role 없이 그린다(처음 실패·누른 다시 시도의 또 실패·탭을 바꿔 처음 보인 실패만 alert).
  * 가짜 실패: vi.mock 공장이 그 조각 이름이 ctl.fail에 있는 동안 던지고, 빼면 원래 모듈을 준다(던진 공장은 캐시되지 않아 다시 받기가 공장을 다시 부른다 —
  * 받은 뒤에는 캐시되어 다시 실패시킬 수 없으니 조각마다 「실패 → 받기」를 한 번씩, 시험 차례가 그것을 따른다 — 코어 약속(core.ts loadViewerCore)도 이 파일에서 한 번 받으면
  * 남아 3D 보기 띠 시험이 맨 앞, 사전 값을 보는 시험(site/i18n.mjs가 네 사전을 정적으로 가져옴)이 사전 시험 뒤).
@@ -425,6 +427,63 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     // 받아 그리는 길(초점은 지금 탭 버튼)은 아래 깎기 시험이 본다(여기서는 몸통 버튼이 「새로 고침」뿐이고 jsdom에는 새로 고침이 없다)
     api.setPanelTab('tools');
     expect(alert()!.textContent).toBe('공구을(를) 불러오지 못했습니다. 새로 고침');
+  });
+
+  it('220차: 실패 글이 떠 있는 채 앱이 같은 탭 몸통을 다시 그리면(같은 탭 다시 보이기·언어 바꿈·패널 refresh·한 이동씩) 새 alert 마디 0 — 처음 실패·누른 다시 시도의 또 실패(「새로 고침」)·탭을 바꿔 처음 보인 실패만 alert, 초점은 다시 그린 몸통의 같은 자리 버튼', async () => {
+    // 깎기 조각(받기 함수가 앱마다 — 이 앱에서 셈이 처음)과 정보 탭 조각(공구 탭 — 위 시험이 누른 셈이 남아 버튼은 「새로 고침」일 수 있어 버튼 글은 보지 않는다)을 받지 못하게
+    ctl.fail.add('sim');
+    ctl.fail.add('info');
+    const { app, root } = mount();
+    expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
+    const api = window.opencadApp!;
+    api.togglePanel(true);
+    const body = root.querySelector<HTMLElement>('.panel-body')!;
+    // 몸통에 새로 붙은 alert 마디(붙은 마디와 그 안 — 화면 읽기 프로그램은 새로 붙은 role=alert를 읽는다). 셈은 그 자리에서 쌓인 기록까지(takeRecords)
+    let alerts = 0;
+    const add = (rs: MutationRecord[]): void => {
+      for (const r of rs) for (const n of r.addedNodes) if (n instanceof Element) alerts += Number(n.matches('[role="alert"]')) + n.querySelectorAll('[role="alert"]').length;
+    };
+    const mo = new MutationObserver(add);
+    mo.observe(body, { childList: true, subtree: true });
+    const seen = (): number => (add(mo.takeRecords()), alerts);
+    const failP = (name: string): HTMLElement | undefined => [...body.querySelectorAll<HTMLElement>('p')].find((p) => p.firstChild?.textContent === `${name}을(를) 불러오지 못했습니다.`);
+    try {
+      // 처음 실패(탭을 바꿔 그린 「불러오는 중…」 뒤 받기 끝) — alert 하나
+      api.setPanelTab('sim');
+      await vi.waitFor(() => expect(failP('깎기')).toBeDefined(), WAIT);
+      expect([seen(), failP('깎기')!.textContent, failP('깎기')!.getAttribute('role')]).toEqual([1, '깎기을(를) 불러오지 못했습니다. 다시 시도', 'alert']);
+      // 앱이 같은 탭을 다시 그림(사용자는 이 실패에 아무것도 누르지 않음): 같은 탭 다시 보이기(API — 정보 탭 열기·판단 띠 버튼과 같은 panel.show)·언어 바꿈(languagechange → panel.show)·패널 refresh.
+      // 214차까지는 그리기마다 같은 글이 새 role=alert 마디로 붙어 거듭 읽힐 수 있었다 — 같은 글·같은 버튼은 role 없이(새 alert 0)
+      const retry = failP('깎기')!.querySelector<HTMLButtonElement>('button')!;
+      retry.focus();
+      api.setPanelTab('sim');
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+      app.panel.refresh();
+      expect([seen(), failP('깎기')?.textContent, failP('깎기')?.getAttribute('role')]).toEqual([1, '깎기을(를) 불러오지 못했습니다. 다시 시도', null]);
+      // 초점은 다시 그린 몸통의 같은 자리 버튼(137차 몸통 열쇠·215차 data-key 그대로)
+      expect(focused()).toBe(failP('깎기')!.querySelector('button'));
+      expect(focused()).not.toBe(retry);
+      // 누른 다시 시도도 받지 못하면 「새로 고침」으로 바뀐 글은 새 alert(215차 기대 그대로) — 초점은 바뀐 버튼
+      failP('깎기')!.querySelector<HTMLButtonElement>('button')!.click();
+      await vi.waitFor(() => expect(failP('깎기')?.textContent).toBe('깎기을(를) 불러오지 못했습니다. 새로 고침'), WAIT);
+      expect([seen(), failP('깎기')!.getAttribute('role')]).toEqual([2, 'alert']);
+      expect(focused()).toBe(failP('깎기')!.querySelector('button'));
+      // 그 뒤 앱이 다시 그려도 새 alert 0
+      root.dispatchEvent(new CustomEvent('languagechange', { detail: 'ko' }));
+      api.setPanelTab('sim');
+      expect(seen()).toBe(2);
+      // 탭을 바꿔 처음 보인 실패는 alert(공구 탭 — 정보 탭 조각, 이 패널에서 처음 받기), 그 탭을 한 이동씩(줄 고르기 → 공구 탭 다시 그림)은 새 alert 0, 깎기 탭으로 돌아오면 다시 alert
+      api.setPanelTab('tools');
+      await vi.waitFor(() => expect(failP('공구')).toBeDefined(), WAIT);
+      expect([seen(), failP('공구')!.getAttribute('role')]).toEqual([3, 'alert']);
+      app.stepMove(1);
+      app.stepMove(1);
+      expect([seen(), !!failP('공구'), failP('공구')?.getAttribute('role')]).toEqual([3, true, null]);
+      api.setPanelTab('sim');
+      expect([seen(), failP('깎기')?.getAttribute('role')]).toEqual([4, 'alert']);
+    } finally {
+      mo.disconnect();
+    }
   });
 
   it('키보드 단축키 창: 열리지 않으면 창 대신 알림 상자에 실패 글과 다시 시도 — 거듭 눌러도 알림은 하나, 214차: 다시 시도도 받지 못하면 버튼은 「새로 고침」, 메뉴로 다시 열어 받으면 창이 열리고 실패 알림은 닫힌다', async () => {

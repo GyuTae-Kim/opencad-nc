@@ -374,7 +374,8 @@ describe('218차: 199·201차 시험이 그리지 않는 203~217차 화면·상�
       for (const n of ['가상 커서', '소재 깎기', '키보드 단축키', '예제 열기']) loadDone(n);
       const { app, root, dispose } = await mount(lang);
       const api = window.opencadApp!;
-      const body = (): HTMLElement | null => root.querySelector<HTMLElement>('.panel-body p[role="alert"]');
+      // 220차: 실패 글 칸은 role이 아니라 그 버튼(data-key="load")으로 찾는다 — 언어를 바꿔 같은 탭을 다시 그리면 같은 글은 role 없이 그린다(다시 읽히지 않게, dom.ts loadFailed)
+      const body = (): HTMLElement | null => [...root.querySelectorAll<HTMLElement>('.panel-body p.hint')].find((p) => p.querySelector('button[data-key="load"]')) ?? null;
       const seen: Seen = new Map();
       try {
         expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
@@ -423,7 +424,8 @@ describe('218차: 199·201차 시험이 그리지 않는 203~217차 화면·상�
         const next = LANGS[(i + 1) % LANGS.length]!;
         await switchTo(next);
         await settle();
-        expect([!!toastOf(fail('예제 열기', next)), !!toastOf(fail('가상 커서', next)), body()?.firstChild?.textContent]).toEqual([true, true, fail('깎기', next)]);
+        // 220차: 다시 그린 몸통의 같은 실패 글은 role 없음(새 언어 글로 바뀌어도 새 alert 마디가 아님)
+        expect([!!toastOf(fail('예제 열기', next)), !!toastOf(fail('가상 커서', next)), body()?.firstChild?.textContent, body()?.getAttribute('role')]).toEqual([true, true, fail('깎기', next), null]);
         await look(seen, `${next}로 바꿈`);
       } finally {
         dispose();

@@ -527,3 +527,35 @@ describe('218차가 남긴 일본어 「…새로 고친 뒤…」(219차)', () 
     expect(Object.values(dict('ja')).filter((v) => v.includes('再読み込み'))).toHaveLength(7);
   });
 });
+
+/**
+ * 220차: 219차 표가 고르지 않고 둔 중국어 쌍점·한자가 든 풀이 괄호 — 사전 전체를 묶음(화면 자리)마다 세어(.runtime 셈 — README 개발 220차 문단), 묶음 다수가 3분의 2 이상이고
+ * 사전 전체 다수(「：」 312 : 반각 53 · 전각 괄호 209 : 반각 91)와 같은 꼴이면 적은 꼴을 바꿨다(원문·코드 그대로, 새 열쇠 0). 키 글·코드·셈식 괄호는 그대로(217·218차).
+ */
+describe('219차가 고르지 않은 중국어 쌍점·풀이 괄호(220차)', () => {
+  const zh = catalogs['zh-CN'] as Record<string, string>;
+  const HALF = /\([^()]*\p{Script=Han}[^()]*\)/u;
+  it('반각 쌍점은 코드 셋뿐(인라인 스크립트의 CSS 「prefers-color-scheme: dark」·og 그림 주소·찾기 칸의 줄 번호 「:120」) — 해석 경고(「：」 244 : 반각 46)·정보 탭·깎기 탭·알림 글 모두 「：」', () => {
+    const code = Object.keys(zh).filter((k) => /^\/\/ |^https:\/\/|:120\(/.test(k));
+    expect(code).toHaveLength(3);
+    expect(Object.keys(zh).filter((k) => zh[k]!.includes(':')).sort()).toEqual(code.sort());
+    // 해석 경고 줄 앞머리 틀(model.ts 「N번 줄: …」)과 WangShi 해석기 「{0}: …」(같은 묶음 「{0}：…」 74 : 「{0}: …」 25였다)
+    expect([zh['{0}번 줄: {1}'], zh['{0}번 줄:'], zh['{0}: 뿌리 요소 뒤의 글은 읽지 않음']]).toEqual(['第 {0} 行：{1}', '第 {0} 行：', '{0}：不读取根元素之后的文本']);
+    expect(translate('<panel>: 해석하지 못해 목록에만 넣음', 'zh-CN')).toBe('<panel>：无法解析，仅列入列表');
+  });
+  it('해석 경고(전각 115 : 반각 28)·알림 오류 글(4 : 1)의 한자 풀이 괄호는 전각(같은 값 안 코드 괄호도) — 「(알람 N)」 조각은 모두 「（报警 N）— 」, 둔 묶음의 반각 값은 62 그대로', () => {
+    const alarm = Object.entries(zh).filter(([k]) => k.includes('(알람 '));
+    expect(alarm).toHaveLength(15);
+    for (const [k, v] of alarm) {
+      expect(v, k).toMatch(/（报警 [^）]+）/);
+      expect(v, k).not.toMatch(/\(报警|） —/);
+    }
+    expect(zh['CYCLE95: 가공 종류(VARI = {0})가 맞지 않음(알람 61002) — 그리지 않음']).toBe('CYCLE95：加工类型（VARI = {0}）无效（报警 61002）— 不绘制');
+    expect(zh[errorText(new TypeError('Failed to fetch'))]).toBe('无法接收文件（网络错误）。');
+    expect(zh['소수점 없는 큰 좌표가 많음({0}개) — Fanuc 최소 입력 단위(0.001)로 쓴 프로그램이면 "소수점 없는 값 = 최소 단위"를 켜십시오']).toBe('没有小数点的大坐标很多（{0} 个）— 如果程序使用 Fanuc 最小输入单位（0.001），请打开“无小数点的值 = 最小单位”');
+    // 둔 묶음의 반각(한자 든 풀이 괄호): 깎기 탭 29(반각이 묶음 다수 — 사전 다수와 갈림)·정보 탭 14(16 : 14 반반)·판단 띠 5(5 : 3)·상태 줄 4·재생·따라가기 띠 4(섞임 없음)·
+    // 키 글 4(「(空格键)」·「(→, Shift+→ 10개)」)·「(추정)」 짝 1(3D 보기 묶음 이름 — 상태 줄 둘과 같은 조각, 126차)·셈식 1(G76 「(深度 − K)」) — 새 값은 전각으로(늘면 실패)
+    expect(Object.values(zh).filter((v) => HALF.test(v))).toHaveLength(62);
+    expect(zh['기계 원점 쪽 이동(추정)']).toBe('机床原点方向移动(估计)');
+  });
+});
