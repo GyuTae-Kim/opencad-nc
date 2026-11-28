@@ -9,6 +9,9 @@
  * 같은 글 거르기는 원문으로 견줘 언어를 바꾼 사이의 같은 실패도 하나, 받기 실패 까닭 글(Firefox·Safari·vite)은 앱 원문 하나로.
  * 213차: 3D 보기 띠는 알림이 닫힌 뒤에도 띠가 필요한 때(뷰어가 있을 때 문서 열기·3D 보기 키 — 받는 중이 아닐 때, 뷰어마다 셋까지) 조용히 다시 받는다(다시 받지 못하면 같은 알림 하나).
  * 같은 글 거르기에서 mixSpan·문자열 밖 조각은 파일 이름 조각(translate="no")뿐이라 붙일 때의 글이 곧 원문 — 언어를 바꾼 사이의 같은 실패도 하나임을 고정한다.
+ * 214차: 다시 받아 붙으면(조용한 다시 받기·창 다시 열기·메뉴로 고른 언어) 그 조각의 실패 알림을 닫는다(전에는 8초 남고 그 다시 시도는 아무것도 하지 않고 닫혔다).
+ * 3D 보기 띠는 캔버스의 첫 손가락 누름(isPrimary pointerdown)·단면 켜기에도 조용히 다시 받는다(213차 뷰어마다 셋까지 그대로).
+ * 알림의 다시 시도를 누른 뒤 또 받지 못하면 그 알림의 버튼을 「새로 고침」으로(같은 문서에서 받지 못한 모듈 받기를 브라우저가 기억할 수 있어 — HTML module map; 글·알림 하나는 그대로).
  * 가짜 실패: vi.mock 공장이 그 조각 이름이 ctl.fail에 있는 동안 던지고, 빼면 원래 모듈을 준다(던진 공장은 캐시되지 않아 다시 받기가 공장을 다시 부른다 —
  * 받은 뒤에는 캐시되어 다시 실패시킬 수 없으니 조각마다 「실패 → 받기」를 한 번씩, 시험 차례가 그것을 따른다 — 코어 약속(core.ts loadViewerCore)도 이 파일에서 한 번 받으면
  * 남아 3D 보기 띠 시험이 맨 앞, 사전 값을 보는 시험(site/i18n.mjs가 네 사전을 정적으로 가져옴)이 사전 시험 뒤).
@@ -71,6 +74,14 @@ const fake = vi.hoisted(() => {
       this.sectionCbs.push(cb);
       return () => {};
     }
+    // 214차: 단면 켜기(손잡이 자리가 보이게 — 받아 붙인 띠의 손잡이가 켜진 단면에 보이는지)
+    setSectionAxis(axis: string, t: number): void {
+      this.section = { axis, t, flip: false, position: t };
+      for (const cb of this.sectionCbs) cb(this.section);
+    }
+    sectionHandle(): { x: number; y: number; dx: number; dy: number } | null {
+      return this.section ? { x: 40, y: 30, dx: 1, dy: 0 } : null;
+    }
     setScene(): void {
       this.measurePts = 0;
     }
@@ -125,6 +136,7 @@ vi.mock('../../site/locales/ja.json', async (importOriginal) => {
   return importOriginal();
 });
 
+import { touchPointerEvent } from '../../src/app/aim';
 import { NcViewerApp } from '../../src/app/app';
 import { isChunkLoadError } from '../../src/app/core';
 import { installLocalization } from '../../src/app/i18n';
@@ -135,6 +147,10 @@ import { browserFocus, focused } from './focus-rules';
 const SIE = ['; PART 1', 'G71 G17 G90', 'T="FLAT_D6" D1', 'M6', 'S1000 M3', 'G0 X0 Y0 Z5', 'G1 Z-1 F200', 'G1 X20', 'G1 Y20', 'L9001', 'M30', ''].join('\n');
 const enc = (t: string): ArrayBuffer => new TextEncoder().encode(t).buffer as ArrayBuffer;
 const WAIT = { timeout: 5000 };
+/** 3D 보기 띠 조각을 받지 못한 알림 글 */
+const UI = '가상 커서을(를) 불러오지 못했습니다.';
+/** 알림의 동작 버튼 글(다시 시도·새로 고침) */
+const act = (t: HTMLElement): string | null | undefined => t.querySelector('.toast-act')?.textContent;
 /** 알림 상자 가운데 글(닫기·동작 버튼 글은 빼고 — 첫 마디)이 text인 것 */
 const toastsWith = (text: string): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.toasts > .toast')].filter((t) => t.firstChild?.textContent === text);
 /** 그 글의 알림이 꼭 하나(쌓이지 않음) */
@@ -186,46 +202,60 @@ const pick = (lang: string): void => document.querySelector<HTMLButtonElement>(`
 
 // 이 묶음이 맨 앞: 3D 보기 띠는 코어 약속이 이 파일에서 처음 받는 때만, 사전 둘은 아래 211차 사전 값 시험(site/i18n.mjs가 정적으로 받음)보다 먼저 실패시킬 수 있다
 describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언어를 바꾼 사이의 같은 실패, 받기 실패 까닭 글', () => {
-  it('3D 보기 띠 조각: 받지 못해도 문서는 열고 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 다시 시도 — 213차: 알림이 닫힌 뒤에도 다음 문서 열기·3D 보기 키에 조용히 다시 받아(다시 받지 못하면 같은 알림 하나) 받으면 단면 손잡이·가상 커서 알림 칸을 붙인다', async () => {
+  it('3D 보기 띠 조각: 받지 못해도 문서는 열고 알림 상자에 「가상 커서을(를) 불러오지 못했습니다.」와 다시 시도 — 213차: 알림이 닫힌 뒤에도 다음 문서 열기·3D 보기 키에 조용히 다시 받는다(다시 받지 못하면 같은 알림 하나), 214차: 다시 시도도 받지 못하면 버튼은 「새로 고침」', async () => {
     // 정보 탭 조각도 받지 못하게 둔다(여기서 받으면 캐시되어 아래 211차 정보 탭 시험이 실패시킬 수 없다 — 받지 못한 약속은 비워진다)
     ctl.fail.add('ui');
     ctl.fail.add('info');
     const { app, root } = mount();
     expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
     const view = root.querySelector<HTMLElement>('.view')!;
-    const TEXT = '가상 커서을(를) 불러오지 못했습니다.';
     // 전에는 글 없이 빠지고 뷰어가 생긴 뒤 다시 받지 않았다(코어 약속이 받은 채 남음)
-    const a = await vi.waitFor(() => only(TEXT), WAIT);
+    const a = await vi.waitFor(() => only(UI), WAIT);
     expect(a.getAttribute('role')).toBe('alert');
-    expect(a.querySelector('.toast-act')!.textContent).toBe('다시 시도');
+    expect(act(a)).toBe('다시 시도');
     expect([view.querySelector('.sec-handle'), view.querySelector('.key-live')]).toEqual([null, null]);
     // 다시 받지 못하면 알림은 새 알림 하나로 바뀐다(같은 글 하나)
     a.querySelector<HTMLButtonElement>('.toast-act')!.click();
-    await vi.waitFor(() => expect(only(TEXT)).not.toBe(a), WAIT);
+    await vi.waitFor(() => expect(only(UI)).not.toBe(a), WAIT);
+    // 214차: 누른 다시 시도가 또 받지 못했다 — 그 알림의 버튼은 「새로 고침」(같은 문서의 다시 받기가 브라우저에 실패로 기억될 수 있어), 글은 그대로·알림 하나
+    expect(act(only(UI))).toBe('새로 고침');
     // 213차: 알림을 닫으면(✕ — 8초 뒤 저절로 닫힐 때와 같다) 212차는 다시 받는 길이 없었다(다른 문서를 열어도 뷰어가 이미 있어 그대로 — 새로 고침뿐)
-    only(TEXT).querySelector<HTMLButtonElement>('.toast-x')!.click();
-    expect(toastsWith(TEXT)).toHaveLength(0);
-    // 다음 문서 열기: 조용히 다시 받는다 — 받지 못하면 같은 알림이 다시 하나
+    only(UI).querySelector<HTMLButtonElement>('.toast-x')!.click();
+    expect(toastsWith(UI)).toHaveLength(0);
+    // 다음 문서 열기: 조용히 다시 받는다 — 받지 못하면 같은 알림이 다시 하나(214차: 조용한 다시 받기의 실패는 세지 않고 버튼은 앞 누름대로 「새로 고침」)
     expect(await app.openBuffer('part2.MPF', enc(SIE))).toBe(true);
-    const b = await vi.waitFor(() => only(TEXT), WAIT);
-    // 3D 보기 키(가상 커서를 켜는 Enter): 한 번 더 — 받지 못하면 그 알림이 새 알림으로 바뀐다(둘이 되지 않음)
+    const b = await vi.waitFor(() => only(UI), WAIT);
+    expect(act(b)).toBe('새로 고침');
+    // 3D 보기 키(가상 커서를 켜는 Enter): 한 번 더 — 받지 못하면 그 알림이 새 알림으로 바뀐다(둘이 되지 않음).
+    // 받아 붙는 길(단면 켜기)은 다음 시험의 새 뷰어로(조각은 이 파일에서 한 번만 받을 수 있다 — 받으면 캐시)
     fake.FakeViewer.last!.canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await vi.waitFor(() => expect(only(TEXT)).not.toBe(b), WAIT);
-    // 받을 수 있게 되면 다음 문서 열기에 받아 붙인다(조용한 다시 받기 셋째 — 뷰어마다 셋까지)
+    await vi.waitFor(() => expect(only(UI)).not.toBe(b), WAIT);
+  });
+
+  it('214차: 3D 보기 띠 조각 — 캔버스 첫 손가락 누름·단면 켜기에도 조용히 다시 받고, 받아 붙으면 남은 실패 알림을 닫는다(손잡이는 켜진 단면 자리에)', async () => {
+    ctl.fail.add('ui');
+    ctl.fail.add('info');
+    // 새 앱·새 뷰어(조용한 다시 받기는 뷰어마다 셋까지 — 앞 시험의 뷰어는 둘을 썼다)
+    const { app, root } = mount();
+    expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
+    const view = root.querySelector<HTMLElement>('.view')!;
+    const a = await vi.waitFor(() => only(UI), WAIT);
+    // 3D 보기 캔버스의 첫 손가락 누름: 213차는 키만이라 손가락만 쓰는 기기는 다음 문서 열기에서만 다시 받았다 — 받지 못하면 같은 알림 하나(새 알림)
+    fake.FakeViewer.last!.canvas.dispatchEvent(touchPointerEvent('pointerdown', 7, 40, 30));
+    await vi.waitFor(() => expect(only(UI)).not.toBe(a), WAIT);
+    // 단면 켜기(손잡이가 필요한 때 — 단면 상자 X): 받을 수 있게 되면 받아 붙이고 손잡이는 켜진 단면 자리에 보인다
     ctl.fail.delete('ui');
-    const stale = only(TEXT);
-    expect(await app.openBuffer('part3.MPF', enc(SIE))).toBe(true);
+    [...root.querySelectorAll<HTMLButtonElement>('.sec-pop .seg')].find((b) => b.textContent === 'X')!.click();
     await vi.waitFor(() => expect(view.querySelector('.key-live')).not.toBeNull(), WAIT);
-    // 손잡이는 붙되 단면이 꺼져 있어 숨음(placeSecHandle)
-    expect(view.querySelector<HTMLElement>('.sec-handle')?.hidden).toBe(true);
-    // 남은 알림의 다시 시도는 받은 뒤라 아무것도 하지 않고 닫히며, 다음 문서를 열어도 다시 받지 않는다(띠는 하나)
-    stale.querySelector<HTMLButtonElement>('.toast-act')!.click();
-    expect(toastsWith(TEXT)).toHaveLength(0);
-    expect(await app.openBuffer('part4.MPF', enc(SIE))).toBe(true);
+    expect(view.querySelector<HTMLElement>('.sec-handle')?.hidden).toBe(false);
+    // 남은 실패 알림은 닫는다 — 213차는 8초 남고 그 다시 시도(받은 뒤라 uiRetry 없음)는 아무것도 하지 않고 닫혔다
+    expect(toastsWith(UI)).toHaveLength(0);
+    // 다음 문서를 열어도 다시 받지 않는다(띠는 하나)
+    expect(await app.openBuffer('part2.MPF', enc(SIE))).toBe(true);
     expect([view.querySelectorAll('.key-live').length, view.querySelectorAll('.sec-handle').length]).toEqual([1, 1]);
   });
 
-  it('언어 사전 조각: 첫 사전을 받지 못하면 한국어로 세워 언어 메뉴를 두고, 메뉴에서 고른 언어도 — 지금 화면 언어로 「{언어 이름}을(를) 불러오지 못했습니다.」와 다시 시도, 언어를 바꾼 사이의 같은 실패도 하나', async () => {
+  it('언어 사전 조각: 첫 사전을 받지 못하면 한국어로 세워 언어 메뉴를 두고, 메뉴에서 고른 언어도 — 지금 화면 언어로 「{언어 이름}을(를) 불러오지 못했습니다.」와 다시 시도, 언어를 바꾼 사이의 같은 실패도 하나 — 214차: 메뉴로 다시 골라 받으면 그 실패 알림을 닫는다', async () => {
     ctl.fail.add('de');
     ctl.fail.add('ja');
     const lang0 = document.documentElement.lang;
@@ -253,9 +283,15 @@ describe('212차: 3D 보기 띠·언어 사전 조각을 받지 못할 때, 언�
       // 독일어 화면에서 다시 일본어: 독일어 글로, 앞 알림(한국어 화면 때 붙인 같은 실패)과 원문으로 견줘 하나 — 211차는 붙일 때의 글로 견줘 둘이었다
       pick('ja');
       await vi.waitFor(() => expect(only(JA)).not.toBe(old), WAIT);
+      // 214차: 메뉴로 다시 고른 실패는 알림의 다시 시도가 아니라 세지 않는다(버튼은 다시 시도 그대로)
       await vi.waitFor(() => expect(only(JA).querySelector('.toast-act')!.textContent).toBe('Noch einmal versuchen'), WAIT);
       expect(document.querySelectorAll('.toasts > .toast.error')).toHaveLength(1);
       expect(document.documentElement.lang).toBe('de');
+      // 214차: 받을 수 있게 되면 메뉴에서 다시 골라 받은 언어의 실패 알림은 닫는다(전에는 새 언어로 다시 옮겨져 「日本語」를 읽지 못했다는 글이 일본어 화면에 남았다)
+      ctl.fail.delete('ja');
+      pick('ja');
+      await vi.waitFor(() => expect(document.documentElement.lang).toBe('ja'), WAIT);
+      expect(document.querySelectorAll('.toasts > .toast.error')).toHaveLength(0);
     } finally {
       dispose();
       document.documentElement.lang = lang0;
@@ -312,7 +348,7 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     expect(focused()).toBe(root.querySelector('.panel-tab.active'));
   });
 
-  it('키보드 단축키 창: 열리지 않으면 창 대신 알림 상자에 실패 글과 다시 시도 — 거듭 눌러도 알림은 하나, 다시 시도로 받으면 창이 열린다', async () => {
+  it('키보드 단축키 창: 열리지 않으면 창 대신 알림 상자에 실패 글과 다시 시도 — 거듭 눌러도 알림은 하나, 214차: 다시 시도도 받지 못하면 버튼은 「새로 고침」, 메뉴로 다시 열어 받으면 창이 열리고 실패 알림은 닫힌다', async () => {
     ctl.fail.add('shortcuts');
     const { root } = mount();
     const dialogs = (): number => root.querySelectorAll('[role="dialog"][aria-modal="true"]').length;
@@ -323,12 +359,19 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
     keysItem.click();
     const a = await vi.waitFor(() => only(TEXT), WAIT);
     keysItem.click();
-    // 둘째 실패: 같은 글의 알림이 새 알림으로 바뀐다(둘이 되지 않음)
+    // 둘째 실패: 같은 글의 알림이 새 알림으로 바뀐다(둘이 되지 않음) — 214차: 메뉴 항목으로 다시 연 실패는 알림의 다시 시도가 아니라 세지 않는다
     await vi.waitFor(() => expect(only(TEXT)).not.toBe(a), WAIT);
-    expect(only(TEXT).querySelector('.toast-act')!.textContent).toBe('다시 시도');
+    expect(act(only(TEXT))).toBe('다시 시도');
     expect(dialogs()).toBe(0);
+    // 214차: 알림의 다시 시도도 받지 못하면 그 알림의 버튼은 「새로 고침」(글은 그대로 — 알림 하나)
+    const b = only(TEXT);
+    b.querySelector<HTMLButtonElement>('.toast-act')!.click();
+    await vi.waitFor(() => expect(only(TEXT)).not.toBe(b), WAIT);
+    expect(act(only(TEXT))).toBe('새로 고침');
+    expect(dialogs()).toBe(0);
+    // 받을 수 있게 되면 메뉴 항목으로 다시 열어 창이 열리고 남은 실패 알림은 닫는다(전에는 창 위에 8초 남고 그 버튼은 창이 열린 동안 아무것도 하지 않았다)
     ctl.fail.delete('shortcuts');
-    only(TEXT).querySelector<HTMLButtonElement>('.toast-act')!.click();
+    keysItem.click();
     await vi.waitFor(() => expect(dialogs()).toBe(1), WAIT);
     expect(toastsWith(TEXT)).toHaveLength(0);
   });

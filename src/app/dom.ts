@@ -93,6 +93,17 @@ function dropToast(el: Element): void {
   }
 }
 
+/**
+ * 211차 같은 글 하나 규칙의 열쇠: kind와 조각마다 원문(212차 — mixSpan이면 든 원문, 아니면 글. 문자열은 원문 — 번역층이 붙인 뒤 옮긴다).
+ * 붙이기 전 글로 짓는다(번역층은 붙인 뒤에 옮긴다)
+ */
+const keyOf = (kind: string, parts: readonly (string | Node)[]): string => kind + JSON.stringify(parts.map((p) => mixSource.get(p as Element) ?? (p as Node).textContent ?? p));
+
+/** 같은 열쇠의 알림을 뗀다(dropToast — 초점이 그 안이었으면 208·209차 남은 알림의 같은 자리·남는 칸) */
+function dropSame(key: string): void {
+  for (const c of [...toastArea().children]) if ((c as HTMLElement).dataset.k === key) dropToast(c);
+}
+
 /** 잠깐 보이는 알림(오류는 role=alert). 글 조각 목록이면 조각마다 글 마디 하나(번역층이 따로 옮긴다). action을 주면 단추 하나(누르면 실행하고 닫는다) */
 export function toast(message: string | readonly (string | Node)[], kind: 'info' | 'error' = 'info', ms = 4000, action?: { label: string; run: () => void }): void {
   const host = toastArea();
@@ -112,10 +123,9 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   el.append(close);
   // 211차: 같은 글의 알림이 떠 있으면 그것을 빼고 새 알림을 붙인다 — 같은 실패를 거듭해도(받지 못한 조각의 다시 시도·같은 버튼 다시 누름) 쌓이지 않고 하나(가장 새 알림으로
   // 새로 읽히고 시간도 새로). 초점이 그 안이었으면 dropToast(208·209차 — 남은 알림의 같은 자리·남는 칸). 붙이기 전 글로 견준다(번역층은 붙인 뒤에 옮긴다)
-  // 212차: 원문으로 견준다 — mixSpan 조각은 그때 언어로 옮겨 넣은 글이라(언어를 바꾸면 relangToasts가 다시 옮김) 211차의 글 견주기는 언어를 바꾼 사이의 같은 실패를 둘로 두었다.
-  // 조각마다 mixSpan이면 든 원문, 아니면 글(문자열은 원문 — 번역층이 붙인 뒤 옮긴다)
-  const key = (el.dataset.k = kind + JSON.stringify(parts.map((p) => mixSource.get(p as Element) ?? (p as Node).textContent ?? p)));
-  for (const c of [...host.children]) if ((c as HTMLElement).dataset.k === key) dropToast(c);
+  // 212차: 원문으로 견준다 — mixSpan 조각은 그때 언어로 옮겨 넣은 글이라(언어를 바꾸면 relangToasts가 다시 옮김) 211차의 글 견주기는 언어를 바꾼 사이의 같은 실패를 둘로 두었다(keyOf).
+  // 214차: 열쇠 짓기·같은 열쇠 떼기를 keyOf·dropSame으로 — 받은 조각의 실패 알림 닫기(loadDone)도 같은 길로
+  dropSame((el.dataset.k = keyOf(kind, parts)));
   host.append(el);
   // 147차: 넷을 넘으면 가장 오래된 안내(info)부터 뺀다 — 가벼운 안내가 오류(문서가 열린 동안은 다시 볼 곳이 없다)를 밀어내지 않게.
   // 모두 오류면 가장 오래된 것(한도는 늘 지킨다). 오류가 없으면 전과 같다. 209차: 초점이 빼는 알림 안이면 남은 알림의 같은 자리로(dropToast)
@@ -139,15 +149,46 @@ export function toast(message: string | readonly (string | Node)[], kind: 'info'
   later();
 }
 
+/** 214차: 알림의 「다시 시도」를 누른 조각 이름(loadFailed — 또 받지 못하면 「새로 고침」, 받으면 loadDone이 뺀다) */
+const tried = new Set<string>();
+/** 211차 실패 글 하나(이름은 그 기능을 여는 탭·메뉴 항목의 글) */
+const failText = (name: string): HTMLSpanElement => mixSpan([`${name}을(를) 불러오지 못했습니다.`], undefined, true);
+
 /**
  * 211차: 열 때 받는 조각(동적 가져오기)을 받지 못했다(오프라인에서 새 판과 옛 캐시가 엇갈림·연결 끊김 등) — 글은 「{이름}을(를) 불러오지 못했습니다.」 하나(이름은 그 기능을 여는
  * 탭·메뉴 항목의 글 — 한 기능 한 낱말, 틀이 잡은 이름도 옮긴다)와 「다시 시도」(같은 받기를 다시 — 받지 못한 약속은 비워 둔다). 전에는 console.error만 남아 빈 탭·「불러오는 중…」에
- * 멈춘 탭·열리지 않는 창으로 까닭 없이 보였다(WCAG 3.3.1·4.1.3). body(탭 몸통 — panel.ts waitTab)를 주면 거기에 글(role=alert)과 버튼, 없으면(창 — 단축키 창) 알림 상자의 동작 버튼
+ * 멈춘 탭·열리지 않는 창으로 까닭 없이 보였다(WCAG 3.3.1·4.1.3). body(탭 몸통 — panel.ts waitTab)를 주면 거기에 글(role=alert)과 버튼, 없으면(창 — 단축키 창) 알림 상자의 동작 버튼.
+ * 214차: 알림의 「다시 시도」를 누른 뒤 또 받지 못하면 그 알림의 버튼은 「새로 고침」(같은 문서에서 받지 못한 모듈 받기는 브라우저가 실패로 기억할 수 있어 — HTML module map — 다시 시도가
+ * 또 곧바로 실패한다. 새로 고치면 서비스 워커가 HTML을 네트워크 먼저로 받아 새 판과 그 조각을, 오프라인이면 담아 둔 같은 판을 준다). 글은 그대로라 같은 글 알림 하나(버튼만 바뀜).
+ * 세는 것은 알림의 다시 시도 누름뿐(tried — 조용한 다시 받기·메뉴·? 키로 다시 연 실패는 넣지 않는다), 받으면 loadDone이 뺀다. 탭 몸통은 그대로(214차 보고 둠)
  */
 export function loadFailed(name: string, retry: () => void, body?: HTMLElement): void {
-  const text = mixSpan([`${name}을(를) 불러오지 못했습니다.`], undefined, true);
-  if (!body) return toast([text], 'error', 8000, { label: '다시 시도', run: retry });
+  const text = failText(name);
+  if (!body)
+    return toast(
+      [text],
+      'error',
+      8000,
+      tried.has(name)
+        ? { label: '새로 고침', run: () => location.reload() }
+        : {
+            label: '다시 시도',
+            run: () => {
+              tried.add(name);
+              retry();
+            },
+          },
+    );
   const b = h('button', { class: 'btn small', type: 'button' }, '다시 시도');
   b.addEventListener('click', retry);
   body.append(h('p', { class: 'hint', role: 'alert' }, text, ' ', b));
+}
+
+/**
+ * 214차: 그 이름의 조각을 받았다(붙였다) — 떠 있는 그 실패 알림을 닫는다(같은 글 하나 규칙의 열쇠·dropSame). 213차까지는 조용한 다시 받기(3D 보기 띠)·? 키·메뉴로 다시 열어(단축키 창)·
+ * 메뉴에서 다시 골라(언어 사전) 받아도 앞 실패 알림이 저절로 닫힐 때(8초)까지 남았고, 그 「다시 시도」는 아무것도 하지 않거나(받은 뒤·창이 열린 동안) 같은 일을 다시 하고 닫혔다
+ */
+export function loadDone(name: string): void {
+  tried.delete(name);
+  dropSame(keyOf('error', [failText(name)]));
 }

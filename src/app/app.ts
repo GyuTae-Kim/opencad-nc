@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, noticeViews, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { h, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText, uiText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -284,7 +284,7 @@ export class NcViewerApp implements PanelHost {
   private keySnap: KeySnap | null = null;
   /**
    * 213차: 3D 보기 띠(viewer-ui)를 받지 못했을 때의 다시 받기(ensureViewer attach가 둔다 — 받는 동안·받은 뒤에는 없다).
-   * auto면 띠가 필요한 때의 조용한 다시 받기(뷰어가 있을 때 문서 열기·3D 보기 키 — 뷰어마다 셋까지), 아니면 알림의 「다시 시도」
+   * auto면 띠가 필요한 때의 조용한 다시 받기(뷰어가 있을 때 문서 열기·3D 보기 키 — 뷰어마다 셋까지, 214차: 캔버스 첫 손가락 누름·단면 켜기도), 아니면 알림의 「다시 시도」
    */
   private uiRetry?: (auto?: boolean) => void;
 
@@ -889,6 +889,9 @@ export class NcViewerApp implements PanelHost {
     if (!v) return;
     if (!axis) v.setSection(null);
     else {
+      // 214차: 단면을 켤 때(손잡이가 필요한 때 — 축 고르기 누름마다 한 번, 범위 막대·손잡이 끌기·카메라 알림에는 걸지 않음)에도 받지 못한 3D 보기 띠를 조용히 다시 받는다(uiRetry).
+      // 받으면 attach가 지금 켠 단면 자리에 손잡이를 놓는다(아래 setSectionAxis가 같은 차례에 단면을 켠다)
+      this.uiRetry?.(true);
       const cur = v.section;
       v.setSectionAxis(axis, t ?? (cur && cur.axis === axis ? cur.t : 0.5), flip === undefined ? {} : { flip });
     }
@@ -1486,6 +1489,8 @@ export class NcViewerApp implements PanelHost {
         };
         return loadFailed('가상 커서', () => this.uiRetry?.());
       }
+      // 214차: 받아 붙이면(조용한 다시 받기든 알림의 다시 시도든) 떠 있는 그 실패 알림을 닫는다 — 213차는 8초 남고 그 다시 시도는 아무것도 하지 않고 닫혔다
+      loadDone('가상 커서');
       this.viewEl.append((this.secHandle = ui.makeSecHandle(() => this.viewer)));
       this.keySnap = new ui.KeySnap(this, core);
       this.placeSecHandle();
@@ -1514,6 +1519,11 @@ export class NcViewerApp implements PanelHost {
     v.onSceneIssues(() => this.syncSceneIssues());
     // 첫 측정 점은 코어 알림이 없어(결과가 생길 때만) 떼기 뒤에 띠를 맞춘다(코어 듣기 다음, 버블 단계).
     // 101차: 손가락 탭으로 찍은 첫 점은 미리 보기도 없어 미리 보기 알림이 오지 않으므로 툴팁·잠금 버튼도 이 길(refreshBar → mlock.update)로만 맞는다
+    // 214차: 3D 보기 캔버스의 첫 손가락 누름(둘째 손가락·끌기의 pointermove는 빼고 — 누름마다 한 번)에도 받지 못한 3D 보기 띠를 조용히 다시 받는다(uiRetry — 213차 뷰어마다 셋까지).
+    // 손가락만 쓰는 기기는 3D 보기 키가 없어 213차에는 다음 문서 열기에서만 다시 받았다
+    v.canvas.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary) this.uiRetry?.(true);
+    });
     this.viewEl.addEventListener('pointerup', () => {
       if (v.measureMode) this.refreshBar();
     });
@@ -2608,13 +2618,15 @@ export class NcViewerApp implements PanelHost {
     // 아니면 180차 덮개 「취소」와 같은 차례(문서가 있으면 3D 보기, 없으면 시작 화면 열기 칸)
     const inPanel = this.panel.el.contains(document.activeElement);
     void import('./shortcuts')
-      .then((m) =>
+      .then((m) => {
+        // 214차: 받으면(? 키·메뉴로 다시 연 때도) 떠 있는 실패 알림을 닫는다 — 213차는 창 위에 8초 남고 그 다시 시도는 창이 열린 동안 아무것도 하지 않았다
+        loadDone('키보드 단축키');
         m.openShortcutsDialog(
           this.root,
           () => (this.keysHelp = false),
           () => [inPanel ? this.panel.el.querySelector<HTMLElement>('.panel-tab.active') : null, this.doc && this.viewer ? this.viewer.canvas : this.startEl.querySelector<HTMLElement>('.dropzone')],
-        ),
-      )
+        );
+      })
       .catch((e: unknown) => {
         this.keysHelp = false;
         console.error(e);

@@ -3,7 +3,7 @@ import { VIEW_LABELS } from 'opencad-viewer3d/camera';
 /** Localize only presentation DOM. CAD data, input values and command keys stay intact. */
 import { currentLanguage, languages, languageUrl, metadataForLanguage, registerCatalog, sourceMessage, translate } from '../../site/i18n-core.mjs';
 // 212차: 사전 조각을 받지 못한 알림(dom.ts — 둘 다 첫 화면 모듈, 서로의 값을 모듈 맨 위에서 쓰지 않아 돌아 가져와도 된다)
-import { loadFailed } from './dom';
+import { loadDone, loadFailed } from './dom';
 import type { Mixed } from './filetext';
 
 const loaders: Record<string, () => Promise<{default: Record<string,string>}>> = {
@@ -173,14 +173,18 @@ export async function installLocalization(root: HTMLElement): Promise<() => void
       graph.textContent=JSON.stringify(existing).replace(/</g,'\\u003c');
     }
   }
+  /** 언어 메뉴 글(그 언어 이름 — 실패 알림의 이름, 214차 loadDone도) */
+  const nameOf = (code: string): string => languages.find((l) => l.code === code)!.label;
   /**
    * 212차: 언어 next의 사전을 받지 못했다 — 알림 상자에 「{언어 이름}을(를) 불러오지 못했습니다.」와 「다시 시도」(그 언어로 바꾸기). 이름은 언어 메뉴 글(한글 없음).
    * 글은 지금 화면 언어(받지 못한 언어가 아니라 바꾸기 전 언어 — loadFailed의 mixSpan이 active로 옮긴다)
    */
-  const failed = (next: string): void => loadFailed(languages.find((l) => l.code === next)!.label, () => void changeLanguage(next));
+  const failed = (next: string): void => loadFailed(nameOf(next), () => void changeLanguage(next));
   async function changeLanguage(next: string): Promise<void> {
     // 212차: 메뉴에서 고른 언어의 사전을 받지 못하면 알림(전에는 글 없이 그대로)
     try { await loadLanguage(next); } catch { return failed(next); }
+    // 214차: 받으면(메뉴에서 다시 골라 받은 때도) 떠 있는 그 언어의 실패 알림을 닫는다 — 213차는 새 언어로 다시 옮겨져(relangToasts) 그 언어 화면에 8초 남았다
+    loadDone(nameOf(next));
     const url = new URL(languageUrl(location.href,next));
     // Dev servers use /en/; published apps use /opencad-<format>/en/.
     if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
