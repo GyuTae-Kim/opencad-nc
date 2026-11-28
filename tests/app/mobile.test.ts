@@ -820,30 +820,26 @@ describe('손가락 기기의 파일 고르기와 시작 화면', () => {
     expect(app.state().docName).toBe('program.txt');
   });
 
-  it('그릴 것이 없는 프로그램 알림은 안내 글과 첫 해석 경고(줄·글)를 글 마디마다 따로 둔다 — 다른 언어에서 경고가 한국어로 남지 않게(31차)', async () => {
+  it('그릴 것이 없는 프로그램 알림은 안내 글과 첫 해석 경고(줄·글)를 둔다 — 다른 언어에서 경고가 한국어로 남지 않게(31차 — 224차: 한 칸에 틀 열쇠로)', async () => {
     const { app, root } = makeApp(true, true);
     const EMPTY = '그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.';
-    // 글 마디마다, 파일 이름은 번역하지 않는 묶음(translate="no" — 54차)
-    const nodes = (el: Element): string[] => [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE || (n as Element).getAttribute?.('translate') === 'no').map((n) => n.textContent ?? '');
+    // 31차는 글 마디마다 따로 두었다(사이 글 「: 」·「 (」·「)」는 번역층이 옮기지 않아 중국어에서도 반각). 224차: 「이름: 안내 (해석 경고: 줄: 경고)」를 한 칸(mixSpan — 그릴 때 언어,
+    // 틀 열쇠 「{0}: {1}」·「{0} (해석 경고: {1})」·「{0}번 줄: {1}」)에 — 한국어 글은 31차 조각을 이은 글 그대로, 파일 이름은 그 안의 번역하지 않는 묶음(translate="no" — 54차).
+    // 네 언어 글(중국어 사전 다수 꼴·영어 그대로·한국어 남지 않음)은 i18n-live201 (ㄴ)(앱 — 다섯 언어 화면)·i18n-joins224(함수 — 줄·횟수·작업 파일 꼴)가 본다
+    const cell = (el: Element): [string, string | null | undefined, number] => [el.textContent ?? '', el.querySelector('[translate="no"]')?.textContent, el.querySelectorAll('[data-i18n-skip]').length];
     // 시작 화면: Heidenhain 부르기만 있는 프로그램(줄 있는 경고)
     expect(await app.openFile(textFile('sub.h', '0 BEGIN PGM T MM\n1 TOOL CALL 1 Z S3000\n2 CALL PGM SUB\n3 END PGM T MM\n'))).toBe(false);
-    const a = nodes(root.querySelector('.start-error')!);
-    expect(a).toEqual(['sub.h', ': ', EMPTY, ' (', '해석 경고', ': ', '3번 줄', ': ', 'CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', ')']);
-    expect(root.querySelector('.start-error [translate=no]')!.textContent).toBe('sub.h');
-    expect(app.state().error).toBe(a.join(''));
-    // 문서가 열려 있으면 알림 상자: 단위 코드가 없는 G-code(줄 없는 경고)
+    const a = ['sub.h', ': ', EMPTY, ' (', '해석 경고', ': ', '3번 줄', ': ', 'CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', ')'].join('');
+    expect(cell(root.querySelector('.start-error')!)).toEqual([a, 'sub.h', 1]);
+    expect(app.state().error).toBe(a);
+    // 문서가 열려 있으면 알림 상자: 단위 코드가 없는 G-code(줄 없는 경고) — 알림 상자 글(닫기 ✕ 앞)
     expect(await app.openFile(textFile('ok.nc', PROGRAM))).toBe(true);
     expect(await app.openFile(textFile('none.nc', 'G999 X10\nM30\n'))).toBe(false);
-    const b = nodes([...document.querySelectorAll('.toast.error')].at(-1)!);
-    expect(b).toEqual(['none.nc', ': ', EMPTY, ' (', '해석 경고', ': ', '단위 코드(G20/G21)가 없어 mm로 봄', ')']);
+    const last = (): Element => [...document.querySelectorAll('.toast.error')].at(-1)!.firstElementChild!;
+    expect(cell(last())).toEqual([['none.nc', ': ', EMPTY, ' (', '해석 경고', ': ', '단위 코드(G20/G21)가 없어 mm로 봄', ')'].join(''), 'none.nc', 0]);
     // 경고가 없으면 안내 글만
     expect(await app.openFile(textFile('blank.nc', 'G21\nM30\n'))).toBe(false);
-    expect(nodes([...document.querySelectorAll('.toast.error')].at(-1)!)).toEqual(['blank.nc', ': ', EMPTY]);
-    // 조각마다 옮기면(번역층이 글 마디마다 하듯) 네 언어 모두 한국어가 남지 않는다
-    for (const code of ['en', 'ja', 'zh-CN', 'de']) for (const parts of [a, b]) expect(parts.map((p) => translate(p, code)).join(''), code).not.toMatch(/[가-힣]/);
-    expect(a.map((p) => translate(p, 'en')).join('')).toBe(
-      `sub.h: No tool path to draw was found. The program may have no motion commands (G0·G1·L, etc.). (Analysis Warning: Line 3: ${translate('CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음', 'en')})`,
-    );
+    expect(cell(last())).toEqual([`blank.nc: ${EMPTY}`, 'blank.nc', 0]);
   });
 
   it('156차: 앱을 만들 때 빈 알림 상자(aria-live)를 붙여 두어, 첫 알림(열기 뒤 해석 경고 안내 — role=status)이 상자째 새로 붙지 않고 이미 있던 알림 영역의 바뀜이 된다', async () => {

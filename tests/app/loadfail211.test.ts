@@ -573,27 +573,27 @@ describe('211차: 열 때 받는 조각을 받지 못하면 보는 자리에 「
 
 // 213차: 맨 끝(앞 묶음이 조각마다 「실패 → 받기」를 마친 뒤 — 이 시험은 받기 실패를 쓰지 않는다)
 describe('213차: 같은 글 알림 견주기 — mixSpan·문자열 밖 조각', () => {
-  it('파일 이름 조각이 섞인 열기 실패 알림(조각마다 글 마디 — showError split)도 언어를 바꾼 사이의 같은 실패는 하나 — 파일 이름 조각(translate="no")은 번역하지 않아 붙일 때의 글이 곧 원문(고치기 전에도 통과 — 재발 막기)', async () => {
+  it('파일 이름이 섞인 열기 실패 알림(213차 조각마다 글 마디 — 224차부터 한 칸 mixSpan)도 언어를 바꾼 사이의 같은 실패는 하나 — 견줄 열쇠는 붙일 때의 원문(고치기 전에도 통과 — 재발 막기)', async () => {
     const lang0 = document.documentElement.lang;
     const { app, root } = mount();
     const dispose = await installLocalization(root);
-    // 이 파일 이름 조각으로 시작하는 오류 알림만(앞 시험의 앱 — 깎기 조각을 받은 앱 등 — 이 늦게 띄우는 다른 알림은 같은 상자에 와도 셈 밖)
-    const errs = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.toasts > .toast.error')].filter((t) => t.firstElementChild?.textContent === 'empty.MPF');
+    // 이 파일 이름 칸을 든 오류 알림만(앞 시험의 앱 — 깎기 조각을 받은 앱 등 — 이 늦게 띄우는 다른 알림은 같은 상자에 와도 셈 밖)
+    const errs = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.toasts > .toast.error')].filter((t) => t.querySelector('[translate="no"]')?.textContent === 'empty.MPF');
     try {
       expect(await app.openBuffer('part.MPF', enc(SIE))).toBe(true);
-      // 이동이 없는 프로그램: 문서가 있으면 알림 상자에 [파일 이름 조각, ': ', 까닭 …](app.ts showError split — 조각마다 번역층이 따로 옮긴다)
+      // 이동이 없는 프로그램: 문서가 있으면 알림 상자에 「이름: 까닭 …」 — 224차: 조각마다 글 마디(showError split)가 아니라 한 칸(mixSpan — 틀 열쇠 「{0}: {1}」, 그 안의 파일 이름은 translate="no")
       expect(await app.openBuffer('empty.MPF', enc('G90\nM30\n'))).toBe(false);
       await vi.waitFor(() => expect(errs()).toHaveLength(1), WAIT);
       const first = errs()[0]!;
-      const name = first.firstElementChild!;
-      expect([name.getAttribute('translate'), name.textContent, name.hasAttribute('data-i18n-skip')]).toEqual(['no', 'empty.MPF', false]);
+      const cell = first.firstElementChild!;
+      expect([cell.hasAttribute('data-i18n-skip'), cell.querySelector('[translate="no"]')?.textContent, cell.textContent!.startsWith('empty.MPF: ')]).toEqual([true, 'empty.MPF', true]);
       pick('en');
       await vi.waitFor(() => expect(document.documentElement.lang).toBe('en'), WAIT);
-      // 영어 화면에서 같은 실패: 앞 알림(한국어 화면 때 붙임 — 번역층이 영어로 다시 옮김)과 견줘 새 알림 하나
+      // 영어 화면에서 같은 실패: 앞 알림(한국어 화면 때 붙임 — relangToasts가 영어로 다시 옮김)과 견줘(원문 열쇠 — 212차 mixSpan 원문) 새 알림 하나
       expect(await app.openBuffer('empty.MPF', enc('G90\nM30\n'))).toBe(false);
       await vi.waitFor(() => expect(errs()[0]).not.toBe(first), WAIT);
       expect(errs()).toHaveLength(1);
-      expect(errs()[0]!.firstElementChild!.textContent).toBe('empty.MPF');
+      expect(errs()[0]!.firstElementChild!.textContent).toMatch(/^empty\.MPF: No tool path/);
     } finally {
       dispose();
       document.documentElement.lang = lang0;

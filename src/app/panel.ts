@@ -148,7 +148,7 @@ export class NcPanel {
    * 작게(끌기 최소)·보통(CSS 기본 380px·46%)·크게(끌기 최대)를 돈다. 끌기 판정은 코어 문턱과 같다(마우스·펜 4px, 손가락 10px).
    * 지금 크기는 둔 변수를 먼저 읽는다(넓은 화면 패널은 CSS 최대 60%라 그린 폭이 변수보다 작을 수 있다)
    * 223차(WCAG 2.1.1·4.1.2): 손잡이는 초점을 받는 분리자(APG Window Splitter) — 넓은 화면 ←(넓게)·→ 20px, 시트 ↑(높게)·↓ 5%, Enter는 누르기와 같은 다음 크기.
-   * 값(aria-valuenow — 기본 범위 0~100)은 패널이 작업 영역의 몇 %인가(넓은 화면 폭·시트 높이), 방향은 그때 화면 폭으로(바꿀 때·초점을 받을 때 — sync).
+   * 값(aria-valuenow — 기본 범위 0~100)은 패널이 작업 영역의 몇 %인가(넓은 화면 폭·시트 높이), 방향은 그때 화면 폭으로(바꿀 때·초점을 받을 때·224차: 작업 영역 크기가 바뀔 때 — sync).
    * 창 키(app.ts onKey)는 분리자의 화살표에서 돌아선다(재생할 수 있는 문서의 ←→ 한 이동 걷기보다 먼저). Home·End(가장 작게·크게)는 첫 화면 크기 허용 안에 들지 않아 두지 않았다
    */
   private bindResize(grip: HTMLElement): void {
@@ -213,6 +213,8 @@ export class NcPanel {
       save(sheet, put(sheet, v));
     });
     grip.addEventListener('focus', sync);
+    // 224차: 창 폭만 바뀌어도(초점 없이 — 화면 읽기 탐색 모드) 방향·값을 맞춘다 — 작업 영역 크기가 바뀌면(223차는 다음 초점까지 앞 값). 앱의 띠 감시와 같은 가드
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sync).observe(this.workspace);
     sync();
   }
 

@@ -32,7 +32,7 @@ import { beginOpen, showAnalyticsSettings, trackExport, type OpenAttempt } from 
 import { formatRecentTime, RecentStore, type RecentEntry } from './recent';
 import { loadSettings, saveSettings, settingsNeedReparse, settingsOpenOptions, type NcSettings } from './settings';
 import { boardLid, boardThrough, createDoc, emptyProgramParts, lineLabel, lineMoveList, moveEndPoint, moveSegments, moveState, mprOps, playPosition, replaceResult, sceneCounts, sceneFeatures, selectionSummary, statusParts, toolMarker, unitLabel, warningLabel, type NcDoc } from './doc';
-import { failParts, h, loadDone, loadFailed, mixSpan, pieces, relangToasts, toast, toastArea, toastSpare } from './dom';
+import { failParts, h, loadDone, loadFailed, mixSpan, relangToasts, toast, toastArea, toastSpare } from './dom';
 import { fileText, mix, plainText, type Mixed } from './filetext';
 import { mixNodes, mixText } from './i18n';
 import { BINARY_MESSAGE, extensionList, fileAccept, fmtInt, fmtNum, formatBytes, isNcFileName, looksBinary, parseOnceParams, parseStartParams, shareErrorText, withoutOnceParams } from './format';
@@ -1153,8 +1153,9 @@ export class NcViewerApp implements PanelHost {
     } catch (e) {
       if (seq === this.loadSeq) {
         this.setBusy(null);
-        // 199차: 까닭은 따로 옮겨지게 글 마디마다(31차 꼴) — 「이름: 까닭」을 한 글로 이으면 맞는 사전 틀이 없어 다른 언어에서도 통째 한국어로 남았다(218차: 까닭은 mixSpan ui)
-        this.showError([fileText(label), ': ', errorText(e)], 'reason');
+        // 199차: 「이름: 까닭」을 한 글로 이으면 맞는 사전 틀이 없어 통째 한국어로 남아 글 마디마다 나눴다(218차: 까닭은 그릴 때 언어로).
+        // 224차: 틀 열쇠 「{0}: {1}」로 한 칸 — 사이 글이 그 언어 사전 꼴(중국어 「：」)
+        this.showError(mix`${fileText(label)}: ${errorText(e)}`);
         attempt.error('fetch_error');
       }
       return false;
@@ -1194,8 +1195,8 @@ export class NcViewerApp implements PanelHost {
       if (seq !== this.loadSeq) return false;
       if (!sceneHasGeometry(res.scene)) {
         attempt.error('empty');
-        // 안내 글과 첫 해석 경고(줄·글)를 조각마다 따로 번역되게(doc.ts emptyProgramParts — 파일 이름은 옮기지 않는다)
-        this.showError([fileText(name), ': ', ...emptyProgramParts(res)], true);
+        // 안내 글과 첫 해석 경고(줄·글) — 224차: 한 칸에 틀 열쇠로(doc.ts emptyProgramParts — 파일 이름은 옮기지 않는다)
+        this.showError(mix`${fileText(name)}: ${emptyProgramParts(res)}`);
         return false;
       }
       await this.ensureViewer();
@@ -1210,9 +1211,9 @@ export class NcViewerApp implements PanelHost {
       if (seq === this.loadSeq) {
         // 215차: 3D 보기 코어 조각을 받지 못했고(ensureViewer가 감싼 오류의 까닭 — 해석 워커·뷰어를 만들지 못함은 까닭이 받기 실패가 아니다) 다시 열 길이 있으면 openFailed
         if (again && isChunkLoadError((e as Error | undefined)?.cause)) this.openFailed(e, '3D 보기', again);
-        // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등 까닭은 따로 옮겨지게 글 마디마다(199차 — 위 openUrl과 같음).
-        // 218차: 까닭은 틀이 잡은 앱 글까지 그릴 때 언어로(showError 'reason' — ensureViewer의 「3D 보기를 만들지 못했습니다: {0}」은 원문으로 던진다)
-        else this.showError([fileText(name), ': ', errorText(e)], 'reason');
+        // 「NC 프로그램으로 보이지 않습니다」·빈 파일·판재 파일 오류 등(위 openUrl과 같은 칸 — 224차 틀 「{0}: {1}」). 까닭은 틀이 잡은 앱 글까지 그릴 때 언어로
+        // (218차 — ensureViewer의 「3D 보기를 만들지 못했습니다: {0}」은 원문으로 던진다)
+        else this.showError(mix`${fileText(name)}: ${errorText(e)}`);
         attempt.error('parse_error');
       }
       return false;
@@ -1395,22 +1396,21 @@ export class NcViewerApp implements PanelHost {
     this.busyName.textContent = name;
   }
 
-  /** 마지막 오류 알림의 글과 조각 여부(시작 화면 — 언어를 바꾸면 다시 그린다) */
-  private errorMsg: [Mixed, boolean | 'reason'] = [[], false];
+  /** 마지막 오류 알림의 글(시작 화면 — 언어를 바꾸면 다시 그린다) */
+  private errorMsg: Mixed = [];
   /** 215차: 시작 화면 오류 칸의 받기 실패(openFailed — 조각 이름과 그 열기를 처음부터 하는 길). 다른 오류(showError)가 비운다(문서가 열리면 오류 칸이 숨어 쓰지 않는다) */
   private startFail: [string, () => void] | null = null;
 
   /**
-   * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다(199차),
-   * split이면 조각마다 글 마디 하나(번역층이 따로 옮기고 파일 글 조각은 옮기지 않는다).
-   * 218차: 'reason'(「이름: 까닭」 — openUrl·openBuffer의 열기 오류)이면 끝 조각(까닭 하나)은 틀이 잡은 앱 글까지 그릴 때 언어로(mixSpan ui — 언어를 바꾸면 다시 그리고 알림 상자는 relangToasts).
-   * 전에는 까닭도 글 마디라 「3D 보기를 만들지 못했습니다: {코어·앱 글}」(ensureViewer)의 잡은 값을 번역층이 옮기지 않아, 던질 때 언어로 굳힌 글(uiText)이 언어를 바꾸면
-   * 한국어 화면에서 바꾼 다른 언어에 한국어 까닭으로, 다른 언어에서 바꾸면 앞 언어 글로 남았다(WCAG 3.1.2)
+   * 오류 알림(문서가 있으면 알림 상자, 없으면 시작 화면). 글·섞은 글은 한 칸에 통째로 지금 언어로 옮기고(파일 이름 자리는 그대로 — 54차) 틀이 잡은 앱 글(까닭)도 옮긴다
+   * (199차 — mixSpan ui, 언어를 바꾸면 다시 그리고 알림 상자는 relangToasts). 218차: 「이름: 까닭」(openUrl·openBuffer의 열기 오류)의 까닭도 그렇게 — 전에는 글 마디라
+   * ensureViewer의 「3D 보기를 만들지 못했습니다: {0}」이 잡은 코어·앱 글을 번역층이 옮기지 않아 언어를 바꾸면 앞 언어·한국어 까닭이 남았다(WCAG 3.1.2).
+   * 224차: 31·218차의 조각 갈래(글 마디마다 — 사이 글 「: 」·「 (」·「)」는 번역층이 옮기지 않아 중국어에서도 반각)를 거두고 틀 열쇠로 잇는다(「{0}: {1}」 — 중국어 「：」, doc.ts emptyProgramParts)
    */
-  private showError(msg: string | Mixed, split: boolean | 'reason' = false): void {
+  private showError(msg: string | Mixed): void {
     const m = typeof msg === 'string' ? [msg] : msg;
     this.error = plainText(m);
-    this.errorMsg = [m, split];
+    this.errorMsg = m;
     this.startFail = null;
     if (this.doc) {
       toast(this.errorNodes(), 'error', 8000);
@@ -1421,9 +1421,7 @@ export class NcViewerApp implements PanelHost {
   }
 
   private errorNodes(): (string | Node)[] {
-    const [m, split] = this.errorMsg;
-    if (split === 'reason') return [...pieces(m.slice(0, -1)), mixSpan(m.slice(-1), undefined, true)];
-    return split ? pieces(m) : [mixSpan(m, undefined, true)];
+    return [mixSpan(this.errorMsg, undefined, true)];
   }
 
   /**

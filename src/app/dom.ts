@@ -1,7 +1,7 @@
 /**
  * 작은 DOM 도움: 요소 만들기(h)와 알림(toast), 파일 글을 담는 요소(fileSpan·mixSpan — 54차).
  */
-import type { FileText, Mixed } from './filetext';
+import type { Mixed } from './filetext';
 import { mixNodes } from './i18n';
 
 type Attr = string | number | boolean | null | undefined;
@@ -25,9 +25,6 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<s
 
 /** 파일 글 하나(번역층이 옮기지 않는다) */
 export const fileSpan = (text: string, cls?: string): HTMLSpanElement => h('span', { class: cls, translate: 'no' }, text);
-
-/** 글 조각 목록 → 마디(앱 글 조각은 번역층이 따로 옮기고, 파일 글 조각은 옮기지 않는다) */
-export const pieces = (parts: readonly (string | FileText)[]): (string | Node)[] => parts.map((p) => (typeof p === 'string' ? p : fileSpan(p.file)));
 
 /** 202차: mixSpan이 담은 원문(알림 상자 조각은 그린 쪽이 다시 그리지 않아 언어를 바꾸면 relangToasts가 이 원문으로 다시 옮긴다) */
 const mixSource = new WeakMap<Element, [Mixed, boolean | undefined]>();

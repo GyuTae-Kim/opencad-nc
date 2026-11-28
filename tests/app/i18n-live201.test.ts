@@ -11,6 +11,8 @@
  * (ㄴ) 열기 오류 「이름: 까닭」(시작 화면 오류 줄·알림 상자)은 조각마다 글 마디라 사이 글 ': '도 번역층을 지난다 — 201차는 사전 열쇠 ':'(중국어 「：」)로 옮겼으나
  * 202차에 되돌렸다: 사이트 키트 translate가 앞뒤 빈칸을 뺀 열쇠로 찾아 값만 돌려줘, 조각을 이어 옮기는 길(mixNodes·uiText·조각마다 옮기기)에서 영어 「: 」가 「:」로
  * 빈칸을 잃었다(mobile.test 31차 시험 「sub.h:No tool …」 — PR CI 실패, ci-guard 9번). 사이 글은 네 언어 모두 원문 ': ' 그대로다(중국어 「：」는 보고 둔 것).
+ * 224차: 사이 글을 틀 열쇠 「{0}: {1}」(한글 없는 틀 — {n}이 있어 9번 안)로 옮겨 「이름: 까닭」을 한 칸(mixSpan — 그릴 때 언어)에 그린다 — 중국어는 사전 다수 꼴 「：」,
+ * 영어·일본어·독일어는 지금과 같은 「: 」(빈칸 그대로 — 기호 열쇠가 아니라 통째 틀이라 202차 꼴이 나지 않음). 그릴 것이 없는 프로그램 알림·주소 열기 오류도 같은 칸
  * 뷰어 코어(WebGL)는 가짜, 해석은 워커와 같은 길(parseForView), 깎기 워커는 같은 실행기를 같은 스레드에서(i18n-screens199.test.ts 꼴).
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -260,24 +262,41 @@ describe('201차: 언어를 바꾼 뒤 알림 영역의 앞 언어 글·열기 �
     });
   });
 
-  // 202차: 201차의 사전 열쇠 ':'(중국어 「：」)를 되돌려 사이 글은 네 언어 모두 원문 ': ' 그대로다 — 그 열쇠는 조각을 이어 옮기는 길에서 영어 「: 」의 빈칸을 지웠다
-  // (위 머리 주석, ci-guard 9번). 기호 하나를 언어마다 다르게 하려면 그 기호가 든 통째 원문·틀 열쇠로 해야 해 중국어 「：」는 보고 둔 것이다
-  it.each(['zh-CN', 'en', 'ja', 'de'])('(ㄴ) %s: 열기 오류 「이름: 까닭」 — 조각 사이 글은 원문 「: 」 그대로(202차 — 기호 열쇠를 되돌림)', async (lang) => {
+  // 202차: 201차의 사전 열쇠 ':'(중국어 「：」)를 되돌려 사이 글은 네 언어 모두 원문 ': ' 그대로였다 — 그 열쇠는 조각을 이어 옮기는 길에서 영어 「: 」의 빈칸을 지웠다
+  // (위 머리 주석, ci-guard 9번). 기호 하나를 언어마다 다르게 하려면 그 기호가 든 통째 원문·틀 열쇠로 해야 해 중국어 「：」는 보고 둔 것이었다.
+  // 224차: 통째 틀 열쇠 「{0}: {1}」로 — 「이름: 까닭」은 한 칸(파일 이름은 그 안의 translate="no" 칸), 중국어는 사전 다수 꼴 「：」, 다른 언어·한국어는 지금 글 그대로.
+  // 그릴 것이 없는 프로그램 알림은 괄호·안쪽 쌍점까지 틀(「{0} (해석 경고: {1})」·「{0}번 줄: {1}」) — 중국어 「（解析警告：第 3 行：…）」(괄호 앞 빈칸 없음)
+  it.each(['ko', 'zh-CN', 'en', 'ja', 'de'])('(ㄴ) %s: 열기 오류 「이름: 까닭」·주소 받기 실패·그릴 것이 없는 프로그램 알림 — 사이 글은 틀 열쇠로 그 언어 사전 다수 꼴(224차 — 202차는 원문 「: 」 그대로)', async (lang) => {
     const { app, root } = await makeApp(lang);
-    // 시작 화면 오류 줄: 파일 이름(파일 글 칸) · 사이 글 · 까닭(앱 글)
-    expect(await app.openBuffer('notes.md', enc.encode('hello world\nsecond line\n').buffer as ArrayBuffer)).toBe(false);
-    await tick();
+    const sep = lang === 'zh-CN' ? '：' : ': ';
+    const ui = (s: string): string => translate(s, lang, true);
     const err = root.querySelector<HTMLElement>('.start-error')!;
-    expect([...err.childNodes].map((n) => n.textContent)).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, lang)]);
+    const cell = (): [string, string | null | undefined, number] => [err.textContent ?? '', err.querySelector('[translate="no"]')?.textContent, err.querySelectorAll('[data-i18n-skip]').length];
+    // 시작 화면 오류 줄: NC 프로그램이 아닌 글 파일
+    expect(await app.openBuffer('notes.md', enc.encode('hello world\nsecond line\n').buffer as ArrayBuffer)).toBe(false);
+    expect(cell()).toEqual([`notes.md${sep}${ui(NOT_NC_MESSAGE)}`, 'notes.md', 1]);
+    // 주소 열기 받기 실패(HTTP 404)
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 404, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) }));
+    expect(await app.openUrl('/files/part.nc')).toBe(false);
+    expect(cell()).toEqual([`part.nc${sep}${ui('파일을 받지 못했습니다(HTTP 404).')}`, 'part.nc', 1]);
+    // 그릴 것이 없는 프로그램(Heidenhain 부르기만 — 줄 있는 경고, mobile.test 31차와 같은 예제)
+    expect(await app.openBuffer('sub.h', enc.encode('0 BEGIN PGM T MM\n1 TOOL CALL 1 Z S3000\n2 CALL PGM SUB\n3 END PGM T MM\n').buffer as ArrayBuffer)).toBe(false);
+    const EMPTY = '그릴 공구 경로를 찾지 못했습니다. 이동 명령(G0·G1·L 등)이 없는 프로그램일 수 있습니다.';
+    const WARN = 'CALL PGM SUB: 프로그램을 찾지 못함 — 다른 파일이면 함께 열어야 읽음';
+    const parts = ['sub.h', ': ', EMPTY, ' (', '해석 경고', ': ', '3번 줄', ': ', WARN, ')'];
+    const ZH: Record<string, string> = { ': ': '：', ' (': '（', ')': '）' };
+    // 224차 앞 꼴(조각마다 번역층이 옮김)과 같은 글 — 중국어만 사이 글 「: 」·「 (」·「)」가 사전 다수 꼴
+    expect(cell()).toEqual([parts.map((p) => (lang === 'zh-CN' && ZH[p] ? ZH[p] : translate(p, lang))).join(''), 'sub.h', 1]);
+    if (lang === 'en') expect(err.textContent).toBe(`sub.h: No tool path to draw was found. The program may have no motion commands (G0·G1·L, etc.). (Analysis Warning: Line 3: ${translate(WARN, 'en')})`);
+    expect(HANGUL.test(err.textContent!)).toBe(lang === 'ko');
     if (lang !== 'zh-CN') return;
-    // 문서가 열린 뒤의 열기 오류(알림 상자 — 같은 조각): 중국어 → 영어로 바꾸어도 사이 글은 ': ', 까닭은 번역층이 새 언어로 옮긴다
+    // 문서가 열린 뒤의 열기 오류(알림 상자 — 같은 칸): 중국어 → 영어로 바꾸면 원문에서 새 언어로 다시 옮긴다(dom.ts relangToasts — 사이 글도 「：」 → 「: 」)
     expect(await app.openBuffer('part.MPF', enc.encode(SIE).buffer as ArrayBuffer)).toBe(true);
     expect(await app.openBuffer('notes.md', enc.encode('hello world\n').buffer as ArrayBuffer)).toBe(false);
-    await tick();
-    const box = (): string[] => [...document.querySelector<HTMLElement>('.toast.error')!.childNodes].slice(0, 3).map((n) => n.textContent ?? '');
-    expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'zh-CN')]);
+    const box = (): string => document.querySelector<HTMLElement>('.toast.error [data-i18n-skip]')?.textContent ?? '';
+    expect(box()).toBe(`notes.md：${translate(NOT_NC_MESSAGE, 'zh-CN', true)}`);
     await to('en');
-    expect(box()).toEqual(['notes.md', ': ', translate(NOT_NC_MESSAGE, 'en')]);
+    await until(() => box() === `notes.md: ${translate(NOT_NC_MESSAGE, 'en', true)}`);
   });
 });
 
